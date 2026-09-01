@@ -8,7 +8,7 @@ Usage:
     uv run orts/examples/artemis1/plot_trajectory.py
 
 Reads `artemis1.rrd` (emitted by `cargo run --example artemis1 -p orts
---features fetch-horizons`) via the `orts convert` CLI and produces
+--features fetch-horizons,rerun`) via the `orts convert` CLI and produces
 four PNGs alongside this script:
 
 - `artemis1_full_mission.png` — all three recorded phases (outbound
@@ -133,7 +133,9 @@ def load_entities() -> dict[str, np.ndarray]:
         sys.exit(
             f"error: {RRD_PATH} does not exist.\n"
             f"       run `cargo run --release --example artemis1 -p orts \\\n"
-            f"              --features fetch-horizons` first to generate it."
+            f"              --features fetch-horizons,rerun` first to generate it.\n"
+            f"       (without the `rerun` feature the example verifies the\n"
+            f"        trajectory but writes no .rrd)"
         )
 
     result = subprocess.run(

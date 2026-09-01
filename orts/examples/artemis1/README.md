@@ -36,6 +36,11 @@ apollo11 example が離散イベント (LOI/TEI/EI) の時刻一致を検証す�
 
 ```sh
 # シミュレーション実行 (Horizons fetch → propagate → verify → RRD 出力)
+# RRD 出力には `rerun` feature も必要。これがないと verify までで終了し、
+# RRD 用の dense Orion テーブル fetch (~5 MB) と再伝播はスキップされる。
+cargo run --release --example artemis1 -p orts --features fetch-horizons,rerun
+
+# verify だけ実行する場合 (RRD 用の fetch と再伝播を省く)
 cargo run --release --example artemis1 -p orts --features fetch-horizons
 
 # 初回実行時: Moon + Sun + Orion を Horizons から fetch (~数十秒)
@@ -46,7 +51,8 @@ cargo run --release --example artemis1 -p orts --features fetch-horizons
 
 ### Rerun RRD
 
-`cargo run` 末尾で `orts/examples/artemis1/artemis1.rrd` (~40 MB) を出力する。
+`rerun` feature 付きの `cargo run` 末尾で `orts/examples/artemis1/artemis1.rrd`
+(~40 MB) を出力する。
 
 ```sh
 rerun orts/examples/artemis1/artemis1.rrd

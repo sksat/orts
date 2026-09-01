@@ -32,7 +32,9 @@ nalgebra.workspace = true
 utsuroi.workspace = true
 tobari = { workspace = true, features = ["fetch-cssi"] }
 arika = { workspace = true, features = ["sgp4"] }
-orts.workspace = true
+# `rerun` is not optional here: .rrd is the default `--format` and the
+# `replay` / `convert` subcommands exist only to read it.
+orts = { workspace = true, features = ["rerun"] }
 log = "0.4.29"
 clap.workspace = true
 tokio.workspace = true

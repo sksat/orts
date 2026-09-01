@@ -531,7 +531,6 @@ fn main() {
     println!();
 
     // Save RRD
-    let rrd_path = "orts/examples/orbital_lifetime/orbital_lifetime.rrd";
     rec.metadata = orts::record::recording::SimMetadata {
         epoch_jd: Some(epoch.jd()),
         mu: Some(MU_EARTH),
@@ -541,8 +540,12 @@ fn main() {
         period: None,
         ..Default::default()
     };
-    orts::record::rerun_export::save_as_rrd(&rec, "orts-orbital-lifetime", rrd_path).unwrap();
-    println!("Saved to {rrd_path} (open with: rerun {rrd_path})");
+    #[cfg(feature = "rerun")]
+    {
+        let rrd_path = "orts/examples/orbital_lifetime/orbital_lifetime.rrd";
+        orts::record::rerun_export::save_as_rrd(&rec, "orts-orbital-lifetime", rrd_path).unwrap();
+        println!("Saved to {rrd_path} (open with: rerun {rrd_path})");
+    }
 
     // Assertions (active during `cargo test --example`)
     // Group 1: all scenarios must terminate with reentry

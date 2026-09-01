@@ -295,7 +295,7 @@ orts (orts/)
     attitude/         # AttitudeState, AttitudeSystem, GravityGradientTorque
     spacecraft/       # SpacecraftState, SpacecraftDynamics
     group/            # PropGroup, GroupState, InterSatelliteForce
-    record/           # Recording, Rerun export (default feature)
+    record/           # Recording, Rerun export (opt-in feature `rerun`)
     setup.rs          # build_orbital_system(), build_spacecraft_dynamics() ヘルパー
     lib.rs
 ```
@@ -363,8 +363,20 @@ trait PropGroup {
 
 ECS データモデルとデータ記録を担当:
 - Recording, Component, Archetype trait
-- Rerun (.rrd) エクスポート（default feature `rerun`; `default-features = false` で除外可能）
+- Rerun (.rrd) エクスポート（opt-in feature `rerun`）
 - Recorder trait（CLI/WS からの記録インターフェース）
+
+`rerun` を opt-in にしているのは、`orts` の依存グラフ 271 crates のうち 230 crates が
+rerun の subcrate 経由でしか到達しないためである。
+接触点は `record::rerun_export` だけで、`record` の他の module と simulation core は
+`rerun` を参照しない。
+lib test 653 本のうち `rerun` を必要とするのは `rerun_export` の 8 本であり、
+`orts/tests/` の統合テストは全て `rerun` 非依存である。
+`orts` は他の feature (`plugin-wasm`, `fetch-*`) も含めて default feature を持たないので、
+`rerun` もそれに揃える。
+.rrd を書き出す `orts-cli` は `features = ["rerun"]` で明示的に有効化する。
+
+format 自体を維持するかどうかの検討は #311。
 
 #### 状態ベクトル 3層設計
 
@@ -740,7 +752,7 @@ SOI 切り替え時の注意点:
 - **Model の純関数性**: `Model<S>::eval(&self, ...)` は副作用を持たない純関数的評価。内部状態の変更は行わない
 - **Context パターン**: `DynamicalSystem::derivatives()` に渡す環境情報 (暦元、天体暦、大気モデル) は将来的に Context 構造体に統合する可能性がある。現状は各 system のフィールドで保持
 - **trait object ポリシー**: モデルは `Box<dyn Model<ConcreteState>>` で実行時差し替え可能。`GravityField`, `AtmosphereModel` 等の環境 trait も `Box<dyn Trait>` で差し替え可能。`impl GravityField for Box<dyn GravityField>` はビルダーヘルパー用の便利 impl であり、性能クリティカルなパスでは `SpacecraftDynamics<G>` のモノモーフィゼーションを使用する
-- **feature gate**: 重いモデル (NRLMSISE-00, Rerun, WebSocket, CSSI HTTP) は feature flag で分離。Rerun は orts の default feature
+- **feature gate**: 重いモデル (NRLMSISE-00, Rerun, WebSocket, CSSI HTTP) は feature flag で分離。`orts` は default feature を持たず、全て opt-in
 
 ## Viewer データフローアーキテクチャ
 

@@ -1236,7 +1236,6 @@ fn main() {
         rec.log_orbital_state(&moon_path, &tp, &os);
     }
 
-    let rrd_path = "orts/examples/apollo11/apollo11.rrd";
     rec.metadata = orts::record::recording::SimMetadata {
         epoch_jd: Some(parking_epoch.jd()),
         mu: Some(MU_EARTH),
@@ -1246,9 +1245,16 @@ fn main() {
         period: None,
         ..Default::default()
     };
-    orts::record::rerun_export::save_as_rrd(&rec, "orts-apollo11", rrd_path).unwrap();
-    println!();
-    println!("Saved to {rrd_path} (open with: rerun {rrd_path})");
+    // The trajectory validation above is the point of this example; the
+    // .rrd dump is just for eyeballing it in the Rerun viewer, so it is
+    // gated rather than making the example require the `rerun` feature.
+    #[cfg(feature = "rerun")]
+    {
+        let rrd_path = "orts/examples/apollo11/apollo11.rrd";
+        orts::record::rerun_export::save_as_rrd(&rec, "orts-apollo11", rrd_path).unwrap();
+        println!();
+        println!("Saved to {rrd_path} (open with: rerun {rrd_path})");
+    }
 }
 
 // Tests — validate against NASA Postflight Trajectory AS-506

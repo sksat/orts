@@ -271,15 +271,15 @@ use orts::orbital::OrbitalSystem;
 use orts::orbital::gravity::PointMass;
 #[cfg(feature = "fetch-horizons")]
 use orts::perturbations::{ConstantThrust, ThirdBodyGravity, ZonalGravity};
-#[cfg(feature = "fetch-horizons")]
+#[cfg(all(feature = "fetch-horizons", feature = "rerun"))]
 use orts::record::archetypes::OrbitalState as RecordOrbitalState;
-#[cfg(feature = "fetch-horizons")]
+#[cfg(all(feature = "fetch-horizons", feature = "rerun"))]
 use orts::record::components::{BodyRadius, GravitationalParameter, Position3D};
-#[cfg(feature = "fetch-horizons")]
+#[cfg(all(feature = "fetch-horizons", feature = "rerun"))]
 use orts::record::entity_path::EntityPath;
-#[cfg(feature = "fetch-horizons")]
+#[cfg(all(feature = "fetch-horizons", feature = "rerun"))]
 use orts::record::recording::Recording;
-#[cfg(feature = "fetch-horizons")]
+#[cfg(all(feature = "fetch-horizons", feature = "rerun"))]
 use orts::record::timeline::TimePoint;
 #[cfg(feature = "fetch-horizons")]
 use utsuroi::{Dop853, Integrator};
@@ -351,7 +351,7 @@ const DT_SECONDS: f64 = 10.0;
 /// `OUTPUT_INTERVAL` and gives ~8,600 samples for the chain window
 /// (smooth trajectory visible in Rerun's 3D view, fine enough to
 /// resolve burn onset / DRO loop shape).
-#[cfg(feature = "fetch-horizons")]
+#[cfg(all(feature = "fetch-horizons", feature = "rerun"))]
 const OUTPUT_INTERVAL: f64 = 60.0;
 
 /// Dense Orion reference step for the chain-window Horizons fetch.
@@ -365,14 +365,14 @@ const OUTPUT_INTERVAL: f64 = 60.0;
 /// cubic Hermite error at 60 s sample spacing is O(h^4) ≈ sub-metre for
 /// Orion's smooth trajectory near the DRI/DRDI burns — below the
 /// display resolution of any imaginable plot.
-#[cfg(feature = "fetch-horizons")]
+#[cfg(all(feature = "fetch-horizons", feature = "rerun"))]
 const ORION_REF_STEP: &str = "1m";
 
 /// Output path for the Rerun RRD file produced at the end of `main`.
 ///
 /// Matches the `apollo11.rrd` convention alongside the companion
 /// example and is `.gitignore`d via the top-level ignore list.
-#[cfg(feature = "fetch-horizons")]
+#[cfg(all(feature = "fetch-horizons", feature = "rerun"))]
 const RRD_OUTPUT_PATH: &str = "orts/examples/artemis1/artemis1.rrd";
 
 /// Mission epoch used as the `sim_time = 0` reference for the RRD
@@ -383,7 +383,7 @@ const RRD_OUTPUT_PATH: &str = "orts/examples/artemis1/artemis1.rrd";
 /// sample. Using `COAST_PHASES[0]`'s start keeps the `sim_time` axis
 /// readable (first sample at t = 0 days, last sample at ~22.96 days)
 /// and matches the "outbound coast" phase the reader sees first.
-#[cfg(feature = "fetch-horizons")]
+#[cfg(all(feature = "fetch-horizons", feature = "rerun"))]
 const MISSION_EPOCH_ISO: &str = "2022-11-17T00:00:00Z";
 
 /// Moon ephemeris window covering all three coast phases, padded ±1 h for
@@ -907,164 +907,171 @@ fn main() {
     // have their own stdout summaries for those gaps, and rendering
     // the omitted ~5-day coasts would triple the RRD size for no
     // visual benefit).
-    println!("── Building Rerun RRD visualization ──");
-    let mission_epoch = Epoch::from_iso8601(MISSION_EPOCH_ISO).expect("valid mission epoch");
+    // Skipped wholesale without the `rerun` feature: everything below
+    // exists only to produce the .rrd, and the dense Horizons fetch
+    // (~5 MB) plus the second propagation would otherwise run with
+    // nowhere to write the result.
+    #[cfg(feature = "rerun")]
+    {
+        println!("── Building Rerun RRD visualization ──");
+        let mission_epoch = Epoch::from_iso8601(MISSION_EPOCH_ISO).expect("valid mission epoch");
 
-    // Fetch one dense Orion reference table covering the **whole**
-    // recorded span (outbound start → return end). A single fetch
-    // lets `HorizonsTable::interpolate` handle every recorded phase
-    // from memory with no per-step HTTP calls, and the cached CSV
-    // (~5 MB for ~23 days × 1 min) is reused on subsequent runs.
-    let ref_start_iso = COAST_PHASES[0].1; // outbound start
-    let ref_stop_iso = COAST_PHASES[COAST_PHASES.len() - 1].2; // return end
-    let ref_start = Epoch::from_iso8601(ref_start_iso)
-        .expect("valid outbound start")
-        .add_seconds(-60.0);
-    let ref_stop = Epoch::from_iso8601(ref_stop_iso)
-        .expect("valid return end")
-        .add_seconds(60.0);
-    println!("  fetching dense Orion reference table ({ORION_REF_STEP} spacing)…");
-    let orion_ref_table = HorizonsTable::fetch_vector_table(
-        ORION_TARGET,
-        EARTH_GEOCENTER,
-        &ref_start,
-        &ref_stop,
-        ORION_REF_STEP,
-        None,
-    )
-    .expect("fetch Orion reference table");
-    println!(
-        "  {} Orion reference samples over {} → {}",
-        orion_ref_table.samples().len(),
-        iso_short(&ref_start),
-        iso_short(&ref_stop),
-    );
-
-    // Build the recording skeleton. Earth and Moon mu / radius come
-    // from `KnownBody::properties()` so the two entities use the same
-    // source of truth; any future correction (e.g. switching to DE441
-    // GM_EARTH) lands in both places at once.
-    let mut rec = Recording::new();
-    let earth_props = arika::body::KnownBody::Earth.properties();
-    let earth_path = EntityPath::parse("/world/earth");
-    rec.log_static(&earth_path, &GravitationalParameter(earth_props.mu));
-    rec.log_static(&earth_path, &BodyRadius(earth_props.radius));
-    let moon_path = EntityPath::parse("/world/moon");
-    let moon_props = arika::body::KnownBody::Moon.properties();
-    rec.log_static(&moon_path, &GravitationalParameter(moon_props.mu));
-    rec.log_static(&moon_path, &BodyRadius(moon_props.radius));
-
-    let mut chain_recording = ChainRecording::new(&mut rec, &orion_ref_table);
-
-    // Helper closure: record a pure-coast phase into a phase-specific
-    // slot of the entity tree. The `phase_key` becomes the final
-    // path segment (`/world/sat/artemis1/<phase_key>`) so downstream
-    // per-phase slicing in plot_trajectory.py can filter by entity
-    // path, avoiding the sim_time-boundary collision problem.
-    let record_fill = |phase_key: &'static str,
-                       label: &'static str,
-                       start_iso: &'static str,
-                       end_iso: &'static str,
-                       chain_recording: &mut ChainRecording| {
-        let phase_start = Epoch::from_iso8601(start_iso).expect("valid fill start");
-        let met = (phase_start.jd() - mission_epoch.jd()) * 86_400.0;
-        chain_recording.reset_for_phase(met, phase_key);
-        record_coast_phase(
-            label,
-            start_iso,
-            end_iso,
-            &moon_ephem,
-            &sun_table_arc,
-            chain_recording,
+        // Fetch one dense Orion reference table covering the **whole**
+        // recorded span (outbound start → return end). A single fetch
+        // lets `HorizonsTable::interpolate` handle every recorded phase
+        // from memory with no per-step HTTP calls, and the cached CSV
+        // (~5 MB for ~23 days × 1 min) is reused on subsequent runs.
+        let ref_start_iso = COAST_PHASES[0].1; // outbound start
+        let ref_stop_iso = COAST_PHASES[COAST_PHASES.len() - 1].2; // return end
+        let ref_start = Epoch::from_iso8601(ref_start_iso)
+            .expect("valid outbound start")
+            .add_seconds(-60.0);
+        let ref_stop = Epoch::from_iso8601(ref_stop_iso)
+            .expect("valid return end")
+            .add_seconds(60.0);
+        println!("  fetching dense Orion reference table ({ORION_REF_STEP} spacing)…");
+        let orion_ref_table = HorizonsTable::fetch_vector_table(
+            ORION_TARGET,
+            EARTH_GEOCENTER,
+            &ref_start,
+            &ref_stop,
+            ORION_REF_STEP,
+            None,
+        )
+        .expect("fetch Orion reference table");
+        println!(
+            "  {} Orion reference samples over {} → {}",
+            orion_ref_table.samples().len(),
+            iso_short(&ref_start),
+            iso_short(&ref_stop),
         );
-    };
 
-    // --- Phase sequence (covering the whole 2022-11-17 → 2022-12-10
-    //     recorded mission window with no gaps) ---
-    //
-    // 1. Outbound coast (verified)          2022-11-17 → 2022-11-20
-    // 2. Outbound-to-chain fill (unmodelled OPF on 2022-11-21 inside)
-    //                                       2022-11-20 → 2022-11-25T21:40
-    // 3. DRI → DRDI chain (verified)        2022-11-25T21:40 → 2022-12-01T22:06
-    // 4. Chain-to-return fill (unmodelled RPF on 2022-12-05 inside)
-    //                                       2022-12-01T22:06 → 2022-12-06
-    // 5. Return coast (verified)            2022-12-06 → 2022-12-10
-    //
-    // Each phase starts fresh from the Horizons reference state at
-    // its own start epoch so upstream errors do not accumulate into
-    // the next phase; the fills 2 and 4 will visibly diverge from
-    // the Horizons reference at ~1 day past their start because the
-    // powered flyby Δv is missing from the force model.
-    record_fill(
-        "outbound",
-        COAST_PHASES[0].0,
-        COAST_PHASES[0].1,
-        COAST_PHASES[0].2,
-        &mut chain_recording,
-    );
+        // Build the recording skeleton. Earth and Moon mu / radius come
+        // from `KnownBody::properties()` so the two entities use the same
+        // source of truth; any future correction (e.g. switching to DE441
+        // GM_EARTH) lands in both places at once.
+        let mut rec = Recording::new();
+        let earth_props = arika::body::KnownBody::Earth.properties();
+        let earth_path = EntityPath::parse("/world/earth");
+        rec.log_static(&earth_path, &GravitationalParameter(earth_props.mu));
+        rec.log_static(&earth_path, &BodyRadius(earth_props.radius));
+        let moon_path = EntityPath::parse("/world/moon");
+        let moon_props = arika::body::KnownBody::Moon.properties();
+        rec.log_static(&moon_path, &GravitationalParameter(moon_props.mu));
+        rec.log_static(&moon_path, &BodyRadius(moon_props.radius));
 
-    if BURN_CHAIN_INDICES.len() >= 2 {
-        let chain_burns: Vec<&Maneuver> =
-            BURN_CHAIN_INDICES.iter().map(|&i| &MANEUVERS[i]).collect();
-        let chain_pre_iso = chain_burns[0].pre_epoch_iso;
-        let chain_post_iso = chain_burns[chain_burns.len() - 1].post_epoch_iso;
+        let mut chain_recording = ChainRecording::new(&mut rec, &orion_ref_table);
 
-        // Fill between outbound end and chain pre. Contains the OPF
-        // (Outbound Powered Flyby, 2022-11-21, ~210 m/s) which the
-        // force model does not carry — the plot will show divergence
-        // starting around MET ~5 days.
+        // Helper closure: record a pure-coast phase into a phase-specific
+        // slot of the entity tree. The `phase_key` becomes the final
+        // path segment (`/world/sat/artemis1/<phase_key>`) so downstream
+        // per-phase slicing in plot_trajectory.py can filter by entity
+        // path, avoiding the sim_time-boundary collision problem.
+        let record_fill = |phase_key: &'static str,
+                           label: &'static str,
+                           start_iso: &'static str,
+                           end_iso: &'static str,
+                           chain_recording: &mut ChainRecording| {
+            let phase_start = Epoch::from_iso8601(start_iso).expect("valid fill start");
+            let met = (phase_start.jd() - mission_epoch.jd()) * 86_400.0;
+            chain_recording.reset_for_phase(met, phase_key);
+            record_coast_phase(
+                label,
+                start_iso,
+                end_iso,
+                &moon_ephem,
+                &sun_table_arc,
+                chain_recording,
+            );
+        };
+
+        // --- Phase sequence (covering the whole 2022-11-17 → 2022-12-10
+        //     recorded mission window with no gaps) ---
+        //
+        // 1. Outbound coast (verified)          2022-11-17 → 2022-11-20
+        // 2. Outbound-to-chain fill (unmodelled OPF on 2022-11-21 inside)
+        //                                       2022-11-20 → 2022-11-25T21:40
+        // 3. DRI → DRDI chain (verified)        2022-11-25T21:40 → 2022-12-01T22:06
+        // 4. Chain-to-return fill (unmodelled RPF on 2022-12-05 inside)
+        //                                       2022-12-01T22:06 → 2022-12-06
+        // 5. Return coast (verified)            2022-12-06 → 2022-12-10
+        //
+        // Each phase starts fresh from the Horizons reference state at
+        // its own start epoch so upstream errors do not accumulate into
+        // the next phase; the fills 2 and 4 will visibly diverge from
+        // the Horizons reference at ~1 day past their start because the
+        // powered flyby Δv is missing from the force model.
         record_fill(
-            "opf_fill",
-            "Outbound → chain fill (contains OPF 2022-11-21)",
-            COAST_PHASES[0].2, // outbound end
-            chain_pre_iso,
+            "outbound",
+            COAST_PHASES[0].0,
+            COAST_PHASES[0].1,
+            COAST_PHASES[0].2,
             &mut chain_recording,
         );
 
-        let chain_pre = Epoch::from_iso8601(chain_pre_iso).expect("valid chain pre epoch");
-        let met = (chain_pre.jd() - mission_epoch.jd()) * 86_400.0;
-        chain_recording.reset_for_phase(met, "chain");
-        println!("  recording DRI → DRDI chain ({chain_pre_iso} → {chain_post_iso})");
-        record_chain_trajectory(
-            &chain_burns,
-            &moon_ephem,
-            &sun_table_arc,
-            &mut chain_recording,
-        );
+        if BURN_CHAIN_INDICES.len() >= 2 {
+            let chain_burns: Vec<&Maneuver> =
+                BURN_CHAIN_INDICES.iter().map(|&i| &MANEUVERS[i]).collect();
+            let chain_pre_iso = chain_burns[0].pre_epoch_iso;
+            let chain_post_iso = chain_burns[chain_burns.len() - 1].post_epoch_iso;
 
-        // Fill between chain post and return start. Contains the RPF
-        // (Return Powered Flyby, 2022-12-05, ~328 m/s) which the
-        // force model also does not carry — divergence starts ~4
-        // days after the fill begins.
+            // Fill between outbound end and chain pre. Contains the OPF
+            // (Outbound Powered Flyby, 2022-11-21, ~210 m/s) which the
+            // force model does not carry — the plot will show divergence
+            // starting around MET ~5 days.
+            record_fill(
+                "opf_fill",
+                "Outbound → chain fill (contains OPF 2022-11-21)",
+                COAST_PHASES[0].2, // outbound end
+                chain_pre_iso,
+                &mut chain_recording,
+            );
+
+            let chain_pre = Epoch::from_iso8601(chain_pre_iso).expect("valid chain pre epoch");
+            let met = (chain_pre.jd() - mission_epoch.jd()) * 86_400.0;
+            chain_recording.reset_for_phase(met, "chain");
+            println!("  recording DRI → DRDI chain ({chain_pre_iso} → {chain_post_iso})");
+            record_chain_trajectory(
+                &chain_burns,
+                &moon_ephem,
+                &sun_table_arc,
+                &mut chain_recording,
+            );
+
+            // Fill between chain post and return start. Contains the RPF
+            // (Return Powered Flyby, 2022-12-05, ~328 m/s) which the
+            // force model also does not carry — divergence starts ~4
+            // days after the fill begins.
+            if COAST_PHASES.len() >= 3 {
+                record_fill(
+                    "rpf_fill",
+                    "Chain → return fill (contains RPF 2022-12-05)",
+                    chain_post_iso,
+                    COAST_PHASES[2].1, // return start
+                    &mut chain_recording,
+                );
+            }
+        }
+
         if COAST_PHASES.len() >= 3 {
             record_fill(
-                "rpf_fill",
-                "Chain → return fill (contains RPF 2022-12-05)",
-                chain_post_iso,
-                COAST_PHASES[2].1, // return start
+                "return",
+                COAST_PHASES[2].0,
+                COAST_PHASES[2].1,
+                COAST_PHASES[2].2,
                 &mut chain_recording,
             );
         }
+
+        // Drop the ChainRecording so its mutable borrow of `rec` ends
+        // before the save call below takes `&rec`.
+        drop(chain_recording);
+
+        println!("  saving RRD to {RRD_OUTPUT_PATH}");
+        orts::record::rerun_export::save_as_rrd(&rec, "orts-artemis1", RRD_OUTPUT_PATH)
+            .expect("save artemis1 RRD");
+        println!();
     }
-
-    if COAST_PHASES.len() >= 3 {
-        record_fill(
-            "return",
-            COAST_PHASES[2].0,
-            COAST_PHASES[2].1,
-            COAST_PHASES[2].2,
-            &mut chain_recording,
-        );
-    }
-
-    // Drop the ChainRecording so its mutable borrow of `rec` ends
-    // before the save call below takes `&rec`.
-    drop(chain_recording);
-
-    println!("  saving RRD to {RRD_OUTPUT_PATH}");
-    orts::record::rerun_export::save_as_rrd(&rec, "orts-artemis1", RRD_OUTPUT_PATH)
-        .expect("save artemis1 RRD");
-    println!();
 
     // Summary tables
     print_summary(&results);
@@ -2043,7 +2050,7 @@ fn verify_burn_chain_continuous(
 /// without losing visible trajectory resolution — at DRO distances the
 /// spacecraft moves < 60 m per integrator step, which is below the
 /// screen pixel even in a close-up Earth view.
-#[cfg(feature = "fetch-horizons")]
+#[cfg(all(feature = "fetch-horizons", feature = "rerun"))]
 struct ChainRecording<'a> {
     rec: &'a mut Recording,
     orion_ref: &'a HorizonsTable,
@@ -2071,7 +2078,7 @@ struct ChainRecording<'a> {
     sim_t_offset: f64,
 }
 
-#[cfg(feature = "fetch-horizons")]
+#[cfg(all(feature = "fetch-horizons", feature = "rerun"))]
 impl<'a> ChainRecording<'a> {
     fn new(rec: &'a mut Recording, orion_ref: &'a HorizonsTable) -> Self {
         Self {
@@ -2228,7 +2235,7 @@ impl<'a> ChainRecording<'a> {
 ///
 /// Earth is logged as static in `main` (body radius + µ) outside this
 /// function because it never moves in the ECI frame.
-#[cfg(feature = "fetch-horizons")]
+#[cfg(all(feature = "fetch-horizons", feature = "rerun"))]
 fn record_chain_trajectory(
     burns: &[&Maneuver],
     moon_ephem: &Arc<dyn MoonEphemeris>,
@@ -2353,7 +2360,7 @@ fn record_chain_trajectory(
 /// verify_coast would leak visualization concerns into the
 /// verification code, and the extra ~few hundred millisecond CPU cost
 /// is negligible next to the Horizons fetches.
-#[cfg(feature = "fetch-horizons")]
+#[cfg(all(feature = "fetch-horizons", feature = "rerun"))]
 fn record_coast_phase(
     label: &str,
     start_iso: &str,
