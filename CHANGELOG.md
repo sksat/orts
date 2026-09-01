@@ -85,6 +85,21 @@ section is subdivided by package.
   (the only shipped effector is torque-only) but wrong for a translational
   effector. ([#148](https://github.com/sksat/orts/pull/148), [#103](https://github.com/sksat/orts/issues/103))
 
+- A negative `sim_time` reaches the .rrd. `save_as_rrd` set the timeline through
+  `set_duration_secs`, which converts via the unsigned `std::time::Duration`:
+  the value was rejected and the previous row's timestamp stayed in place, so
+  `-30, -20, -10, 0, 10` was written as `0, 0, 0, 0, 10`. ([#379](https://github.com/sksat/orts/pull/379))
+
+#### Performance
+- `save_as_rrd` writes .rrd columns through `RecordingStream::send_columns`
+  instead of one `rec.log()` call per value, so the call count scales with the
+  number of fields rather than the number of rows — 32,500 calls became 13 for a
+  2500-row, 13-field segment. The row-oriented loop was 165ms of
+  `HistoryBuffer::flush`'s 224ms on the calling thread, against 55ms of Arrow
+  IPC + LZ4 on the writer thread and 0.2ms for the 665KB file write. Chunks are
+  split at 8192 rows, since bypassing the batcher puts chunk boundaries in the
+  caller's hands. ([#379](https://github.com/sksat/orts/pull/379))
+
 #### Removed
 - **BREAKING**: the `orts::tle` module is removed; TLE parsing moved to
   `arika::tle` (decoding into the shared `arika::elements::Sgp4Elements`).

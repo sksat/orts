@@ -73,6 +73,19 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   とタグ付けされた effector 荷重を変換なしで host frame `F` に貼り替えており、
   `F != SimpleEci` (例: `Gcrs`) で座標を黙って誤ラベルしていた。出荷済み
   effector が torque のみのため潜在的だったが、並進 effector では誤りとなる。([#148](https://github.com/sksat/orts/pull/148), [#103](https://github.com/sksat/orts/issues/103))
+- 負の `sim_time` が .rrd に届くようになった。`save_as_rrd` は timeline を
+  `set_duration_secs` で設定していたが、これは符号なしの `std::time::Duration`
+  を経由するので負値を拒否し、直前の行の timestamp をそのまま残していた。
+  `-30, -20, -10, 0, 10` は `0, 0, 0, 0, 10` として書かれていた。([#379](https://github.com/sksat/orts/pull/379))
+
+#### Performance
+- `save_as_rrd` が .rrd を値ごとの `rec.log()` でなく
+  `RecordingStream::send_columns` で列単位に書くようになった。呼び出し回数は
+  行数でなく field 数に比例する: 2500 行 13 field の segment で 32,500 回が 13 回。
+  行単位のループは `HistoryBuffer::flush` 224ms のうち呼び出しスレッドの 165ms を
+  占めており、writer スレッドの Arrow IPC + LZ4 は 55ms、665KB のファイル書き込みは
+  0.2ms だった。batcher を迂回して chunk の境界が呼び出し側の責任になるため、
+  8192 行で分割する。([#379](https://github.com/sksat/orts/pull/379))
 
 #### Removed
 - **BREAKING**: `orts::tle` module を削除。TLE パースは `arika::tle`
