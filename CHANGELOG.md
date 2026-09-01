@@ -196,17 +196,15 @@ section is subdivided by package.
   malformed field is rejected rather than rolling into another year. ([#87](https://github.com/sksat/orts/pull/87))
 
 #### Fixed
-- Log records reach the user. The CLI never installed a `log` backend, so `log`'s
-  no-op logger discarded every record: a displaced stream-io stdio plug, a stream
-  socket error, a halted served simulation, and every line a WASM plugin wrote
-  through the WIT `host-env.log` import all went nowhere. A `tracing` subscriber
-  with the `log` compatibility bridge is now installed at startup, so it also
-  receives the `tracing` events the rerun crates emit on the `.rrd` recording
-  path. Records go to stderr; stdout still carries only what a command produces
-  (CSV, the `--json` summary, the `serve --stream-stdio` protocol). `RUST_LOG`
-  sets the filter, defaulting to `warn,orts=info` — orts at info, dependencies at
-  warn — and `NO_COLOR` (or a non-terminal stderr) turns styling off. Both are
-  documented in `orts --help`. ([#390](https://github.com/sksat/orts/pull/390))
+- `orts` now writes its diagnostics to stderr. With no `log` backend installed
+  every `log::` call was discarded, so a displaced stream-io stdio plug, a stream
+  socket error, a halted `serve` simulation, and every line a WASM plugin logged
+  through the WIT `host-env.log` import all went unreported. The diagnostics the
+  rerun crates emit while writing an `.rrd` now appear in the same output.
+  `RUST_LOG` selects the level — default `warn,orts=info`, ours at info and
+  dependencies at warn — and `NO_COLOR`, or a stderr that is not a terminal,
+  drops the styling; `orts --help` documents both. stdout is unchanged: the CSV,
+  the `--json` summary, or the `serve --stream-stdio` protocol and nothing else. ([#390](https://github.com/sksat/orts/pull/390))
 - `orts run --format csv --output <path>` now writes the CSV to `<path>`.
   Previously every `--format csv` run wrote to stdout regardless of `--output`,
   silently ignoring the given path. ([#214](https://github.com/sksat/orts/pull/214))

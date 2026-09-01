@@ -173,17 +173,15 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   年に繰り上がらず拒否される。([#87](https://github.com/sksat/orts/pull/87))
 
 #### Fixed
-- log レコードがユーザーに届くようになった。CLI は logger を初期化しておらず、
-  `log` の no-op logger が全レコードを破棄していた: stream-io stdio plug の
-  displaced、stream の socket error、serve 中のシミュレーション停止、そして
-  WASM plugin が WIT `host-env.log` 経由で出力した全ての行が消えていた。
-  起動時に `log` 互換 bridge 付きの `tracing` subscriber を初期化するので、
-  `.rrd` 記録経路で rerun の crate が出す `tracing` event も同じ経路で受け取る。
-  レコードは stderr へ出力する。stdout に出るのは従来どおりコマンドの出力 (CSV、
-  `--json` サマリ、`serve --stream-stdio` の protocol) だけ。filter は `RUST_LOG`
-  で指定し、既定は `warn,orts=info` (orts は info、依存は warn)。`NO_COLOR`
-  指定時と stderr が terminal でない場合は装飾を付けない。どちらも
-  `orts --help` に記載した。 ([#390](https://github.com/sksat/orts/pull/390))
+- `orts` が診断ログを stderr に出力するようになった。logger を初期化していな
+  かったため `log::` の呼び出しは全て破棄されており、stream-io stdio plug の
+  displaced、stream の socket error、`serve` 中のシミュレーション停止、
+  WASM plugin が WIT `host-env.log` 経由で出力した行が、どれも表示されなかった。
+  `.rrd` を書く際に rerun の crate が出す診断も同じ出力に含まれる。level は
+  `RUST_LOG` で選び、既定は `warn,orts=info` (orts は info、依存は warn)。
+  `NO_COLOR` 指定時と stderr が terminal でない場合は装飾を付けない。どちらも
+  `orts --help` に記載がある。stdout は従来どおりコマンドの出力 (CSV、`--json`
+  サマリ、`serve --stream-stdio` の protocol) だけ。 ([#390](https://github.com/sksat/orts/pull/390))
 - `orts run --format csv --output <path>` が CSV を `<path>` に書き込むように
   なった。従来は `--format csv` の実行が `--output` に関わらず常に stdout へ
   出力し、指定パスを黙って無視していた。([#214](https://github.com/sksat/orts/pull/214))
