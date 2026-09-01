@@ -102,13 +102,24 @@ impl ComponentColumn {
     ///
     /// # Panics
     ///
-    /// If `logical_row` is not greater than the one given for the previous
-    /// stored row, or does not fit in `u32`. The row lookup binary-searches, so
-    /// either would make it resolve to whichever entry the search landed on.
-    /// The column is left as it was, so a caller that catches the panic does not
-    /// go on holding scalars no row maps to.
+    /// If `scalars` is not one row wide, or if `logical_row` is not greater than
+    /// the one given for the previous stored row or does not fit in `u32`. The
+    /// row lookup binary-searches, so either row error would make it resolve to
+    /// whichever entry the search landed on. The column is left as it was, so a
+    /// caller that catches the panic does not go on holding scalars no row maps
+    /// to.
     pub fn push_at(&mut self, scalars: &[f64], logical_row: usize) {
-        debug_assert_eq!(scalars.len(), self.scalars_per_row);
+        // Checked in release too, like the row map's asserts: a short row runs
+        // into the next one's scalars. Measured before this was checked — two
+        // scalars into a three-wide column, then a whole row — the last row read
+        // back as `[9.0, 9.0, 7.0]`, and `num_rows()` had stopped agreeing with
+        // the row map.
+        assert_eq!(
+            scalars.len(),
+            self.scalars_per_row,
+            "a row of this column is {} scalars wide",
+            self.scalars_per_row
+        );
         self.rows.record(self.num_rows(), logical_row);
         self.data.extend_from_slice(scalars);
     }
@@ -843,6 +854,28 @@ mod tests {
             "the velocity joins the row that was open when it was logged"
         );
         assert_eq!(vel.at_logical_row(1), None, "no velocity was logged for it");
+    }
+
+    #[test]
+    fn a_row_of_the_wrong_width_is_refused() {
+        let mut column = ComponentColumn::new(3);
+        column.push_at(&[1.0, 2.0, 3.0], 0);
+
+        let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            column.push_at(&[9.0, 9.0], 1);
+        }));
+        assert!(
+            refused.is_err(),
+            "two scalars are not a row of a three-wide column"
+        );
+        assert_eq!(column.data.len(), 3, "no partial row was appended");
+
+        column.push_at(&[7.0, 7.0, 7.0], 1);
+        assert_eq!(
+            column.at_logical_row(1),
+            Some(&[7.0, 7.0, 7.0][..]),
+            "so the next row is whole rather than carrying the refused scalars"
+        );
     }
 
     #[test]
