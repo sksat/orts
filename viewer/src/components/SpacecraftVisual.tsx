@@ -83,8 +83,13 @@ export function SpacecraftVisual({
   modelScale,
 }: SpacecraftVisualProps) {
   const modelConfig = satId ? getSatelliteModelConfig(satId, satName) : null;
+  // The default axis length follows the scale the model is *drawn* at, not the
+  // registry's: overriding one without the other would silently change the ratio
+  // between a spacecraft and its axes.
+  const effectiveModelScale = modelScale ?? modelConfig?.scale;
   const resolvedAxisLength =
-    axisLength ?? (modelConfig ? modelConfig.scale * 5 : DEFAULT_SPHERE_RADIUS * 6);
+    axisLength ??
+    (effectiveModelScale != null ? effectiveModelScale * 5 : DEFAULT_SPHERE_RADIUS * 6);
 
   const bodyAxes = quaternion ? (
     <BodyAxes
