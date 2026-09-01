@@ -571,7 +571,7 @@ mod tests {
         let body = arika::body::KnownBody::Earth;
         let mu = body.properties().mu;
         let inertia = nalgebra::Matrix3::identity() * 10.0;
-        let dynamics = build_spacecraft_dynamics(
+        let dynamics = orts::setup::build_spacecraft_dynamics(
             &body,
             mu,
             None,
@@ -580,6 +580,10 @@ mod tests {
                 ballistic_coeff: None,
                 srp_area_to_mass: None,
                 srp_cr: None,
+                // This test watches the controller's tick cadence, so the plant
+                // carries no disturbance torque and no panels to make one.
+                disturbances: orts::setup::DisturbanceTorques::default(),
+                shape: None,
             },
             &[],
             inertia,
