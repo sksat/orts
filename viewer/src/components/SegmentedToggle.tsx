@@ -43,6 +43,8 @@ export function SegmentedToggle<T extends string>({
           type="button"
           className={`${controlStyles.modeToggleBtn} ${value === option.value ? controlStyles.active : ""}`}
           data-testid={option.testId}
+          // Which segment is selected is otherwise only in the styling.
+          aria-pressed={value === option.value}
           onClick={() => onChange(option.value)}
           disabled={option.disabled}
           title={option.title ?? ""}
