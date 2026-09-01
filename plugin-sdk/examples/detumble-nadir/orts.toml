@@ -16,7 +16,7 @@ epoch = "2024-01-01T00:00:00Z"
 # n = √(μ/a³) ≈ 1.1e-3 rad/s で回り続ける。
 #
 # 実行:
-#   cd plugin-sdk/examples && cargo +1.91.0 component build --release
+#   cd plugin-sdk/examples && cargo component build --release
 #   cd detumble-nadir && orts run --config orts.toml --format csv --output out.csv
 
 [[satellites]]

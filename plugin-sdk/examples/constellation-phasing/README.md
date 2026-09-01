@@ -95,7 +95,7 @@ stateDiagram-v2
 
 ```bash
 cd plugin-sdk/examples/constellation-phasing
-cargo +1.91.0 component build --release
+cargo component build --release
 # -> ../target/wasm32-wasip1/release/orts_example_plugin_constellation_phasing.wasm
 ```
 

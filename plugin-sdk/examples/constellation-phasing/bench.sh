@@ -8,7 +8,7 @@
 # - quick mode: N = 1, 8, 64 with --warmup 1 --runs 3 (dev iteration)
 #
 # Prereq:
-#   cargo +1.91.0 component build --release        # (in this directory)
+#   cargo component build --release        # (in this directory)
 #   hyperfine (github.com/sharkdp/hyperfine)
 #   python3
 
