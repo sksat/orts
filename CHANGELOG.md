@@ -163,7 +163,7 @@ section is subdivided by package.
 #### Added
 - `[[satellites.panels]]` gives a satellite a flat-panel outer surface, with
   `area`, `normal`, `cd`, `specular`, `diffuse`, `cp_offset`, `two_sided`
-  ([#PR](https://github.com/sksat/orts/pull/PR)) and `back` ([#395](https://github.com/sksat/orts/pull/395)).
+  ([#399](https://github.com/sksat/orts/pull/399)) and `back` ([#395](https://github.com/sksat/orts/pull/395)).
   A panel is one face, so a thin plate — a solar array — has to ask for its far
   side: `two_sided = true` where the two sides look the same, or `back` where
   they differ optically, which also carries the reflectivities that differ (an
