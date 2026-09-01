@@ -112,6 +112,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn infinite_times_group_by_sign() {
+        let at = |t: f64| TimePoint::new().with_sim_time(t).with_step(0);
+
+        assert!(
+            at(f64::INFINITY).is_same_row(&at(f64::INFINITY)),
+            "an infinite time is the same instant as itself, so components \
+             logged at it share a row"
+        );
+        assert!(at(f64::NEG_INFINITY).is_same_row(&at(f64::NEG_INFINITY)));
+        assert!(
+            !at(f64::INFINITY).is_same_row(&at(f64::NEG_INFINITY)),
+            "the two infinities are different instants"
+        );
+        assert!(!at(f64::INFINITY).is_same_row(&at(f64::MAX)));
+    }
+
+    #[test]
     fn empty_time_point() {
         let tp = TimePoint::new();
         assert!(tp.indices().is_empty());

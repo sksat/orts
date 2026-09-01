@@ -3059,6 +3059,34 @@ mod tests {
         out
     }
 
+    /// The `(sim_time, x)` of every `Points3D` row, per entity path.
+    fn timed_points_by_path(path: &str) -> BTreeMap<String, Vec<(f64, f32)>> {
+        let mut out: BTreeMap<String, Vec<(f64, f32)>> = BTreeMap::new();
+        for chunk in decode_chunks(path) {
+            let Some((_, times)) = chunk
+                .timelines()
+                .iter()
+                .find(|(name, _)| name.as_str() == "sim_time")
+            else {
+                continue;
+            };
+            let times = times.times_raw().to_vec();
+            for comp_id in chunk.components_identifiers() {
+                for row_idx in 0..chunk.num_rows() {
+                    if let Some(Ok(batch)) = chunk
+                        .component_batch::<re_sdk_types::components::Position3D>(comp_id, row_idx)
+                    {
+                        let t = times[row_idx] as f64 / 1e9;
+                        out.entry(chunk.entity_path().to_string())
+                            .or_default()
+                            .extend(batch.iter().map(|p| (t, p.0.x())));
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// A recording of `n` rows on one satellite, `x` counting up from zero so a
     /// row can be identified by its value.
     fn counted_recording(entity: &str, n: usize) -> Recording {
@@ -3334,6 +3362,65 @@ mod tests {
         );
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// A position column that starts late must put its `Points3D` on the times
+    /// its own rows carry. The scalar paths and the `Points3D` path are built
+    /// from the same logical rows but by separate code, so the 3D path can go
+    /// back to leading-row alignment while the scalars stay right.
+    #[test]
+    fn a_late_starting_position_keeps_its_points_on_its_own_times() {
+        use crate::record::components::{MtqCommand3D, Position3D};
+
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/late_points");
+
+        const N: u64 = 8;
+        const FIRST_POSITION_STEP: u64 = 3;
+        for i in 0..N {
+            let tp = TimePoint::new().with_sim_time(i as f64).with_step(i);
+            // Logged at every step, so the entity's rows start at step 0 and the
+            // position column is the sparse one.
+            rec.log_temporal(&sat, &tp, &MtqCommand3D(Vector3::new(i as f64, 0.0, 0.0)));
+            if i >= FIRST_POSITION_STEP {
+                rec.log_temporal(&sat, &tp, &Position3D(Vector3::new(i as f64, 0.0, 0.0)));
+            }
+        }
+
+        let dir = std::env::temp_dir().join(format!(
+            "orts_rrd_late_points_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("late_points.rrd");
+        let path_str = path.to_str().unwrap();
+        save_as_rrd(&rec, "test-orts", path_str).expect("failed to save .rrd");
+
+        let want: Vec<(f64, f64)> = (FIRST_POSITION_STEP..N)
+            .map(|i| (i as f64, i as f64))
+            .collect();
+        let scalars = timed_scalars_by_path(path_str);
+        assert_eq!(
+            scalars
+                .get("/world/sat/late_points/x")
+                .expect("x missing from the file"),
+            &want,
+            "each x should carry the sim_time of the step it was logged at"
+        );
+
+        let points = timed_points_by_path(path_str);
+        let got = points
+            .get("/world/sat/late_points")
+            .expect("Points3D missing from the file");
+        let want_points: Vec<(f64, f32)> = want.iter().map(|(t, x)| (*t, *x as f32)).collect();
+        assert_eq!(
+            got, &want_points,
+            "and each point should sit at the same time as the scalars of the \
+             row it came from"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// An entity whose only timeline carries the wrong `TimeIndex` variant has no
