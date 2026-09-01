@@ -105,11 +105,12 @@ impl ComponentColumn {
     /// If `logical_row` is not greater than the one given for the previous
     /// stored row, or does not fit in `u32`. The row lookup binary-searches, so
     /// either would make it resolve to whichever entry the search landed on.
+    /// The column is left as it was, so a caller that catches the panic does not
+    /// go on holding scalars no row maps to.
     pub fn push_at(&mut self, scalars: &[f64], logical_row: usize) {
         debug_assert_eq!(scalars.len(), self.scalars_per_row);
-        let stored = self.num_rows();
+        self.rows.record(self.num_rows(), logical_row);
         self.data.extend_from_slice(scalars);
-        self.rows.record(stored, logical_row);
     }
 
     pub fn num_rows(&self) -> usize {
@@ -166,10 +167,15 @@ impl FromIterator<TimeIndex> for TimelineColumn {
 }
 
 impl TimelineColumn {
+    /// Append `index` as the axis's entry for logical row `logical_row`.
+    ///
+    /// # Panics
+    ///
+    /// On the same rows [`ComponentColumn::push_at`] refuses, and likewise
+    /// without appending.
     pub fn push_at(&mut self, index: TimeIndex, logical_row: usize) {
-        let stored = self.data.len();
+        self.rows.record(self.data.len(), logical_row);
         self.data.push(index);
-        self.rows.record(stored, logical_row);
     }
 
     pub fn len(&self) -> usize {
@@ -837,6 +843,34 @@ mod tests {
             "the velocity joins the row that was open when it was logged"
         );
         assert_eq!(vel.at_logical_row(1), None, "no velocity was logged for it");
+    }
+
+    #[test]
+    fn a_refused_row_appends_nothing() {
+        let mut column = ComponentColumn::new(3);
+        column.push_at(&[1.0, 2.0, 3.0], 0);
+
+        // Rows have to ascend for the map to stay searchable, so row 0 a second
+        // time is refused.
+        let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            column.push_at(&[9.0, 9.0, 9.0], 0);
+        }));
+        assert!(refused.is_err(), "the map cannot hold a repeated row");
+        assert_eq!(
+            column.num_rows(),
+            1,
+            "the refused scalars are not left in the column"
+        );
+        assert_eq!(column.at_logical_row(0), Some(&[1.0, 2.0, 3.0][..]));
+
+        let mut axis = TimelineColumn::default();
+        axis.push_at(TimeIndex::Sequence(0), 0);
+        let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            axis.push_at(TimeIndex::Sequence(7), 0);
+        }));
+        assert!(refused.is_err());
+        assert_eq!(axis.len(), 1, "nor the refused time");
+        assert_eq!(axis.at_logical_row(0), Some(TimeIndex::Sequence(0)));
     }
 
     #[test]
