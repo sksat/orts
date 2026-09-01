@@ -33,10 +33,19 @@ pub const DEFAULT_AREA_TO_MASS: f64 = 0.02;
 ///
 /// Computes acceleration from solar photon pressure on a satellite:
 ///
-/// a = -(P/c) × Cr × (A/m) × (AU/r_sun)² × ŝ
+/// a = -P × Cr × (A/m) × (AU/r_sun)² × ŝ
 ///
-/// where ŝ is the unit vector from the satellite toward the Sun,
-/// giving acceleration directed away from the Sun.
+/// P is [`SOLAR_RADIATION_PRESSURE`], which is the solar irradiance already
+/// divided by the speed of light, so it is a pressure in N/m² and the formula
+/// applies no further `/c`. ŝ is the unit vector from the satellite toward the
+/// Sun, giving acceleration directed away from the Sun.
+///
+/// Produces no torque, and takes no attitude: with no orientation there is no
+/// lever arm to cross the force against. That is exactly the model's premise,
+/// an isotropic surface presenting the same cross-section in every direction,
+/// with its centre of pressure taken at the centre of mass. Attitude-dependent
+/// SRP, including the torque an off-centre centre of pressure produces, is
+/// [`crate::spacecraft::PanelSrp`].
 pub struct SolarRadiationPressure {
     /// Radiation pressure coefficient (1.0 = absorber, 2.0 = reflector)
     pub cr: f64,

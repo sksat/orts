@@ -1,0 +1,150 @@
+{
+  "description": "Orekit reference forces for a single flat panel under solar radiation pressure. Panel normal is +Z in the body frame, the Sun is at (sin(incidence), 0, cos(incidence)), and the attitude is identity.",
+  "generator": "tools/generate_orekit_panel_srp_fixtures.py",
+  "orekit_convention": {
+    "absorption": "alpha",
+    "reflection": "rho_s (specular)",
+    "diffuse": "1 - alpha - rho_s"
+  },
+  "pressure_n_m2": 4.5396e-06,
+  "area_m2": 4.0,
+  "panel_normal_body": [
+    0.0,
+    0.0,
+    1.0
+  ],
+  "cases": [
+    {
+      "name": "black_face_on",
+      "specular": 0.0,
+      "diffuse": 0.0,
+      "incidence_deg": 0.0,
+      "force_body_n": [
+        0.0,
+        0.0,
+        -1.81584e-05
+      ]
+    },
+    {
+      "name": "black_30deg",
+      "specular": 0.0,
+      "diffuse": 0.0,
+      "incidence_deg": 30.0,
+      "force_body_n": [
+        -7.862817846039673e-06,
+        0.0,
+        -1.3618800000000002e-05
+      ]
+    },
+    {
+      "name": "black_60deg",
+      "specular": 0.0,
+      "diffuse": 0.0,
+      "incidence_deg": 60.0,
+      "force_body_n": [
+        -7.862817846039676e-06,
+        0.0,
+        -4.539600000000001e-06
+      ]
+    },
+    {
+      "name": "mirror_face_on",
+      "specular": 1.0,
+      "diffuse": 0.0,
+      "incidence_deg": 0.0,
+      "force_body_n": [
+        0.0,
+        0.0,
+        -3.63168e-05
+      ]
+    },
+    {
+      "name": "mirror_30deg",
+      "specular": 1.0,
+      "diffuse": 0.0,
+      "incidence_deg": 30.0,
+      "force_body_n": [
+        0.0,
+        0.0,
+        -2.7237600000000005e-05
+      ]
+    },
+    {
+      "name": "mirror_60deg",
+      "specular": 1.0,
+      "diffuse": 0.0,
+      "incidence_deg": 60.0,
+      "force_body_n": [
+        0.0,
+        0.0,
+        -9.079200000000003e-06
+      ]
+    },
+    {
+      "name": "lambertian_face_on",
+      "specular": 0.0,
+      "diffuse": 1.0,
+      "incidence_deg": 0.0,
+      "force_body_n": [
+        0.0,
+        0.0,
+        -3.0264e-05
+      ]
+    },
+    {
+      "name": "lambertian_45deg",
+      "specular": 0.0,
+      "diffuse": 1.0,
+      "incidence_deg": 45.0,
+      "force_body_n": [
+        -9.0792e-06,
+        0.0,
+        -1.7639151850331868e-05
+      ]
+    },
+    {
+      "name": "solar_array_15deg",
+      "specular": 0.2,
+      "diffuse": 0.1,
+      "incidence_deg": 15.0,
+      "force_body_n": [
+        -3.6316800000000006e-06,
+        0.0,
+        -2.1499732583520104e-05
+      ]
+    },
+    {
+      "name": "solar_array_45deg",
+      "specular": 0.2,
+      "diffuse": 0.1,
+      "incidence_deg": 45.0,
+      "force_body_n": [
+        -7.263360000000001e-06,
+        0.0,
+        -1.1751035185033187e-05
+      ]
+    },
+    {
+      "name": "solar_array_75deg",
+      "specular": 0.2,
+      "diffuse": 0.1,
+      "incidence_deg": 75.0,
+      "force_body_n": [
+        -3.6316799999999998e-06,
+        0.0,
+        -1.7729745679916966e-06
+      ]
+    },
+    {
+      "name": "specular_ish_45deg",
+      "specular": 0.6,
+      "diffuse": 0.1,
+      "incidence_deg": 45.0,
+      "force_body_n": [
+        -3.6316800000000006e-06,
+        0.0,
+        -1.5382715185033187e-05
+      ]
+    }
+  ]
+}
