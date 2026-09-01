@@ -194,11 +194,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   どの質量分布もこの値を持たない。([#351](https://github.com/sksat/orts/pull/351))
 
 #### Fixed
-- `[satellites.attitude]` や `[satellites.controller]` を一部の衛星にだけ書いた
-  config を、`orts config validate` と `orts serve --config` が bind 前に拒否する。
-  engine は元からこの fleet を拒否していたが、`orts serve` は engine を spawn した
+- どの mode でも走らない fleet を `orts config validate` と `orts serve --config`
+  が拒否する。`[satellites.attitude]` や `[satellites.controller]` を一部の衛星に
+  だけ書いた config と、全衛星に controller があって attitude がどこにもない config。
+  engine は元からこれらを拒否していたが、`orts serve` は engine を spawn した
   manager の中で建てるので、config は valid と言われ banner も出た上で、渡した
-  config が走らないまま server が idle で待つ状態になっていた。([#351](https://github.com/sksat/orts/pull/351))
+  config が走らないまま server が idle で待つ状態になっていた。`serve` は listening を
+  告げる代わりにエラーで終了する。([#351](https://github.com/sksat/orts/pull/351))
 - WebSocket の `add_satellite` が、実行中の fleet にいる衛星と同じ entity path
   (`/world/sat/<id>`) になる id を拒否する。従来は同じ path の 2 機を許し、
   `[[command]]` は後から追加した方にしか届かなかった。`id` 省略時の

@@ -924,10 +924,13 @@ impl SimConfig {
     /// key holding an unknown value stays an error — there the file names
     /// something the simulation cannot do.
     ///
-    /// The paths come back as a value rather than through `log::warn!`, which
-    /// the CLI initializes no logger for (see #387), so nothing would print
-    /// them. A caller decides where they go: `orts config validate --json` puts
-    /// them in `warnings`, and a test reads them without a logger.
+    /// The paths come back as a value so that each caller decides where they
+    /// go: `orts config validate --json` puts them in `warnings`, `run` and
+    /// `serve` print them, and a test reads them. The printing ones use
+    /// `eprintln!`, which is what every other line addressed to whoever wrote
+    /// the config uses (`Warning: satellite 'a': sensors declared without …`).
+    /// `log::` in this crate carries diagnostics about the machinery instead,
+    /// and reaches nobody until a backend is installed (#387, #390).
     pub fn load_with_warnings(path: &Path) -> Result<LoadedConfig, String> {
         let ext = path
             .extension()
@@ -3819,6 +3822,30 @@ orbit = { type = "circular", altitude = 600 }
             .validate()
             .expect_err("half a fleet with a controller runs in no mode");
         assert!(err.contains("Mixed controller config"), "msg: {err}");
+
+        // A uniform controlled fleet with no attitude anywhere. The mode comes
+        // out `Controlled`, and `build_controlled_satellite` then refuses every
+        // satellite for want of an attitude state — under `orts serve --config`
+        // that refusal arrives after the startup banner.
+        let controller_without_attitude = r#"
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+controller = { type = "wasm", path = "ctrl.wasm" }
+
+[[satellites]]
+id = "b"
+orbit = { type = "circular", altitude = 600 }
+controller = { type = "wasm", path = "ctrl.wasm" }
+"#;
+        let config: SimConfig = toml::from_str(controller_without_attitude).expect("valid toml");
+        let err = config
+            .validate()
+            .expect_err("a controller has no attitude state to command");
+        assert!(
+            err.contains("without `[satellites.attitude]`"),
+            "msg: {err}"
+        );
 
         // Both declared on every satellite, and on none, are the fleets that do
         // pick a mode.

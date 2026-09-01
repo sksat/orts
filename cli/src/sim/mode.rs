@@ -88,6 +88,20 @@ pub fn ensure_fleet_declares_uniformly(
              or remove it from all."
         ));
     }
+    // A controlled satellite is built on its attitude state, so
+    // `build_controlled_satellite` refuses one without it. Reaching that refusal
+    // takes until the engine is built, which under `orts serve --config` is
+    // after the startup banner: the fleet is uniform, the mode comes out
+    // `Controlled`, and the server then sits idle.
+    if with_controller == fleet_size && with_attitude == 0 {
+        return Err(
+            "`[satellites.controller]` without `[satellites.attitude]`: a controller \
+             commands the satellite's attitude, so a controlled fleet propagates attitude \
+             dynamics and needs the inertia and initial state to do it. Add \
+             `[satellites.attitude]` to every satellite or remove the controllers."
+                .to_string(),
+        );
+    }
     Ok(())
 }
 
