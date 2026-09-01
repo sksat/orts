@@ -851,6 +851,17 @@ pub struct UnreadClientKeys {
     pub unnamed: usize,
 }
 
+impl UnreadClientKeys {
+    /// Name a key while there is room for one, and count it after that.
+    fn push(&mut self, key: String) {
+        if self.named.len() < CLIENT_MESSAGE_KEY_LIMIT {
+            self.named.push(key);
+        } else {
+            self.unnamed += 1;
+        }
+    }
+}
+
 /// The keys of a client message that no field of it reads.
 ///
 /// `ClientMessage` is `#[serde(tag = "type")]`, and `serde_ignored` cannot see
@@ -860,8 +871,11 @@ pub struct UnreadClientKeys {
 /// past the tag — the same trick reaches `add_satellite`'s flattened
 /// `SatelliteConfig`, where `flatten` removes the unknown-field check outright.
 ///
-/// Paths are relative to the part inspected: `dtt` and `satellites.0.altitide`
-/// for `start_simulation`'s config.
+/// Two things are inspected: the message's own keys, against what the variant
+/// reads (`ClientMessage` ignores an unknown one), and the payload the variant
+/// carries. Paths are relative to whichever they came from, so an envelope
+/// `dtt` and a config `dtt` are both named `dtt` — the name is what finds the
+/// typo either way.
 ///
 /// Takes the message already parsed, so the caller can hand the same `Value` to
 /// `ClientMessage` rather than paying for a second parse of every frame.
@@ -871,13 +885,22 @@ pub fn unread_client_message_keys(value: &serde_json::Value) -> UnreadClientKeys
     };
 
     let mut keys = UnreadClientKeys::default();
-    let mut note = |path: serde_ignored::Path| {
-        if keys.named.len() < CLIENT_MESSAGE_KEY_LIMIT {
-            keys.named.push(path.to_string());
-        } else {
-            keys.unnamed += 1;
+
+    // The envelope, against the keys the variant reads. `ClientMessage` ignores
+    // an unknown one, so `{"type":"start_simulation","config":{…},"dtt":10}`
+    // used to start the simulation with `dtt` dropped in silence.
+    if let (Some(read), Some(object)) = (
+        crate::commands::serve::protocol::variant_envelope_keys(kind),
+        value.as_object(),
+    ) {
+        for key in object.keys() {
+            if key != "type" && !read.contains(&key.as_str()) {
+                keys.push(key.clone());
+            }
         }
-    };
+    }
+
+    let mut note = |path: serde_ignored::Path| keys.push(path.to_string());
     match kind {
         "start_simulation" => {
             if let Some(config) = value.get("config") {
@@ -4123,5 +4146,77 @@ orbit = { type = "circular", altitude = 600 }
         // on what gets said about it, not on what it may contain.
         serde_json::from_value::<crate::commands::serve::protocol::ClientMessage>(value)
             .expect("a message full of unknown keys still starts a simulation");
+    }
+
+    /// A key beside the variant's own is named too, not only one in the payload.
+    ///
+    /// `ClientMessage` ignores an envelope key it does not read, so
+    /// `{"type":"start_simulation","config":{…},"dtt":10}` started the
+    /// simulation with `dtt` dropped in silence. The same held for a typo in an
+    /// optional field of `query_range`, and for any key on a variant that reads
+    /// none — a typo in a required field fails to deserialize instead, which the
+    /// server answers with an error.
+    #[test]
+    fn a_key_beside_the_variants_own_is_named() {
+        let cases = [
+            (
+                "start_simulation",
+                "{\"type\":\"start_simulation\",\"dtt\":10,\"config\":{\"dt\":1.0,\
+                 \"satellites\":[{\"id\":\"a\",\"orbit\":\
+                 {\"type\":\"circular\",\"altitude\":400}}]}}",
+                "dtt",
+            ),
+            (
+                "query_range",
+                "{\"type\":\"query_range\",\"t_min\":0.0,\"t_max\":10.0,\"max_pointz\":100}",
+                "max_pointz",
+            ),
+            (
+                "pause_simulation",
+                "{\"type\":\"pause_simulation\",\"untl\":10.0}",
+                "untl",
+            ),
+        ];
+        for (label, msg, key) in cases {
+            let value: serde_json::Value =
+                serde_json::from_str(msg).unwrap_or_else(|e| panic!("{label}: valid JSON: {e}"));
+            // The message is still one the server runs; the key is a warning.
+            serde_json::from_value::<crate::commands::serve::protocol::ClientMessage>(
+                value.clone(),
+            )
+            .unwrap_or_else(|e| panic!("{label}: an unknown key must not stop the message: {e}"));
+            let unread = unread_client_message_keys(&value);
+            assert_eq!(
+                unread.named,
+                vec![key.to_string()],
+                "{label}: the key beside the variant's own"
+            );
+        }
+    }
+
+    /// The keys a variant does read are not reported.
+    ///
+    /// The list in `protocol::variant_envelope_keys` is written by hand, so a
+    /// wrong entry would name a field the message uses.
+    #[test]
+    fn the_keys_a_variant_reads_are_not_named() {
+        for msg in [
+            "{\"type\":\"query_range\",\"t_min\":0.0,\"t_max\":10.0,\"max_points\":100,\
+             \"entity_path\":\"/world/sat/a\"}",
+            "{\"type\":\"pause_simulation\"}",
+            "{\"type\":\"resume_simulation\"}",
+            "{\"type\":\"terminate_simulation\"}",
+        ] {
+            let value: serde_json::Value = serde_json::from_str(msg).expect("valid JSON");
+            serde_json::from_value::<crate::commands::serve::protocol::ClientMessage>(
+                value.clone(),
+            )
+            .unwrap_or_else(|e| panic!("{msg} must deserialize: {e}"));
+            assert_eq!(
+                unread_client_message_keys(&value),
+                UnreadClientKeys::default(),
+                "nothing to report for {msg}"
+            );
+        }
     }
 }

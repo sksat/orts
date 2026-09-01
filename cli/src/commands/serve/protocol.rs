@@ -46,6 +46,28 @@ pub enum ClientMessage {
     TerminateSimulation,
 }
 
+/// The keys a variant reads beside the `type` tag, or `None` where there is
+/// nothing to compare against.
+///
+/// `serde_ignored` cannot see inside an internally tagged enum, so
+/// [`crate::config::unread_client_message_keys`] compares a message's own keys
+/// against this list to find the ones nothing reads. It lives here so that a
+/// field added to a variant above and not listed here is one line away rather
+/// than one file away — miss it and that field's typos go back to being
+/// dropped in silence.
+///
+/// `None` for `add_satellite`, whose whole envelope is the flattened
+/// `SatelliteConfig` that function inspects as a payload, and for a `type` no
+/// variant answers to, which fails to deserialize and is reported as an error.
+pub fn variant_envelope_keys(kind: &str) -> Option<&'static [&'static str]> {
+    match kind {
+        "query_range" => Some(&["t_min", "t_max", "max_points", "entity_path"]),
+        "start_simulation" => Some(&["config"]),
+        "pause_simulation" | "resume_simulation" | "terminate_simulation" => Some(&[]),
+        _ => None,
+    }
+}
+
 /// Server-to-client WebSocket message.
 #[derive(Serialize, Clone, Debug, TS)]
 #[serde(tag = "type")]
