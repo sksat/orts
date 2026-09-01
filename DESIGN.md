@@ -67,7 +67,9 @@ arika と tobari の詳細設計はそれぞれの [`arika/DESIGN.md`](arika/DES
 
 数値積分を続けると、状態が本来満たすべき制約からのずれが蓄積する (四元数のノルムが 1 からずれる等)。
 このずれを制約面に戻す操作 (正規化、clamp) が `OdeState::project` で、いつ呼ぶかを契約として固定している。
-呼ぶ位置が揺れると、以下のように適応刻みの判定やシンプレクティック性が壊れるためである。
+制約が厳密解の不変量である限り、数値解の制約からのずれは局所誤差と同じ $O(h^{p+1})$ に留まるため、射影しても収束次数は落ちない (多様体上の ODE に対する標準の projection method。Hairer–Lubich–Wanner, Geometric Numerical Integration, IV.4)。
+projection が必要なのは、四元数のように表現自体が制約を持ち、ずれが secular に蓄積する state だけであり、default は no-op。
+一方で呼ぶ位置が揺れると、以下のように適応刻みの判定やシンプレクティック性が壊れる。
 
 - 各積分器は「採用したステップの結果」に対してのみ、callback や event 判定に渡す直前に一度だけ project を呼ぶ。reject された候補や RK の中間 stage には呼ばない
 - 適応解法の accept/reject 判定は projection 前の生の候補で行う。誤差推定は生の候補に対して計算された量なので、projection 後の状態と組み合わせると判定が非一貫になる
