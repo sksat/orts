@@ -200,7 +200,8 @@ export function dispatchServerMessage(
       );
       return "reject";
     }
-    // The `??` fallbacks tolerate older servers that predate these fields.
+    // The `??` below cover `satellites`, `stream_interval` and `epoch_jd` for a
+    // server that predates them; the central body came from the resolve above.
     const satellites: SatelliteInfo[] = (msg.satellites ?? []).map(normalizeSatelliteInfo);
     callbacks.onInfo?.({
       mu: resolved.body.mu,
