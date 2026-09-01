@@ -1101,13 +1101,16 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
         // what row 0 means: a position from one time beside a velocity from
         // another.
         //
-        // `ComponentColumn` has no way to say "no value at this row", so a row
-        // exists only where the state components are whole. Anchoring on
-        // position and velocity keeps the trajectory intact when an optional
-        // component such as attitude was recorded at only some of the times.
-        // That component is then left out rather than filled with zeros, which
-        // downstream would read as a measured value: `orts convert` writes them
-        // to CSV and computes orbital elements from them.
+        // A row therefore exists only where the state components are whole.
+        // Anchoring on position and velocity keeps the trajectory intact when an
+        // optional component such as attitude was recorded at only some of the
+        // times; that component covers the rows it has, and `orts convert` leaves
+        // the others empty rather than writing a zero, which downstream would
+        // read as a measured value.
+        //
+        // The cost is that a time where the anchors are not whole is no row at
+        // all, so a whole optional value recorded only at such a time is not
+        // reported.
         let anchors: Vec<&(String, Vec<String>)> = {
             let state: Vec<&(String, Vec<String>)> = temporal
                 .iter()
@@ -1185,8 +1188,9 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
         // CSV path reads `SimTime` only, so filling the others changes what
         // `orts convert` reports. Left as it stands on main until the step
         // round-trip is settled with the writer.
-        // Dense over `row_keys`: every row the file carries for this entity is a
-        // row of the recording, and a component that covers only some of them
+        // Dense over `row_keys`, which is the intersection of the anchor columns'
+        // keys — so a time the file carries for this entity is a row only when
+        // the anchors are whole there. A component that covers some of those rows
         // records which ones.
         let entity_times = TimelineColumn {
             data: row_keys
@@ -1224,30 +1228,33 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
             // covers. A row where some of its fields are missing is left out —
             // half a vector is not a value.
             let mut column = ComponentColumn::new(fields.len());
-            for (logical_row, &key) in row_keys.iter().enumerate() {
-                let mut row = Vec::with_capacity(fields.len());
-                for field in fields {
-                    match get_scalar_data(&scalars, base, field).and_then(|col| col.get(&key)) {
-                        Some(&v) => row.push(v),
-                        None => break,
+            // Resolve each field's column once: `get_scalar_data` formats two
+            // candidate paths per call, and this walks every row. A field with no
+            // column at all leaves the component with no whole row, which the
+            // guard below then drops.
+            let field_columns: Option<Vec<&Column>> = fields
+                .iter()
+                .map(|field| get_scalar_data(&scalars, base, field))
+                .collect();
+            if let Some(field_columns) = field_columns {
+                for (logical_row, &key) in row_keys.iter().enumerate() {
+                    let row: Vec<f64> = field_columns
+                        .iter()
+                        .map_while(|col| col.get(&key).copied())
+                        .collect();
+                    if row.len() == fields.len() {
+                        column.push_at(&row, logical_row);
                     }
                 }
-                if row.len() == fields.len() {
-                    column.push_at(&row, logical_row);
-                }
             }
-            // The entity has rows but none of them holds this component whole, so
-            // the file carries no value to report for it. An entity with no rows
-            // at all still gets its columns, empty, so the schema survives.
+            // None of this entity's rows holds the component whole, so there is
+            // nothing to report for it. That can also happen when the file does
+            // carry a whole value, at a time that is not one of the rows — see
+            // the anchor comment above. An entity with no rows at all still gets
+            // its columns, empty, which is what keeps its schema entry.
             if !row_keys.is_empty() && column.num_rows() == 0 {
                 continue;
             }
-            // The entity has rows but none of them holds this component whole, so
-            // the file carries no value to report for it. An entity with no rows
-            // at all still gets its columns, empty, so the schema survives.
-            // The entity has rows but none of them holds this component whole, so
-            // the file carries no value to report for it. An entity with no rows
-            // at all still gets its columns, empty, so the schema survives.
 
             let comp_name: Cow<'static, str> = Cow::Owned(name.clone());
             let store = rec.entity_mut(&entity);

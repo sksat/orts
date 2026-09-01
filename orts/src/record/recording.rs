@@ -525,7 +525,7 @@ mod tests {
     use crate::record::timeline::TimePoint;
 
     #[test]
-    fn component_column_push_and_get() {
+    fn component_column_push_at_and_get() {
         let mut col = ComponentColumn::new(3);
         col.push_at(&[1.0, 2.0, 3.0], 0);
         col.push_at(&[4.0, 5.0, 6.0], 1);

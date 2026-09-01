@@ -1422,6 +1422,86 @@ mod tests {
         );
     }
 
+    /// The whole `orts convert` chain for a component logged at only some steps:
+    /// written to .rrd at the times it was logged, read back covering those rows,
+    /// and written to CSV with the other rows empty.
+    ///
+    /// The halves are covered separately; this is what composes them.
+    #[test]
+    fn a_sparse_component_reaches_the_csv_through_a_file() {
+        use orts::record::archetypes::OrbitalState as RecOrbitalState;
+        use orts::record::components::MtqCommand3D;
+        use orts::record::rerun_export::{load_as_recording, save_as_rrd};
+        use orts::record::timeline::TimePoint;
+
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/chain");
+        let r0 = 6778.137;
+        let v0 = (398600.4418_f64 / r0).sqrt();
+        const N: u64 = 4;
+        const FIRST: u64 = 2;
+
+        for i in 0..N {
+            let tp = TimePoint::new().with_sim_time(i as f64).with_step(i);
+            let os = RecOrbitalState::new(
+                nalgebra::Vector3::new(r0, 0.0, 0.0),
+                nalgebra::Vector3::new(0.0, v0, 0.0),
+            );
+            rec.log_orbital_state(&sat, &tp, &os);
+            if i >= FIRST {
+                rec.log_temporal(
+                    &sat,
+                    &tp,
+                    &MtqCommand3D(nalgebra::Vector3::new(i as f64, 0.0, 0.0)),
+                );
+            }
+        }
+
+        let path = std::env::temp_dir().join(format!(
+            "orts_chain_{}_{:?}.rrd",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let path_str = path.to_str().unwrap().to_string();
+        save_as_rrd(&rec, "orts-chain-test", &path_str).expect("save");
+        let loaded = load_as_recording(&path_str).expect("load");
+        let _ = std::fs::remove_file(&path);
+
+        let header = build_csv_header(&loaded, &sat, false);
+        assert!(
+            header.contains("mtq_mx"),
+            "the command column survives the file: {header}"
+        );
+        let want = header.trim_start_matches("# ").matches(',').count() + 1;
+
+        let mut out = Vec::new();
+        write_satellite_csv(&mut out, &loaded, &sat, 398600.4418, false).expect("csv");
+        let body = String::from_utf8(out).expect("utf-8");
+        let lines: Vec<&str> = body.lines().filter(|l| !l.starts_with('#')).collect();
+
+        assert_eq!(lines.len(), N as usize, "one line per step");
+        for (i, line) in lines.iter().enumerate() {
+            assert_eq!(
+                line.matches(',').count() + 1,
+                want,
+                "line {i} column count: {line}"
+            );
+            // The steps before the first command leave those fields empty; the
+            // rest carry the value logged at that step.
+            if (i as u64) < FIRST {
+                assert!(
+                    line.ends_with(",,,"),
+                    "line {i} should be empty there: {line}"
+                );
+            } else {
+                assert!(
+                    line.contains(&format!(",{:.10},", i as f64)),
+                    "line {i} should carry {i}: {line}"
+                );
+            }
+        }
+    }
+
     /// The header names every extra column, so a component with no value at a
     /// step contributes empty fields. A short line would put the remaining
     /// values under the wrong headings.
