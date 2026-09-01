@@ -55,6 +55,9 @@ function spawnServer(configFile: string): Promise<{ child: ChildProcess; port: n
     };
     const timeout = setTimeout(() => {
       settle();
+      // Nothing else will: `beforeAll` throws before it can record the child, so
+      // `afterAll` has nothing to kill and the server would outlive the run.
+      child.kill("SIGTERM");
       reject(new Error("Timed out waiting for orts server to start"));
     }, 30000);
     /**
