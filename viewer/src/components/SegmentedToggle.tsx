@@ -47,7 +47,7 @@ export function SegmentedToggle<T extends string>({
           aria-pressed={value === option.value}
           onClick={() => onChange(option.value)}
           disabled={option.disabled}
-          title={option.title ?? ""}
+          title={option.title}
         >
           {option.label}
         </button>
