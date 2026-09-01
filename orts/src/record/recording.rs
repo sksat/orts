@@ -480,6 +480,121 @@ mod tests {
     }
 
     #[test]
+    fn a_column_logged_every_step_needs_no_row_mapping() {
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/dense");
+
+        for i in 0..4u64 {
+            let tp = TimePoint::new().with_sim_time(i as f64).with_step(i);
+            rec.log_temporal(&sat, &tp, &Position3D(Vector3::new(i as f64, 0.0, 0.0)));
+        }
+
+        let store = rec.entity(&sat).unwrap();
+        let col = &store.columns[&Position3D::component_name()];
+        assert_eq!(
+            col.rows,
+            RowMap::Dense,
+            "the common case must not allocate a mapping"
+        );
+        assert_eq!(store.timelines[&TimelineName::SimTime].rows, RowMap::Dense);
+        for i in 0..4 {
+            assert_eq!(col.logical_row_of(i), i);
+            assert_eq!(col.at_logical_row(i), col.get_row(i));
+        }
+    }
+
+    /// Skipping a component at some steps is how "no value here" is said. Its
+    /// column records the rows it does cover, so the values stay on their own
+    /// steps instead of sliding onto the leading ones (#375).
+    #[test]
+    fn a_column_that_skips_steps_records_the_rows_it_covers() {
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/sparse");
+
+        for i in 0..6u64 {
+            let tp = TimePoint::new().with_sim_time(i as f64).with_step(i);
+            rec.log_temporal(&sat, &tp, &Position3D(Vector3::new(i as f64, 0.0, 0.0)));
+            if i >= 4 {
+                rec.log_temporal(&sat, &tp, &Velocity3D(Vector3::new(0.0, i as f64, 0.0)));
+            }
+        }
+
+        let store = rec.entity(&sat).unwrap();
+        assert_eq!(store.num_rows, 6);
+
+        let vel = &store.columns[&Velocity3D::component_name()];
+        assert_eq!(vel.num_rows(), 2);
+        assert_eq!(vel.rows, RowMap::Sparse(vec![4, 5]));
+        assert_eq!(vel.logical_row_of(0), 4);
+        assert_eq!(vel.logical_row_of(1), 5);
+
+        assert_eq!(vel.at_logical_row(4), Some([0.0, 4.0, 0.0].as_slice()));
+        assert_eq!(vel.at_logical_row(5), Some([0.0, 5.0, 0.0].as_slice()));
+        for absent in [0, 1, 2, 3] {
+            assert_eq!(
+                vel.at_logical_row(absent),
+                None,
+                "row {absent} has no velocity"
+            );
+        }
+
+        // The dense column alongside it is untouched.
+        let pos = &store.columns[&Position3D::component_name()];
+        assert_eq!(pos.rows, RowMap::Dense);
+        assert_eq!(pos.num_rows(), 6);
+    }
+
+    /// A `TimePoint` need not name every axis, so an axis can cover only some
+    /// rows. Keeping that mapping is what stops two axes of different lengths
+    /// from being read as if index 0 of each meant the same row.
+    #[test]
+    fn an_axis_records_the_rows_it_covers() {
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/axes");
+
+        for i in 0..6u64 {
+            let tp = if i < 3 {
+                TimePoint::new().with_step(i)
+            } else {
+                TimePoint::new().with_sim_time(i as f64).with_step(i)
+            };
+            rec.log_temporal(&sat, &tp, &Position3D(Vector3::new(i as f64, 0.0, 0.0)));
+        }
+
+        let store = rec.entity(&sat).unwrap();
+        assert_eq!(store.num_rows, 6);
+
+        let step = &store.timelines[&TimelineName::Step];
+        assert_eq!(step.len(), 6);
+        assert_eq!(step.rows, RowMap::Dense);
+
+        let sim = &store.timelines[&TimelineName::SimTime];
+        assert_eq!(sim.len(), 3);
+        assert_eq!(sim.rows, RowMap::Sparse(vec![3, 4, 5]));
+        assert_eq!(sim.at_logical_row(3), Some(TimeIndex::Seconds(3.0)));
+        assert_eq!(sim.at_logical_row(0), None, "row 0 named no sim_time");
+    }
+
+    /// Two calls at the same `TimePoint` fill one row, which is what lets an
+    /// archetype log several components per step.
+    #[test]
+    fn calls_at_one_time_point_share_a_row() {
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/shared");
+        let tp = TimePoint::new().with_sim_time(7.0).with_step(2);
+
+        rec.log_temporal(&sat, &tp, &Position3D(Vector3::new(1.0, 2.0, 3.0)));
+        rec.log_temporal(&sat, &tp, &Velocity3D(Vector3::new(4.0, 5.0, 6.0)));
+
+        let store = rec.entity(&sat).unwrap();
+        assert_eq!(store.num_rows, 1);
+        assert_eq!(store.timelines[&TimelineName::SimTime].len(), 1);
+        for name in [Position3D::component_name(), Velocity3D::component_name()] {
+            assert_eq!(store.columns[&name].logical_row_of(0), 0);
+        }
+    }
+
+    #[test]
     fn log_orbital_state() {
         let mut rec = Recording::new();
         let sat = EntityPath::parse("/world/sat/iss");

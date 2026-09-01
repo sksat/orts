@@ -1254,9 +1254,7 @@ fn to_rerun_path(path: &EntityPath) -> String {
 mod tests {
     use super::*;
     use crate::record::archetypes::OrbitalState;
-    use crate::record::components::{
-        BodyRadius, GravitationalParameter, Position3D, Quaternion4D, Velocity3D,
-    };
+    use crate::record::components::{BodyRadius, GravitationalParameter, Position3D};
     use crate::record::timeline::TimePoint;
     use nalgebra::Vector3;
 
