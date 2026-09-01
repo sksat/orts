@@ -184,11 +184,20 @@ async fn main_loop(
                         // working here, and an operator can see what was
                         // dropped. `start_simulation` carries a whole config, so
                         // a typo there would otherwise be silent.
-                        // One parse for both: the warning pass reads the tree
-                        // and `ClientMessage` then consumes it, so a frame is
-                        // not parsed twice on the way in.
-                        let parsed = serde_json::from_str::<serde_json::Value>(&text).and_then(
-                            |value| {
+                        //
+                        // The message is read from the text, not from a
+                        // `serde_json::Value`: a `Value`'s map keeps the last of
+                        // two members with one name, so
+                        // `{…,"config":{"dt":1},"config":{"dt":99}}` would run
+                        // with 99 and no word about it, where serde refuses a
+                        // duplicate field outright. The tree for the warning
+                        // pass is then built only for a message that was read,
+                        // and `MAX_CONTROL_MESSAGE_BYTES` bounds what that costs.
+                        let parsed = serde_json::from_str::<ClientMessage>(&text);
+                        if parsed.is_ok()
+                            && let Ok(value) = serde_json::from_str::<serde_json::Value>(&text)
+                        {
+                            {
                                 let unread = crate::config::unread_client_message_keys(&value);
                                 for key in &unread.named {
                                     eprintln!(
@@ -202,9 +211,8 @@ async fn main_loop(
                                         unread.unnamed
                                     );
                                 }
-                                serde_json::from_value::<ClientMessage>(value)
-                            },
-                        );
+                            }
+                        }
                         // A message this server cannot read is answered, not
                         // dropped. A `type`-tagged block refuses an unknown key
                         // (nothing can report one there), and dropping the error

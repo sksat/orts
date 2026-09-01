@@ -33,6 +33,22 @@ section is subdivided by package.
 - WIT v0 plugin interface extended with the msg-io and stream-io channels. ([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
 #### Changed
+- `SatelliteParams` carries an optional `SpacecraftShape`, and
+  `build_spacecraft_dynamics` installs `PanelSrp` and `PanelDrag` from it in
+  place of the isotropic `SolarRadiationPressure` and `AtmosphericDrag`. The
+  outer shape is one object, so panels drive both forces rather than one of
+  them. `build_orbital_system` installs neither: panel forces need an attitude.
+  `SurfacePanel` gains `with_cp_offset`, which is what turns a panel force into
+  an attitude disturbance. ([#386](https://github.com/sksat/orts/pull/386))
+- `orts::setup` registers disturbance torques, and `SatelliteParams` carries a
+  `DisturbanceTorques` selection to say which. `build_spacecraft_dynamics`
+  installs the gravity-gradient torque from it; `build_orbital_system` installs
+  none, since an orbit-only system has no orientation for a torque to act on and
+  discards `torque_body`. Callers no longer register environmental models
+  themselves — the CLI had been adding this torque on the same line in two entry
+  points, with nothing keeping the two in step. Actuators (RW, MTQ, thrusters)
+  stay with the caller, since they come from the spacecraft's own hardware
+  description. ([#382](https://github.com/sksat/orts/pull/382))
 - `SurfacePanel` carries `optics: PanelOptics { specular, diffuse }` in place of
   a lumped `cr`, with the absorbed fraction derived as `1 - specular - diffuse`.
   A single coefficient fixes the SRP force magnitude face-on but leaves its
@@ -134,6 +150,25 @@ section is subdivided by package.
 ### `orts-cli` (Rust, crates.io, binary)
 
 #### Added
+- `[[satellites.panels]]` gives a satellite a flat-panel outer surface, with
+  `area`, `normal`, `cd`, `specular`, `diffuse` and `cp_offset`. Writing panels
+  makes SRP and drag attitude-dependent, and an off-centre centre of pressure
+  turns them into attitude disturbances — which is what the isotropic
+  `srp_area_to_mass` / `ballistic_coeff` cannot express. Panels require
+  `attitude` and are rejected alongside those isotropic parameters, since both
+  would describe the same force. A list of zero panels is rejected too: omit
+  the key for an isotropic cross-section, since a surface of no panels
+  describes nothing. Panel accelerations report on the wire under
+  the name of the force (`drag`, `srp`), because that channel is per force
+  rather than per model; `perturbations` names the model, and for an attitude
+  satellite it now comes from the dynamics being propagated rather than from a
+  rebuilt orbit-only system. ([#386](https://github.com/sksat/orts/pull/386))
+- `[satellites.disturbances]` selects which environmental disturbance torques a
+  satellite models, `gravity_gradient` defaulting to true — the behaviour
+  attitude propagation has always had. A sibling of `[satellites.attitude]`
+  rather than a field inside it: that table states the attitude state and the
+  body's properties, this one selects which environment models get solved.
+  Specifying it without `attitude` is rejected. ([#382](https://github.com/sksat/orts/pull/382))
 - Ground-station contact-window reporting in `orts run`: declare stations with
   `[[ground_station]]` (`name`, `latitude_deg`, `longitude_deg`, `altitude_km`,
   `min_elevation_deg`); detected windows print to stderr ordered by AOS, with
@@ -181,6 +216,10 @@ section is subdivided by package.
   are discoverable without leaving the terminal. ([#217](https://github.com/sksat/orts/pull/217))
 
 #### Changed
+- `orts run`'s downlink log records moved from info/debug to debug/trace. They
+  fire per satellite per outbound message per control tick, so with a backend
+  installed, info would bury every other diagnostic on a fleet-sized run and add
+  a locked stderr write inside the integration loop. ([#390](https://github.com/sksat/orts/pull/390))
 - `--tle` is TLE-only again (2LE/3LE; `-` for stdin) and pairs with the new
   `--omm`; element-set parsing is now backed by `arika::tle` / `arika::omm`
   instead of the removed `orts::tle`. (Previously `--tle` also auto-accepted OMM.) ([#87](https://github.com/sksat/orts/pull/87))
@@ -218,6 +257,15 @@ section is subdivided by package.
   no error to the client. ([#351](https://github.com/sksat/orts/pull/351))
 
 #### Fixed
+- `orts` now writes its diagnostics to stderr. With no `log` backend installed
+  every `log::` call was discarded, so a displaced stream-io stdio plug, a stream
+  socket error, a halted `serve` simulation, and every line a WASM plugin logged
+  through the WIT `host-env.log` import all went unreported. The diagnostics the
+  rerun crates emit while writing an `.rrd` now appear in the same output.
+  `RUST_LOG` selects the level — default `warn,orts=info`, ours at info and
+  dependencies at warn — and `NO_COLOR`, or a stderr that is not a terminal,
+  drops the styling; `orts --help` documents both. stdout is unchanged: the CSV,
+  the `--json` summary, or the `serve --stream-stdio` protocol and nothing else. ([#390](https://github.com/sksat/orts/pull/390))
 - `orts config validate` and `orts serve --config` refuse a fleet no
   simulation mode can run: `[satellites.attitude]` or
   `[satellites.controller]` on some satellites but not all, or a controller on

@@ -30,6 +30,21 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - WIT v0 plugin interface に msg-io / stream-io チャネルを追加。([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
 #### Changed
+- `SatelliteParams` が `SpacecraftShape` を optional で持ち、
+  `build_spacecraft_dynamics` がそれを見て等方面の `SolarRadiationPressure` /
+  `AtmosphericDrag` の代わりに `PanelSrp` / `PanelDrag` を install するように
+  した。機体の外形は一つなので、パネルは片方ではなく両方の力を担う。
+  `build_orbital_system` はどちらも install しない (パネルの力は姿勢を要求する)。
+  `SurfacePanel` に `with_cp_offset` を追加した。パネルの力を姿勢外乱にするのは
+  この offset である。([#386](https://github.com/sksat/orts/pull/386))
+- 外乱トルクの登録を `orts::setup` に集約し、どれを解くかを `SatelliteParams` の
+  `DisturbanceTorques` で選ぶようにした。`build_spacecraft_dynamics` がそれを見て
+  gravity gradient トルクを install する。`build_orbital_system` は install しない
+  (軌道のみの系にはトルクが作用する姿勢が無く、`torque_body` を捨てる)。
+  呼び出し側は環境モデルを登録しなくなった。CLI はこのトルクを 2 つの entry point
+  で同一行に書いていて、両者が食い違わない保証が無かった。actuator (RW, MTQ,
+  thruster) の登録は呼び出し側に残る。搭載する actuator は機体のハードウェア記述で
+  決まる。([#382](https://github.com/sksat/orts/pull/382))
 - `SurfacePanel` が lumped な `cr` の代わりに `optics: PanelOptics { specular,
   diffuse }` を持つようになった。吸収率は `1 - specular - diffuse` として導出する。
   単一係数は face-on の SRP 力の大きさを決めるだけで、斜入射での向きが決まらない
@@ -116,6 +131,22 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `orts-cli` (Rust, crates.io, binary)
 
 #### Added
+- `[[satellites.panels]]` で衛星に平板の外形を与えられるようにした
+  (`area`, `normal`, `cd`, `specular`, `diffuse`, `cp_offset`)。パネルを書くと
+  SRP と大気抵抗が姿勢依存になり、圧力中心が重心から外れていればそれが姿勢外乱に
+  なる。等方面の `srp_area_to_mass` / `ballistic_coeff` では表せない部分である。
+  パネルは `attitude` を要求し、等方面のパラメータとの同時指定は reject する
+  (同じ力を二通りに述べることになる)。パネルが 0 枚のリストも reject する。
+  等方面で表すならキーを書かない。0 枚の外形は何も述べていない。パネルの加速度は wire 上では力の名前
+  (`drag`, `srp`) で報告する。あのチャネルはモデル単位ではなく物理力単位だから
+  である。どのモデルかは `perturbations` が述べ、姿勢を持つ衛星についてはこれを
+  軌道のみの系を組み直して読むのではなく、実際に伝播する dynamics から取るように
+  した。([#386](https://github.com/sksat/orts/pull/386))
+- `[satellites.disturbances]` で衛星がモデル化する環境外乱トルクを選べるように
+  した。`gravity_gradient` の既定は true で、姿勢伝播が従来から持っていた振る舞い。
+  `[satellites.attitude]` の中ではなく sibling の table にしたのは、前者が姿勢の
+  状態と機体特性を述べる場所であり、どの環境モデルを解くかは別の関心事だから。
+  `attitude` 不在での指定は reject する。([#382](https://github.com/sksat/orts/pull/382))
 - `orts run` の地上局コンタクトウィンドウ出力: `[[ground_station]]`
   (`name`、`latitude_deg`、`longitude_deg`、`altitude_km`、`min_elevation_deg`)
   で局を宣言。検出したウィンドウを AOS 順に stderr へ出力 (UTC 時刻、
@@ -158,6 +189,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   追加。よく使う・agent に関係する経路を端末内で発見できるようにした。([#217](https://github.com/sksat/orts/pull/217))
 
 #### Changed
+- `orts run` の downlink log レコードの level を info/debug から debug/trace へ
+  下げた。衛星 × outbound message × control tick ごとに出るため、logger が
+  実際に動く状態では info だと fleet 規模の実行で他の診断が読めなくなり、
+  積分ループ内で stderr のロックを取る書き込みが増える。 ([#390](https://github.com/sksat/orts/pull/390))
 - `--tle` を再び TLE 専用 (2LE/3LE、`-` で stdin) とし、新規 `--omm` と
   対にした。要素セットのパースは削除した `orts::tle` でなく
   `arika::tle` / `arika::omm` を使用 (従来は `--tle` が OMM も自動受理)。([#87](https://github.com/sksat/orts/pull/87))
@@ -193,6 +228,15 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   client への error も無い状態になっていた。([#351](https://github.com/sksat/orts/pull/351))
 
 #### Fixed
+- `orts` が診断ログを stderr に出力するようになった。logger を初期化していな
+  かったため `log::` の呼び出しは全て破棄されており、stream-io stdio plug の
+  displaced、stream の socket error、`serve` 中のシミュレーション停止、
+  WASM plugin が WIT `host-env.log` 経由で出力した行が、どれも表示されなかった。
+  `.rrd` を書く際に rerun の crate が出す診断も同じ出力に含まれる。level は
+  `RUST_LOG` で選び、既定は `warn,orts=info` (orts は info、依存は warn)。
+  `NO_COLOR` 指定時と stderr が terminal でない場合は装飾を付けない。どちらも
+  `orts --help` に記載がある。stdout は従来どおりコマンドの出力 (CSV、`--json`
+  サマリ、`serve --stream-stdio` の protocol) だけ。 ([#390](https://github.com/sksat/orts/pull/390))
 - どの mode でも実行できない fleet を `orts config validate` と
   `orts serve --config` が拒否する。`[satellites.attitude]` や
   `[satellites.controller]` を一部の衛星にだけ書いた config と、全衛星に controller

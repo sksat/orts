@@ -4253,4 +4253,36 @@ orbit = { type = "circular", altitude = 600 }
             );
         }
     }
+
+    /// A frame naming one field twice is refused, not resolved to the last one.
+    ///
+    /// `serde_json::Value` keeps the last of two members with one name, so
+    /// reading the message from a tree would run
+    /// `{…,"config":{"dt":1},"config":{"dt":99}}` with 99 and say nothing. The
+    /// server reads the text, where serde refuses a duplicate field.
+    #[test]
+    fn a_duplicate_field_is_refused() {
+        let one = "{\"dt\":1.0,\"satellites\":[{\"id\":\"a\",\"orbit\":\
+                   {\"type\":\"circular\",\"altitude\":400}}]}";
+        let msg = format!("{{\"type\":\"start_simulation\",\"config\":{one},\"config\":{one}}}");
+
+        // Through a tree: the duplicate is gone before anything can object.
+        let value: serde_json::Value = serde_json::from_str(&msg).expect("valid JSON");
+        assert_eq!(
+            value.as_object().expect("an object").len(),
+            2,
+            "the tree holds `type` and one `config`"
+        );
+        serde_json::from_value::<crate::commands::serve::protocol::ClientMessage>(value)
+            .expect("a tree cannot see the duplicate");
+
+        // From the text, which is what the server reads.
+        let err = serde_json::from_str::<crate::commands::serve::protocol::ClientMessage>(&msg)
+            .err()
+            .expect("a duplicate field must be refused");
+        assert!(
+            err.to_string().contains("duplicate field"),
+            "the error says which: {err}"
+        );
+    }
 }
