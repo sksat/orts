@@ -12,8 +12,14 @@ import type { PanelBackConfig } from "./PanelBackConfig";
  * from the Sun or the flow. A thin structure exposed on both sides — a solar
  * array — therefore needs both faces, or it produces nothing for half of the
  * attitudes it sees, and the torque about an off-centre `cp_offset` goes with
- * it. Write `back` to get the far face; the two sides usually differ optically
- * (cells one side, substrate the other), so it takes its own reflectivities.
+ * it. Ask for the far face with `two_sided` when the two sides look the same,
+ * or with `back` when they differ optically, which is the usual case for an
+ * array: cells one side, substrate the other.
+ *
+ * Either way, only for a plate. A face of a closed body already has its far
+ * side in the panel list — the opposite face of the box — so a second face
+ * here sits at the same place pointing the same way, and both are lit
+ * together: twice the force, and a torque pair that partly cancels.
  */
 export type PanelConfig = { 
 /**
@@ -43,17 +49,21 @@ diffuse?: number,
  */
 cp_offset?: [number, number, number], 
 /**
- * The other side of the same thin plate, when there is one.
+ * Give the plate its far face, sharing everything with this one.
  *
- * Writing this table is what gives the plate a back face; an empty one
- * (`back = {}`) gives it the front's optics. Area, `cd` and `cp_offset`
- * are shared, since it is one plate — a different `cd` per side needs the
- * two faces written out as separate panels. Omit the key for a plate with
- * one exposed side.
+ * The short spelling for a thin plate whose two sides look the same. Use
+ * `back` when they differ optically — that also asks for the far face, so
+ * `two_sided = true` adds nothing beside it, and `two_sided = false`
+ * beside it is a contradiction and rejected.
+ */
+two_sided?: boolean, 
+/**
+ * The other side of the plate, when it differs from this one.
  *
- * Only for a plate. A face of a closed body already has its far side in
- * the panel list — the opposite face of the box — so `back` there adds a
- * second face at the same place pointing the same way, and both are lit
- * together: twice the force, and a torque pair that partly cancels.
+ * Asks for the far face as `two_sided` does, and carries the
+ * reflectivities that differ; one left out comes from this side. An empty
+ * table says the same as `two_sided = true`. Area, `cd` and `cp_offset`
+ * are shared either way, since it is one plate — a different `cd` per side
+ * needs the two faces written out as separate panels.
  */
 back?: PanelBackConfig, };
