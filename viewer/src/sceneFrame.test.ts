@@ -71,6 +71,26 @@ describe("computeLvlhAxes", () => {
     expect(computeLvlhAxes([7000, 0, 0], [0, 0, 0])).toBeNull();
   });
 
+  it("returns null for a non-finite position or velocity", () => {
+    // A threshold comparison is false for NaN, so a length check alone lets a
+    // non-finite input through and every axis comes out NaN. Callers read
+    // non-null axes as "the local-orbital frame is available" and would then
+    // place the whole scene at NaN.
+    const bad = [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY];
+    for (const n of bad) {
+      expect(computeLvlhAxes([n, 0, 0], [0, 7.5, 0])).toBeNull();
+      expect(computeLvlhAxes([7000, n, 0], [0, 7.5, 0])).toBeNull();
+      expect(computeLvlhAxes([7000, 0, 0], [n, 7.5, 0])).toBeNull();
+      expect(computeLvlhAxes([7000, 0, 0], [0, 0, n])).toBeNull();
+    }
+  });
+
+  it("returns null when the cross product overflows to infinity", () => {
+    // Finite inputs whose product is not: the r × v magnitude overflows even
+    // though both lengths are finite.
+    expect(computeLvlhAxes([1e200, 1e200, 0], [0, 1e200, 1e200])).toBeNull();
+  });
+
   // Circular equatorial orbit: r = +X, v = +Y
   // radial = +X, crossTrack = +Z (r×v = X×Y = Z), inTrack = Z×X = +Y
   it("computes correct axes for equatorial circular orbit at +X", () => {
