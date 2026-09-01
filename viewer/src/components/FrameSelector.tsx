@@ -1,7 +1,7 @@
 import type { SatelliteInfo } from "../hooks/useWebSocket.js";
 import type { FrameCenter, FrameOrientation, ReferenceFrame } from "../referenceFrame.js";
 import styles from "./FrameSelector.module.css";
-import { type OrientationOption, OrientationSelector } from "./OrientationSelector.js";
+import { type SegmentedOption, SegmentedToggle } from "./SegmentedToggle.js";
 
 interface FrameSelectorProps {
   referenceFrame: ReferenceFrame;
@@ -71,7 +71,7 @@ export function FrameSelector({
   // Which orientations this centre offers: a satellite centre offers the orbit
   // frame, a central-body centre the body's rotating frame (which needs an
   // epoch to know the rotation angle).
-  const orientationOptions: OrientationOption<FrameOrientation>[] = [
+  const orientationOptions: SegmentedOption<FrameOrientation>[] = [
     { value: "inertial", label: labels.inertial, testId: "frame-orientation-inertial" },
     isSatCentered
       ? { value: "local_orbital", label: "LVLH", testId: "frame-orientation-lvlh" }
@@ -103,7 +103,7 @@ export function FrameSelector({
         </select>
       </div>
 
-      <OrientationSelector
+      <SegmentedToggle
         value={referenceFrame.orientation}
         options={orientationOptions}
         onChange={handleOrientationChange}
