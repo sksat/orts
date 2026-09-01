@@ -62,6 +62,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   なくコンパイルエラーとして出るようにするため: `Cr = 1.5` は単一の `(ρ_s, ρ_d)`
   に対応せず、力の向きがこの分解に依存するようになったので、どの既定値も face-on 以外
   で旧振る舞いを再現しない。面が本当に不明なら `PanelOptics::absorber()` を渡す。([#377](https://github.com/sksat/orts/pull/377))
+- **BREAKING**: `EntityStore::timelines` の型が `Vec<TimeIndex>` から
+  `TimelineColumn` になり、列は自分が覆う論理行を持つようになった。追加は論理行を
+  明示して検査する `ComponentColumn::push_at` を通す。`push` と `scalars_per_row`、
+  両 column type の `data` / `rows` field は crate 内限定 — map と data が食い違った列は、
+  値を別の行の時刻で報告する。読み出しは列が `scalars` と `scalars_per_row()`、軸が
+  `times`、行単位では `get_row` が格納 index、`at_logical_row` が
+  論理行。([#375](https://github.com/sksat/orts/issues/375))
 - `StateEffector` を frame-generic 化 — `StateEffector<S, F: frame::Eci =
   SimpleEci>` で `ExternalLoads<F>` を返す (`Model<S, F>` と同様)。effector は
   host の慣性 frame で荷重を生成するようになった。既定の `F` により既存の
@@ -73,6 +80,19 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   20-40% 改善する。([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- 一部の step でしか logging されなかった component が、logging された時刻を保つ
+  ようになった。`log_temporal` は行数の比較で新しい行かどうかを決めていたため、
+  短い列が**先頭の**行に並んでいた: step 5 から attitude を出すと step 5〜9 が
+  t=0〜4 として書かれていた。行は `TimePoint` で識別するようになり、
+  `ComponentColumn` と新しい `TimelineColumn` がそれぞれ自分の覆う論理行を持つ
+  (毎 step logging される列は `RowMap::Dense` なので通常ケースのコストはゼロ)。
+  「この step に値が無い」は `log_temporal` を呼ばないことで表現でき、
+  API 追加は不要。([#375](https://github.com/sksat/orts/issues/375))
+- entity の他の行が持たない軸を名指しする `TimePoint`、および軸を別の順序で
+  組んだ `TimePoint` が、行を分けたり誤配置したりしなくなった。同じ軸を同じ index で
+  名指す 2 点は、組んだ順序に関係なく 1 行。`with_*` は軸の index を置き換える
+  (2 つ目を append しない)。`+0.0` と `-0.0` は同一の瞬間で、`NaN` 時刻でも
+  component ごとでなく step ごとに 1 行になる。([#375](https://github.com/sksat/orts/issues/375))
 - .rrd の loader 2 つが、scalar 列を recording 自身の時刻 index で結合するようになった。
   一部の時刻にしか現れない component が、後の値を前の行にずらすことがなくなる。
   `load_rrd_data` は `orts replay` と `orts serve` の history 読み戻し、

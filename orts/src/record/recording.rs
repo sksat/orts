@@ -6,44 +6,241 @@ use crate::record::components::{AngularVelocity3D, Quaternion4D};
 use crate::record::entity_path::EntityPath;
 use crate::record::timeline::{TimeIndex, TimePoint, TimelineName};
 
-/// A column of component data (SoA layout for a single component type).
-#[derive(Debug, Clone)]
-pub struct ComponentColumn {
-    /// Number of f64 values per row.
-    pub scalars_per_row: usize,
-    /// Flat storage: scalars_per_row * num_rows f64 values.
-    pub data: Vec<f64>,
+/// Which logical row each stored entry belongs to.
+///
+/// A component logged at every step, which is the common case, needs no mapping:
+/// stored entry `k` is logical row `k`. `Sparse` carries the mapping for a
+/// component that was logged at only some of the entity's steps, so its values
+/// keep the times they were logged at rather than lining up with the leading
+/// rows.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) enum RowMap {
+    #[default]
+    Dense,
+    /// Logical row of each stored entry, ascending.
+    Sparse(Vec<u32>),
 }
 
-impl ComponentColumn {
-    pub fn new(scalars_per_row: usize) -> Self {
-        ComponentColumn {
-            scalars_per_row,
-            data: Vec::new(),
+impl RowMap {
+    /// Record that the entry at stored index `stored` is logical row `logical`,
+    /// switching away from `Dense` only once the two actually diverge.
+    fn record(&mut self, stored: usize, logical: usize) {
+        // `stored_index` binary-searches, so the rows have to stay strictly
+        // ascending, and they are stored as `u32`. Breaking either would tie a
+        // value to an unrelated row, so these hold in release too: they are two
+        // integer comparisons against the Arrow work each row already costs.
+        assert!(
+            u32::try_from(logical).is_ok(),
+            "logical row {logical} is past the u32 the row map stores"
+        );
+        assert!(
+            stored == 0 || logical > self.logical_row(stored - 1),
+            "logical row {logical} does not follow {} at stored index {stored}",
+            self.logical_row(stored.saturating_sub(1)),
+        );
+        match self {
+            Self::Dense if stored == logical => {}
+            Self::Dense => {
+                let mut rows: Vec<u32> = (0..stored as u32).collect();
+                rows.push(logical as u32);
+                *self = Self::Sparse(rows);
+            }
+            Self::Sparse(rows) => rows.push(logical as u32),
         }
     }
 
-    pub fn push(&mut self, scalars: &[f64]) {
-        debug_assert_eq!(scalars.len(), self.scalars_per_row);
+    /// Logical row of stored entry `stored`.
+    pub fn logical_row(&self, stored: usize) -> usize {
+        match self {
+            Self::Dense => stored,
+            Self::Sparse(rows) => rows.get(stored).map(|r| *r as usize).unwrap_or(stored),
+        }
+    }
+
+    /// Stored index holding logical row `logical`, if it holds one at all.
+    pub fn stored_index(&self, logical: usize) -> Option<usize> {
+        match self {
+            Self::Dense => Some(logical),
+            // A row past the `u32` the map stores is held by no entry. Casting
+            // would wrap and could match an unrelated row.
+            Self::Sparse(rows) => rows.binary_search(&u32::try_from(logical).ok()?).ok(),
+        }
+    }
+}
+
+/// A column of component data (SoA layout for a single component type).
+///
+/// The storage and the row map have to agree — the map is what says which
+/// entity row each stored row is — so they are written only through
+/// [`Self::push_at`], which checks. Read them with [`Self::scalars`] and the
+/// row lookups.
+#[derive(Debug, Clone)]
+pub struct ComponentColumn {
+    /// Number of f64 values per row.
+    ///
+    /// Where a row starts in `data` and how many rows there are both follow from
+    /// this, so changing it after an append would move every row without the map
+    /// hearing about it.
+    pub(crate) scalars_per_row: usize,
+    /// Flat storage: scalars_per_row * num_rows f64 values.
+    pub(crate) data: Vec<f64>,
+    /// Which logical row each stored row belongs to.
+    pub(crate) rows: RowMap,
+}
+
+impl ComponentColumn {
+    /// # Panics
+    ///
+    /// If `scalars_per_row` is zero. Rows would all be empty, so `num_rows`
+    /// would stay at zero while the row map recorded one entry per append, and
+    /// the map is what says which entity row each stored row is.
+    pub fn new(scalars_per_row: usize) -> Self {
+        assert!(
+            scalars_per_row > 0,
+            "a column holds at least one scalar per row"
+        );
+        ComponentColumn {
+            scalars_per_row,
+            data: Vec::new(),
+            rows: RowMap::Dense,
+        }
+    }
+
+    /// Append `scalars` as the next logical row.
+    ///
+    /// Mixing this with [`Self::push_at`] on one column would leave the row map
+    /// disagreeing with the data, so it is deliberately not public: a caller
+    /// that knows about logical rows uses `push_at`.
+    pub(crate) fn push(&mut self, scalars: &[f64]) {
+        let stored = self.num_rows();
+        self.push_at(scalars, stored);
+    }
+
+    /// Append `scalars` as the entity's logical row `logical_row`.
+    ///
+    /// # Panics
+    ///
+    /// If `scalars` is not one row wide, or if `logical_row` is not greater than
+    /// the one given for the previous stored row or does not fit in `u32`. The
+    /// row lookup binary-searches, so either row error would make it resolve to
+    /// whichever entry the search landed on. The column is left as it was, so a
+    /// caller that catches the panic does not go on holding scalars no row maps
+    /// to.
+    pub fn push_at(&mut self, scalars: &[f64], logical_row: usize) {
+        // Checked in release too, like the row map's asserts: a short row runs
+        // into the next one's scalars. Measured before this was checked — two
+        // scalars into a three-wide column, then a whole row — the last row read
+        // back as `[9.0, 9.0, 7.0]`, and `num_rows()` had stopped agreeing with
+        // the row map.
+        assert_eq!(
+            scalars.len(),
+            self.scalars_per_row,
+            "a row of this column is {} scalars wide",
+            self.scalars_per_row
+        );
+        self.rows.record(self.num_rows(), logical_row);
         self.data.extend_from_slice(scalars);
     }
 
     pub fn num_rows(&self) -> usize {
-        // checked_div yields None when scalars_per_row == 0 (avoids div-by-zero).
-        self.data
-            .len()
-            .checked_div(self.scalars_per_row)
-            .unwrap_or(0)
+        self.data.len() / self.scalars_per_row
     }
 
+    /// How many scalars one row holds.
+    pub fn scalars_per_row(&self) -> usize {
+        self.scalars_per_row
+    }
+
+    /// The flat storage, `scalars_per_row` values per stored row.
+    ///
+    /// Stored rows, so a column that skipped steps is shorter than the entity;
+    /// [`Self::logical_row_of`] says which row each one is.
+    pub fn scalars(&self) -> &[f64] {
+        &self.data
+    }
+
+    /// The `index`-th *stored* row. For a column that skipped steps this is not
+    /// logical row `index`; use [`Self::at_logical_row`] for that.
     pub fn get_row(&self, index: usize) -> Option<&[f64]> {
-        let start = index * self.scalars_per_row;
-        let end = start + self.scalars_per_row;
+        // Checked: the product wraps for a large enough index, and a wrapped
+        // one lands back inside the column and reads an unrelated row.
+        let start = index.checked_mul(self.scalars_per_row)?;
+        let end = start.checked_add(self.scalars_per_row)?;
         if end <= self.data.len() {
             Some(&self.data[start..end])
         } else {
             None
         }
+    }
+
+    /// The value this column holds at the entity's logical row `logical_row`,
+    /// or `None` when the component was not logged at that step.
+    pub fn at_logical_row(&self, logical_row: usize) -> Option<&[f64]> {
+        self.get_row(self.rows.stored_index(logical_row)?)
+    }
+
+    /// Logical row of the `index`-th stored row.
+    pub fn logical_row_of(&self, index: usize) -> usize {
+        self.rows.logical_row(index)
+    }
+}
+
+/// Time indices for one axis, with the logical row each one belongs to.
+///
+/// A `TimePoint` need not name every axis the entity uses, so an axis can cover
+/// only some rows. Keeping the mapping here is what lets two axes that cover
+/// different rows still be read as the same entity's timeline.
+/// Written only through [`Self::push_at`], for the reason
+/// [`ComponentColumn`] is.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TimelineColumn {
+    pub(crate) data: Vec<TimeIndex>,
+    pub(crate) rows: RowMap,
+}
+
+/// Collects a dense axis, one time per logical row.
+impl FromIterator<TimeIndex> for TimelineColumn {
+    fn from_iter<I: IntoIterator<Item = TimeIndex>>(iter: I) -> Self {
+        Self {
+            data: iter.into_iter().collect(),
+            rows: RowMap::Dense,
+        }
+    }
+}
+
+impl TimelineColumn {
+    /// Append `index` as the axis's entry for logical row `logical_row`.
+    ///
+    /// # Panics
+    ///
+    /// On the same rows [`ComponentColumn::push_at`] refuses, and likewise
+    /// without appending.
+    pub fn push_at(&mut self, index: TimeIndex, logical_row: usize) {
+        self.rows.record(self.data.len(), logical_row);
+        self.data.push(index);
+    }
+
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    /// The times this axis holds, one per row it covers.
+    pub fn times(&self) -> &[TimeIndex] {
+        &self.data
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+
+    /// The time this axis holds at logical row `logical_row`.
+    pub fn at_logical_row(&self, logical_row: usize) -> Option<TimeIndex> {
+        self.data.get(self.rows.stored_index(logical_row)?).copied()
+    }
+
+    /// Logical row of the `index`-th stored time.
+    pub fn logical_row_of(&self, index: usize) -> usize {
+        self.rows.logical_row(index)
     }
 }
 
@@ -54,10 +251,41 @@ pub struct EntityStore {
     pub static_data: HashMap<ComponentName, Vec<f64>>,
     /// Temporal component columns.
     pub columns: HashMap<ComponentName, ComponentColumn>,
-    /// Time indices for each timeline (parallel arrays with component columns).
-    pub timelines: HashMap<TimelineName, Vec<TimeIndex>>,
-    /// Number of temporal rows logged.
+    /// Time indices for each timeline, each carrying the logical rows it covers.
+    pub timelines: HashMap<TimelineName, TimelineColumn>,
+    /// Number of logical rows logged.
+    ///
+    /// The export addresses the columns and the axes by logical row, so a store
+    /// assembled by hand rather than through `log_temporal` has to set this: at
+    /// zero, nothing temporal is written.
     pub num_rows: usize,
+}
+
+impl EntityStore {
+    /// The `TimePoint` of the last logical row, or `None` when there is no row.
+    ///
+    /// Read back from `timelines` rather than remembered from the last
+    /// `log_temporal`: the fields above are public, so a caller can empty a
+    /// store that has already been logged to. A remembered point would then
+    /// describe rows that are gone, and the next `log_temporal` would take the
+    /// store to be mid-row with no row to be in.
+    fn last_row_time_point(&self) -> Option<TimePoint> {
+        let last_row = self.num_rows.checked_sub(1)?;
+        // `log_temporal` pushes every axis of a point at the one row it opens
+        // for it, so in a store it built, the axes holding `last_row` are that
+        // row's point. `is_same_row` ignores axis order, so the order the map
+        // yields them in does not matter.
+        Some(
+            self.timelines
+                .iter()
+                .fold(TimePoint::new(), |point, (name, axis)| {
+                    match axis.at_logical_row(last_row) {
+                        Some(index) => point.with_axis(name.clone(), index),
+                        None => point,
+                    }
+                }),
+        )
+    }
 }
 
 /// Simulation metadata that can be embedded in a Recording.
@@ -164,10 +392,13 @@ impl Recording {
 
     /// Log temporal component data at a specific time point.
     ///
-    /// When multiple components are logged at the same time point (e.g. via
-    /// [`log_orbital_state`](Self::log_orbital_state)), the timeline indices
-    /// are pushed only once per logical time step, keeping
-    /// `timelines[*].len() == num_rows` invariant.
+    /// Calls carrying the same `TimePoint` fill one logical row, so logging
+    /// several components at one time step (e.g. via
+    /// [`log_orbital_state`](Self::log_orbital_state)) advances the row once.
+    ///
+    /// Skipping a component at some step is how "no value here" is expressed:
+    /// its column records which logical rows it does cover, so its values keep
+    /// the times they were logged at.
     pub fn log_temporal<C: Component>(
         &mut self,
         entity: &EntityPath,
@@ -184,39 +415,44 @@ impl Recording {
                 field_names: C::field_names().iter().map(|s| s.to_string()).collect(),
             });
 
-        let column = store
-            .columns
-            .entry(C::component_name())
-            .or_insert_with(|| ComponentColumn::new(C::num_scalars()));
-
-        column.push(&component.to_scalars());
-
-        // Push timeline indices only once per logical time step.
-        // After pushing component data, if any column has more rows than
-        // there are timeline entries, this is a new logical row.
-        let max_component_rows = store
-            .columns
-            .values()
-            .map(|c| c.num_rows())
-            .max()
-            .unwrap_or(0);
-        let timeline_len = store
-            .timelines
-            .values()
-            .map(|tl| tl.len())
-            .max()
-            .unwrap_or(0);
-
-        if max_component_rows > timeline_len {
+        // The row is identified by the time point itself rather than inferred
+        // from row counts, which is what let a column that skipped steps line up
+        // with the wrong times.
+        let continues_row = store
+            .last_row_time_point()
+            .is_some_and(|last| last.is_same_row(time_point));
+        // A component logged twice at one time point is two samples of it, so the
+        // second starts a row of its own at the same time rather than landing on
+        // the row the first already occupies. That also keeps one entry per
+        // logical row in the column's `RowMap`.
+        let row_taken = continues_row
+            && store
+                .columns
+                .get(&C::component_name())
+                .is_some_and(|column| {
+                    column.num_rows() > 0
+                        && column.logical_row_of(column.num_rows() - 1) == store.num_rows - 1
+                });
+        if !continues_row || row_taken {
+            let logical_row = store.num_rows;
             for (timeline_name, time_index) in time_point.indices() {
                 store
                     .timelines
                     .entry(timeline_name.clone())
                     .or_default()
-                    .push(*time_index);
+                    .push_at(*time_index, logical_row);
             }
             store.num_rows += 1;
         }
+        // There is a row to write into either way: the branch above opened one,
+        // and `continues_row` is only true of a store that already has rows.
+        let logical_row = store.num_rows - 1;
+
+        store
+            .columns
+            .entry(C::component_name())
+            .or_insert_with(|| ComponentColumn::new(C::num_scalars()))
+            .push_at(&component.to_scalars(), logical_row);
     }
 
     /// Convenience: log an OrbitalState archetype (position + velocity).
@@ -364,6 +600,420 @@ mod tests {
 
         let sim_times = &store.timelines[&TimelineName::SimTime];
         assert_eq!(sim_times.len(), 2);
+    }
+
+    #[test]
+    fn a_column_logged_every_step_needs_no_row_mapping() {
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/dense");
+
+        for i in 0..4u64 {
+            let tp = TimePoint::new().with_sim_time(i as f64).with_step(i);
+            rec.log_temporal(&sat, &tp, &Position3D(Vector3::new(i as f64, 0.0, 0.0)));
+        }
+
+        let store = rec.entity(&sat).unwrap();
+        let col = &store.columns[&Position3D::component_name()];
+        assert_eq!(
+            col.rows,
+            RowMap::Dense,
+            "the common case must not allocate a mapping"
+        );
+        assert_eq!(store.timelines[&TimelineName::SimTime].rows, RowMap::Dense);
+        // Dense addressing means the two lookups agree and each row is itself.
+        for i in 0..4 {
+            assert_eq!(col.at_logical_row(i), Some([i as f64, 0.0, 0.0].as_slice()));
+        }
+    }
+
+    /// Skipping a component at some steps is how "no value here" is said. Its
+    /// column records the rows it does cover, so the values stay on their own
+    /// steps instead of sliding onto the leading ones (#375).
+    #[test]
+    fn a_column_that_skips_steps_records_the_rows_it_covers() {
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/sparse");
+
+        for i in 0..6u64 {
+            let tp = TimePoint::new().with_sim_time(i as f64).with_step(i);
+            rec.log_temporal(&sat, &tp, &Position3D(Vector3::new(i as f64, 0.0, 0.0)));
+            if i >= 4 {
+                rec.log_temporal(&sat, &tp, &Velocity3D(Vector3::new(0.0, i as f64, 0.0)));
+            }
+        }
+
+        let store = rec.entity(&sat).unwrap();
+        assert_eq!(store.num_rows, 6);
+
+        let vel = &store.columns[&Velocity3D::component_name()];
+        assert_eq!(vel.num_rows(), 2);
+        assert_eq!(vel.rows, RowMap::Sparse(vec![4, 5]));
+        assert_eq!(vel.logical_row_of(0), 4);
+        assert_eq!(vel.logical_row_of(1), 5);
+
+        assert_eq!(vel.at_logical_row(4), Some([0.0, 4.0, 0.0].as_slice()));
+        assert_eq!(vel.at_logical_row(5), Some([0.0, 5.0, 0.0].as_slice()));
+        for absent in [0, 1, 2, 3] {
+            assert_eq!(
+                vel.at_logical_row(absent),
+                None,
+                "row {absent} has no velocity"
+            );
+        }
+
+        // The dense column alongside it is untouched.
+        let pos = &store.columns[&Position3D::component_name()];
+        assert_eq!(pos.rows, RowMap::Dense);
+        assert_eq!(pos.num_rows(), 6);
+    }
+
+    /// A `TimePoint` need not name every axis, so an axis can cover only some
+    /// rows. Keeping that mapping is what stops two axes of different lengths
+    /// from being read as if index 0 of each meant the same row.
+    #[test]
+    fn an_axis_records_the_rows_it_covers() {
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/axes");
+
+        for i in 0..6u64 {
+            let tp = if i < 3 {
+                TimePoint::new().with_step(i)
+            } else {
+                TimePoint::new().with_sim_time(i as f64).with_step(i)
+            };
+            rec.log_temporal(&sat, &tp, &Position3D(Vector3::new(i as f64, 0.0, 0.0)));
+        }
+
+        let store = rec.entity(&sat).unwrap();
+        assert_eq!(store.num_rows, 6);
+
+        let step = &store.timelines[&TimelineName::Step];
+        assert_eq!(step.len(), 6);
+        assert_eq!(step.rows, RowMap::Dense);
+
+        let sim = &store.timelines[&TimelineName::SimTime];
+        assert_eq!(sim.len(), 3);
+        assert_eq!(sim.rows, RowMap::Sparse(vec![3, 4, 5]));
+        assert_eq!(sim.at_logical_row(3), Some(TimeIndex::Seconds(3.0)));
+        assert_eq!(sim.at_logical_row(0), None, "row 0 named no sim_time");
+    }
+
+    /// Two calls at the same `TimePoint` fill one row, which is what lets an
+    /// archetype log several components per step.
+    #[test]
+    fn calls_at_one_time_point_share_a_row() {
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/shared");
+        let tp = TimePoint::new().with_sim_time(7.0).with_step(2);
+
+        rec.log_temporal(&sat, &tp, &Position3D(Vector3::new(1.0, 2.0, 3.0)));
+        rec.log_temporal(&sat, &tp, &Velocity3D(Vector3::new(4.0, 5.0, 6.0)));
+
+        let store = rec.entity(&sat).unwrap();
+        assert_eq!(store.num_rows, 1);
+        assert_eq!(store.timelines[&TimelineName::SimTime].len(), 1);
+        for name in [Position3D::component_name(), Velocity3D::component_name()] {
+            assert_eq!(store.columns[&name].logical_row_of(0), 0);
+        }
+    }
+
+    /// The axes of a `TimePoint` name a row regardless of the order they were
+    /// added in. Comparing the backing `Vec` would split one step into two rows
+    /// and leave position and velocity on different rows.
+    #[test]
+    fn axis_order_does_not_split_a_row() {
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/order");
+
+        let a = TimePoint::new().with_sim_time(7.0).with_step(2);
+        let b = TimePoint::new().with_step(2).with_sim_time(7.0);
+
+        rec.log_temporal(&sat, &a, &Position3D(Vector3::new(1.0, 2.0, 3.0)));
+        rec.log_temporal(&sat, &b, &Velocity3D(Vector3::new(4.0, 5.0, 6.0)));
+
+        let store = rec.entity(&sat).unwrap();
+        assert_eq!(
+            store.num_rows, 1,
+            "one step, whichever order the axes came in"
+        );
+        assert_eq!(store.timelines[&TimelineName::SimTime].len(), 1);
+        assert_eq!(
+            store.columns[&Position3D::component_name()].logical_row_of(0),
+            store.columns[&Velocity3D::component_name()].logical_row_of(0),
+        );
+    }
+
+    /// A `NaN` time is still one row per step. Comparing `NaN` by value makes
+    /// every call a new row, which would scatter one step's components.
+    #[test]
+    fn a_nan_time_still_groups_one_step() {
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/nan");
+        let tp = TimePoint::new().with_sim_time(f64::NAN).with_step(0);
+
+        rec.log_temporal(&sat, &tp, &Position3D(Vector3::new(1.0, 2.0, 3.0)));
+        rec.log_temporal(&sat, &tp, &Velocity3D(Vector3::new(4.0, 5.0, 6.0)));
+
+        let store = rec.entity(&sat).unwrap();
+        assert_eq!(store.num_rows, 1);
+    }
+
+    /// Revisiting a time already logged starts a new row rather than merging
+    /// into the earlier one, which keeps `RowMap::Sparse` ascending — its
+    /// `stored_index` lookup binary-searches.
+    #[test]
+    fn a_revisited_time_starts_a_new_row() {
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/revisit");
+
+        for t in [0.0, 10.0, 0.0] {
+            let tp = TimePoint::new().with_sim_time(t);
+            rec.log_temporal(&sat, &tp, &Position3D(Vector3::new(t, 0.0, 0.0)));
+        }
+
+        let store = rec.entity(&sat).unwrap();
+        assert_eq!(store.num_rows, 3);
+        let col = &store.columns[&Position3D::component_name()];
+        assert_eq!(col.rows, RowMap::Dense);
+        // Both t=0 rows are kept, in the order they were logged.
+        let times: Vec<f64> = (0..3).map(|i| col.at_logical_row(i).unwrap()[0]).collect();
+        assert_eq!(times, vec![0.0, 10.0, 0.0]);
+    }
+
+    /// `+0.0` and `-0.0` are the same instant, so they name one row. Comparing
+    /// the bit patterns would split the step and leave the CSV writer with no
+    /// velocity at the position's row.
+    #[test]
+    fn signed_zero_is_one_row() {
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/zero");
+
+        rec.log_temporal(
+            &sat,
+            &TimePoint::new().with_sim_time(0.0),
+            &Position3D(Vector3::new(1.0, 2.0, 3.0)),
+        );
+        rec.log_temporal(
+            &sat,
+            &TimePoint::new().with_sim_time(-0.0),
+            &Velocity3D(Vector3::new(4.0, 5.0, 6.0)),
+        );
+
+        assert_eq!(rec.entity(&sat).unwrap().num_rows, 1);
+    }
+
+    /// One point holds one index per axis, so a repeated `with_*` is the later
+    /// value. Two entries for one axis would be written to it twice and would
+    /// make two points that name different times compare as one row.
+    #[test]
+    fn a_repeated_axis_is_the_later_value() {
+        let tp = TimePoint::new().with_sim_time(1.0).with_sim_time(2.0);
+        assert_eq!(tp.indices().len(), 1);
+        assert_eq!(
+            tp.get(&TimelineName::SimTime),
+            Some(TimeIndex::Seconds(2.0))
+        );
+        assert!(!tp.is_same_row(&TimePoint::new().with_sim_time(1.0)));
+    }
+
+    /// Logging one component twice at a time point is two samples of it, so the
+    /// second takes a row of its own at the same time. Landing both on one row
+    /// would leave the column's row map with a repeated row, which its
+    /// binary-searched lookup cannot resolve.
+    #[test]
+    fn one_component_logged_twice_at_a_time_takes_two_rows() {
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/twice");
+        let tp = TimePoint::new().with_sim_time(4.0).with_step(1);
+
+        rec.log_temporal(&sat, &tp, &Position3D(Vector3::new(1.0, 0.0, 0.0)));
+        rec.log_temporal(&sat, &tp, &Position3D(Vector3::new(2.0, 0.0, 0.0)));
+
+        let store = rec.entity(&sat).unwrap();
+        assert_eq!(store.num_rows, 2);
+        let col = &store.columns[&Position3D::component_name()];
+        assert_eq!(col.rows, RowMap::Dense);
+        assert_eq!(col.at_logical_row(0), Some([1.0, 0.0, 0.0].as_slice()));
+        assert_eq!(col.at_logical_row(1), Some([2.0, 0.0, 0.0].as_slice()));
+        // Both rows carry the time they were logged at.
+        let axis = &store.timelines[&TimelineName::SimTime];
+        for row in 0..2 {
+            assert_eq!(axis.at_logical_row(row), Some(TimeIndex::Seconds(4.0)));
+        }
+    }
+
+    /// A logical row past the `u32` the map stores is held by no entry. Casting
+    /// would wrap and could match an unrelated row.
+    #[test]
+    fn a_row_past_the_map_domain_is_absent() {
+        let mut col = ComponentColumn::new(1);
+        col.push_at(&[1.0], 5);
+        assert_eq!(col.rows, RowMap::Sparse(vec![5]));
+
+        assert_eq!(col.at_logical_row(5), Some([1.0].as_slice()));
+        // 2^32 + 5 truncates to 5, which must not be read as row 5.
+        assert_eq!(col.at_logical_row(1usize << 32 | 5), None);
+        assert_eq!(col.rows.stored_index(1usize << 32 | 5), None);
+    }
+
+    /// A component repeated at one time point opens the next row when it is
+    /// repeated, so a component logged in between belongs to the row that was
+    /// open at the time.
+    ///
+    /// Logging `Position(p0)`, `Velocity(v1)`, `Position(p1)` at one time point
+    /// says nothing about which position `v1` goes with — no `v0` was logged —
+    /// so this records the grouping rather than leaving it unspecified.
+    #[test]
+    fn a_component_between_two_samples_joins_the_open_row() {
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/between");
+        let tp = TimePoint::new().with_sim_time(1.0).with_step(0);
+
+        rec.log_temporal(&sat, &tp, &Position3D(Vector3::new(0.0, 0.0, 0.0)));
+        rec.log_temporal(&sat, &tp, &Velocity3D(Vector3::new(1.0, 0.0, 0.0)));
+        rec.log_temporal(&sat, &tp, &Position3D(Vector3::new(2.0, 0.0, 0.0)));
+
+        let store = rec.entity(&sat).unwrap();
+        assert_eq!(
+            store.num_rows, 2,
+            "the repeated position opens a second row"
+        );
+
+        let pos = &store.columns[&Position3D::component_name()];
+        assert_eq!(pos.at_logical_row(0).map(|v| v[0]), Some(0.0));
+        assert_eq!(pos.at_logical_row(1).map(|v| v[0]), Some(2.0));
+
+        let vel = &store.columns[&Velocity3D::component_name()];
+        assert_eq!(
+            vel.at_logical_row(0).map(|v| v[0]),
+            Some(1.0),
+            "the velocity joins the row that was open when it was logged"
+        );
+        assert_eq!(vel.at_logical_row(1), None, "no velocity was logged for it");
+    }
+
+    #[test]
+    fn a_column_of_no_scalars_is_refused() {
+        let refused = std::panic::catch_unwind(|| ComponentColumn::new(0));
+        assert!(
+            refused.is_err(),
+            "a zero-width column could hold no row, leaving the map the only \
+             record of one"
+        );
+    }
+
+    #[test]
+    fn a_row_past_the_column_is_absent_however_far_past() {
+        let mut column = ComponentColumn::new(2);
+        column.push_at(&[1.0, 2.0], 0);
+
+        assert_eq!(column.get_row(1), None, "one row past the end");
+        // The product `index * 2` wraps to 0 here, which would read row 0.
+        let wraps_to_zero = 1usize << 63;
+        assert_eq!(column.get_row(wraps_to_zero), None, "far past the end");
+        assert_eq!(
+            column.at_logical_row(wraps_to_zero),
+            None,
+            "and the logical-row lookup says the same"
+        );
+    }
+
+    #[test]
+    fn a_sparse_column_reads_back_flat_and_by_row() {
+        let mut column = ComponentColumn::new(2);
+        column.push_at(&[1.0, 2.0], 0);
+        column.push_at(&[5.0, 6.0], 5);
+
+        assert_eq!(column.scalars_per_row(), 2, "the width it was built with");
+        assert_eq!(
+            column.scalars(),
+            [1.0, 2.0, 5.0, 6.0],
+            "the flat view holds the stored rows, not the skipped ones"
+        );
+        assert_eq!(column.logical_row_of(1), 5, "which row the second one is");
+        assert_eq!(column.at_logical_row(5), Some(&[5.0, 6.0][..]));
+        assert_eq!(column.at_logical_row(1), None, "no row 1 was stored");
+    }
+
+    #[test]
+    fn a_row_of_the_wrong_width_is_refused() {
+        let mut column = ComponentColumn::new(3);
+        column.push_at(&[1.0, 2.0, 3.0], 0);
+
+        let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            column.push_at(&[9.0, 9.0], 1);
+        }));
+        assert!(
+            refused.is_err(),
+            "two scalars are not a row of a three-wide column"
+        );
+        assert_eq!(column.data.len(), 3, "no partial row was appended");
+
+        column.push_at(&[7.0, 7.0, 7.0], 1);
+        assert_eq!(
+            column.at_logical_row(1),
+            Some(&[7.0, 7.0, 7.0][..]),
+            "so the next row is whole rather than carrying the refused scalars"
+        );
+    }
+
+    #[test]
+    fn a_refused_row_appends_nothing() {
+        let mut column = ComponentColumn::new(3);
+        column.push_at(&[1.0, 2.0, 3.0], 0);
+
+        // Rows have to ascend for the map to stay searchable, so row 0 a second
+        // time is refused.
+        let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            column.push_at(&[9.0, 9.0, 9.0], 0);
+        }));
+        assert!(refused.is_err(), "the map cannot hold a repeated row");
+        assert_eq!(
+            column.num_rows(),
+            1,
+            "the refused scalars are not left in the column"
+        );
+        assert_eq!(column.at_logical_row(0), Some(&[1.0, 2.0, 3.0][..]));
+
+        let mut axis = TimelineColumn::default();
+        axis.push_at(TimeIndex::Sequence(0), 0);
+        let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            axis.push_at(TimeIndex::Sequence(7), 0);
+        }));
+        assert!(refused.is_err());
+        assert_eq!(axis.len(), 1, "nor the refused time");
+        assert_eq!(axis.at_logical_row(0), Some(TimeIndex::Sequence(0)));
+    }
+
+    #[test]
+    fn a_cleared_store_logged_at_the_same_time_starts_over() {
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/cleared");
+        let tp = TimePoint::new().with_sim_time(1.0).with_step(0);
+
+        rec.log_temporal(&sat, &tp, &Position3D(Vector3::new(1.0, 0.0, 0.0)));
+
+        // `EntityStore`'s fields are public, so a caller can empty a store that
+        // has already been logged to.
+        let store = rec.entity_mut(&sat);
+        store.columns.clear();
+        store.timelines.clear();
+        store.num_rows = 0;
+
+        rec.log_temporal(&sat, &tp, &Position3D(Vector3::new(2.0, 0.0, 0.0)));
+
+        let store = rec.entity(&sat).unwrap();
+        assert_eq!(
+            store.num_rows, 1,
+            "the same time point opens row 0 again rather than continuing the row the clear removed"
+        );
+        let pos = &store.columns[&Position3D::component_name()];
+        assert_eq!(pos.at_logical_row(0).map(|v| v[0]), Some(2.0));
+        assert_eq!(
+            store.timelines[&TimelineName::SimTime].at_logical_row(0),
+            Some(TimeIndex::Seconds(1.0)),
+            "and the row carries its time"
+        );
     }
 
     #[test]

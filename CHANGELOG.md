@@ -72,6 +72,15 @@ section is subdivided by package.
   since the force direction now depends on that split, no default reproduces the
   old behaviour anywhere but face-on. Pass `PanelOptics::absorber()` when the
   surface is genuinely unknown. ([#377](https://github.com/sksat/orts/pull/377))
+- **BREAKING**: `EntityStore::timelines` holds `TimelineColumn` rather than
+  `Vec<TimeIndex>`, and a column now carries the logical rows it covers.
+  Appending goes through `ComponentColumn::push_at`, which states the row and
+  checks it; `push`, `scalars_per_row` and the `data` / `rows` fields of both
+  column types are crate-private, since a column whose map and data disagree
+  reports values at other rows' times. Read a column with `scalars`,
+  `scalars_per_row()` and an axis with `times`, or by row: `get_row` takes a
+  stored index, `at_logical_row` an entity
+  row. ([#375](https://github.com/sksat/orts/issues/375))
 - `StateEffector` is now frame-generic — `StateEffector<S, F: frame::Eci =
   SimpleEci>` returning `ExternalLoads<F>`, like `Model<S, F>` — so effectors
   produce loads already in the host inertial frame. The defaulted `F` keeps
@@ -84,6 +93,20 @@ section is subdivided by package.
   0.33 m, and the three shorter Harris-Priester oracles by 20-40%. ([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- A component logged at only some steps keeps the times it was logged at.
+  `log_temporal` decided whether a call began a new row by comparing row counts,
+  so a short column lined up with the *leading* rows: logging attitude from step
+  5 onward wrote steps 5-9 at t=0-4. The row is now named by its `TimePoint`,
+  and `ComponentColumn` and the new `TimelineColumn` each carry which logical
+  rows they cover (`RowMap::Dense` for a column logged every step, so the common
+  case costs nothing). Skipping a component at a step is how "no value here" is
+  said, and needs no new call. ([#375](https://github.com/sksat/orts/issues/375))
+- A `TimePoint` that names an axis the entity's other rows do not, or names its
+  axes in another order, no longer splits or misplaces a row. Two points are one
+  row when they name the same axes at the same indices, whatever order they were
+  built in, and `with_*` replaces the index for an axis rather than appending a
+  second one. `+0.0` and `-0.0` are one instant, and a `NaN` time gives one row
+  per step rather than one per component. ([#375](https://github.com/sksat/orts/issues/375))
 - Both .rrd loaders join scalar columns on the recording's time index, so a
   component present at only some of the times no longer shifts its values onto
   earlier rows. `load_rrd_data` serves `orts replay` and `orts serve`'s history

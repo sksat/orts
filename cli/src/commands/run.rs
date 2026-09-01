@@ -355,21 +355,29 @@ fn satellite_final_state(rec: &Recording, sat_path: &EntityPath) -> (usize, Opti
         return (0, None);
     }
     let i = samples - 1;
+    // `i` indexes the position column's stored rows; the timeline and the other
+    // columns are addressed by the entity's logical row.
+    let logical = pos_col.logical_row_of(i);
 
-    let t_s = store
+    // An axis need not cover every row, so this row may carry no time. The
+    // summary's `final_state` is optional; reporting the state at 0 s would put a
+    // time in it that the recording does not have.
+    let Some(t_s) = store
         .timelines
         .get(&TimelineName::SimTime)
-        .and_then(|tl| tl.get(i))
-        .map(|ti| match ti {
-            TimeIndex::Seconds(s) => *s,
-            _ => 0.0,
+        .and_then(|tl| tl.at_logical_row(logical))
+        .and_then(|ti| match ti {
+            TimeIndex::Seconds(s) => Some(s),
+            TimeIndex::Sequence(_) => None,
         })
-        .unwrap_or(0.0);
+    else {
+        return (samples, None);
+    };
 
     let vel_row = store
         .columns
         .get(&Velocity3D::component_name())
-        .and_then(|c| c.get_row(i));
+        .and_then(|c| c.at_logical_row(logical));
     let final_state = match (pos_col.get_row(i), vel_row) {
         (Some(pos), Some(vel)) => Some(FinalState {
             t_s,
@@ -886,12 +894,19 @@ pub fn write_satellite_csv(
     let id = id.rsplit('/').next().unwrap_or("default");
 
     for i in 0..pos_col.num_rows() {
-        let t = match sim_times.get(i) {
-            Some(orts::record::timeline::TimeIndex::Seconds(s)) => *s,
-            _ => 0.0,
+        // `i` indexes the position column's stored rows; the timeline and the
+        // other columns are addressed by the entity's logical row.
+        let logical = pos_col.logical_row_of(i);
+        // Empty rather than 0 when the row carries no time, as an optional
+        // component's cells are: `sim_time` need not cover every row.
+        let t = match sim_times.at_logical_row(logical) {
+            Some(orts::record::timeline::TimeIndex::Seconds(s)) => format!("{s:.3}"),
+            _ => String::new(),
         };
         let pos = pos_col.get_row(i).unwrap();
-        let vel = vel_col.get_row(i).unwrap();
+        let Some(vel) = vel_col.at_logical_row(logical) else {
+            continue;
+        };
         let pos_vec = nalgebra::Vector3::new(pos[0], pos[1], pos[2]);
         let vel_vec = nalgebra::Vector3::new(vel[0], vel[1], vel[2]);
         let elements = KeplerianElements::from_state_vector(&pos_vec, &vel_vec, mu);
@@ -901,7 +916,7 @@ pub fn write_satellite_csv(
             line.push_str(&format!("{},", id));
         }
         line.push_str(&format!(
-            "{:.3},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.3},{:.10},{:.10},{:.10},{:.10},{:.10}",
+            "{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.3},{:.10},{:.10},{:.10},{:.10},{:.10}",
             t,
             pos[0],
             pos[1],
@@ -918,10 +933,16 @@ pub fn write_satellite_csv(
         ));
 
         for (_name, col) in &extra_cols {
-            if let Some(row) = col.get_row(i) {
-                for val in row {
-                    line.push_str(&format!(",{:.10}", val));
+            // The header names every extra column, so a component with no value at
+            // this step contributes empty fields rather than none: a short line
+            // would put the remaining values under the wrong headings.
+            match col.at_logical_row(logical) {
+                Some(row) => {
+                    for val in row {
+                        line.push_str(&format!(",{:.10}", val));
+                    }
                 }
+                None => line.push_str(&",".repeat(col.scalars_per_row())),
             }
         }
 
@@ -955,7 +976,7 @@ pub fn build_csv_header(rec: &Recording, sat_path: &EntityPath, with_id: bool) -
             // Use component name as column prefix (strip "orts." prefix)
             let short = name.strip_prefix("orts.").unwrap_or(name);
             if let Some(col) = store.columns.get(name) {
-                let n = col.scalars_per_row;
+                let n = col.scalars_per_row();
                 if n == 1 {
                     header.push_str(&format!(",{short}"));
                 } else {
@@ -1344,6 +1365,113 @@ mod tests {
         let mut argv = vec!["orts", "--sat", "altitude=500"];
         argv.extend_from_slice(extra);
         SimArgs::try_parse_from(argv).expect("test argv should parse")
+    }
+
+    /// A row whose `TimePoint` named no `sim_time` has no time to report, so the
+    /// CSV cell is empty and the summary's final state is left out. Reporting
+    /// either at 0 s would put a time in the output the recording does not have.
+    #[test]
+    fn a_row_with_no_sim_time_reports_no_time() {
+        use orts::record::archetypes::OrbitalState as RecOrbitalState;
+        use orts::record::timeline::TimePoint;
+
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/untimed");
+        let r0 = 6778.137;
+        let v0 = (398600.4418_f64 / r0).sqrt();
+
+        for i in 0..3u64 {
+            // The middle row and the last one name only `step`.
+            let tp = if i == 0 {
+                TimePoint::new().with_sim_time(0.0).with_step(i)
+            } else {
+                TimePoint::new().with_step(i)
+            };
+            let os = RecOrbitalState::new(
+                nalgebra::Vector3::new(r0, 0.0, 0.0),
+                nalgebra::Vector3::new(0.0, v0, 0.0),
+            );
+            rec.log_orbital_state(&sat, &tp, &os);
+        }
+
+        let mut out = Vec::new();
+        write_satellite_csv(&mut out, &rec, &sat, 398600.4418, false).expect("csv");
+        let body = String::from_utf8(out).expect("utf-8");
+        let lines: Vec<&str> = body.lines().filter(|l| !l.starts_with('#')).collect();
+
+        assert_eq!(lines.len(), 3, "every row is still written");
+        assert!(
+            lines[0].starts_with("0.000,"),
+            "the timed row carries its time: {}",
+            lines[0]
+        );
+        for i in [1, 2] {
+            assert!(
+                lines[i].starts_with(','),
+                "row {i} named no sim_time, so its time cell is empty: {}",
+                lines[i]
+            );
+        }
+
+        // The last row has no time, so there is no final state to report.
+        let (samples, final_state) = satellite_final_state(&rec, &sat);
+        assert_eq!(samples, 3);
+        assert!(
+            final_state.is_none(),
+            "a state with no time must not be reported at 0 s"
+        );
+    }
+
+    /// The header names every extra column, so a component with no value at a
+    /// step contributes empty fields. A short line would put the remaining
+    /// values under the wrong headings.
+    #[test]
+    fn a_component_missing_at_a_step_keeps_the_csv_column_count() {
+        use orts::record::archetypes::OrbitalState as RecOrbitalState;
+        use orts::record::components::MtqCommand3D;
+        use orts::record::timeline::TimePoint;
+
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/sparse");
+        let r0 = 6778.137;
+        let v0 = (398600.4418_f64 / r0).sqrt();
+
+        for i in 0..4u64 {
+            let tp = TimePoint::new().with_sim_time(i as f64).with_step(i);
+            let os = RecOrbitalState::new(
+                nalgebra::Vector3::new(r0, 0.0, 0.0),
+                nalgebra::Vector3::new(0.0, v0, 0.0),
+            );
+            rec.log_orbital_state(&sat, &tp, &os);
+            // Only the later steps carry a command.
+            if i >= 2 {
+                rec.log_temporal(
+                    &sat,
+                    &tp,
+                    &MtqCommand3D(nalgebra::Vector3::new(i as f64, 0.0, 0.0)),
+                );
+            }
+        }
+
+        let header = build_csv_header(&rec, &sat, false);
+        let want = header.trim_start_matches("# ").matches(',').count() + 1;
+
+        let mut out = Vec::new();
+        write_satellite_csv(&mut out, &rec, &sat, 398600.4418, false).expect("csv");
+        let body = String::from_utf8(out).expect("utf-8");
+
+        let lines: Vec<&str> = body.lines().filter(|l| !l.starts_with('#')).collect();
+        assert_eq!(lines.len(), 4, "one line per step");
+        for (i, line) in lines.iter().enumerate() {
+            assert_eq!(
+                line.matches(',').count() + 1,
+                want,
+                "line {i} has a different column count from the header: {line}"
+            );
+        }
+        // The steps without a command leave those fields empty.
+        assert!(lines[0].ends_with(",,,"), "line 0: {}", lines[0]);
+        assert!(!lines[2].ends_with(",,,"), "line 2: {}", lines[2]);
     }
 
     #[test]

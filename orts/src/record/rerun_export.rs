@@ -6,7 +6,9 @@ use re_chunk::TimeColumn;
 use crate::record::component::Component;
 use crate::record::components::Position3D;
 use crate::record::entity_path::EntityPath;
-use crate::record::recording::{EntityStore, Recording, SimMetadata};
+use crate::record::recording::{
+    ComponentColumn, EntityStore, Recording, RowMap, SimMetadata, TimelineColumn,
+};
 use crate::record::timeline::{TimeIndex, TimelineName};
 
 /// Rows per columnar chunk.
@@ -25,93 +27,121 @@ const CHUNK_ROWS: usize = 8192;
 /// the export has always written; `WallClock` and `Custom` timelines have no
 /// read-back contract yet.
 struct EntityIndex {
-    sim_time_secs: Option<Vec<f64>>,
-    steps: Option<Vec<i64>>,
-    /// Logical rows this index covers.
-    n_rows: usize,
+    /// `sim_time` seconds per logical row; `None` where this axis covers no row.
+    sim_time_secs: Vec<Option<f64>>,
+    /// `step` per logical row.
+    steps: Vec<Option<i64>>,
 }
 
 impl EntityIndex {
     fn from_store(store: &EntityStore) -> Self {
-        // Read both axes before choosing a row count. A `TimeColumn` carries no "no
-        // time on this row", so an axis holding the wrong `TimeIndex` variant cannot
-        // be written at all, and the row count has to come from one that can.
-        let sim_time_secs = store.timelines.get(&TimelineName::SimTime).and_then(|tl| {
-            tl.iter()
-                .map(|index| match index {
-                    TimeIndex::Seconds(t) => Some(*t),
-                    TimeIndex::Sequence(_) => None,
-                })
-                .collect::<Option<Vec<_>>>()
-        });
+        let n_rows = store.num_rows;
+        let mut sim_time_secs = vec![None; n_rows];
+        let mut steps = vec![None; n_rows];
 
-        let mut steps = store.timelines.get(&TimelineName::Step).and_then(|tl| {
-            tl.iter()
-                .map(|index| match index {
-                    TimeIndex::Sequence(s) => i64::try_from(*s).ok(),
-                    TimeIndex::Seconds(_) => None,
-                })
-                .collect::<Option<Vec<_>>>()
-        });
-
-        // Prefer `sim_time`, as the row-oriented export did, and fall back to `step`
-        // when `sim_time` cannot be written. Deriving the count from a usable axis is
-        // also what keeps the invariant below: a non-zero `n_rows` always has at
-        // least one index column to go with it.
-        let n_rows = sim_time_secs
-            .as_ref()
-            .map(Vec::len)
-            .or_else(|| steps.as_ref().map(Vec::len))
-            .unwrap_or(0);
-
-        // Two axes can cover different logical rows: `log_temporal` pushes only to
-        // the axes a `TimePoint` names, so each is packed over its own rows and the
-        // same index can mean different rows in each. A `step` axis that does not
-        // cover exactly the exported rows is dropped rather than truncated.
-        if steps.as_ref().is_some_and(|steps| steps.len() != n_rows) {
-            steps = None;
+        // Address both axes by logical row. An axis need not cover every row (a
+        // `TimePoint` need not name it), and a `TimeIndex` of the wrong variant
+        // cannot go on that axis at all, so both show up as a `None` row.
+        if let Some(axis) = store.timelines.get(&TimelineName::SimTime) {
+            for (stored, index) in axis.data.iter().enumerate() {
+                if let (TimeIndex::Seconds(t), Some(slot)) =
+                    (index, sim_time_secs.get_mut(axis.logical_row_of(stored)))
+                {
+                    *slot = Some(*t);
+                }
+            }
         }
-
-        // `send_columns` reads an empty index list as *static* data, and static data
-        // unconditionally shadows every temporal value at the same path in the
-        // viewer. `n_rows` came from a usable axis, so this cannot fire.
-        debug_assert!(
-            n_rows == 0 || sim_time_secs.is_some() || steps.is_some(),
-            "rows to export with no index column"
-        );
+        if let Some(axis) = store.timelines.get(&TimelineName::Step) {
+            for (stored, index) in axis.data.iter().enumerate() {
+                if let (TimeIndex::Sequence(s), Some(slot)) =
+                    (index, steps.get_mut(axis.logical_row_of(stored)))
+                {
+                    *slot = i64::try_from(*s).ok();
+                }
+            }
+        }
 
         Self {
             sim_time_secs,
             steps,
-            n_rows,
         }
     }
 
-    /// The `TimeColumn`s covering `rows`. `send_columns` requires every index
-    /// column to be as long as the component columns it accompanies.
-    fn time_columns(&self, rows: Range<usize>) -> Vec<TimeColumn> {
+    /// Which axes have a value on logical row `row`.
+    ///
+    /// Chunks are cut where this changes, so every row goes out on the axes that
+    /// cover it instead of the whole chunk being dropped for want of one axis.
+    fn axes_at(&self, row: usize) -> AxisMask {
+        AxisMask {
+            sim_time: self.sim_time_secs.get(row).copied().flatten().is_some(),
+            step: self.steps.get(row).copied().flatten().is_some(),
+        }
+    }
+
+    /// Index columns covering exactly `logical_rows`, in that order.
+    ///
+    /// An axis with no value on one of those rows is left out rather than
+    /// written misaligned. `None` means no axis covers them all, and the caller
+    /// must skip the rows: `send_columns` reads an empty index list as *static*
+    /// data, which would shadow every temporal value at the same path.
+    fn time_columns(&self, logical_rows: &[usize]) -> Option<Vec<TimeColumn>> {
         let mut columns = Vec::with_capacity(2);
-        if let Some(secs) = &self.sim_time_secs {
-            columns.push(TimeColumn::new_duration_secs(
-                "sim_time",
-                secs[rows.clone()].iter().copied(),
-            ));
+        if let Some(secs) = gather(&self.sim_time_secs, logical_rows) {
+            columns.push(TimeColumn::new_duration_secs("sim_time", secs));
         }
-        if let Some(steps) = &self.steps {
-            columns.push(TimeColumn::new_sequence(
-                "step",
-                steps[rows].iter().copied(),
-            ));
+        if let Some(steps) = gather(&self.steps, logical_rows) {
+            columns.push(TimeColumn::new_sequence("step", steps));
         }
-        columns
+        (!columns.is_empty()).then_some(columns)
     }
 }
 
-/// Split `n` rows into consecutive ranges of at most [`CHUNK_ROWS`].
-fn chunk_ranges(n: usize) -> impl Iterator<Item = Range<usize>> {
-    (0..n)
-        .step_by(CHUNK_ROWS)
-        .map(move |start| start..(start + CHUNK_ROWS).min(n))
+/// Which of the written axes cover a row.
+///
+/// `Copy` because the loop that cuts chunks holds one while walking the rows.
+#[derive(Clone, Copy, PartialEq)]
+struct AxisMask {
+    sim_time: bool,
+    step: bool,
+}
+
+/// The axis values for `rows`, or `None` if the axis misses any of them.
+fn gather<T: Copy>(axis: &[Option<T>], rows: &[usize]) -> Option<Vec<T>> {
+    rows.iter()
+        .map(|row| axis.get(*row).copied().flatten())
+        .collect()
+}
+
+/// The entity logical row of each stored row in `column`.
+fn logical_rows_of(column: &ComponentColumn) -> Vec<usize> {
+    (0..column.num_rows())
+        .map(|stored| column.logical_row_of(stored))
+        .collect()
+}
+
+/// Split the stored rows into ranges of at most [`CHUNK_ROWS`] that also share
+/// one set of usable axes.
+///
+/// A run of rows an axis covers can end partway through a column, and one chunk
+/// carries one set of index columns, so the cut has to follow the axes.
+///
+/// A recording whose `TimePoint` names different axes on every row therefore
+/// gets a chunk per row, which costs what the columnar export saved. Every
+/// caller in this repository names the same axes at every step.
+fn chunk_ranges_by_axes(index: &EntityIndex, logical_rows: &[usize]) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    while start < logical_rows.len() {
+        let axes = index.axes_at(logical_rows[start]);
+        let limit = (start + CHUNK_ROWS).min(logical_rows.len());
+        let mut end = start + 1;
+        while end < limit && index.axes_at(logical_rows[end]) == axes {
+            end += 1;
+        }
+        ranges.push(start..end);
+        start = end;
+    }
+    ranges
 }
 
 /// Save a Recording to a .rrd file using the Rerun SDK.
@@ -167,16 +197,17 @@ pub fn save_as_rrd(
                 .map(|field| format!("{rr_path}/{field}"))
                 .collect();
 
-            // A column with fewer rows than the entity has logical rows keeps the
-            // leading alignment it had under the row-oriented export (see #375).
-            // The `min` is also what holds the index columns to the data length.
-            let n_rows = column.num_rows().min(index.n_rows);
+            // The times come from the logical rows this column actually covers, so
+            // a component logged at only some steps keeps its own times.
+            let logical_rows = logical_rows_of(column);
 
-            for rows in chunk_ranges(n_rows) {
+            for rows in chunk_ranges_by_axes(&index, &logical_rows) {
                 // Built once per chunk and cloned per field: a `TimeColumn` clone is
                 // a refcount bump on the Arrow buffer, whereas rebuilding one
                 // re-scales every timestamp.
-                let indexes = index.time_columns(rows.clone());
+                let Some(indexes) = index.time_columns(&logical_rows[rows.clone()]) else {
+                    continue;
+                };
                 for (k, path) in paths.iter().enumerate() {
                     let values: Vec<f64> = rows
                         .clone()
@@ -199,9 +230,13 @@ pub fn save_as_rrd(
             && pos_col.scalars_per_row >= 3
         {
             let scalars_per_row = pos_col.scalars_per_row;
-            let n_rows = pos_col.num_rows().min(index.n_rows);
-            for rows in chunk_ranges(n_rows) {
-                let indexes = index.time_columns(rows.clone());
+            // Same logical rows as the position scalars above; taking the range
+            // instead would move the points off the times the scalars carry.
+            let logical_rows = logical_rows_of(pos_col);
+            for rows in chunk_ranges_by_axes(&index, &logical_rows) {
+                let Some(indexes) = index.time_columns(&logical_rows[rows.clone()]) else {
+                    continue;
+                };
                 let points: Vec<[f32; 3]> = rows
                     .map(|i| {
                         let start = i * scalars_per_row;
@@ -838,7 +873,6 @@ pub fn load_from_rrd(path: &str) -> Result<Vec<RrdRow>, Box<dyn std::error::Erro
 ///
 /// This enables `orts convert` to produce the same CSV output as `orts run`.
 pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Error>> {
-    use crate::record::recording::ComponentColumn;
     use re_chunk::Chunk;
     use re_log_encoding::DecoderApp;
     use re_log_types::LogMsg;
@@ -1151,10 +1185,17 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
         // CSV path reads `SimTime` only, so filling the others changes what
         // `orts convert` reports. Left as it stands on main until the step
         // round-trip is settled with the writer.
-        let entity_times: Vec<TimeIndex> = row_keys
-            .iter()
-            .map(|k| TimeIndex::Seconds(k.t_secs()))
-            .collect();
+        // Dense over `row_keys`: a component that covers only some of them is
+        // dropped below rather than restored as a sparse column, which is what
+        // this loader has always done. Restoring it belongs with the CSV path
+        // that reads these rows (#375 follow-up).
+        let entity_times = TimelineColumn {
+            data: row_keys
+                .iter()
+                .map(|k| TimeIndex::Seconds(k.t_secs()))
+                .collect(),
+            rows: RowMap::Dense,
+        };
 
         for (name, fields) in &statics {
             let mut static_scalars = Vec::new();
@@ -1251,9 +1292,7 @@ fn to_rerun_path(path: &EntityPath) -> String {
 mod tests {
     use super::*;
     use crate::record::archetypes::OrbitalState;
-    use crate::record::components::{
-        BodyRadius, GravitationalParameter, Position3D, Quaternion4D, Velocity3D,
-    };
+    use crate::record::components::{BodyRadius, GravitationalParameter, Position3D};
     use crate::record::timeline::TimePoint;
     use nalgebra::Vector3;
 
@@ -1555,11 +1594,11 @@ mod tests {
             .get(&TimelineName::SimTime)
             .expect("SimTime timeline missing");
         assert_eq!(sim_times.len(), 3);
-        match &sim_times[0] {
+        match &sim_times.times()[0] {
             TimeIndex::Seconds(t) => assert!((t - 0.0).abs() < 1e-9),
             other => panic!("expected Seconds, got {:?}", other),
         }
-        match &sim_times[2] {
+        match &sim_times.times()[2] {
             TimeIndex::Seconds(t) => assert!((t - 20.0).abs() < 1e-9),
             other => panic!("expected Seconds, got {:?}", other),
         }
@@ -1958,7 +1997,7 @@ mod tests {
         assert_eq!(store.num_rows, 1, "only t=10 has a whole position");
         assert_eq!(
             store.timelines.get(&TimelineName::SimTime),
-            Some(&vec![TimeIndex::Seconds(10.0)])
+            Some(&[TimeIndex::Seconds(10.0)].into_iter().collect())
         );
         let row = column.get_row(0).expect("the one row");
         assert_eq!(
@@ -2037,7 +2076,7 @@ mod tests {
             .get(&TimelineName::SimTime)
             .expect("a sim_time timeline");
         assert_eq!(times.len(), store.num_rows, "timeline and rows must agree");
-        assert_eq!(times, &vec![TimeIndex::Seconds(10.0)]);
+        assert_eq!(times.times(), [TimeIndex::Seconds(10.0)]);
         for (name, col) in &store.columns {
             assert_eq!(
                 col.num_rows(),
@@ -2171,7 +2210,11 @@ mod tests {
         let store = loaded.entity(&entity).expect("the parent entity");
         assert_eq!(
             store.timelines.get(&TimelineName::SimTime),
-            Some(&vec![TimeIndex::Seconds(10.0), TimeIndex::Seconds(20.0)]),
+            Some(
+                &[TimeIndex::Seconds(10.0), TimeIndex::Seconds(20.0)]
+                    .into_iter()
+                    .collect()
+            ),
             "only the parent's own times are rows"
         );
         assert_eq!(store.num_rows, 2);
@@ -2416,7 +2459,11 @@ mod tests {
         assert_eq!(store.num_rows, 2);
         assert_eq!(
             store.timelines.get(&TimelineName::SimTime),
-            Some(&vec![TimeIndex::Seconds(0.0), TimeIndex::Seconds(10.0)])
+            Some(
+                &[TimeIndex::Seconds(0.0), TimeIndex::Seconds(10.0)]
+                    .into_iter()
+                    .collect()
+            )
         );
         assert_eq!(velocity.get_row(0).expect("row 0"), &[1.0, 2.0, 3.0]);
         assert_eq!(velocity.get_row(1).expect("row 1"), &[4.0, 2.0, 3.0]);
@@ -2593,7 +2640,11 @@ mod tests {
         assert_eq!(store.num_rows, 2, "the velocity keeps both of its times");
         assert_eq!(
             store.timelines.get(&TimelineName::SimTime),
-            Some(&vec![TimeIndex::Seconds(0.0), TimeIndex::Seconds(10.0)])
+            Some(
+                &[TimeIndex::Seconds(0.0), TimeIndex::Seconds(10.0)]
+                    .into_iter()
+                    .collect()
+            )
         );
         let velocity = store
             .columns
@@ -2977,6 +3028,65 @@ mod tests {
         out
     }
 
+    /// Scalar values with the `sim_time` they were written at, per entity path.
+    fn timed_scalars_by_path(path: &str) -> BTreeMap<String, Vec<(f64, f64)>> {
+        let mut out: BTreeMap<String, Vec<(f64, f64)>> = BTreeMap::new();
+        for chunk in decode_chunks(path) {
+            let Some((_, times)) = chunk
+                .timelines()
+                .iter()
+                .find(|(name, _)| name.as_str() == "sim_time")
+            else {
+                continue;
+            };
+            let times = times.times_raw().to_vec();
+            for comp_id in chunk.components_identifiers() {
+                if !comp_id.as_str().contains("Scalar") && !comp_id.as_str().contains("scalars") {
+                    continue;
+                }
+                for row_idx in 0..chunk.num_rows() {
+                    if let Some(Ok(batch)) =
+                        chunk.component_batch::<re_sdk_types::components::Scalar>(comp_id, row_idx)
+                    {
+                        let t = times[row_idx] as f64 / 1e9;
+                        out.entry(chunk.entity_path().to_string())
+                            .or_default()
+                            .extend(batch.iter().map(|s| (t, s.0.0)));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The `(sim_time, x)` of every `Points3D` row, per entity path.
+    fn timed_points_by_path(path: &str) -> BTreeMap<String, Vec<(f64, f32)>> {
+        let mut out: BTreeMap<String, Vec<(f64, f32)>> = BTreeMap::new();
+        for chunk in decode_chunks(path) {
+            let Some((_, times)) = chunk
+                .timelines()
+                .iter()
+                .find(|(name, _)| name.as_str() == "sim_time")
+            else {
+                continue;
+            };
+            let times = times.times_raw().to_vec();
+            for comp_id in chunk.components_identifiers() {
+                for row_idx in 0..chunk.num_rows() {
+                    if let Some(Ok(batch)) = chunk
+                        .component_batch::<re_sdk_types::components::Position3D>(comp_id, row_idx)
+                    {
+                        let t = times[row_idx] as f64 / 1e9;
+                        out.entry(chunk.entity_path().to_string())
+                            .or_default()
+                            .extend(batch.iter().map(|p| (t, p.0.x())));
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// A recording of `n` rows on one satellite, `x` counting up from zero so a
     /// row can be identified by its value.
     fn counted_recording(entity: &str, n: usize) -> Recording {
@@ -3215,6 +3325,104 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    /// A component logged only from a later step must be written at the times it
+    /// was logged at. The store used to keep one timeline per entity and no
+    /// per-column row mapping, so a short column lined up with the *leading*
+    /// timeline entries: values from steps 5-9 landed on t=0-4 (#375).
+    #[test]
+    fn a_late_starting_component_keeps_its_own_times() {
+        use crate::record::components::MtqCommand3D;
+
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/late");
+
+        const N: u64 = 10;
+        const FIRST_MTQ_STEP: u64 = 5;
+        for i in 0..N {
+            let tp = TimePoint::new().with_sim_time(i as f64).with_step(i);
+            let os = OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::new(0.0, 7.5, 0.0));
+            rec.log_orbital_state(&sat, &tp, &os);
+            if i >= FIRST_MTQ_STEP {
+                rec.log_temporal(&sat, &tp, &MtqCommand3D(Vector3::new(i as f64, 0.0, 0.0)));
+            }
+        }
+
+        let path = std::env::temp_dir().join("test_orts_late_component.rrd");
+        let path_str = path.to_str().unwrap();
+        save_as_rrd(&rec, "test-orts", path_str).expect("failed to save .rrd");
+
+        let timed = timed_scalars_by_path(path_str);
+        let got = timed
+            .get("/world/sat/late/mtq_mx")
+            .expect("mtq_mx missing from the file");
+        let want: Vec<(f64, f64)> = (FIRST_MTQ_STEP..N).map(|i| (i as f64, i as f64)).collect();
+        assert_eq!(
+            got, &want,
+            "each mtq_mx value should carry the sim_time of the step it was logged at"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A position column that starts late must put its `Points3D` on the times
+    /// its own rows carry. The scalar paths and the `Points3D` path are built
+    /// from the same logical rows but by separate code, so the 3D path can go
+    /// back to leading-row alignment while the scalars stay right.
+    #[test]
+    fn a_late_starting_position_keeps_its_points_on_its_own_times() {
+        use crate::record::components::{MtqCommand3D, Position3D};
+
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/late_points");
+
+        const N: u64 = 8;
+        const FIRST_POSITION_STEP: u64 = 3;
+        for i in 0..N {
+            let tp = TimePoint::new().with_sim_time(i as f64).with_step(i);
+            // Logged at every step, so the entity's rows start at step 0 and the
+            // position column is the sparse one.
+            rec.log_temporal(&sat, &tp, &MtqCommand3D(Vector3::new(i as f64, 0.0, 0.0)));
+            if i >= FIRST_POSITION_STEP {
+                rec.log_temporal(&sat, &tp, &Position3D(Vector3::new(i as f64, 0.0, 0.0)));
+            }
+        }
+
+        let dir = std::env::temp_dir().join(format!(
+            "orts_rrd_late_points_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("late_points.rrd");
+        let path_str = path.to_str().unwrap();
+        save_as_rrd(&rec, "test-orts", path_str).expect("failed to save .rrd");
+
+        let want: Vec<(f64, f64)> = (FIRST_POSITION_STEP..N)
+            .map(|i| (i as f64, i as f64))
+            .collect();
+        let scalars = timed_scalars_by_path(path_str);
+        assert_eq!(
+            scalars
+                .get("/world/sat/late_points/x")
+                .expect("x missing from the file"),
+            &want,
+            "each x should carry the sim_time of the step it was logged at"
+        );
+
+        let points = timed_points_by_path(path_str);
+        let got = points
+            .get("/world/sat/late_points")
+            .expect("Points3D missing from the file");
+        let want_points: Vec<(f64, f32)> = want.iter().map(|(t, x)| (*t, *x as f32)).collect();
+        assert_eq!(
+            got, &want_points,
+            "and each point should sit at the same time as the scalars of the \
+             row it came from"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// An entity whose only timeline carries the wrong `TimeIndex` variant has no
     /// usable index left. `send_columns` reads an empty index list as *static* data,
     /// and static data unconditionally shadows every temporal value at the same path
@@ -3231,9 +3439,10 @@ mod tests {
             column.push(&[1.0, 2.0, 3.0]);
             store.columns.insert(Position3D::component_name(), column);
             // A sequence on the sim-time axis, and no step axis at all.
-            store
-                .timelines
-                .insert(TimelineName::SimTime, vec![TimeIndex::Sequence(0)]);
+            store.timelines.insert(
+                TimelineName::SimTime,
+                [TimeIndex::Sequence(0)].into_iter().collect(),
+            );
             store.num_rows = 1;
         }
         rec.register_component_fields(Position3D::component_name(), vec!["x", "y", "z"]);
@@ -3256,9 +3465,9 @@ mod tests {
     }
 
     /// An unusable `sim_time` axis must not take a usable `step` axis down with it.
-    /// The row count is taken from whichever axis can actually be written, so these
-    /// rows are exported on `step` alone — which is what the row-oriented export did,
-    /// since its `set_duration_secs` call was skipped on the variant mismatch while
+    /// Each axis covers the rows it can be written for, so these rows go out on
+    /// `step` alone — which is what the row-oriented export did, since its
+    /// `set_duration_secs` call was skipped on the variant mismatch while
     /// `set_time_sequence` still ran.
     #[test]
     fn a_usable_step_axis_carries_the_export_on_its_own() {
@@ -3274,11 +3483,11 @@ mod tests {
                 column.push(&[i as f64, 0.0, 0.0]);
             }
             store.columns.insert(Position3D::component_name(), column);
-            // `sim_time` holds the wrong variant, and is a different length from
-            // `step` as well, so neither its values nor its length can be used.
-            store
-                .timelines
-                .insert(TimelineName::SimTime, vec![TimeIndex::Sequence(0)]);
+            // `sim_time` holds the wrong variant, so it covers no row at all.
+            store.timelines.insert(
+                TimelineName::SimTime,
+                [TimeIndex::Sequence(0)].into_iter().collect(),
+            );
             store.timelines.insert(
                 TimelineName::Step,
                 (0..N as u64).map(TimeIndex::Sequence).collect(),
@@ -3316,14 +3525,14 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
-    /// Two timeline arrays that cover different logical rows cannot both index the
-    /// data, so the shorter axis is dropped rather than truncated. Logging rows 0-4
-    /// with `step` alone and rows 5-9 with both leaves `sim_time` 5 long and `step`
-    /// 10 long, and index 0 of each names a *different* row: `sim_time[0]` is row
-    /// 5's time while `step[0]` is row 0's step. Truncating `step` to the exported
-    /// range would therefore pair row 0-4 steps with row 5-9 times.
+    /// Two axes can cover different rows: logging rows 0-4 with `step` alone and
+    /// rows 5-9 with both leaves `step` over all ten rows and `sim_time` over the
+    /// last five. The chunk is cut where the usable axes change, so rows 0-4 go out
+    /// on `step` and rows 5-9 on both, and every row keeps its own times. Until
+    /// #375 the row count came from `sim_time`, so only five rows were written and
+    /// `step` was dropped for disagreeing on length.
     #[test]
-    fn a_step_axis_that_covers_other_rows_is_dropped() {
+    fn rows_are_split_where_the_usable_axes_change() {
         let mut rec = Recording::new();
         let sat = EntityPath::parse("/world/sat/divergent");
 
@@ -3342,29 +3551,50 @@ mod tests {
             rec.log_orbital_state(&sat, &tp, &os);
         }
 
-        // The premise: the axes really do diverge in this shape.
+        // The premise: the axes really do cover different rows in this shape.
         let store = rec.entity(&sat).expect("entity");
         assert_eq!(store.timelines[&TimelineName::SimTime].len(), 5);
         assert_eq!(store.timelines[&TimelineName::Step].len(), 10);
+        assert_eq!(store.num_rows, 10);
 
         let path = std::env::temp_dir().join("test_orts_divergent_axes.rrd");
         let path_str = path.to_str().unwrap();
         save_as_rrd(&rec, "test-orts", path_str).expect("failed to save .rrd");
 
+        // Per path: the rows with `step` alone, then the rows with both axes.
+        let mut shapes: BTreeMap<String, Vec<(Vec<String>, usize)>> = BTreeMap::new();
         for chunk in decode_chunks(path_str) {
-            if !chunk
-                .entity_path()
-                .to_string()
-                .starts_with("/world/sat/divergent")
-            {
+            let entity = chunk.entity_path().to_string();
+            if !entity.starts_with("/world/sat/divergent") {
                 continue;
             }
-            assert!(
-                chunk.timelines().keys().all(|name| name.as_str() != "step"),
-                "{} kept a step axis covering other rows",
-                chunk.entity_path()
+            let mut axes: Vec<String> = chunk
+                .timelines()
+                .keys()
+                .map(|name| name.as_str().to_string())
+                .collect();
+            axes.sort();
+            shapes
+                .entry(entity)
+                .or_default()
+                .push((axes, chunk.num_rows()));
+        }
+        assert!(!shapes.is_empty(), "no chunk was written for the entity");
+        for (entity, chunks) in &shapes {
+            assert_eq!(
+                chunks,
+                &vec![
+                    (vec!["step".to_string()], 5),
+                    (vec!["sim_time".to_string(), "step".to_string()], 5),
+                ],
+                "{entity} chunk shapes"
             );
         }
+
+        // No row is lost to the split, and the order holds.
+        let xs = &scalars_by_path(path_str)["/world/sat/divergent/x"];
+        let want: Vec<f64> = (0..10).map(|i| i as f64).collect();
+        assert_eq!(xs, &want);
 
         let _ = std::fs::remove_file(&path);
     }
