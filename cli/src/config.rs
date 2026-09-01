@@ -943,8 +943,14 @@ impl SimConfig {
         let config: SimConfig = match ext.as_str() {
             "json" => {
                 let mut de = serde_json::Deserializer::from_str(&content);
-                serde_ignored::deserialize(&mut de, &mut note)
-                    .map_err(|e| format!("Failed to parse JSON config: {e}"))?
+                let config = serde_ignored::deserialize(&mut de, &mut note)
+                    .map_err(|e| format!("Failed to parse JSON config: {e}"))?;
+                // `serde_json::from_str` ends by checking that the input is
+                // spent; driving the `Deserializer` directly does not, so
+                // anything after the config would be dropped without a word.
+                de.end()
+                    .map_err(|e| format!("Failed to parse JSON config: {e}"))?;
+                config
             }
             "toml" => {
                 let de = toml::Deserializer::parse(&content)
@@ -3175,6 +3181,37 @@ altitude = 500
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// A JSON file with anything after the config is refused.
+    ///
+    /// Reading the keys nothing reads means driving `serde_json`'s
+    /// `Deserializer` instead of calling `from_str`, and only `from_str` ends by
+    /// checking that the input is spent. A second object, or a truncated edit
+    /// that left the old text behind, would otherwise load as though the file
+    /// stopped where the config did.
+    #[test]
+    fn a_json_config_with_content_after_it_is_refused() {
+        let dir = std::env::temp_dir().join(format!(
+            "orts-json-trailing-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let config =
+            r#"{"dt":1.0,"satellites":[{"id":"a","orbit":{"type":"circular","altitude":400}}]}"#;
+        let path = dir.join("sim.json");
+
+        std::fs::write(&path, config).expect("write config");
+        SimConfig::load_with_warnings(&path).expect("the config alone loads");
+
+        for trailing in ["{\"dt\":99.0}", "this is not json"] {
+            std::fs::write(&path, format!("{config}{trailing}")).expect("write config");
+            let err = SimConfig::load_with_warnings(&path)
+                .expect_err("content after the config must be refused");
+            assert!(err.contains("JSON"), "msg: {err}");
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     /// Two satellites resolving to one id share the recording entity path and
     /// the CSV section, and `[[command]]` reaches only whichever one won the
     /// id → index map. Reject the fleet instead.
@@ -3429,11 +3466,14 @@ altitude = 800
         assert!(err.contains("initial_quaternion"), "msg: {err}");
     }
 
-    /// The quaternion bound must be exactly what the dynamics break on: `run`
-    /// and `serve` copy `initial_quaternion` into `AttitudeState` verbatim, and
-    /// every consumer reads it through `orientation()`, which normalizes it. So
-    /// the config check is correct when it accepts a quaternion exactly when
-    /// that normalization yields a finite unit quaternion. Cross-checked
+    /// The quaternion bound must be exactly what the dynamics break on. `run`
+    /// and `serve` divide by the norm once ([`normalized_initial_quaternion`],
+    /// which is the same normalization) before storing, and every consumer then
+    /// reads the state through `orientation()`, which normalizes again. So the
+    /// config check is correct when it accepts a quaternion exactly when that
+    /// normalization yields a finite unit quaternion — checked here by feeding
+    /// the raw components to `orientation()`, the one call whose result the
+    /// config cannot influence. Cross-checked
     /// against the real call rather than against a threshold on the input,
     /// because the interesting boundary is not where the arithmetic fails
     /// outright: `[1e-160, 0, 0, 0]` looks harmless and does produce a finite
@@ -3481,6 +3521,20 @@ altitude = 800
                 orientation.coords
             );
         }
+
+        // Where the bound itself sits, written out so that loosening
+        // `QUATERNION_UNIT_TOLERANCE` cannot take the oracle with it. Measured:
+        // these two normalize 1.8e-11 and 5.6e-6 off unit norm.
+        let mut accepted = attitude([10.0, 10.0, 10.0], [0.0; 3], 100.0);
+        accepted.initial_quaternion = [1e-157, 0.0, 0.0, 0.0];
+        accepted
+            .validate()
+            .expect("1e-157 normalizes close enough to unit norm");
+        let mut refused = attitude([10.0, 10.0, 10.0], [0.0; 3], 100.0);
+        refused.initial_quaternion = [1e-160, 0.0, 0.0, 0.0];
+        refused
+            .validate()
+            .expect_err("1e-160 normalizes to 1.0000056, too far to accept");
     }
 
     #[test]

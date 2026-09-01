@@ -1832,4 +1832,34 @@ orbit = { type = "circular", altitude = 500 }
             .expect("an id naming no entity must be refused");
         assert!(err.contains("no path segment"), "got: {err}");
     }
+
+    /// Two id spellings that name one entity are a collision here too.
+    ///
+    /// `EntityPath` drops empty segments, so `a` and `/a` both parse to
+    /// `/world/sat/a`. Comparing the resolved paths catches that; comparing the
+    /// id strings would not.
+    #[test]
+    fn add_satellite_refuses_an_id_spelled_differently_for_one_entity() {
+        let mut init = engine_from_toml(
+            r#"
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+"#,
+        )
+        .expect("engine builds");
+        let cfg: SatelliteConfig = serde_json::from_str(
+            r#"{
+                "id": "/a",
+                "orbit": { "type": "circular", "altitude": 700 }
+            }"#,
+        )
+        .expect("valid satellite config");
+        let err = init
+            .engine
+            .add_satellite(cfg)
+            .err()
+            .expect("an id naming an entity already in the fleet must be refused");
+        assert!(err.contains("unique"), "got: {err}");
+    }
 }
