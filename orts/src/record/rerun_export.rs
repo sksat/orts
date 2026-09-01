@@ -1230,12 +1230,16 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
             let mut column = ComponentColumn::new(fields.len());
             // Resolve each field's column once: `get_scalar_data` formats two
             // candidate paths per call, and this walks every row. `temporal` was
-            // retained on every field having a column, so each lookup is `Some`.
+            // retained on every field having a column, so the count holds; a
+            // short list would build rows out of the wrong fields, so it is
+            // checked rather than assumed.
             let field_columns: Vec<&Column> = fields
                 .iter()
                 .filter_map(|field| get_scalar_data(&scalars, base, field))
                 .collect();
-            debug_assert_eq!(field_columns.len(), fields.len());
+            if field_columns.len() != fields.len() {
+                continue;
+            }
             for (logical_row, &key) in row_keys.iter().enumerate() {
                 let row: Vec<f64> = field_columns
                     .iter()
