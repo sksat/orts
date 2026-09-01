@@ -5,8 +5,9 @@ duration = 7000.0
 epoch = "2024-01-01T00:00:00Z"
 # Demo では drag を掛けずに Hohmann 遷移を見せる（zonal 重力と、epoch があるので
 # Sun / Moon の第三体重力は入る）。
-# drag が入るのは ballistic_coeff を持つ衛星と、B* が実質ゼロでない TLE/OMM 軌道
-# (`has_bstar_drag`)。この例はどちらでもないので drag は掛からない
+# drag が入るのは ballistic_coeff を持つ衛星、panels を持つ衛星 (面ごとの面積と
+# 抗力係数を自分で持つので PanelDrag になる)、B* が実質ゼロでない TLE/OMM 軌道
+# (`has_bstar_drag`) の 3 つ。この例はどれでもないので drag は掛からない
 # (`atmosphere` は drag の on/off ではなく、使う大気モデルの選択)。
 
 # 円軌道 500 km → 2000 km の Hohmann 遷移 (高度 4 倍) + 到達後の TCM デモ。
