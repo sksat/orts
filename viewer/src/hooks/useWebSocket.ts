@@ -146,11 +146,22 @@ function parseHistoryPoints(states: HistoryState[]): OrbitPoint[] {
   }));
 }
 
+/** Whether a source is still usable after the message just dispatched. */
+export type DispatchOutcome = "continue" | "reject";
+
 /**
  * Dispatch a parsed server message to the appropriate callback.
  * Extracted as a pure function for testability.
+ *
+ * `"reject"` where the message says the source cannot be read at all. The
+ * caller owns the socket, so closing it is its part: leaving it open would let
+ * the states that follow reach the charts with no `SimInfo` to measure them
+ * against, which is what refusing the info exists to prevent.
  */
-export function dispatchServerMessage(msg: ServerMessage, callbacks: DispatchCallbacks): void {
+export function dispatchServerMessage(
+  msg: ServerMessage,
+  callbacks: DispatchCallbacks,
+): DispatchOutcome {
   if (msg.type === "state") {
     callbacks.onState({
       entityPath: msg.entity_path,
@@ -187,7 +198,7 @@ export function dispatchServerMessage(msg: ServerMessage, callbacks: DispatchCal
       callbacks.onError?.(
         `the server's simulation info: ${describeCentralBodyError(resolved.error)}`,
       );
-      return;
+      return "reject";
     }
     // The `??` fallbacks tolerate older servers that predate these fields.
     const satellites: SatelliteInfo[] = (msg.satellites ?? []).map(normalizeSatelliteInfo);
@@ -220,6 +231,7 @@ export function dispatchServerMessage(msg: ServerMessage, callbacks: DispatchCal
   } else if (msg.type === "satellite_added") {
     callbacks.onSatelliteAdded?.(normalizeSatelliteInfo(msg.satellite), msg.t);
   }
+  return "continue";
 }
 
 export interface UseWebSocketReturn {
@@ -316,7 +328,11 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     ws.addEventListener("message", (event: MessageEvent) => {
       try {
         const msg = JSON.parse(event.data as string) as ServerMessage;
-        dispatchServerMessage(msg, callbacksRef.current);
+        if (dispatchServerMessage(msg, callbacksRef.current) === "reject") {
+          // The error is already reported. Closing stops the states that would
+          // otherwise follow it, and the close handler resets the rest.
+          ws.close();
+        }
       } catch {
         // Silently ignore malformed messages
       }

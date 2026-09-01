@@ -31,6 +31,15 @@ describe("resolveCentralBody", () => {
     expect(body.bodyRadius).not.toBe(EARTH.radiusKm);
   });
 
+  it("keys a body on its name whatever case the source wrote it in", () => {
+    // `orts run` writes `arika`'s display name into a recording, so this is
+    // what the default path produces: a case-sensitive lookup read "Earth" as a
+    // body with no constants, and refused a recording that left one out.
+    const body = resolved({ bodyId: "Earth", mu: null, bodyRadius: null });
+    expect(body).toEqual({ bodyId: "earth", mu: EARTH.mu, bodyRadius: EARTH.radiusKm });
+    expect(resolved({ bodyId: " MARS ", mu: null, bodyRadius: null }).bodyId).toBe("mars");
+  });
+
   it("reads a source that names no body as Earth", () => {
     // Recordings predate the field, and their orbits are Earth's.
     const body = resolved({ mu: null, bodyRadius: null });

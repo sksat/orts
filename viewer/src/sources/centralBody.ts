@@ -14,7 +14,12 @@
  * on the chart to say so.
  */
 
-import { type BodyCatalog, IMPLICIT_BODY_ID, resolveBodyCatalog } from "./bodyCatalog.js";
+import {
+  type BodyCatalog,
+  bodyIdOf,
+  IMPLICIT_BODY_ID,
+  resolveBodyCatalog,
+} from "./bodyCatalog.js";
 
 /** Resolved central body constants. */
 export interface CentralBody {
@@ -90,12 +95,17 @@ export function describeCentralBodyError(error: CentralBodyError): string {
  * A body the catalog does not carry is fine as long as the source carries both
  * of its constants — nothing is being invented then. It fails only where a value
  * is missing and there is nothing to fill it from.
+ *
+ * The resolved `bodyId` is the source's name as an id: lowercase, which is what
+ * the catalog and the scene's own body definitions key on, while a recording
+ * carries `arika`'s display name ("Earth").
  */
 export function resolveCentralBody(
   declared: DeclaredCentralBody,
   catalog?: BodyCatalog,
 ): CentralBodyResult {
-  const bodyId = declared.bodyId ?? IMPLICIT_BODY_ID;
+  // The name is the source's; the id is what the catalog and the scene key on.
+  const bodyId = declared.bodyId != null ? bodyIdOf(declared.bodyId) : IMPLICIT_BODY_ID;
   const entry = resolveBodyCatalog(catalog)[bodyId];
 
   const resolve = (

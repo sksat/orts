@@ -50,6 +50,18 @@ export const DEFAULT_BODY_CATALOG: BodyCatalog = {
 /** The body a source that names none is read as. */
 export const IMPLICIT_BODY_ID = "earth";
 
+/**
+ * The id a source's body name keys on.
+ *
+ * `orts run` writes `arika`'s display name — "Earth", "Mars" — into a
+ * recording, and the ids here and the ones the scene renders by are lowercase.
+ * The Rust side lowercases the same field on its way in
+ * (`cli/src/commands/replay.rs`).
+ */
+export function bodyIdOf(name: string): string {
+  return name.trim().toLowerCase();
+}
+
 /** Merge consumer-supplied constants over the defaults, per body id. */
 export function resolveBodyCatalog(custom?: BodyCatalog): BodyCatalog {
   return custom ? { ...DEFAULT_BODY_CATALOG, ...custom } : DEFAULT_BODY_CATALOG;
