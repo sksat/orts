@@ -15,7 +15,11 @@ interface PrimitiveMarkerProps {
   size?: number;
 }
 
-/** Default half-extent, matching the legacy sphere marker's footprint. */
+/**
+ * Default half-extent. Larger than the sphere marker's radius: a cube read at an
+ * angle presents less silhouette than a sphere of the same radius, so matching
+ * radii would make the orientation cube look like the smaller marker.
+ */
 const DEFAULT_SIZE = DEFAULT_CUBE_HALF_EXTENT;
 
 /**
