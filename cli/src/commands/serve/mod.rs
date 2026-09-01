@@ -161,14 +161,27 @@ fn unhonored_sim_args(sim: &SimArgs) -> Vec<&'static str> {
     .filter_map(|(flag, differs)| differs.then_some(flag))
     .collect()
 }
+/// The largest control message `/ws` will read.
+///
+/// Every inbound frame is parsed into a `serde_json::Value` so the keys nothing
+/// reads can be named, and the tree costs several times the bytes on the wire.
+/// axum's default ceiling is 64 MiB per message, which is far past anything this
+/// endpoint has to carry: measured, a `start_simulation` runs about 256 bytes per
+/// satellite, so 250 KiB for a fleet of 1000 and 2.5 MiB for 10000. 8 MiB leaves
+/// room for a fleet larger than any this simulator runs while keeping what one
+/// unauthenticated client can make the server hold to something bounded.
+///
+/// Outbound messages are unaffected: this bounds what is read.
+const MAX_CONTROL_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
 
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
     let rx = state.tx.subscribe();
     let cmd_tx = state.cmd_tx.clone();
-    ws.on_upgrade(move |socket| async move {
-        connection::handle_connection(socket, rx, cmd_tx).await;
-        eprintln!("Client disconnected");
-    })
+    ws.max_message_size(MAX_CONTROL_MESSAGE_BYTES)
+        .on_upgrade(move |socket| async move {
+            connection::handle_connection(socket, rx, cmd_tx).await;
+            eprintln!("Client disconnected");
+        })
 }
 
 /// Binary WS endpoint for a declared `stream-io` stream — the shape of a
@@ -212,10 +225,6 @@ async fn async_server(
         .map_err(|e| CmdError::failure(format!("binding to {addr}: {e}")))?;
 
     let actual_port = listener.local_addr().unwrap().port();
-    eprintln!("Server listening on http://localhost:{actual_port}");
-    #[cfg(feature = "viewer")]
-    eprintln!("Viewer:             http://localhost:{actual_port}/");
-    eprintln!("WebSocket endpoint: ws://localhost:{actual_port}/ws");
 
     let (tx, _rx) = broadcast::channel::<String>(256);
     let (cmd_tx, cmd_rx) = mpsc::channel::<SimCommand>(16);
@@ -223,9 +232,9 @@ async fn async_server(
     // Determine initial config: if CLI args specify simulation, auto-start.
     let initial_config = if has_explicit_sim_args(sim) {
         match sim.config.as_ref() {
-            Some(config_path) => Some(crate::config::SimConfig::load(std::path::Path::new(
-                config_path,
-            ))?),
+            Some(config_path) => Some(crate::config::load_config_reporting_unread_keys(
+                std::path::Path::new(config_path),
+            )?),
             None => None,
         }
     } else {
@@ -271,6 +280,7 @@ async fn async_server(
         // Same reason as in `run`: this path skips `SimConfig::validate`.
         crate::commands::run::validate_sim_args(sim)?;
         let params = Arc::new(SimParams::from_sim_args(sim, true));
+        crate::satellite::ensure_unique_ids(&params.satellites)?;
         tokio::spawn(manager::simulation_manager_with_params(
             params,
             plugin_overrides,
@@ -324,6 +334,16 @@ async fn async_server(
     let app = app.fallback(spa::spa_handler);
 
     let app = app.with_state(state);
+
+    // Announced only once every rejection above is behind us. This banner is
+    // what callers wait on to mean "the endpoint is up" — `cli/tests/ws_e2e.rs`
+    // matches the first line, the Playwright specs read the port out of the
+    // `ws://` one — so printing it before the config is loaded turned a
+    // rejected config into a connection that is refused with no explanation.
+    eprintln!("Server listening on http://localhost:{actual_port}");
+    #[cfg(feature = "viewer")]
+    eprintln!("Viewer:             http://localhost:{actual_port}/");
+    eprintln!("WebSocket endpoint: ws://localhost:{actual_port}/ws");
 
     match shutdown_rx {
         Some(rx) => {

@@ -163,7 +163,7 @@ impl HistoryBuffer {
         }
 
         self.states.push_back(state);
-        if self.states.len() > self.flush_at {
+        if self.states.len() >= self.flush_at {
             self.flush();
         }
     }
@@ -222,7 +222,10 @@ impl HistoryBuffer {
                 // states, so a permanently unwritable spill directory costs
                 // one failed write per `capacity` pushes instead of one per
                 // push.
-                self.flush_at = self.states.len() + self.capacity;
+                // `saturating_add`: the capacity comes from the caller, and a
+                // wrapped sum would put the retry threshold below the current
+                // length, spilling on every push — the opposite of the backoff.
+                self.flush_at = self.states.len().saturating_add(self.capacity);
             }
         }
     }
@@ -1884,5 +1887,32 @@ mod tests {
             let back: F64 = serde_json::from_str(&json).unwrap();
             assert!(back.0.is_nan(), "NaN did not survive as {json}");
         }
+    }
+
+    /// The buffer spills once it holds `capacity` states, not one more.
+    ///
+    /// `capacity` is documented as the most it keeps in memory before
+    /// flushing, and the retry after a failed spill as happening once the
+    /// buffer has grown by another `capacity`. Both were reached one push
+    /// late: measured with `capacity = 4`, the first spill came on push 5.
+    #[test]
+    fn the_buffer_spills_at_capacity() {
+        let dir = std::env::temp_dir().join(format!(
+            "hist_cap_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let mut buf = HistoryBuffer::new(4, dir.clone(), 398600.4418, 6378.137);
+
+        for i in 0..3 {
+            buf.push(make_state(i as f64));
+        }
+        assert_eq!(buf.segment_count, 0, "three of four states is not full");
+
+        buf.push(make_state(3.0));
+        assert_eq!(buf.segment_count, 1, "the fourth state fills it");
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
