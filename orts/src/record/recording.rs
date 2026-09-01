@@ -106,16 +106,6 @@ impl ComponentColumn {
         }
     }
 
-    /// Append `scalars` as the next logical row.
-    ///
-    /// Mixing this with [`Self::push_at`] on one column would leave the row map
-    /// disagreeing with the data, so it is deliberately not public: a caller
-    /// that knows about logical rows uses `push_at`.
-    pub(crate) fn push(&mut self, scalars: &[f64]) {
-        let stored = self.num_rows();
-        self.push_at(scalars, stored);
-    }
-
     /// Append `scalars` as the entity's logical row `logical_row`.
     ///
     /// # Panics
@@ -537,8 +527,8 @@ mod tests {
     #[test]
     fn component_column_push_and_get() {
         let mut col = ComponentColumn::new(3);
-        col.push(&[1.0, 2.0, 3.0]);
-        col.push(&[4.0, 5.0, 6.0]);
+        col.push_at(&[1.0, 2.0, 3.0], 0);
+        col.push_at(&[4.0, 5.0, 6.0], 1);
 
         assert_eq!(col.num_rows(), 2);
         assert_eq!(col.get_row(0), Some([1.0, 2.0, 3.0].as_slice()));
@@ -549,8 +539,8 @@ mod tests {
     #[test]
     fn component_column_scalar() {
         let mut col = ComponentColumn::new(1);
-        col.push(&[42.0]);
-        col.push(&[99.0]);
+        col.push_at(&[42.0], 0);
+        col.push_at(&[99.0], 1);
 
         assert_eq!(col.num_rows(), 2);
         assert_eq!(col.get_row(0), Some([42.0].as_slice()));
