@@ -65,17 +65,14 @@ arika と tobari の詳細設計はそれぞれの [`arika/DESIGN.md`](arika/DES
 
 ### 積分と projection の契約
 
-`OdeState::project` (四元数正規化、境界 clamp 等) は、各積分器が「採用したステップの結果を publish する直前」に一度だけ呼ぶ (reject した候補や中間 stage には呼ばない)。
-callback と event_check は projection 後の状態を受け取る。
-戻り値 `Projection::{Unchanged, Changed}` は実際に状態を書き換えたかを表し、FSAL (First Same As Last) を持つ適応解法がキャッシュした終端微分を再利用できるかの判定に使う。
-複合 state は子の結果の OR を返す。
+数値積分を続けると、状態が本来満たすべき制約からのずれが蓄積する (四元数のノルムが 1 からずれる等)。
+このずれを制約面に戻す操作 (正規化、clamp) が `OdeState::project` で、いつ呼ぶかを契約として固定している。
+呼ぶ位置が揺れると、以下のように適応刻みの判定やシンプレクティック性が壊れるためである。
 
-accept/reject の判定は projection 前の生の候補で行う。
-誤差ベクトルは生の候補に対応する量であり、projection 後の状態と混ぜると数値的に非一貫になる。
-
-Yoshida (高次シンプレクティック) は汎用 projection を適用しない。
-一般の正規化や clamp はシンプレクティック写像ではなく、substep 間に挟むと合成の構造が壊れるため、projection を持たない Verlet kernel を合成する。
-Störmer-Verlet 単体は契約を揃えるため full step の末尾で呼ぶ。
+- 各積分器は「採用したステップの結果」に対してのみ、callback や event 判定に渡す直前に一度だけ project を呼ぶ。reject された候補や RK の中間 stage には呼ばない
+- 適応解法の accept/reject 判定は projection 前の生の候補で行う。誤差推定は生の候補に対して計算された量なので、projection 後の状態と組み合わせると判定が非一貫になる
+- 戻り値 `Projection::{Unchanged, Changed}` は「実際に状態を書き換えたか」を表す。FSAL (前ステップ終端の微分を次ステップ先頭で再利用する最適化) は状態がそのまま持ち越されることが前提なので、Changed ならキャッシュした微分を破棄する。複合 state は子の結果の OR を返す
+- Yoshida (高次シンプレクティック) には汎用 projection を適用しない。正規化や clamp はシンプレクティック写像ではなく、substep の合成の間に挟むと手法の狙いである構造保存が壊れる。そのため projection を持たない Verlet kernel を合成し、Störmer-Verlet 単体は full step の末尾で project を呼んで他の積分器と契約を揃える
 
 ### 制御の 3 層
 
