@@ -62,13 +62,19 @@ export interface DirectionVectorInputs {
   options?: DirectionVectorOptions;
 }
 
-/** Unit vector, or null for a zero-length or non-finite input. */
+/**
+ * Unit vector, or null for a zero-length or non-finite input.
+ *
+ * The length is checked for being finite as well as positive: components can each
+ * be finite while their squares overflow, and dividing by an infinite length
+ * yields a zero vector — which a rotation onto it turns into an invalid
+ * quaternion rather than a dropped arrow.
+ */
 function normalize(v: Vec3 | null | undefined): Vec3 | null {
   if (v == null) return null;
   const [x, y, z] = v;
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null;
   const len = Math.sqrt(x * x + y * y + z * z);
-  if (!(len > 0)) return null;
+  if (!(Number.isFinite(len) && len > 0)) return null;
   return [x / len, y / len, z / len];
 }
 

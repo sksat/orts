@@ -127,5 +127,8 @@ export function drawnExtentForSpan(span: number): number {
 export function cameraDistanceForSpan(span: number, fovDegrees: number, aspect = 1): number {
   const halfFov = (fovDegrees / 2) * (Math.PI / 180);
   const vertical = (drawnExtentForSpan(span) * VIEW_MARGIN) / Math.tan(halfFov);
-  return vertical / Math.min(1, aspect);
+  // A viewport with no width or height has no aspect to fit; treat it as square
+  // rather than returning an infinite distance a caller would place a camera at.
+  const usable = Number.isFinite(aspect) && aspect > 0 ? Math.min(1, aspect) : 1;
+  return vertical / usable;
 }

@@ -150,6 +150,16 @@ describe("resolveDirectionVectors", () => {
     }
   });
 
+  it("omits a direction whose length overflows from finite components", () => {
+    // Each component is finite but the squares are not, so the length comes out
+    // infinite and dividing by it would give a zero vector — which a rotation
+    // onto it turns into an invalid quaternion rather than a dropped arrow.
+    const huge: Vec3 = [1e200, 1e200, 1e200];
+    expect(resolveDirectionVectors({ frame: INERTIAL, sunEci: huge, positionEci: huge })).toEqual(
+      [],
+    );
+  });
+
   it("omits the Sun when its direction is zero or non-finite", () => {
     const { r } = orbitState(7000, 0.5, 0.2);
     for (const sunEci of [

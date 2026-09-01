@@ -110,6 +110,15 @@ describe("sizes derived from the span", () => {
     }
   });
 
+  it("treats an unusable aspect as square rather than returning an infinite distance", () => {
+    // A canvas with no width or height has no aspect to fit; a caller must not be
+    // handed Infinity or NaN to place a camera at.
+    const square = cameraDistanceForSpan(1, 50, 1);
+    for (const aspect of [0, -2, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(cameraDistanceForSpan(1, 50, aspect)).toBeCloseTo(square, 12);
+    }
+  });
+
   it("does not pull the camera closer than the square fit on a wide viewport", () => {
     // A landscape viewport is already covered by the square fit; widening it must
     // not shrink the spacecraft by pushing the camera in.
