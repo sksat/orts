@@ -1545,6 +1545,63 @@ diffuse = 0.1
 cp_offset = [0.0, 1.5, 0.0]
 "#;
 
+    /// A `back` table in config has to reach the dynamics, not just the spec.
+    ///
+    /// The config tests stop at `SpacecraftShape`; this one takes both configs
+    /// through to the models the integrator evaluates and puts the Sun behind
+    /// the written face. Without `back` the plate is dark there and SRP is
+    /// exactly zero; with it, the far face is lit. That is the user-facing
+    /// claim, and nothing else in the suite makes it.
+    #[test]
+    fn a_back_table_lights_the_plate_from_behind() {
+        let srp_magnitude = |toml: &str| -> f64 {
+            let init = engine_from_toml(toml).expect("engine builds");
+            let SimGroup::Spacecraft(group) = &init.engine.group else {
+                panic!("expected an attitude fleet");
+            };
+            let (_, dynamics) = group
+                .satellites_with_dynamics()
+                .next()
+                .expect("one satellite");
+            // Put the spacecraft sunward of Earth and its panel normal away
+            // from the Sun, so the written face is the dark one.
+            let epoch = init.engine.params.epoch.expect("panel SRP needs an epoch");
+            let sun_dir = arika::sun::sun_position_eci(&epoch.to_tdb())
+                .into_inner()
+                .normalize();
+            let probe = orts::SpacecraftState {
+                orbit: orts::orbital::OrbitalState::new(
+                    sun_dir * 7000.0,
+                    nalgebra::Vector3::new(0.0, 7.5, 0.0),
+                ),
+                attitude: orts::attitude::AttitudeState::identity(),
+                mass: 50.0,
+            };
+
+            dynamics
+                .model_breakdown(0.0, &probe)
+                .into_iter()
+                .find(|(name, _)| *name == "panel_srp")
+                .map(|(_, loads)| loads.acceleration_inertial.magnitude())
+                .expect("panel_srp is installed")
+        };
+
+        // The panel normal is +x in both configs; the Sun ends up on -x of it.
+        let one_face = srp_magnitude(PANEL_TOML);
+        let two_faces = srp_magnitude(&format!(
+            "{PANEL_TOML}back = {{ specular = 0.05, diffuse = 0.4 }}\n"
+        ));
+
+        assert_eq!(
+            one_face, 0.0,
+            "one written face, lit from behind, feels nothing"
+        );
+        assert!(
+            two_faces > 0.0,
+            "the back face has to feel it: got {two_faces:e}"
+        );
+    }
+
     /// Panels written in config have to reach the dynamics the integrator
     /// evaluates, replacing the isotropic models rather than joining them.
     #[test]

@@ -540,6 +540,109 @@ mod tests {
         }
     }
 
+    /// Over a full turn of the Sun direction, the plate has exactly one lit
+    /// face, and its force is the one-sided law for whichever side is lit.
+    ///
+    /// The single-direction tests below say the pair works somewhere. This says
+    /// it works everywhere, which is the claim `back_face` exists to make: no
+    /// attitude leaves the plate dark, none lights both faces (which would
+    /// double the force), and the lit face's own optics are the ones used.
+    #[test]
+    fn a_plate_has_exactly_one_lit_face_at_every_sun_direction() {
+        let cells = PanelOptics::new(0.1, 0.2);
+        let substrate = PanelOptics::new(0.05, 0.4);
+        let front = SurfacePanel::at_com(4.0, Vector3::new(1.0, 0.0, 0.0), 2.2, cells)
+            .with_cp_offset(Vector3::new(0.0, 1.5, 0.0));
+        let back = front.back_face(substrate);
+
+        // Enough steps to land near edge-on without landing exactly on it, and
+        // an odd count so the two exact edge-on angles are never sampled.
+        const STEPS: usize = 721;
+        let mut lit_front = 0;
+        let mut lit_back = 0;
+        for i in 0..STEPS {
+            let angle = std::f64::consts::TAU * (i as f64) / (STEPS as f64);
+            let s_body = sun_tilted_in_xy(angle);
+
+            let f_front = panel_force(&front, &s_body, TEST_PRESSURE);
+            let f_back = panel_force(&back, &s_body, TEST_PRESSURE);
+            let (front_lit, back_lit) = (f_front != Vector3::zeros(), f_back != Vector3::zeros());
+
+            assert!(
+                !(front_lit && back_lit),
+                "both faces lit at {angle} rad, which would double the force"
+            );
+            assert!(
+                front_lit || back_lit,
+                "neither face lit at {angle} rad, so the plate has a dead zone"
+            );
+            if front_lit {
+                lit_front += 1;
+            } else {
+                lit_back += 1;
+            }
+
+            // The lit face's force is the one-sided law with that face's own
+            // optics, so the pair cannot be silently sharing the front's.
+            // The optics come from the test, not from the panel: reading
+            // `lit.optics` would make the oracle agree with a back face that
+            // silently kept the front's surface.
+            let (lit, force, optics) = if front_lit {
+                (&front, f_front, cells)
+            } else {
+                (&back, f_back, substrate)
+            };
+            let cos_theta = lit.normal.dot(&s_body);
+            let along_sun = optics.absorptivity() + optics.diffuse();
+            let along_normal = 2.0 * (optics.specular() * cos_theta + optics.diffuse() / 3.0);
+            let expected = -TEST_PRESSURE
+                * lit.area
+                * cos_theta
+                * (along_sun * s_body + along_normal * lit.normal);
+            assert!(
+                (force - expected).magnitude() < 1e-18,
+                "at {angle} rad: {force:?} vs {expected:?}"
+            );
+        }
+        assert_eq!(
+            lit_front + lit_back,
+            STEPS,
+            "every sample lit exactly one face"
+        );
+        assert!(
+            lit_front > STEPS / 4 && lit_back > STEPS / 4,
+            "both faces should take a real share of the turn: {lit_front} / {lit_back}"
+        );
+    }
+
+    /// Exactly edge-on, the pair is dark rather than doubled.
+    ///
+    /// `cos θ` is +0.0 for one face and -0.0 for the other, and both are
+    /// dropped by `cos_theta <= 0.0`. A zero-thickness plate seen edge-on has
+    /// no projected area, so no force is the right answer.
+    #[test]
+    fn a_plate_seen_edge_on_feels_nothing_from_either_face() {
+        let front = SurfacePanel::at_com(
+            4.0,
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::new(0.1, 0.2),
+        );
+        let back = front.back_face(PanelOptics::new(0.05, 0.4));
+
+        let edge_on = Vector3::new(0.0, 1.0, 0.0);
+        assert_eq!(front.normal.dot(&edge_on), 0.0);
+        assert_eq!(back.normal.dot(&edge_on), 0.0);
+        assert_eq!(
+            panel_force(&front, &edge_on, TEST_PRESSURE),
+            Vector3::zeros()
+        );
+        assert_eq!(
+            panel_force(&back, &edge_on, TEST_PRESSURE),
+            Vector3::zeros()
+        );
+    }
+
     /// The back face is what covers the attitudes the front cannot.
     ///
     /// A thin plate written as one panel produces nothing whenever the Sun is
