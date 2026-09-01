@@ -93,6 +93,13 @@ section is subdivided by package.
   0.33 m, and the three shorter Harris-Priester oracles by 20-40%. ([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- `load_as_recording` restores a component the .rrd carries on only some of an
+  entity's rows, rather than dropping it. It had to drop it while a column could
+  not say which rows it covered: filling the absent rows with zeros would have
+  put a value the file never carried into the CSV `orts convert` writes, and
+  dropping the rows would have cost the trajectory. A row holding only some of
+  the component's fields is still left out, and a component no row holds whole is
+  still not reported. ([#375](https://github.com/sksat/orts/issues/375))
 - A component logged at only some steps keeps the times it was logged at.
   `log_temporal` decided whether a call began a new row by comparing row counts,
   so a short column lined up with the *leading* rows: logging attitude from step

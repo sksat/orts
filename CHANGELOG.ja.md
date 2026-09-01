@@ -80,6 +80,12 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   20-40% 改善する。([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- `load_as_recording` が、.rrd が entity の一部の行にしか持たない component を
+  落とさず復元するようになった。列が「自分の覆う行」を持てなかった間は落とすしか
+  なかった: 欠けた行をゼロで埋めると `orts convert` の CSV にファイルが持っていない
+  値が入り、行を落とすと軌道が失われる。component の field が一部しか揃っていない行は
+  従来どおり除外し、どの行も丸ごと持たない component は報告しない。
+  ([#375](https://github.com/sksat/orts/issues/375))
 - 一部の step でしか logging されなかった component が、logging された時刻を保つ
   ようになった。`log_temporal` は行数の比較で新しい行かどうかを決めていたため、
   短い列が**先頭の**行に並んでいた: step 5 から attitude を出すと step 5〜9 が
