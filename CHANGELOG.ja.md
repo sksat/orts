@@ -217,7 +217,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   どのフィールドも読まないキーは、拒否せずキー名を warning として表示する。実行は
   続くので新しい `orts` 向けに書いた config も古い `orts` で実行でき、`duraton = 100`
   が黙って 1 周期分実行されることはなくなった。`orts config validate` は `warnings`
-  にキーのパスを出力し、`run` と `serve` は stderr に表示する。server は client の
+  にキーのパスを出力し、`run` と `serve` は `log::warn!` で報告する。server は client の
   `start_simulation` や `add_satellite` に含まれるものを表示する。`type` タグ付きの
   block (`[satellites.orbit]`、`[satellites.controller]`、reaction wheel、磁気トルカ)
   だけは拒否する。`serde_ignored` は internally tagged enum の内部を見られず報告

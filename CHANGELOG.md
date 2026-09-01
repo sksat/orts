@@ -246,8 +246,8 @@ section is subdivided by package.
   A key nothing reads is named rather than refused: the run goes ahead, so a
   config written for a newer `orts` still works here, and `duraton = 100` no
   longer runs for one orbital period in silence. `orts config validate` carries
-  the paths in its `warnings`, `run` and `serve` print them, and the server names
-  the ones in a client's `start_simulation` or `add_satellite`. A `type`-tagged
+  the paths in its `warnings`, `run` and `serve` report them at warn level, and
+  the server names the ones in a client's `start_simulation` or `add_satellite`. A `type`-tagged
   block — `[satellites.orbit]`, `[satellites.controller]`, the reaction wheels
   and the magnetorquers — refuses instead: `serde_ignored` cannot see inside an
   internally tagged enum, so there is nothing to name there, and a dropped

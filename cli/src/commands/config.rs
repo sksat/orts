@@ -93,8 +93,8 @@ fn run_validate(path: &str, json: bool) {
                 }));
             } else {
                 for key in &loaded.unread_keys {
-                    eprintln!(
-                        "Warning: {path}: nothing reads `{}`; its value is ignored",
+                    log::warn!(
+                        "{path}: nothing reads `{}`; its value is ignored",
                         crate::config::printable_key(key)
                     );
                 }

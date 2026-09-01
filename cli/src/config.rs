@@ -946,8 +946,8 @@ pub fn unread_client_message_keys(value: &serde_json::Value) -> UnreadClientKeys
 pub fn load_config_reporting_unread_keys(path: &Path) -> Result<SimConfig, String> {
     let loaded = SimConfig::load_with_warnings(path)?;
     for key in &loaded.unread_keys {
-        eprintln!(
-            "Warning: {}: nothing reads `{}`; its value is ignored",
+        log::warn!(
+            "{}: nothing reads `{}`; its value is ignored",
             path.display(),
             printable_key(key)
         );
@@ -1015,11 +1015,8 @@ impl SimConfig {
     ///
     /// The paths come back as a value so that each caller decides where they
     /// go: `orts config validate --json` puts them in `warnings`, `run` and
-    /// `serve` print them, and a test reads them. The printing ones use
-    /// `eprintln!`, which is what every other line addressed to whoever wrote
-    /// the config uses (`Warning: satellite 'a': sensors declared without …`).
-    /// `log::` in this crate carries diagnostics about the machinery instead,
-    /// and reaches nobody until a backend is installed (#387, #390).
+    /// `serve` report them through `log::warn!`, and a test reads them without
+    /// a logger installed.
     pub fn load_with_warnings(path: &Path) -> Result<LoadedConfig, String> {
         let ext = path
             .extension()

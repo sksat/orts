@@ -200,14 +200,14 @@ async fn main_loop(
                             {
                                 let unread = crate::config::unread_client_message_keys(&value);
                                 for key in &unread.named {
-                                    eprintln!(
-                                        "Warning: client message: nothing reads `{}`; its value is ignored",
+                                    log::warn!(
+                                        "client message: nothing reads `{}`; its value is ignored",
                                         crate::config::printable_key(key)
                                     );
                                 }
                                 if unread.unnamed > 0 {
-                                    eprintln!(
-                                        "Warning: client message: and {} more keys nothing reads",
+                                    log::warn!(
+                                        "client message: and {} more keys nothing reads",
                                         unread.unnamed
                                     );
                                 }
