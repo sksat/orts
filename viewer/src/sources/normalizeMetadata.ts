@@ -7,7 +7,7 @@
 
 import type { CSVMetadata } from "../orbit.js";
 import type { RrdMetadata } from "../wasm/rrdWasmInit.js";
-import { resolveCentralBody } from "./centralBody.js";
+import type { CentralBody } from "./centralBody.js";
 import type { SimInfo } from "./types.js";
 
 /**
@@ -17,7 +17,12 @@ import type { SimInfo } from "./types.js";
  * @param fileName - Original file name (used as satellite display name)
  * @param dt - Estimated time step between data points [s]
  */
-export function csvMetadataToSimInfo(metadata: CSVMetadata, fileName: string, dt: number): SimInfo {
+export function csvMetadataToSimInfo(
+  metadata: CSVMetadata,
+  fileName: string,
+  dt: number,
+  centralBody: CentralBody,
+): SimInfo {
   const satellites =
     metadata.satellites && metadata.satellites.length > 0
       ? metadata.satellites.map((id) => ({
@@ -39,18 +44,12 @@ export function csvMetadataToSimInfo(metadata: CSVMetadata, fileName: string, dt
           },
         ];
 
-  // Resolved once and read twice, rather than resolved per field. Each field
-  // falls back on its own, so a valid `mu` can sit beside Earth's radius, and
-  // `central_body` is the name the source gave and passes through: it can read
-  // "mars" over Earth's constants.
-  const centralBody = resolveCentralBody(metadata.mu, metadata.centralBodyRadius);
-
   return {
     mu: centralBody.mu,
     dt,
     output_interval: dt,
     stream_interval: dt,
-    central_body: metadata.centralBody ?? "earth",
+    central_body: centralBody.bodyId,
     central_body_radius: centralBody.bodyRadius,
     epoch_jd: metadata.epochJd,
     satellites,
@@ -70,6 +69,7 @@ export function rrdMetadataToSimInfo(
   fileName: string,
   dt: number,
   entityPaths: string[],
+  centralBody: CentralBody,
 ): SimInfo {
   const satellites = entityPaths.map((path) => {
     // Extract name from entity path (last segment after /sat/)
@@ -97,18 +97,12 @@ export function rrdMetadataToSimInfo(
     });
   }
 
-  // Resolved once and read twice, rather than resolved per field. Each field
-  // falls back on its own, so a valid `mu` can sit beside Earth's radius, and
-  // `central_body` is the name the source gave and passes through: it can read
-  // "mars" over Earth's constants.
-  const centralBody = resolveCentralBody(metadata.mu, metadata.body_radius);
-
   return {
     mu: centralBody.mu,
     dt,
     output_interval: dt,
     stream_interval: dt,
-    central_body: metadata.body_name ?? "earth",
+    central_body: centralBody.bodyId,
     central_body_radius: centralBody.bodyRadius,
     epoch_jd: metadata.epoch_jd ?? null,
     satellites,

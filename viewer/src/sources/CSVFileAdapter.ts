@@ -10,6 +10,8 @@
 
 import type { CSVMetadata } from "../orbit.js";
 import type { CSVWorkerMessage } from "./csvParseLogic.js";
+import type { BodyCatalog } from "./bodyCatalog.js";
+import { type CentralBody, describeCentralBodyError, resolveCentralBody } from "./centralBody.js";
 import { csvMetadataToSimInfo } from "./normalizeMetadata.js";
 import type { SourceAdapter, SourceEventHandler, SourceId } from "./types.js";
 
@@ -22,11 +24,26 @@ export class CSVFileAdapter implements SourceAdapter {
   private file: File;
   private stopped = false;
 
-  constructor(sourceId: SourceId, file: File, onEvent: SourceEventHandler) {
+  /**
+   * `bodyCatalog` extends the bodies whose constants a recording may leave
+   * out, for a consumer simulating around one this viewer does not ship.
+   */
+  constructor(
+    sourceId: SourceId,
+    file: File,
+    onEvent: SourceEventHandler,
+    bodyCatalog?: BodyCatalog,
+  ) {
     this.sourceId = sourceId;
     this.onEvent = onEvent;
     this.file = file;
+    this.bodyCatalog = bodyCatalog;
   }
+
+  private bodyCatalog: BodyCatalog | undefined;
+  /** The body this file's orbits are measured against, resolved from its
+   * metadata as soon as that arrives. */
+  private centralBody: CentralBody | null = null;
 
   start(): void {
     // Make restart safe: kill any in-flight read/worker first, then reset
@@ -35,6 +52,7 @@ export class CSVFileAdapter implements SourceAdapter {
     this.estimatedDt = null;
     this.lastTByEntity.clear();
     this.pendingMetadata = null;
+    this.centralBody = null;
     this.infoEmitted = false;
     this.stopped = false;
 
@@ -99,6 +117,26 @@ export class CSVFileAdapter implements SourceAdapter {
 
     switch (msg.type) {
       case "metadata": {
+        // Resolved here, once, rather than when the file completes: the
+        // history chunks below reach the charts first, so finding out then
+        // that they cannot be measured would be after the fact.
+        const resolved = resolveCentralBody(
+          {
+            bodyId: msg.metadata.centralBody,
+            mu: msg.metadata.mu,
+            bodyRadius: msg.metadata.centralBodyRadius,
+          },
+          this.bodyCatalog,
+        );
+        if (!resolved.ok) {
+          this.onEvent(id, {
+            kind: "error",
+            message: `${this.file.name}: ${describeCentralBodyError(resolved.error)}`,
+          });
+          this.stop();
+          return;
+        }
+        this.centralBody = resolved.body;
         // Held until "complete", where info is emitted with the final dt
         this.pendingMetadata = msg.metadata;
         break;
@@ -136,11 +174,12 @@ export class CSVFileAdapter implements SourceAdapter {
 
       case "complete":
         // Emit info with the final dt estimate before signalling completion
-        if (!this.infoEmitted && this.pendingMetadata) {
+        if (!this.infoEmitted && this.pendingMetadata && this.centralBody) {
           const info = csvMetadataToSimInfo(
             this.pendingMetadata,
             this.file.name,
             this.estimatedDt ?? CSVFileAdapter.DEFAULT_DT,
+            this.centralBody,
           );
           this.onEvent(id, { kind: "info", info });
           this.infoEmitted = true;

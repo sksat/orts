@@ -6,6 +6,7 @@ import type { HistoryState } from "../protocol/generated/HistoryState.js";
 import type { SatelliteInfo as WireSatelliteInfo } from "../protocol/generated/SatelliteInfo.js";
 import type { WsMessage } from "../protocol/generated/WsMessage.js";
 import type { MarkerShape } from "../satelliteShapes.js";
+import { describeCentralBodyError, resolveCentralBody } from "../sources/centralBody.js";
 
 /** Per-satellite info from the server, normalized for app use. */
 export interface SatelliteInfo {
@@ -174,15 +175,29 @@ export function dispatchServerMessage(msg: ServerMessage, callbacks: DispatchCal
       ...parseAttitude(msg.attitude),
     });
   } else if (msg.type === "info") {
+    // A server that predates `central_body_radius` leaves it out, and the body
+    // it names says which radius that is. Resolved the way a file's is, so a
+    // live source cannot be read against a body a file would be refused for.
+    const resolved = resolveCentralBody({
+      bodyId: msg.central_body,
+      mu: msg.mu,
+      bodyRadius: msg.central_body_radius,
+    });
+    if (!resolved.ok) {
+      callbacks.onError?.(
+        `the server's simulation info: ${describeCentralBodyError(resolved.error)}`,
+      );
+      return;
+    }
     // The `??` fallbacks tolerate older servers that predate these fields.
     const satellites: SatelliteInfo[] = (msg.satellites ?? []).map(normalizeSatelliteInfo);
     callbacks.onInfo?.({
-      mu: msg.mu,
+      mu: resolved.body.mu,
       dt: msg.dt,
       output_interval: msg.output_interval,
       stream_interval: msg.stream_interval ?? msg.output_interval,
-      central_body: msg.central_body ?? "earth",
-      central_body_radius: msg.central_body_radius ?? 6378.137,
+      central_body: resolved.body.bodyId,
+      central_body_radius: resolved.body.bodyRadius,
       epoch_jd: msg.epoch_jd ?? null,
       satellites,
     });

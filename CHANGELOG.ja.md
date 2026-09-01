@@ -451,6 +451,21 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   wire 型を置き換え、`satellite_added` variant を追加。([#95](https://github.com/sksat/orts/pull/95))
 
 #### Fixed
+- source の中心天体定数を、source が名乗った天体から解決するか、解決できなければ
+  source を拒否するようになった。従来は `mu` と半径がそれぞれ独立に地球へ fallback して
+  いたので、Mars を名乗ってどちらも持たない recording が「Mars の `mu` + 地球の半径」
+  として読まれていた。存在しない天体で、高度 (`r - radius`) が約 3000 km ずれるのに
+  チャート上にその手掛かりが無い。既定値は viewer が定数を持つ天体に属するものとし、
+  `DEFAULT_BODY_CATALOG` (arika が伝播する 10 天体) に置いた。そこに無い天体でも、
+  source が両方の定数を持っていれば通す。何も発明していないため。source が持っている値が
+  値になりえない場合 (`mu` が 0 以下、半径が 0 以下、いずれも非有限) は、既定値で
+  差し替えるのでなくエラーにする。天体名を持たない source は従来どおり地球として読む
+  (この field より古い recording がそれに当たる)。解決は metadata が届いた時点で 1 度だけ
+  行い、その値を派生値と、チャートを組み立てる `SimInfo` の両方で使う。ファイル経路は
+  読み込みの最後に field ごとに解決していたので、その時点で既に point がチャートへ
+  届いていた。live の WebSocket source も同じ経路で解決するので、ファイルなら拒否される
+  天体で読まれることはない。独自の天体で simulation する consumer は、その定数を adapter
+  に渡す ([#383](https://github.com/sksat/orts/pull/383))
 - `.rrd` ファイルを開いたとき、recording が持たない軌道量を導出するようになった。
   decoder が復元するのは位置と速度で、Kepler 要素とチャートが描く高度・比エネルギー・
   角運動量は 0 のハードコードで届いていた。400 km 軌道の recording が半長軸 0 km、

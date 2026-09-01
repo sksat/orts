@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { CSVMetadata } from "../orbit.js";
+import type { CentralBody } from "./centralBody.js";
 import { csvMetadataToSimInfo } from "./normalizeMetadata.js";
+
+/// The resolved body the caller now supplies. Resolving it is
+/// `resolveCentralBody`'s own test; here it is just the value passed through.
+const EARTH: CentralBody = { bodyId: "earth", mu: 398600.4418, bodyRadius: 6378.137 };
 
 describe("csvMetadataToSimInfo", () => {
   const fullMetadata: CSVMetadata = {
@@ -13,7 +18,7 @@ describe("csvMetadataToSimInfo", () => {
   };
 
   it("converts full metadata to SimInfo with filename fallback", () => {
-    const info = csvMetadataToSimInfo(fullMetadata, "test.csv", 10.0);
+    const info = csvMetadataToSimInfo(fullMetadata, "test.csv", 10.0, EARTH);
     expect(info.mu).toBe(398600.4418);
     expect(info.central_body).toBe("earth");
     expect(info.central_body_radius).toBe(6378.137);
@@ -24,7 +29,7 @@ describe("csvMetadataToSimInfo", () => {
 
   it("uses satellite name from metadata when available", () => {
     const withName: CSVMetadata = { ...fullMetadata, satelliteName: "ISS" };
-    const info = csvMetadataToSimInfo(withName, "iss_orbit.csv", 10.0);
+    const info = csvMetadataToSimInfo(withName, "iss_orbit.csv", 10.0, EARTH);
     expect(info.satellites[0].name).toBe("ISS");
   });
 
@@ -37,7 +42,7 @@ describe("csvMetadataToSimInfo", () => {
       satelliteName: null,
       satellites: null,
     };
-    const info = csvMetadataToSimInfo(empty, "orbit.csv", 5.0);
+    const info = csvMetadataToSimInfo(empty, "orbit.csv", 5.0, EARTH);
     expect(info.mu).toBe(398600.4418);
     expect(info.central_body).toBe("earth");
     expect(info.central_body_radius).toBe(6378.137);
@@ -45,14 +50,14 @@ describe("csvMetadataToSimInfo", () => {
   });
 
   it("sets dt from provided value", () => {
-    const info = csvMetadataToSimInfo(fullMetadata, "test.csv", 7.5);
+    const info = csvMetadataToSimInfo(fullMetadata, "test.csv", 7.5, EARTH);
     expect(info.dt).toBe(7.5);
     expect(info.output_interval).toBe(7.5);
     expect(info.stream_interval).toBe(7.5);
   });
 
   it("satellite id is 'default' and name is filename", () => {
-    const info = csvMetadataToSimInfo(fullMetadata, "apollo11.csv", 1.0);
+    const info = csvMetadataToSimInfo(fullMetadata, "apollo11.csv", 1.0, EARTH);
     expect(info.satellites[0].id).toBe("default");
     expect(info.satellites[0].name).toBe("apollo11.csv");
     expect(info.satellites[0].perturbations).toEqual([]);
@@ -63,7 +68,7 @@ describe("csvMetadataToSimInfo", () => {
       ...fullMetadata,
       satellites: ["iss", "sso"],
     };
-    const info = csvMetadataToSimInfo(multiSat, "constellation.csv", 10.0);
+    const info = csvMetadataToSimInfo(multiSat, "constellation.csv", 10.0, EARTH);
     expect(info.satellites).toHaveLength(2);
     expect(info.satellites[0].id).toBe("iss");
     expect(info.satellites[0].name).toBe("iss");
@@ -76,7 +81,7 @@ describe("csvMetadataToSimInfo", () => {
       ...fullMetadata,
       satellites: ["iss"],
     };
-    const info = csvMetadataToSimInfo(singleSat, "iss.csv", 10.0);
+    const info = csvMetadataToSimInfo(singleSat, "iss.csv", 10.0, EARTH);
     expect(info.satellites).toHaveLength(1);
     expect(info.satellites[0].id).toBe("iss");
     expect(info.satellites[0].name).toBe("iss");
@@ -87,7 +92,7 @@ describe("csvMetadataToSimInfo", () => {
       ...fullMetadata,
       satellites: [],
     };
-    const info = csvMetadataToSimInfo(emptySats, "test.csv", 10.0);
+    const info = csvMetadataToSimInfo(emptySats, "test.csv", 10.0, EARTH);
     expect(info.satellites).toHaveLength(1);
     expect(info.satellites[0].id).toBe("default");
   });

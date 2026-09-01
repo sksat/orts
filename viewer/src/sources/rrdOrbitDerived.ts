@@ -11,22 +11,10 @@
  */
 
 import type { OrbitPoint } from "../orbit.js";
-import { type CentralBody, resolveCentralBody } from "./centralBody.js";
 import type { RrdPointOut } from "./rrdParseLogic.js";
 
 /** Values `orbit_derived_batch` returns per state. */
 export const ORBIT_DERIVED_STRIDE = 10;
-
-/** The central body constants a batch is converted against. */
-export type OrbitDerivedContext = CentralBody;
-
-/** Read `mu` and the body radius out of a recording's metadata. */
-export function orbitDerivedContext(metadata: {
-  mu: number | null;
-  body_radius: number | null;
-}): OrbitDerivedContext {
-  return resolveCentralBody(metadata.mu, metadata.body_radius);
-}
 
 /** Flatten points into the `[x,y,z,vx,vy,vz, ...]` layout the batch takes. */
 export function packStates(points: readonly RrdPointOut[]): Float64Array {
