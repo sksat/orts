@@ -179,7 +179,7 @@ pub fn ensure_unique_ids(specs: &[SatelliteSpec]) -> Result<(), String> {
         if let Some(first) = seen.insert(spec.entity_path().to_string(), i) {
             return Err(format!(
                 "duplicate satellite id '{}': satellites #{first} and #{i} would share \
-                 one recording entity and one command target; ids must be unique",
+                 one recording entity, and one CSV section with it; ids must be unique",
                 spec.id
             ));
         }

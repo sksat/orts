@@ -75,6 +75,10 @@ fn run_validate(path: &str, json: bool) {
             // A key nothing read is a warning, not a failure: a config written
             // for a newer `orts` still runs here. Naming the paths is what
             // makes a typo findable, since the value it carried is gone.
+            // The JSON form carries the key as it was written — a JSON string
+            // encodes a newline or an escape character itself. The line printed
+            // to a terminal goes through `printable_key`, like every other
+            // warning naming a key.
             let warnings: Vec<String> = loaded
                 .unread_keys
                 .iter()
@@ -88,8 +92,11 @@ fn run_validate(path: &str, json: bool) {
                     "warnings": warnings,
                 }));
             } else {
-                for warning in &warnings {
-                    eprintln!("Warning: {path}: {warning}");
+                for key in &loaded.unread_keys {
+                    eprintln!(
+                        "Warning: {path}: nothing reads `{}`; its value is ignored",
+                        crate::config::printable_key(key)
+                    );
                 }
                 eprintln!("OK: {path} is a valid orts config");
             }

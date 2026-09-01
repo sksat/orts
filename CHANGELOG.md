@@ -195,9 +195,9 @@ section is subdivided by package.
   something else: an unknown `[integrator] type` or `atmosphere` (previously
   dp45 / the exponential model), two
   satellites whose ids name one recording entity (previously one entity and one
-  CSV section for both, and for two spellings of one id string, one
-  `[[command]]` target too; compared on the entity, so `a` and `/a` collide as
-  they do in the recording), and an attitude block no
+  CSV section for both; compared on the entity, so `a` and `/a` collide as they
+  do in the recording, while the same id string twice shared its `[[command]]`
+  target as well), and an attitude block no
   rigid body could have — an inertia tensor that is not positive definite or
   violates `I1 + I2 >= I3` on its principal moments, `mass <= 0`, or an
   `initial_quaternion` that cannot be normalized. The `integrator` /
