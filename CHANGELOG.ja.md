@@ -168,44 +168,46 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - TLE epoch の day-of-year を (閏考慮の) 年日数で検証。不正値はそのまま別の
   年に繰り上がらず拒否される。([#87](https://github.com/sksat/orts/pull/87))
 - config ファイル、`orts config validate`、WebSocket の `start_simulation`
-  payload は、シミュレーションが honor できない入力を別の何かに解決せず拒否する:
+  payload は、シミュレーションが実行できない入力を別の値に読み替えず拒否する:
   未知の `[integrator] type` / `atmosphere` (従来は dp45 / exponential
   モデル)、id が 1 つの recording entity を指す 2 機 (id の文字列でなく entity で
   比較するので、recording と同じく `a` と `/a` は衝突する。従来は recording
   entity と CSV section を共有し、id 文字列まで同じなら `[[command]]` の宛先も
   共有していた)、
-  剛体が持てない attitude ブロック (正定値でない、または主慣性モーメントで
+  どの剛体もとりえない attitude ブロック (正定値でない、または主慣性モーメントで
   `I1 + I2 >= I3` を破る慣性テンソル、`mass <= 0`、正規化できない
   `initial_quaternion`)。config が受理する `integrator` / `atmosphere` の綴りは、
   対応する CLI フラグが受理する集合と厳密に一致する。
 
-  何も読まないキーは、拒否ではなく名前を出す。実行は続くので新しい `orts` 向けに
-  書いた config もここで動き、`duraton = 100` が黙って 1 周期走ることはなくなった。
-  `orts config validate` は `warnings` にパスを載せ、`run` と `serve` は表示し、
-  server は client の `start_simulation` や `add_satellite` に含まれるものを出す。
-  `type` タグ付きの block (`[satellites.orbit]`、`[satellites.controller]`、
-  reaction wheel、磁気トルカ) だけは拒否する。`serde_ignored` は internally tagged
-  enum の中を見られないので名前を出す手段が無く、`inclinaton = 51.6` が落ちると
-  軌道が赤道面のままになる。特異な慣性テンソルは従来
+  どのフィールドも読まないキーは、拒否せずキー名を warning として表示する。実行は
+  続くので新しい `orts` 向けに書いた config も古い `orts` で実行でき、`duraton = 100`
+  が黙って 1 周期分実行されることはなくなった。`orts config validate` は `warnings`
+  にキーのパスを出力し、`run` と `serve` は stderr に表示する。server は client の
+  `start_simulation` や `add_satellite` に含まれるものを表示する。`type` タグ付きの
+  block (`[satellites.orbit]`、`[satellites.controller]`、reaction wheel、磁気トルカ)
+  だけは拒否する。`serde_ignored` は internally tagged enum の内部を見られず報告
+  できないため、`inclinaton = 51.6` が無視されると軌道が赤道面のままになる。特異な
+  慣性テンソルは従来
   `SpacecraftDynamics::new` で panic し、`orts serve --config` では spawn された
   manager task の中で起きるため、server は listen したままシミュレーションも
   client への error も無い状態になっていた。([#351](https://github.com/sksat/orts/pull/351))
 
 #### Fixed
-- どの mode でも走らない fleet を `orts config validate` と `orts serve --config`
-  が拒否する。`[satellites.attitude]` や `[satellites.controller]` を一部の衛星に
-  だけ書いた config と、全衛星に controller があって attitude がどこにもない config。
-  engine は元からこれらを拒否していたが、`orts serve` は engine を spawn した
-  manager の中で建てるので、config は valid と言われ banner も出た上で、渡した
-  config が走らないまま server が idle で待つ状態になっていた。`serve` は listening を
-  告げる代わりにエラーで終了する。([#351](https://github.com/sksat/orts/pull/351))
-- WebSocket の `add_satellite` が、実行中の fleet にいる衛星と同じ entity path
-  (`/world/sat/<id>`) になる id を拒否する。従来は同じ path の 2 機を許し、
-  `[[command]]` は後から追加した方にしか届かなかった。`id` 省略時の
-  `sat-<現在の機数>` も同じように衝突する。([#351](https://github.com/sksat/orts/pull/351))
+- どの mode でも実行できない fleet を `orts config validate` と
+  `orts serve --config` が拒否する。`[satellites.attitude]` や
+  `[satellites.controller]` を一部の衛星にだけ書いた config と、全衛星に controller
+  があって attitude がどこにもない config。engine は元からこれらを拒否していたが、
+  `orts serve` は engine を spawn した manager task 内で構築するため、config は valid
+  と判定され banner も表示された上で、指定した config が実行されないまま server が
+  idle 状態で待機していた。`serve` は listening と表示せずエラー終了する。([#351](https://github.com/sksat/orts/pull/351))
+- WebSocket の `add_satellite` が、実行中の fleet の衛星と同じ entity path
+  (`/world/sat/<id>`) になる id を拒否する。従来は同じ path の 2 機を受理し、
+  `[[command]]` は後から追加した方にしか配送されなかった。`id` 省略時の
+  `sat-<現在の機数>` も同様に衝突する。([#351](https://github.com/sksat/orts/pull/351))
 - `orts serve` が、`ClientMessage` に deserialize できなかったメッセージに
-  `{"type":"error"}` を返す。従来は error を捨てていたので、client は来ない応答を
-  待ち続けた。失敗するのは `type` タグ付き block に未知のキーがある場合。([#351](https://github.com/sksat/orts/pull/351))
+  `{"type":"error"}` を返す。従来は error を破棄していたため、client は応答が
+  返らないまま待ち続けた。deserialize が失敗するのは `type` タグ付き block に未知の
+  キーがある場合。([#351](https://github.com/sksat/orts/pull/351))
 - `orts serve` が `Server listening` / `WebSocket endpoint` の banner を、
   `--config` ファイルを受理した後にだけ出すようになった。先に出していたため、
   banner を起動完了として待つ呼び出し側 (`cli/tests/ws_e2e.rs`、Playwright の
