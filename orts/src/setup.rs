@@ -103,6 +103,21 @@ pub fn default_third_bodies(body: &KnownBody) -> Result<Vec<ThirdBodyGravity>, S
     Ok(bodies)
 }
 
+/// SRP whose body-dependent quantities both come from the central body: the
+/// Sun's position relative to it, and its own radius for the shadow. Neither
+/// is the Earth default `for_earth` bakes in.
+fn build_srp(
+    body: KnownBody,
+    sat: &SatelliteParams,
+    am: f64,
+) -> Result<SolarRadiationPressure, SunPositionError> {
+    let mut srp = SolarRadiationPressure::for_body(body, Some(am))?;
+    if let Some(cr) = sat.srp_cr {
+        srp = srp.with_cr(cr);
+    }
+    Ok(srp)
+}
+
 /// Build an OrbitalSystem for the given body, automatically configuring gravity,
 /// third-body perturbations, drag, and SRP based on the provided parameters.
 ///
@@ -152,13 +167,7 @@ pub fn build_orbital_system(
     if epoch.is_some()
         && let Some(am) = sat.srp_area_to_mass
     {
-        // Both body-dependent quantities come from the central body: the Sun's
-        // position relative to it, and its own radius for the shadow.
-        let mut srp = SolarRadiationPressure::for_body(*body, Some(am))?;
-        if let Some(cr) = sat.srp_cr {
-            srp = srp.with_cr(cr);
-        }
-        system = system.with_model(srp);
+        system = system.with_model(build_srp(*body, sat, am)?);
     }
 
     Ok(system)
@@ -251,20 +260,10 @@ pub fn build_spacecraft_dynamics(
     if epoch.is_some() {
         match (&sat.shape, sat.srp_area_to_mass) {
             (Some(shape), _) => {
-                // Both body-dependent quantities come from the central body,
-                // the same two the cannonball arm below takes: the Sun's
-                // position relative to it, and its own radius for the shadow.
                 system = system.with_model(PanelSrp::for_body(*body, shape.clone())?);
             }
             (None, Some(am)) => {
-                // Both body-dependent quantities come from the central body: the
-                // Sun's position relative to it, and its own radius for the
-                // shadow.
-                let mut srp = SolarRadiationPressure::for_body(*body, Some(am))?;
-                if let Some(cr) = sat.srp_cr {
-                    srp = srp.with_cr(cr);
-                }
-                system = system.with_model(srp);
+                system = system.with_model(build_srp(*body, sat, am)?);
             }
             (None, None) => {}
         }
@@ -851,5 +850,26 @@ mod tests {
             .is_err(),
             "SRP for Uranus should be refused"
         );
+    }
+    /// The shadow radius is the central body's, whichever body that is.
+    ///
+    /// From #385, kept as its own case: `build_srp` now takes the geometry
+    /// from the body, so this pins the radius half of that.
+    #[test]
+    fn srp_shadow_radius_matches_central_body() {
+        let sat = SatelliteParams {
+            has_drag: false,
+            ballistic_coeff: None,
+            srp_area_to_mass: None,
+            srp_cr: None,
+            disturbances: DisturbanceTorques::default(),
+            shape: None,
+        };
+        let moon = KnownBody::Moon.properties();
+        let srp = build_srp(KnownBody::Moon, &sat, 0.02).expect("the Moon has a Sun vector");
+        assert_eq!(srp.shadow_body_radius, Some(moon.radius));
+        let earth = KnownBody::Earth.properties();
+        let srp = build_srp(KnownBody::Earth, &sat, 0.02).expect("Earth has a Sun vector");
+        assert_eq!(srp.shadow_body_radius, Some(earth.radius));
     }
 }
