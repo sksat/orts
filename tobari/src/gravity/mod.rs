@@ -67,6 +67,14 @@ use legendre::{HfRecursion, SCALE_UP, tri_index, tri_len};
 
 pub use icgem::{IcgemError, TideSystem};
 
+/// Highest degree a field may declare.
+///
+/// 2190 is the highest degree distributed by ICGEM (EGM2008 / EIGEN-6C4),
+/// and the 2⁻⁹³⁰ scaling in [`legendre`] keeps `P̃nm(±1)` representable to
+/// about degree 2700. The bound also keeps a malformed header from
+/// requesting a gigabyte-scale coefficient allocation.
+pub const MAX_DEGREE: usize = 2190;
+
 // Used only on no_std (libm-backed `.sqrt()`); std uses the inherent method.
 #[allow(unused_imports)]
 use crate::math::F64Ext;
@@ -79,7 +87,8 @@ pub enum CoefficientError {
     IndexOutOfRange { degree: usize, order: usize },
     /// A coefficient was NaN or infinite.
     NonFinite { degree: usize, order: usize },
-    /// `gm` or `radius` was not a finite positive number.
+    /// `gm` or `radius` was not a finite positive number, or `max_degree`
+    /// exceeded [`MAX_DEGREE`].
     InvalidConstant(&'static str),
 }
 
@@ -201,6 +210,9 @@ impl SphericalHarmonicField {
         }
         if !(radius_km.is_finite() && radius_km > 0.0) {
             return Err(CoefficientError::InvalidConstant("radius"));
+        }
+        if max_degree > MAX_DEGREE {
+            return Err(CoefficientError::InvalidConstant("max_degree"));
         }
         let len = tri_len(max_degree);
         let mut c = vec![0.0; len];
@@ -776,6 +788,10 @@ gfc 2 2 2.4e-6 -1.4e-6
         assert_eq!(
             SphericalHarmonicField::from_normalized_coefficients(-1.0, A, 2, &[]),
             Err(CoefficientError::InvalidConstant("gm"))
+        );
+        assert_eq!(
+            SphericalHarmonicField::from_normalized_coefficients(GM, A, MAX_DEGREE + 1, &[]),
+            Err(CoefficientError::InvalidConstant("max_degree"))
         );
     }
 

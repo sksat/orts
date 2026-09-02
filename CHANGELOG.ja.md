@@ -557,7 +557,8 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - `gravity::SphericalHarmonicField`: 静的 ICGEM `.gfc` parser (fully normalized
   な `gfc` record のみ。時変 record `gfct`/`trnd`/`dot`/`asin`/`acos` と
   `unnormalized` は明示エラーで拒否。`errors` の列数、`m ≤ n`、重複、非有限値、
-  `C00 = 1`、degree-1 がゼロであること、係数の完備性を検証) と、body frame での
+  `C00 = 1`、degree-1 がゼロであること、係数の完備性を検証。`norm` は必須、
+  `max_degree` は `gravity::MAX_DEGREE` = 2190 が上限) と、body frame での
   非中心 potential / 加速度の Holmes–Featherstone 評価器 (km 単位)。Orekit の
   `HolmesFeatherstoneAttractionModel` と同じ構造だが極そのものでも正則。
   `truncated(degree, order)`, `gm()`, `radius()`, `tide_system()` (記録のみ、

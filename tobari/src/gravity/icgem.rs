@@ -23,6 +23,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt;
 
+use super::MAX_DEGREE;
 use super::legendre::{tri_index, tri_len};
 
 /// Permanent-tide convention of the C̄20 coefficient, as declared by the file.
@@ -271,13 +272,22 @@ pub(super) fn parse(text: &str) -> Result<ParsedIcgem, IcgemError> {
     {
         return Err(IcgemError::NotAGravityField(pt.to_string()));
     }
+    // The normalization changes the scale of every coefficient, so a file that
+    // does not state it cannot be read safely: no default.
     match norm {
-        Some("fully_normalized") | None => {}
+        Some("fully_normalized") => {}
         Some(other) => return Err(IcgemError::UnsupportedNormalization(other.to_string())),
+        None => return Err(IcgemError::MissingHeader("norm")),
     }
     let gm = gm.ok_or(IcgemError::MissingHeader("earth_gravity_constant"))?;
     let radius = radius.ok_or(IcgemError::MissingHeader("radius"))?;
     let max_degree = max_degree.ok_or(IcgemError::MissingHeader("max_degree"))?;
+    if max_degree > MAX_DEGREE {
+        return Err(IcgemError::InvalidHeader(
+            "max_degree",
+            alloc::format!("{max_degree} (limit {MAX_DEGREE})"),
+        ));
+    }
     if !(gm.is_finite() && gm > 0.0) {
         return Err(IcgemError::InvalidHeader(
             "earth_gravity_constant",
@@ -538,6 +548,37 @@ gfc    2    2  2.439383573283130E-06 -1.400273703859340E-06 7.2306E-11 7.3020E-1
         );
         let text = MINIMAL.replace("max_degree              2\n", "");
         assert_eq!(parse(&text), Err(IcgemError::MissingHeader("max_degree")));
+    }
+
+    #[test]
+    fn rejects_missing_norm_header() {
+        let text = MINIMAL.replace("norm                    fully_normalized\n", "");
+        assert_eq!(parse(&text), Err(IcgemError::MissingHeader("norm")));
+    }
+
+    /// A header claiming an absurd degree must fail cleanly instead of
+    /// overflowing the triangular size or allocating gigabytes.
+    #[test]
+    fn rejects_max_degree_above_the_supported_limit() {
+        for bad in ["2191", "100000", "18446744073709551615"] {
+            let text = MINIMAL.replace(
+                "max_degree              2",
+                &alloc::format!("max_degree {bad}"),
+            );
+            match parse(&text) {
+                Err(IcgemError::InvalidHeader("max_degree", _)) => {}
+                other => panic!("{bad}: expected InvalidHeader(max_degree), got {other:?}"),
+            }
+        }
+        // usize overflow in the integer parse itself is also an InvalidHeader.
+        let text = MINIMAL.replace(
+            "max_degree              2",
+            "max_degree 99999999999999999999999",
+        );
+        assert!(matches!(
+            parse(&text),
+            Err(IcgemError::InvalidHeader("max_degree", _))
+        ));
     }
 
     #[test]

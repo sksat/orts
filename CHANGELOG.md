@@ -623,7 +623,8 @@ section is subdivided by package.
   normalized `gfc` records; `gfct`/`trnd`/`dot`/`asin`/`acos` time-variable
   records and `unnormalized` files are rejected with an explicit error;
   `errors` column count, `m ≤ n`, duplicates, non-finite values, `C00 = 1`,
-  zero degree-1 and completeness are validated) plus a Holmes–Featherstone
+  zero degree-1 and completeness are validated; `norm` is required and
+  `max_degree` is capped at `gravity::MAX_DEGREE` = 2190) plus a Holmes–Featherstone
   evaluator of the non-central potential and acceleration in the body frame,
   km units. Same structure as Orekit's `HolmesFeatherstoneAttractionModel`
   but regular at the exact pole. `truncated(degree, order)`, `gm()`,
