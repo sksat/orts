@@ -2,8 +2,8 @@ use arika::elements::ParsedElementSet;
 
 /// Try fetching a TLE by NORAD catalog number. Tries CelesTrak first, falls back to SatNOGS.
 pub fn try_fetch_tle_by_norad_id(norad_id: u32) -> Option<ParsedElementSet> {
-    if let Some(omm) = fetch_tle_celestrak(norad_id) {
-        return Some(omm);
+    if let Some(parsed) = fetch_tle_celestrak(norad_id) {
+        return Some(parsed);
     }
     eprintln!("CelesTrak failed, trying SatNOGS...");
     fetch_tle_satnogs(norad_id)
@@ -37,7 +37,7 @@ fn fetch_tle_celestrak(norad_id: u32) -> Option<ParsedElementSet> {
         return None;
     }
     match arika::tle::parse(&body) {
-        Ok(omm) => Some(omm),
+        Ok(parsed) => Some(parsed),
         Err(e) => {
             eprintln!("Failed to parse CelesTrak TLE: {e}");
             None
@@ -75,7 +75,7 @@ fn fetch_tle_satnogs(norad_id: u32) -> Option<ParsedElementSet> {
     let tle2 = entry["tle2"].as_str()?;
     let tle_text = format!("{tle0}\n{tle1}\n{tle2}");
     match arika::tle::parse(&tle_text) {
-        Ok(omm) => Some(omm),
+        Ok(parsed) => Some(parsed),
         Err(e) => {
             eprintln!("Failed to parse SatNOGS TLE: {e}");
             None
@@ -90,14 +90,14 @@ mod tests {
     #[test]
     #[ignore] // Requires network access
     fn fetch_iss_tle_from_celestrak() {
-        let omm = fetch_tle_celestrak(25544);
-        assert!(omm.is_some());
+        let parsed = fetch_tle_celestrak(25544);
+        assert!(parsed.is_some());
     }
 
     #[test]
     #[ignore] // Requires network access
     fn fetch_iss_tle_satnogs_fallback() {
-        let omm = fetch_tle_satnogs(25544);
-        assert!(omm.is_some());
+        let parsed = fetch_tle_satnogs(25544);
+        assert!(parsed.is_some());
     }
 }

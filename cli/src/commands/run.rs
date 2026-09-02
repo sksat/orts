@@ -757,12 +757,12 @@ fn sim_metadata(params: &SimParams) -> orts::record::recording::SimMetadata {
                 altitude, r0
             )
         }
-        OrbitSpec::Omm { omm } => {
+        OrbitSpec::ElementSet { elements } => {
             format!(
                 "Initial orbit: from TLE/OMM (a = {:.1} km, e = {:.6}, i = {:.2}°)",
-                omm.semi_major_axis(params.mu),
-                omm.fields().eccentricity,
-                omm.fields().inclination.to_degrees()
+                elements.semi_major_axis(params.mu),
+                elements.fields().eccentricity,
+                elements.fields().inclination.to_degrees()
             )
         }
     });

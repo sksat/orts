@@ -232,7 +232,7 @@ fn validate_sim_config(config: &SimConfig) -> Result<(), String> {
     // SGP4/TEME is Earth-centered: reject a non-Earth TLE/OMM config here so a
     // WebSocket `StartSimulation` returns an error to the client instead of
     // reaching the panic in `SimParams::from_config`.
-    crate::sim::params::validate_omm_body(body, &specs)?;
+    crate::sim::params::validate_element_set_body(body, &specs)?;
     // Reject fleets that no single mode can honor (mixed attitude / mixed
     // controller) with the same rule `ServeEngine::build` and `orts run` use,
     // so a WebSocket `StartSimulation` fails here instead of at engine build.
