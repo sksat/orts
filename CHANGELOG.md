@@ -327,41 +327,6 @@ section is subdivided by package.
   period boundary, and the boundary for a newly added satellite was read from
   the *previous* entry in the fleet (or a hardcoded 5554 s when it was the
   first). ([#368](https://github.com/sksat/orts/pull/368))
-- `orts` now writes its diagnostics to stderr. With no `log` backend installed
-  every `log::` call was discarded, so a displaced stream-io stdio plug, a stream
-  socket error, a halted `serve` simulation, and every line a WASM plugin logged
-  through the WIT `host-env.log` import all went unreported. The diagnostics the
-  rerun crates emit while writing an `.rrd` now appear in the same output.
-  `RUST_LOG` selects the level — default `warn,orts=info`, ours at info and
-  dependencies at warn — and `NO_COLOR`, or a stderr that is not a terminal,
-  drops the styling; `orts --help` documents both. stdout is unchanged: the CSV,
-  the `--json` summary, or the `serve --stream-stdio` protocol and nothing else. ([#390](https://github.com/sksat/orts/pull/390))
-- `orts config validate` and `orts serve --config` refuse a `tle` or `norad`
-  orbit about any body but Earth. SGP4 is Earth's, and `SimParams::from_config`
-  reached that rule through a panic, so such a config validated clean and then
-  took down `orts run --config`. ([#351](https://github.com/sksat/orts/pull/351))
-- `orts config validate` and `orts serve --config` refuse a fleet no
-  simulation mode can run: `[satellites.attitude]` or
-  `[satellites.controller]` on some satellites but not all, or a controller on
-  every satellite with attitude on none. The engine already refused these, but
-  `orts serve` builds it inside the spawned manager, so the config validated
-  clean, the startup banner printed, and the server sat idle with the given
-  config never running. `serve` now exits with the error instead of announcing
-  a listening server. ([#351](https://github.com/sksat/orts/pull/351))
-- The WebSocket `add_satellite` refuses an id whose entity path
-  (`/world/sat/<id>`) already belongs to a satellite in the running fleet. Two
-  satellites on one path meant `[[command]]` reached only the one added last. An
-  omitted `id` takes `sat-<current fleet size>`, which collides the same
-  way. ([#351](https://github.com/sksat/orts/pull/351))
-- `orts serve` answers a message that does not deserialize into `ClientMessage`
-  with a `{"type":"error"}` frame. The error used to be discarded, leaving the
-  client waiting for a response that never came. An unknown key in a
-  `type`-tagged block is what fails. ([#351](https://github.com/sksat/orts/pull/351))
-- `orts serve` prints its `Server listening` / `WebSocket endpoint` banner only
-  after the `--config` file is accepted. Printing it first made a rejected
-  config reach a caller that waits on the banner — `cli/tests/ws_e2e.rs`, the
-  Playwright specs — as a refused connection rather than as its own error
-  message. ([#351](https://github.com/sksat/orts/pull/351))
 - Each controller runs on its own `sample_period`. Two loops moved it: the
   non-realtime `orts serve` cut the timeline at `stream_interval` and called the
   controller once per cut, so the README quick start's config — which leaves

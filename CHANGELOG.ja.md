@@ -287,39 +287,6 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   なった。`serve` は無摂動の orbit-only 衛星を周期の境界ごとに初期軌道へ戻すが、
   新規追加した衛星の境界は fleet の**直前**のエントリから読んでいた (最初の追加では
   5554 s のハードコード)。([#368](https://github.com/sksat/orts/pull/368))
-- `orts` が診断ログを stderr に出力するようになった。logger を初期化していな
-  かったため `log::` の呼び出しは全て破棄されており、stream-io stdio plug の
-  displaced、stream の socket error、`serve` 中のシミュレーション停止、
-  WASM plugin が WIT `host-env.log` 経由で出力した行が、どれも表示されなかった。
-  `.rrd` を書く際に rerun の crate が出す診断も同じ出力に含まれる。level は
-  `RUST_LOG` で選び、既定は `warn,orts=info` (orts は info、依存は warn)。
-  `NO_COLOR` 指定時と stderr が terminal でない場合は装飾を付けない。どちらも
-  `orts --help` に記載がある。stdout は従来どおりコマンドの出力 (CSV、`--json`
-  サマリ、`serve --stream-stdio` の protocol) だけ。 ([#390](https://github.com/sksat/orts/pull/390))
-- `tle` / `norad` 軌道を Earth 以外の中心天体で使う config を、
-  `orts config validate` と `orts serve --config` が拒否する。SGP4 は Earth 専用で、
-  `SimParams::from_config` はこの規則に panic 経由で到達していたため、config は valid
-  と判定された上で `orts run --config` が panic していた。([#351](https://github.com/sksat/orts/pull/351))
-- どの mode でも実行できない fleet を `orts config validate` と
-  `orts serve --config` が拒否する。`[satellites.attitude]` や
-  `[satellites.controller]` を一部の衛星にだけ書いた config と、全衛星に controller
-  があって attitude がどこにもない config。engine は元からこれらを拒否していたが、
-  `orts serve` は engine を spawn した manager task 内で構築するため、config は valid
-  と判定され banner も表示された上で、指定した config が実行されないまま server が
-  idle 状態で待機していた。`serve` は listening と表示せずエラー終了する。([#351](https://github.com/sksat/orts/pull/351))
-- WebSocket の `add_satellite` が、実行中の fleet の衛星と同じ entity path
-  (`/world/sat/<id>`) になる id を拒否する。従来は同じ path の 2 機を受理し、
-  `[[command]]` は後から追加した方にしか配送されなかった。`id` 省略時の
-  `sat-<現在の機数>` も同様に衝突する。([#351](https://github.com/sksat/orts/pull/351))
-- `orts serve` が、`ClientMessage` に deserialize できなかったメッセージに
-  `{"type":"error"}` を返す。従来は error を破棄していたため、client は応答が
-  返らないまま待ち続けた。deserialize が失敗するのは `type` タグ付き block に未知の
-  キーがある場合。([#351](https://github.com/sksat/orts/pull/351))
-- `orts serve` が `Server listening` / `WebSocket endpoint` の banner を、
-  `--config` ファイルを受理した後にだけ出すようになった。先に出していたため、
-  banner を起動完了として待つ呼び出し側 (`cli/tests/ws_e2e.rs`、Playwright の
-  spec) には、拒否された config が error message ではなく接続失敗として
-  届いていた。([#351](https://github.com/sksat/orts/pull/351))
 - 各 controller が自分の `sample_period` で動くようになった。2 つの loop がこれを
   動かしていた。非 realtime の `orts serve` は `stream_interval` で timeline を切り、
   切るたびに controller を 1 回呼んでいた。README quick start の config は
