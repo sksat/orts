@@ -199,26 +199,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Standard ubuntu-latest runners ship with only ~14 GB of free
-      # disk. The orts workspace (rerun + wasmtime with async feature
-      # + criterion benches + 50+ transitive crates) fills that during
-      # the link phase of `cargo test --workspace --no-run`, so we
-      # reclaim ~17 GB by removing runtimes we don't need (Android,
-      # .NET, Haskell, Docker). Large-packages is intentionally off
-      # because it would also remove LLVM/clang, which our
-      # `.cargo/config.toml` uses as the linker driver for wild.
-      # Tool-cache is kept so setup-rust / setup-node stay hot, and
-      # swap is kept because the linker occasionally peaks memory.
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false
-          docker-images: true
-          swap-storage: false
+      # The cleanup this wraps was added when ubuntu-latest shipped ~14 GB of
+      # free disk, which the link phase of `cargo test --workspace --no-run`
+      # filled. The image now starts with 87 GiB available (measured
+      # 2026-09-02), so the action checks first and skips the 66-113 s cleanup
+      # unless the headroom is actually gone.
+      - name: Free disk space if low
+        uses: ./.github/actions/free-disk-space-if-low
 
       - name: Set up wild linker
         uses: ./.github/actions/setup-wild
@@ -241,6 +228,12 @@ jobs:
       - name: Build workspace
         run: cargo test --locked --workspace --no-run
 
+      # What the cleanup threshold in free-disk-space-if-low is set against:
+      # this is the workspace's heaviest link phase, so the headroom left here
+      # says how much margin that threshold really has.
+      - name: Report disk headroom after the build
+        run: df -h /
+
       - name: Upload CLI binary
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -258,16 +251,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false
-          docker-images: true
-          swap-storage: false
+      - name: Free disk space if low
+        uses: ./.github/actions/free-disk-space-if-low
 
       - name: Set up wild linker
         uses: ./.github/actions/setup-wild
@@ -310,16 +295,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false
-          docker-images: true
-          swap-storage: false
+      - name: Free disk space if low
+        uses: ./.github/actions/free-disk-space-if-low
 
       - name: Set up wild linker
         uses: ./.github/actions/setup-wild
@@ -353,16 +330,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false
-          docker-images: true
-          swap-storage: false
+      - name: Free disk space if low
+        uses: ./.github/actions/free-disk-space-if-low
 
       - name: Set up wild linker
         uses: ./.github/actions/setup-wild
@@ -398,16 +367,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false
-          docker-images: true
-          swap-storage: false
+      - name: Free disk space if low
+        uses: ./.github/actions/free-disk-space-if-low
 
       - name: Set up wild linker
         uses: ./.github/actions/setup-wild
@@ -534,16 +495,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false
-          docker-images: true
-          swap-storage: false
+      - name: Free disk space if low
+        uses: ./.github/actions/free-disk-space-if-low
 
       - name: Set up wild linker
         uses: ./.github/actions/setup-wild
@@ -615,6 +568,11 @@ jobs:
             --test serve_kble_stdio_e2e \
             --test run_mode_e2e
 
+      # This job carries both the test binaries and the guest WASM, so it is
+      # the other place worth knowing the headroom at (see rust-build).
+      - name: Report disk headroom after the build
+        run: df -h /
+
       - name: Run CLI plugin-backend E2E
         env:
           ORTS_BIN: ${{ github.workspace }}/bin/orts
@@ -654,16 +612,8 @@ jobs:
       - name: Set up wild linker
         uses: ./.github/actions/setup-wild
 
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false
-          docker-images: true
-          swap-storage: false
+      - name: Free disk space if low
+        uses: ./.github/actions/free-disk-space-if-low
 
       - name: Parse rust-toolchain.toml
         id: rust-toolchain
@@ -803,18 +753,11 @@ jobs:
         if: matrix.target == 'x86_64-unknown-linux-musl'
         uses: ./.github/actions/setup-wild
 
-      # Linux-only action, and only the Linux builds are large enough to need it.
-      - name: Free disk space
+      # Linux-only action. The dist build also holds the `cross` image, so it is
+      # the one job whose headroom is worth cleaning when it runs short.
+      - name: Free disk space if low
         if: runner.os == 'Linux'
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false
-          docker-images: true
-          swap-storage: false
+        uses: ./.github/actions/free-disk-space-if-low
 
       # gnu is built via `cross` so its glibc floor is pinned and
       # host-independent (see Cross.toml); no host wild/clang needed. musl
