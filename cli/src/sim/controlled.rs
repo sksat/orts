@@ -702,7 +702,8 @@ mod tests {
             &[],
             inertia,
             None,
-        );
+        )
+        .expect("Earth has a Sun ephemeris");
 
         // Circular orbit 400 km up, in the equatorial plane.
         let r = body.properties().radius + 400.0;
@@ -1037,7 +1038,7 @@ path = "does-not-exist.wasm"
                 #[cfg(feature = "plugin-wasm")]
                 plugin_backend: params.resolve_plugin_backend(),
             };
-            build_controlled_satellite(&spec, None, &mut ctx).map(|_| ())
+            build_controlled_satellite(&spec, None, 0.0, &mut ctx).map(|_| ())
         };
 
         for body in ["mars", "moon"] {
