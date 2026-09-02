@@ -181,6 +181,9 @@ fn unhonored_sim_args(sim: &SimArgs) -> Vec<&'static str> {
         ("--f107", sim.f107 != default.f107),
         ("--ap", sim.ap != default.ap),
         ("--space-weather", sim.space_weather.is_some()),
+        ("--gravity-field", sim.gravity_field.is_some()),
+        ("--gravity-degree", sim.gravity_degree.is_some()),
+        ("--gravity-order", sim.gravity_order.is_some()),
     ]
     .into_iter()
     .filter_map(|(flag, differs)| differs.then_some(flag))
@@ -616,5 +619,26 @@ mod tests {
             crate::commands::run::validate_sim_args(&args(&["--dt", "NaN"])).is_err(),
             "a non-finite dt is refused"
         );
+    }
+
+    /// The gravity-field flags reach a simulation only through
+    /// `from_sim_args`, so `serve --config` must name them rather than run the
+    /// zonal model behind an explicit `--gravity-field`.
+    #[test]
+    fn gravity_field_flags_are_named_when_unhonored() {
+        assert_eq!(
+            unhonored_sim_args(&args(&[
+                "--gravity-field",
+                "x.gfc",
+                "--gravity-degree",
+                "8",
+                "--gravity-order",
+                "8",
+            ])),
+            vec!["--gravity-field", "--gravity-degree", "--gravity-order"]
+        );
+        let err = refusal(&["--config", "mission.toml", "--gravity-field", "x.gfc"])
+            .expect("serve --config must refuse the flag");
+        assert!(err.contains("--gravity-field"), "{err}");
     }
 }
