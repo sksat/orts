@@ -238,23 +238,10 @@ impl SimParams {
     /// Build SimParams from CLI arguments.
     /// `is_serve`: when true and no orbit args are given, defaults to SSO+ISS.
     ///
-    /// Loads `--gravity-field` itself and panics on a bad file, like a bad
-    /// `--space-weather` file; the CLI entry points load it first with
-    /// [`load_gravity_field`](Self::load_gravity_field) and call
-    /// [`from_sim_args_with_gravity_field`](Self::from_sim_args_with_gravity_field)
-    /// so the failure is a normal error.
-    pub fn from_sim_args(args: &SimArgs, is_serve: bool) -> Self {
-        let gravity_field = Self::load_gravity_field(
-            args.gravity_field.as_deref(),
-            args.gravity_degree,
-            args.gravity_order,
-        )
-        .unwrap_or_else(|e| panic!("{e}"));
-        Self::from_sim_args_with_gravity_field(args, is_serve, gravity_field)
-    }
-
-    /// [`from_sim_args`](Self::from_sim_args) with the gravity field already
-    /// loaded (it is the one the flags name; `None` = zonal model).
+    /// `gravity_field` is the loaded `--gravity-field` (see
+    /// [`load_gravity_field`](Self::load_gravity_field)); the entry points
+    /// load it first so a bad file is a normal error rather than a panic
+    /// here. `None` keeps the zonal model.
     pub fn from_sim_args_with_gravity_field(
         args: &SimArgs,
         is_serve: bool,
@@ -382,9 +369,8 @@ impl SimParams {
 
     /// Build SimParams from a config file.
     ///
-    /// Loads `[gravity_field]` itself and panics on a bad file (see
-    /// [`from_sim_args`](Self::from_sim_args)); `orts run` / `orts serve` load
-    /// it first and call
+    /// Loads `[gravity_field]` itself and panics on a bad file, like a bad
+    /// `--space-weather` file; `orts run` / `orts serve` load it first and call
     /// [`from_config_with_gravity_field`](Self::from_config_with_gravity_field).
     /// A WebSocket `start_simulation` cannot carry `[gravity_field]`
     /// (`serve::manager::validate_sim_config` rejects it), so it never
@@ -406,7 +392,7 @@ impl SimParams {
         let mu = Self::resolve_mu(body, gravity_field.as_deref());
 
         // `None` defers the default; resolved from the element-set epoch after
-        // the satellites are built (see `from_sim_args`).
+        // the satellites are built (see `from_sim_args_with_gravity_field`).
         let epoch = config.epoch.as_ref().map(|s| {
             Epoch::from_iso8601(s).unwrap_or_else(|| {
                 panic!("Invalid epoch format: {s}. Expected ISO 8601 (e.g. 2024-03-20T12:00:00Z)")
@@ -842,7 +828,7 @@ orbit = { type = "circular", altitude = 400 }
             plugin_backend_threshold: None,
             plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
-        let params = SimParams::from_sim_args(&args, false);
+        let params = SimParams::from_sim_args_with_gravity_field(&args, false, None);
         assert!((params.output_interval - 10.0).abs() < 1e-9);
         assert!((params.stream_interval - 10.0).abs() < 1e-9);
         // Defaults to Epoch::now() for known bodies
@@ -879,7 +865,7 @@ orbit = { type = "circular", altitude = 400 }
             plugin_backend_threshold: None,
             plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
-        let params = SimParams::from_sim_args(&args, false);
+        let params = SimParams::from_sim_args_with_gravity_field(&args, false, None);
         assert!((params.dt - 1.0).abs() < 1e-9);
         assert!((params.output_interval - 10.0).abs() < 1e-9);
         assert!((params.stream_interval - 2.0).abs() < 1e-9);
@@ -916,7 +902,7 @@ orbit = { type = "circular", altitude = 400 }
             plugin_backend_threshold: None,
             plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
-        let params = SimParams::from_sim_args(&args, false);
+        let params = SimParams::from_sim_args_with_gravity_field(&args, false, None);
         assert!((params.stream_interval - 5.0).abs() < 1e-9);
 
         // stream_interval > output_interval → clamped to output_interval
@@ -948,7 +934,7 @@ orbit = { type = "circular", altitude = 400 }
             plugin_backend_threshold: None,
             plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
-        let params2 = SimParams::from_sim_args(&args2, false);
+        let params2 = SimParams::from_sim_args_with_gravity_field(&args2, false, None);
         assert!((params2.stream_interval - 10.0).abs() < 1e-9);
     }
 
@@ -982,7 +968,7 @@ orbit = { type = "circular", altitude = 400 }
             plugin_backend_threshold: None,
             plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
-        let params = SimParams::from_sim_args(&args, false);
+        let params = SimParams::from_sim_args_with_gravity_field(&args, false, None);
         assert!(params.epoch.is_some());
         let epoch = params.epoch.unwrap();
         // 2024-03-20 12:00:00 UTC
@@ -1024,7 +1010,7 @@ orbit = { type = "circular", altitude = 400 }
             plugin_backend_threshold: None,
             plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
-        SimParams::from_sim_args(&args, false);
+        SimParams::from_sim_args_with_gravity_field(&args, false, None);
     }
 
     #[test]
@@ -1061,7 +1047,7 @@ orbit = { type = "circular", altitude = 400 }
             plugin_backend_threshold: None,
             plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
-        let params = SimParams::from_sim_args(&args, false);
+        let params = SimParams::from_sim_args_with_gravity_field(&args, false, None);
 
         // Should have one satellite in TLE mode
         assert_eq!(params.satellites.len(), 1);
@@ -1120,7 +1106,7 @@ orbit = { type = "circular", altitude = 400 }
             plugin_backend_threshold: None,
             plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
-        let params = SimParams::from_sim_args(&args, false);
+        let params = SimParams::from_sim_args_with_gravity_field(&args, false, None);
 
         assert_eq!(params.satellites.len(), 1);
         let sat = &params.satellites[0];
@@ -1166,7 +1152,7 @@ orbit = { type = "circular", altitude = 400 }
             plugin_backend_threshold: None,
             plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
-        let params = SimParams::from_sim_args(&args, false);
+        let params = SimParams::from_sim_args_with_gravity_field(&args, false, None);
         let state = params.satellites[0]
             .initial_state(params.mu, params.epoch)
             .unwrap();
@@ -1218,7 +1204,7 @@ orbit = { type = "circular", altitude = 400 }
             plugin_backend_threshold: None,
             plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
-        let params = SimParams::from_sim_args(&args, false);
+        let params = SimParams::from_sim_args_with_gravity_field(&args, false, None);
         assert!(matches!(
             params.satellites[0].orbit,
             OrbitSpec::ElementSet { .. }
@@ -1266,7 +1252,7 @@ orbit = { type = "circular", altitude = 400 }
             plugin_backend_threshold: None,
             plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
-        let params = SimParams::from_sim_args(&args, false);
+        let params = SimParams::from_sim_args_with_gravity_field(&args, false, None);
 
         // Epoch should be overridden to 2025-01-01
         let epoch = params.epoch.unwrap();
@@ -1309,7 +1295,7 @@ orbit = { type = "circular", altitude = 400 }
             plugin_backend_threshold: None,
             plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
-        let params = SimParams::from_sim_args(&args, false);
+        let params = SimParams::from_sim_args_with_gravity_field(&args, false, None);
         assert_eq!(params.satellites.len(), 2);
         assert_eq!(params.satellites[0].id, "sso");
         assert_eq!(params.satellites[1].id, "leo");
@@ -1346,7 +1332,7 @@ orbit = { type = "circular", altitude = 400 }
             plugin_backend_threshold: None,
             plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
-        let params = SimParams::from_sim_args(&args, true);
+        let params = SimParams::from_sim_args_with_gravity_field(&args, true, None);
         // Should have at least SSO satellite
         assert!(!params.satellites.is_empty());
         assert!(params.satellites.iter().any(|s| s.id == "sso"));
