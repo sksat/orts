@@ -490,9 +490,10 @@ pub fn tick_controller(
     apply_held_commands(sat)?;
     // The schedule has to advance, or the caller's `while sat.tick_due_at(to)`
     // would tick again at this instant and never finish. Construction refuses
-    // a period below the clock's resolution there, but the resolution halves
-    // going up a binade and grows with the time, so the invariant is checked
-    // where it has to hold rather than only where the satellite was built.
+    // a period below the clock's resolution there, but that resolution doubles
+    // at each binade boundary, so a period wide enough at the anchor can be
+    // too narrow further along. The invariant is checked where it has to hold
+    // rather than only where the satellite was built.
     let taken = sat.next_tick_t();
     sat.ticks_done += 1;
     let following = sat.next_tick_t();
