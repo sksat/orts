@@ -89,6 +89,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   20-40% 改善する。([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- `SurfacePanel::at_com` と `SurfacePanel::rectangle` が、magnitude を計算できない
+  方向ベクトルを、無限大の normal を持つ panel にせず reject するようになった。
+  正規化した後で結果の長さを検査していたので、`[1e-200, 1e-200, 1e-200]` が通って
+  いた: squared norm が 0 に underflow するため正規化が 0 除算になり normal が無限大
+  になって、そこから計算する力はすべて NaN になる。呼び出し側が渡したベクトルの
+  magnitude を検査する形にした。squared norm が overflow する `[1e300, 1e300, 0]`
+  も同じ検査で落ちる。([#424](https://github.com/sksat/orts/pull/424))
 - `load_as_recording` が、.rrd が entity の一部の行にしか持たない component を
   落とさず復元するようになった。列が「自分の覆う行」を持てなかった間は落とすしか
   なかった: 欠けた行をゼロで埋めると `orts convert` の CSV にファイルが持っていない

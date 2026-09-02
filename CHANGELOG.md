@@ -103,6 +103,14 @@ section is subdivided by package.
   0.33 m, and the three shorter Harris-Priester oracles by 20-40%. ([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- `SurfacePanel::at_com` and `SurfacePanel::rectangle` reject a direction vector
+  whose magnitude cannot be computed, instead of building a panel whose normal
+  is infinite. They normalised first and then checked the result was long
+  enough, which `[1e-200, 1e-200, 1e-200]` passes: its squared norm underflows
+  to zero, so normalising divides by zero and gives an infinite normal, and
+  every force computed from it is NaN. The magnitude of the vector the caller
+  passed is now what is checked, which also covers `[1e300, 1e300, 0]`, whose
+  squared norm overflows. ([#424](https://github.com/sksat/orts/pull/424))
 - `load_as_recording` restores a component the .rrd carries on only some of an
   entity's rows, rather than dropping it. It had to drop it while a column could
   not say which rows it covered: filling the absent rows with zeros would have

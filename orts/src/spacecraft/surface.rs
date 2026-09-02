@@ -171,10 +171,12 @@ impl SurfacePanel {
     /// value to pass when the surface is genuinely unknown.
     ///
     /// # Panics
-    /// Panics if `normal` is zero-length.
+    /// Panics unless `normal` has a finite non-zero magnitude. Finite
+    /// components are not enough on their own: `[1e300, 1e300, 0]` squares to a
+    /// norm that overflows and `[1e-200; 3]` to one that underflows, and
+    /// neither can be normalised.
     pub fn at_com(area: f64, normal: Vector3<f64>, cd: f64, optics: PanelOptics) -> Self {
-        let n = normal.normalize();
-        assert!(n.magnitude() > 0.5, "Panel normal must be non-zero");
+        let n = unit_direction(normal, "normal");
         Self {
             area,
             normal: n,
@@ -208,11 +210,11 @@ impl SurfacePanel {
     /// occlusion.
     ///
     /// # Panics
-    /// Panics if either vector is zero-length or non-finite (both leave a
-    /// non-finite length, which normalising cannot recover), if the half-extents
-    /// are not positive and finite, if their product underflows to zero or
-    /// overflows to infinity, or if `in_plane_x` is not perpendicular to
-    /// `normal` (to within 1e-9 after normalisation). An axis off the plane
+    /// Panics unless both vectors have a finite non-zero magnitude — see
+    /// [`Self::at_com`] for the finite-component cases that fail this — if the
+    /// half-extents are not positive and finite, if their product underflows to
+    /// zero or overflows to infinity, or if `in_plane_x` is not perpendicular
+    /// to `normal` (to within 1e-9 after normalisation). An axis off the plane
     /// describes a rectangle that is not on the panel; projecting it onto the
     /// plane would build a panel the caller did not ask for, so it is rejected
     /// instead.
@@ -239,10 +241,8 @@ impl SurfacePanel {
             area.is_finite() && area > 0.0,
             "panel half-extents {half_extent:?} give an area of {area}"
         );
-        let n = normal.normalize();
-        assert!(n.magnitude() > 0.5, "Panel normal must be non-zero");
-        let x = in_plane_x.normalize();
-        assert!(x.magnitude() > 0.5, "Panel in-plane axis must be non-zero");
+        let n = unit_direction(normal, "normal");
+        let x = unit_direction(in_plane_x, "in-plane axis");
         assert!(
             n.dot(&x).abs() < 1e-9,
             "panel in-plane axis must be perpendicular to the normal, got n·x = {}",
@@ -349,6 +349,25 @@ impl SurfacePanel {
             outline: self.outline,
         }
     }
+}
+
+/// Normalise a direction the caller supplied, rejecting one whose magnitude
+/// cannot be computed.
+///
+/// Checking the normalised result is not enough. A vector whose squared norm
+/// underflows normalises to `[inf, inf, inf]`, and one whose squared norm
+/// overflows normalises to `[0, 0, 0]`; both have every component finite, so
+/// the input has to be measured before it is divided. An infinite normal is the
+/// worse of the two, since `|n| > 0.5` reads it as a valid direction and every
+/// force built from it is NaN.
+fn unit_direction(v: Vector3<f64>, what: &str) -> Vector3<f64> {
+    let mag = v.magnitude();
+    assert!(
+        mag.is_finite() && mag > 0.0,
+        "panel {what} needs a finite non-zero magnitude, got {:?} with |v| = {mag}",
+        v.as_slice()
+    );
+    v / mag
 }
 
 /// Spacecraft shape model for aerodynamic force computation.
@@ -2071,6 +2090,181 @@ mod tests {
         let b = build([1e-308, 1e308]);
         assert_eq!(a.area, b.area, "the product is commutative");
         assert!(a.area.is_finite() && a.area > 0.0, "got {}", a.area);
+    }
+
+    /// A direction vector is rejected unless its own magnitude is finite and
+    /// non-zero.
+    ///
+    /// `normalize()` and then `magnitude() > 0.5` is not that check.
+    /// `[1e-200; 3]` squares to a norm that underflows to zero, so normalising
+    /// divides by zero and gives `[inf, inf, inf]` — an infinite magnitude,
+    /// which passes `> 0.5`. The panel then carries an infinite normal, and
+    /// cos θ and every force built from it are NaN.
+    #[test]
+    fn a_direction_vector_needs_a_magnitude_that_can_be_computed() {
+        let rejected = [
+            ("zero", Vector3::zeros()),
+            ("NaN", Vector3::new(f64::NAN, 0.0, 0.0)),
+            ("infinite", Vector3::new(f64::INFINITY, 0.0, 0.0)),
+            // Every component finite, but the squared norm overflows, and
+            // normalising then divides by infinity and gives zero.
+            ("overflowing", Vector3::new(1e300, 1e300, 0.0)),
+            // The same, underflowing: normalising divides by zero.
+            ("underflowing", Vector3::new(1e-200, 1e-200, 1e-200)),
+        ];
+
+        for (name, v) in rejected {
+            let as_normal = std::panic::catch_unwind(|| {
+                SurfacePanel::at_com(4.0, v, 2.2, PanelOptics::absorber())
+            });
+            if let Ok(panel) = as_normal {
+                panic!(
+                    "at_com took a {name} normal and built one pointing {:?}",
+                    panel.normal.as_slice()
+                );
+            }
+            let as_rectangle_normal = std::panic::catch_unwind(|| {
+                SurfacePanel::rectangle(
+                    [1.0, 1.0],
+                    Vector3::new(0.0, 1.0, 0.0),
+                    v,
+                    2.2,
+                    PanelOptics::absorber(),
+                )
+            });
+            if let Ok(panel) = as_rectangle_normal {
+                panic!(
+                    "rectangle took a {name} normal and built one pointing {:?}",
+                    panel.normal.as_slice()
+                );
+            }
+            let as_axis = std::panic::catch_unwind(|| {
+                SurfacePanel::rectangle(
+                    [1.0, 1.0],
+                    v,
+                    Vector3::new(1.0, 0.0, 0.0),
+                    2.2,
+                    PanelOptics::absorber(),
+                )
+            });
+            if let Ok(panel) = as_axis {
+                panic!(
+                    "rectangle took a {name} in-plane axis and kept {:?}",
+                    panel.outline
+                );
+            }
+        }
+
+        // Being small is not the problem: this one's magnitude is 1.7e-150,
+        // which divides cleanly.
+        let small = Vector3::new(1e-150, 1e-150, 1e-150);
+        let panel = SurfacePanel::at_com(4.0, small, 2.2, PanelOptics::absorber());
+        assert!(
+            (panel.normal.magnitude() - 1.0).abs() < 1e-15,
+            "a computable magnitude has to be accepted, got |n| = {}",
+            panel.normal.magnitude()
+        );
+    }
+
+    /// A caster tilted through the shaded panel's plane covers only part of it.
+    ///
+    /// Every other occlusion case here has the two plates parallel or
+    /// coplanar, so all four corners of the target sit on one side of the
+    /// caster's plane and one depth comparison could answer for the whole
+    /// panel. Here the caster's centre is upstream of the target while one of
+    /// its edges is behind it, and the corners on that side reach its plane
+    /// going backwards even though their rays land inside its outline.
+    ///
+    /// The tilt runs through all four in-plane directions because each one
+    /// leaves a different pair of corners behind, and between them every
+    /// corner takes a turn: a depth test that looked at one fixed corner and
+    /// projected the rest would answer this correctly for some tilts and
+    /// wrongly for others.
+    #[test]
+    fn a_caster_tilted_through_the_panel_covers_only_part_of_it() {
+        let upstream = Vector3::new(1.0, 0.0, 0.0);
+        let shaded = SurfacePanel::rectangle(
+            [1.0, 1.0],
+            Vector3::new(0.0, 1.0, 0.0),
+            upstream,
+            2.2,
+            PanelOptics::absorber(),
+        );
+        let mut buf = [Vector3::zeros(); MAX_PANEL_CORNERS];
+        let corners = shaded
+            .corners_into(&mut buf)
+            .expect("a rectangle has corners");
+
+        // Where a ray from `from` toward `upstream` meets a caster's plane.
+        let depth = |from: &Vector3<f64>, c: &SurfacePanel| {
+            c.normal.dot(&(c.cp_offset - from)) / c.normal.dot(&upstream)
+        };
+
+        let mut ever_behind = [false; MAX_PANEL_CORNERS];
+        for tilt in [
+            Vector3::new(0.0, 1.0, 0.0),
+            Vector3::new(0.0, -1.0, 0.0),
+            Vector3::new(0.0, 0.0, 1.0),
+            Vector3::new(0.0, 0.0, -1.0),
+        ] {
+            // Tilted 45° so its plane cuts the target's, and wide enough that
+            // every corner's ray meets that plane inside the outline.
+            let caster = |x: f64| {
+                SurfacePanel::rectangle(
+                    [1.6, 1.2],
+                    (upstream - tilt).normalize(),
+                    (upstream + tilt).normalize(),
+                    2.2,
+                    PanelOptics::absorber(),
+                )
+                .with_cp_offset(Vector3::new(x, 0.0, 0.0))
+            };
+
+            // The geometry the test is about, stated rather than assumed.
+            let cutting = caster(0.5);
+            assert!(
+                depth(&shaded.cp_offset, &cutting) > 0.0,
+                "tilt {tilt:?}: the caster's centre has to be upstream of the target's"
+            );
+            let mut behind = 0;
+            for (i, corner) in corners.iter().enumerate() {
+                let t = depth(corner, &cutting);
+                if t <= 0.0 {
+                    behind += 1;
+                    ever_behind[i] = true;
+                }
+                let hit = corner + upstream * t;
+                assert!(
+                    cutting.outline_contains(&hit),
+                    "tilt {tilt:?}: corner {corner:?} reaches the caster's outline at \
+                     {hit:?}, so the depth is the only thing that can keep it lit"
+                );
+            }
+            assert_eq!(
+                behind, 2,
+                "tilt {tilt:?}: the caster's plane has to split the target's corners"
+            );
+
+            let panels = vec![shaded.clone(), cutting];
+            assert!(
+                !is_fully_occluded(&panels[0], &panels, &upstream),
+                "tilt {tilt:?}: a caster cutting through the panel leaves part of it lit"
+            );
+
+            // Slid upstream until it clears the target, the same plate does
+            // cover it — so the answer above comes from the tilt, not a miss.
+            let panels = vec![shaded.clone(), caster(2.0)];
+            assert!(
+                is_fully_occluded(&panels[0], &panels, &upstream),
+                "tilt {tilt:?}: clear of the panel, the same tilted plate covers it"
+            );
+        }
+
+        assert!(
+            ever_behind.iter().all(|behind| *behind),
+            "every corner has to be the one behind for some tilt, or a fixed \
+             corner would do: {ever_behind:?}"
+        );
     }
 
     /// The cube's faces carry outlines, so a panel added behind one is found.
