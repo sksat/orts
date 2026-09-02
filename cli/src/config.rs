@@ -525,10 +525,14 @@ impl PanelConfig {
                 // `area` arm gets: half-extents of 1e200 each are finite and
                 // positive on their own and multiply to infinity, which reaches
                 // the integrator as a non-finite state rather than an error.
+                // Positive and finite on their own is not enough: the
+                // product underflows for `[1e-300, 1e-300]` and overflows for
+                // `[1e200, 1e200]`. A zero area is the worse of the two — it
+                // validates, runs, and produces no force.
                 let area = 4.0 * half_extent[0] * half_extent[1];
-                if !area.is_finite() {
+                if !area.is_finite() || area <= 0.0 {
                     return Err(format!(
-                        "panels[{index}].half_extent gives a non-finite area ({} × {})",
+                        "panels[{index}].half_extent gives an area of {area} ({} × {})",
                         half_extent[0], half_extent[1]
                     ));
                 }
@@ -3279,18 +3283,23 @@ attitude = {{ inertia_diag = [10, 10, 10], mass = 50 }}
         }
     }
 
-    /// Half-extents that are each finite and positive can still multiply to an
-    /// infinite area, which the integrator reports as a non-finite state and an
-    /// exit code of 0 rather than as a config error.
+    /// Half-extents that are each finite and positive can still give an area
+    /// that is neither, at both ends.
+    ///
+    /// Overflow reached the integrator as a non-finite state and exit code 0.
+    /// Underflow is worse: a zero area validates, runs, and produces no force,
+    /// so the panel is silently not there.
     #[test]
-    fn half_extents_multiplying_to_infinity_are_rejected() {
-        let config: SimConfig = toml::from_str(&panel_sat_toml(
-            "normal = [1, 0, 0]\ncd = 2.2\nhalf_extent = [1e200, 1e200]\n\
-             in_plane_x = [0, 1, 0]",
-        ))
-        .expect("parses");
-        let err = config.satellites[0].validate().unwrap_err();
-        assert!(err.contains("non-finite area"), "got: {err}");
+    fn half_extents_giving_a_zero_or_infinite_area_are_rejected() {
+        for extent in ["[1e200, 1e200]", "[1e-300, 1e-300]"] {
+            let config: SimConfig = toml::from_str(&panel_sat_toml(&format!(
+                "normal = [1, 0, 0]\ncd = 2.2\nhalf_extent = {extent}\n\
+                 in_plane_x = [0, 1, 0]"
+            )))
+            .expect("parses");
+            let err = config.satellites[0].validate().unwrap_err();
+            assert!(err.contains("gives an area of"), "{extent}: got {err}");
+        }
     }
 
     /// `two_sided = true` is the short way to say what an empty `back` says.

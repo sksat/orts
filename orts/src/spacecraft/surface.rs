@@ -83,21 +83,6 @@ impl PanelOptics {
     }
 }
 
-/// A flat surface panel on a spacecraft body.
-///
-/// Represents one face of the spacecraft's outer surface for computing
-/// aerodynamic and SRP forces.  Each panel has an outward-pointing normal in
-/// the body frame, a drag coefficient, optical properties, and a
-/// centre-of-pressure offset from the centre of mass.
-///
-/// For thin surfaces like solar panels where both sides are exposed to the
-/// flow, model each side as a separate panel with opposite normals; the two
-/// sides may then carry different optical properties. [`Self::back_face`]
-/// builds the second one from the first.
-///
-/// Both force models assume `normal` is unit length. [`Self::at_com`] and
-/// [`SpacecraftShape::cube`] guarantee that; a struct literal does not, and the
-/// SRP force is cubic in `|normal|` through its specular term.
 /// A panel's extent within its own plane.
 ///
 /// A panel needs none of this to produce a force: the flat-plate law uses the
@@ -232,6 +217,14 @@ impl SurfacePanel {
             half_extent.iter().all(|h| h.is_finite() && *h > 0.0),
             "panel half-extents must be positive and finite, got {half_extent:?}"
         );
+        // The product needs its own check: `[1e-300, 1e-300]` underflows to a
+        // zero area and `[1e200, 1e200]` overflows to infinity, and each
+        // half-extent is positive and finite in both.
+        let area = 4.0 * half_extent[0] * half_extent[1];
+        assert!(
+            area.is_finite() && area > 0.0,
+            "panel half-extents {half_extent:?} give an area of {area}"
+        );
         let n = normal.normalize();
         assert!(n.magnitude() > 0.5, "Panel normal must be non-zero");
         let x = in_plane_x.normalize();
@@ -242,7 +235,7 @@ impl SurfacePanel {
             n.dot(&x)
         );
         Self {
-            area: 4.0 * half_extent[0] * half_extent[1],
+            area,
             normal: n,
             cd,
             optics,
@@ -1933,6 +1926,39 @@ mod tests {
             (t0 + t180).magnitude() / t0.magnitude() < 1e-10,
             "reversing the flow reverses the torque: {t0:?} vs {t180:?}"
         );
+    }
+
+    /// Half-extents that are each positive and finite can still give an area
+    /// that is neither.
+    #[test]
+    fn rectangle_rejects_an_area_that_underflows_or_overflows() {
+        for half_extent in [[1e-300, 1e-300], [1e200, 1e200]] {
+            let caught = std::panic::catch_unwind(|| {
+                SurfacePanel::rectangle(
+                    half_extent,
+                    Vector3::new(0.0, 1.0, 0.0),
+                    Vector3::new(1.0, 0.0, 0.0),
+                    2.2,
+                    PanelOptics::absorber(),
+                )
+            });
+            assert!(
+                caught.is_err(),
+                "{half_extent:?} gives an area of {} and has to be rejected",
+                4.0 * half_extent[0] * half_extent[1]
+            );
+        }
+
+        // And the smallest extent whose area survives is still accepted, so the
+        // check is on the product rather than on the magnitude of a side.
+        let ok = SurfacePanel::rectangle(
+            [1e-150, 1e-150],
+            Vector3::new(0.0, 1.0, 0.0),
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
+        assert!(ok.area > 0.0 && ok.area.is_finite());
     }
 
     /// A caster edge-on to the incoming direction covers nothing.
