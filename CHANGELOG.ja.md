@@ -155,6 +155,15 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   ([#372](https://github.com/sksat/orts/pull/372))
 - Sun 中心の伝播でも SRP は残る。Sun が原点なので衛星→Sun ベクトルは `-r_sat` で、
   遮るものもない。落ちるのは第三体項だけ。([#372](https://github.com/sksat/orts/pull/372))
+- 中心天体から見た Sun ベクトルを Orekit の DE ephemeris と突き合わせるようにした
+  (`arika/tests/oracle_body_sun.rs`、fixture は
+  `tools/generate_body_sun_fixtures.py` が生成)。7 天体 × 2000-2075 年の 6 epoch で、
+  方向と距離の両方を比較する。arika はこのベクトルを Earth では Meeus 級数、Moon では
+  そこから月ベクトルを引いた差、惑星では Standish の要素から作っており、既存のテストは
+  そのうちの一つを別の一つと比べていた。符号・位相・黄道→赤道の誤りは全部を同時に
+  すり抜けうる。一致は Earth・Moon・Mercury・Venus が 0.4' 以内、Mars が 1.2'、
+  Jupiter が 6.5'、Saturn が 16.9'。黄道を回さなければ 23.4° ずれる。
+  ([#372](https://github.com/sksat/orts/pull/372))
 - `PanelSrp::without_shadow()` を追加。`SolarRadiationPressure::without_shadow()`
   と同じく、影だけを外して構築時の Sun 方向を保つ。影なしの panel SRP は
   `PanelSrp::new` からしか作れず、そちらは地球の Sun を読むので、他の天体では

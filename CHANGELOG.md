@@ -181,6 +181,17 @@ section is subdivided by package.
 - Sun-centred propagation keeps its SRP: the Sun is the origin there, so the
   satellite-to-Sun vector is `-r_sat` and nothing eclipses it. Only the
   third-body term drops out. ([#372](https://github.com/sksat/orts/pull/372))
+- The Sun-from-central-body vector is checked against Orekit's DE ephemeris
+  (`arika/tests/oracle_body_sun.rs`, fixture from
+  `tools/generate_body_sun_fixtures.py`): 7 bodies over 6 epochs from 2000 to
+  2075, comparing direction and distance. arika builds this vector from the
+  Meeus series for Earth, that series minus the lunar one for the Moon, and the
+  Standish elements for the planets, and its other tests compare one of those
+  against another — so the same sign, phase or ecliptic-to-equatorial error
+  could hold across all of them. Agreement is within 0.4' for Earth, the Moon,
+  Mercury and Venus, 1.2' for Mars, 6.5' for Jupiter and 16.9' for Saturn,
+  against the 23.4° an unrotated ecliptic vector would give.
+  ([#372](https://github.com/sksat/orts/pull/372))
 - `PanelSrp::without_shadow()` drops the shadow and keeps the Sun direction the
   model was built with, the way `SolarRadiationPressure::without_shadow()` does.
   A shadow-free panel model was reachable only through `PanelSrp::new`, which
