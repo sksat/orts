@@ -114,23 +114,19 @@ impl SimGroup {
         };
         for sat in sats.iter_mut() {
             crate::config::validate_sample_period(sat.controller.sample_period())?;
-            let mut t = current_t;
-            // Every tick due inside this span, then the rest of the span under
-            // the command the last tick left. `target_t - current_t` is the
-            // stream/output interval, which has no reason to be a multiple of
-            // the controller period: the loop used to call the controller once
-            // per span with `dt = span`, so a span shorter than the period ran
-            // the controller too often and shortened its hold.
-            while sat.tick_due_at(target_t) {
-                let tick_t = sat.next_tick_t();
-                crate::sim::controlled::propagate_controlled(sat, t, tick_t, params.dt)
-                    .map_err(|e| format!("controlled simulation error at t={t:.3}: {e}"))?;
-                crate::sim::controlled::tick_controller(sat, tick_t, params.epoch.as_ref())
-                    .map_err(|e| format!("controlled simulation error at t={tick_t:.3}: {e}"))?;
-                t = tick_t;
-            }
-            crate::sim::controlled::propagate_controlled(sat, t, target_t, params.dt)
-                .map_err(|e| format!("controlled simulation error at t={t:.3}: {e}"))?;
+            // `target_t - current_t` is the stream/output interval, which has
+            // no reason to be a multiple of the controller period: this used
+            // to call the controller once per span with `dt = span`, so a span
+            // shorter than the period ran the controller too often and
+            // shortened its hold.
+            crate::sim::controlled::advance_controlled(
+                sat,
+                current_t,
+                target_t,
+                params.dt,
+                params.epoch.as_ref(),
+            )
+            .map_err(|e| format!("controlled simulation error at t={current_t:.3}: {e}"))?;
         }
         Ok(())
     }

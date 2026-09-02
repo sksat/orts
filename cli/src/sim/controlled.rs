@@ -345,6 +345,43 @@ fn apply_held_commands(sat: &mut ControlledSatellite) -> Result<(), String> {
 ///
 /// `params_dt` is the requested ODE step; it is capped by the span so a step
 /// cannot reach past `t1`.
+/// The next moment anything happens in a fleet: the earliest controller tick
+/// due, or `horizon` if none falls before it.
+///
+/// An empty fleet has no tick, so the horizon is the answer. Taking the
+/// shortest `sample_period` in the fleet instead — one tick rate for everyone
+/// — ran every slower controller at that rate.
+pub fn next_fleet_event_t(sats: &[ControlledSatellite], horizon: f64) -> f64 {
+    sats.iter()
+        .map(|sat| sat.next_tick_t())
+        .fold(f64::INFINITY, f64::min)
+        .min(horizon)
+}
+
+/// Advance one satellite across `[from, to]`.
+///
+/// Propagates to each tick due inside the span, ticks the controller there,
+/// then propagates the rest of the span under the command that tick left. The
+/// span is the caller's — `stream_interval` in `serve`, the gap between fleet
+/// events in `run` — and has no reason to be a multiple of the controller's
+/// period, so a span shorter than the period integrates without a tick.
+pub fn advance_controlled(
+    sat: &mut ControlledSatellite,
+    from: f64,
+    to: f64,
+    params_dt: f64,
+    epoch: Option<&Epoch>,
+) -> Result<(), String> {
+    let mut t = from;
+    while sat.tick_due_at(to) {
+        let tick_t = sat.next_tick_t();
+        propagate_controlled(sat, t, tick_t, params_dt)?;
+        tick_controller(sat, tick_t, epoch)?;
+        t = tick_t;
+    }
+    propagate_controlled(sat, t, to, params_dt)
+}
+
 pub fn propagate_controlled(
     sat: &mut ControlledSatellite,
     t0: f64,
@@ -620,17 +657,10 @@ mod tests {
         (sat, ticks)
     }
 
-    /// Step one satellite the way a caller does: propagate to each due tick,
-    /// tick there, then propagate the remainder of the span.
+    /// Step one satellite the way a caller does — through the same function
+    /// `serve` and `run` call, so an error in that loop fails these tests.
     fn advance(sat: &mut ControlledSatellite, from: f64, to: f64, params_dt: f64) {
-        let mut t = from;
-        while sat.tick_due_at(to) {
-            let tick_t = sat.next_tick_t();
-            propagate_controlled(sat, t, tick_t, params_dt).expect("integrates");
-            tick_controller(sat, tick_t, None).expect("ticks");
-            t = tick_t;
-        }
-        propagate_controlled(sat, t, to, params_dt).expect("integrates");
+        advance_controlled(sat, from, to, params_dt, None).expect("integrates and ticks");
     }
 
     /// A span shorter than the sample period does not tick the controller.
@@ -768,21 +798,20 @@ mod tests {
     /// rejects outright rather than mis-simulate.
     #[test]
     fn a_mixed_rate_fleet_ticks_each_controller_at_its_own_period() {
-        let (mut fast, fast_ticks) = satellite_with(0.1, 0.0);
-        let (mut slow, slow_ticks) = satellite_with(1.0, 0.0);
+        let (fast, fast_ticks) = satellite_with(0.1, 0.0);
+        let (slow, slow_ticks) = satellite_with(1.0, 0.0);
 
-        // Advance to the earliest tick due in the fleet, repeatedly, the way
-        // the run loop does.
+        // The event times come from the same function the run loop calls, so
+        // an error in that choice fails this test.
+        let mut fleet = vec![fast, slow];
         let mut t = 0.0;
         while t < 1.0 - 1e-12 {
-            let next_t = fast.next_tick_t().min(slow.next_tick_t()).min(1.0);
-            propagate_controlled(&mut fast, t, next_t, 0.01).expect("integrates");
-            if fast.tick_due_at(next_t) {
-                tick_controller(&mut fast, next_t, None).expect("ticks");
-            }
-            propagate_controlled(&mut slow, t, next_t, 0.01).expect("integrates");
-            if slow.tick_due_at(next_t) {
-                tick_controller(&mut slow, next_t, None).expect("ticks");
+            let next_t = next_fleet_event_t(&fleet, 1.0);
+            for sat in &mut fleet {
+                propagate_controlled(sat, t, next_t, 0.01).expect("integrates");
+                if sat.tick_due_at(next_t) {
+                    tick_controller(sat, next_t, None).expect("ticks");
+                }
             }
             t = next_t;
         }

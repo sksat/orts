@@ -1188,15 +1188,7 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Result<Record
     let mut last_output_t = 0.0;
 
     while t < duration - 1e-12 {
-        // The next moment anything happens: the earliest controller tick due,
-        // or the end of the run. Stepping the whole fleet on one tick — the
-        // shortest `sample_period` in the fleet — ran every slower controller
-        // at that rate instead of its own.
-        let next_t = satellites
-            .iter()
-            .map(|sat| sat.next_tick_t())
-            .fold(f64::INFINITY, f64::min)
-            .min(duration);
+        let next_t = crate::sim::controlled::next_fleet_event_t(&satellites, duration);
         let dt = next_t - t;
 
         // 時刻指定コマンド: この区間の終端 (next_t) までに due なものを
