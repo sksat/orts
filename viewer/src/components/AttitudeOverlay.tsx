@@ -23,14 +23,17 @@ export interface AttitudeOverlayProps {
   onSelectedSatelliteChange: (id: string) => void;
   orientation: AttitudeFrame;
   onOrientationChange: (orientation: AttitudeFrame) => void;
-  /** True when an epoch is known — the body-fixed frame and the Sun need it. */
-  hasEpoch: boolean;
-  /** True when the shown spacecraft has a position (nadir, local-orbital need it). */
-  hasPosition: boolean;
-  /** True when it also has a velocity (the local-orbital basis needs it). */
-  hasVelocity: boolean;
-  /** True when the central body is the one whose rotation the viewer models. */
-  supportsBodyFixed: boolean;
+  /**
+   * Why an option cannot be used right now, or undefined when it can. The reasons
+   * come from the app rather than being re-derived here: whether the scene can
+   * actually build a local-orbital basis, or draw a nadir arrow, is a question for
+   * the same code the scene resolves with — a control that offers what the scene
+   * then drops is lying.
+   */
+  localOrbitalUnavailable?: string;
+  bodyFixedUnavailable?: string;
+  sunUnavailable?: string;
+  nadirUnavailable?: string;
   directionVectors: DirectionVectorOptions;
   onDirectionVectorsChange: (value: DirectionVectorOptions) => void;
   /** Kinds actually drawn, for the legend. */
@@ -58,10 +61,10 @@ export function AttitudeOverlay({
   onSelectedSatelliteChange,
   orientation,
   onOrientationChange,
-  hasEpoch,
-  hasPosition,
-  hasVelocity,
-  supportsBodyFixed,
+  localOrbitalUnavailable,
+  bodyFixedUnavailable,
+  sunUnavailable,
+  nadirUnavailable,
   directionVectors,
   onDirectionVectorsChange,
   drawnVectorKinds,
@@ -73,23 +76,15 @@ export function AttitudeOverlay({
       value: "localOrbital",
       label: "LVLH",
       testId: "attitude-orientation-lvlh",
-      disabled: !hasPosition || !hasVelocity,
-      title: !hasPosition
-        ? "Requires a position"
-        : !hasVelocity
-          ? "Requires a velocity"
-          : undefined,
+      disabled: localOrbitalUnavailable != null,
+      title: localOrbitalUnavailable,
     },
     {
       value: "bodyFixed",
       label: "Body-Fixed",
       testId: "attitude-orientation-body-fixed",
-      disabled: !hasEpoch || !supportsBodyFixed,
-      title: !supportsBodyFixed
-        ? "The viewer models only Earth's rotation"
-        : !hasEpoch
-          ? "Requires epoch"
-          : undefined,
+      disabled: bodyFixedUnavailable != null,
+      title: bodyFixedUnavailable,
     },
   ];
 
@@ -125,10 +120,7 @@ export function AttitudeOverlay({
       <DirectionVectorControls
         value={directionVectors}
         onChange={onDirectionVectorsChange}
-        unavailable={{
-          ...(hasEpoch ? {} : { sun: "Requires epoch" }),
-          ...(hasPosition ? {} : { nadir: "Requires a position" }),
-        }}
+        unavailable={{ sun: sunUnavailable, nadir: nadirUnavailable }}
       />
 
       {hasBody && <SceneLegend vectorKinds={drawnVectorKinds} />}
