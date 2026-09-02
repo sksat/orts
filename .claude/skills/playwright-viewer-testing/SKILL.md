@@ -72,6 +72,26 @@ usable evidence that a subtree was dropped (e.g. the attitude view has no Earth)
 Establish the hook exists before the action whose effect you assert, or its absence
 afterwards proves nothing.
 
+#### Inventorying the whole scene
+
+To count or measure *everything* drawn — is that mesh a cylinder or a line, how
+many sprites are there, what opacity did they get — reach the scene root through
+an existing hook's registry rather than the canvas. `canvas.__r3f` is not a
+documented API and reads back `null`; the registries hold the rendered object
+itself, so walk up its `.parent` chain:
+
+```javascript
+const group = window.__debug_sat_quat_registry?.get(id)?.();   // rendered object
+let root = group; while (root.parent != null) root = root.parent;
+root.traverse((o) => { /* o.isSprite, o.geometry?.type, o.material?.opacity */ });
+```
+
+The registry is keyed by the id the *scene* was given, which in the app is the
+entity path (`/world/sat/<id>`), not the config id — enumerate `registry.keys()`
+instead of assuming. This route is for a one-off probe while developing. What a
+committed test asserts should still go through a named hook, so the assertion
+survives a refactor of the scene's internals.
+
 ### Common Pitfalls
 
 1. **Cannot access uPlot data from DOM**: `chart._uplot`, `chart.__uplot` do not exist. uPlot stores instance internally in React ref via `useRef()`.
