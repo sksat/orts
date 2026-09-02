@@ -15,9 +15,9 @@ epoch = "2024-01-01T00:00:00Z"
 # 司令するので、body-Y が常に velocity 方向を向いた状態で burn できる
 # （教科書通りの 2-burn Hohmann になる）。
 #
-# - FirstBurn: t≈0 から ~37 s。Δv ≈ 366 m/s を prograde に投入。
+# - FirstBurn: t≈0 から ~34 s。Δv ≈ 366 m/s を prograde に投入。
 #   transfer ellipse (perigee 500 km / apogee 2000 km、SMA 7628 km) を形成。
-# - Coast: t≈37 s から ~3314 s (transfer 半周期)。ballistic に apogee へ。
+# - Coast: t≈34 s から ~3329 s (apogee)。ballistic に apogee へ。
 # - SecondBurn: apogee で再び prograde burn、SMA を target まで上げて円化。
 # - Trim: SMA が deadband 分だけ下回ったら TCM 補正 burn (drag 等に対抗)。
 #
@@ -40,7 +40,7 @@ initial_angular_velocity = [0.0, 0.0, 0.0]
 
 [satellites.controller]
 type = "wasm"
-path = "../target/wasm32-wasip2/release/orts_example_plugin_transfer_burn_with_tcm.wasm"
+path = "../target/wasm32-wasip1/release/orts_example_plugin_transfer_burn_with_tcm.wasm"
 
 [satellites.controller.config]
 target_altitude_km = 2000.0

@@ -375,6 +375,31 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   なし) のため、`orts_plugin!` の callback 型 guest は影響なし。手書きの
   `impl Guest` guest は binding を再生成し新規 host import をリンクする必要がある。([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
+#### Fixed
+- `detumble-nadir` の Nadir モードが nadir を指向するようになった。star tracker の
+  body→inertial 姿勢をそのまま誤差クォータニオンとして扱っていたため、目標は
+  慣性 identity 姿勢・目標角速度 0 だった。`input.spacecraft.orbit` を参照せず、
+  LVLH 目標も軌道角速度 (LEO で ~1.1e-3 rad/s) も計算していない。nadir 指向が
+  成立している状態に対して 1.0 N·m の wheel torque を指令し、その間
+  `current_mode()` は "nadir" を返していた。([#367](https://github.com/sksat/orts/pull/367))
+- 指令を組めない tick が、そのモードが駆動するアクチュエータに明示的なゼロを
+  指令するようになった。WIT の `command` 契約では `None` は「コマンドなし =
+  前回値を保持」でゼロではないため、detumble 最後の磁気モーメントが nadir フェーズ中
+  ずっと通電し続け、センサ欠損時には wheel torque 指令が残って wheel が飽和へ
+  加速し続けていた。([#367](https://github.com/sksat/orts/pull/367))
+- `transfer-burn-with-tcm` と `constellation-phasing` が apogee で円化するように
+  なった。transfer ellipse の半周期は *perigee* からの時間だが、両 example は
+  そのタイマーを有限時間の first burn の**終了時**から起動していたため、burn が
+  張った弧の分だけ apogee を過ぎてから点火していた。同梱の 5000 N / 500 kg では
+  1.66° のずれで、推力が下がるほど弧が広がりずれは無限に大きくなりうる。apogee は
+  径方向速度 `r·v` の符号反転で検出し、タイマーは watchdog に降格した。
+  ([#367](https://github.com/sksat/orts/pull/367))
+- 両 example の同梱設定・bench スクリプト・README が `target/wasm32-wasip2/` を
+  指していた。host が読むのは component で、それを出す `cargo component build` の
+  出力先は `wasm32-wasip1` なので、手順どおりに実行しても plugin が見つからなかった。
+  `detumble-nadir` にはそもそも設定が無く一度も end-to-end で動かされていなかったので、
+  追加した。([#367](https://github.com/sksat/orts/pull/367))
+
 ### `arika` (Rust, crates.io)
 
 #### Added
