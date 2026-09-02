@@ -175,9 +175,12 @@ fn dop853_candidate<S: DynamicalSystem>(
     //     err = E / sqrt(n (E + 0.01 F))
     //
     // (the published form carries an explicit `|h|` because there the
-    // difference vectors exclude it). `OdeState::error_norm` computes
+    // difference vectors exclude it, and it substitutes 1 for a denominator
+    // that comes out non-positive). `OdeState::error_norm` computes
     // `sqrt(E / n)`, which is the same expression with `F = 0`, so it never
-    // returns less: the ratio is `sqrt(E / (E + 0.01 F)) <= 1`. A larger
+    // returns less: for `E > 0` the ratio is `sqrt(E / (E + 0.01 F)) <= 1`,
+    // and at `E = 0` both are zero — an exact step is accepted either way. A
+    // larger
     // estimate means the controller accepts less, and on one period of a
     // harmonic oscillator that measured as more accuracy than the tolerance
     // asked for — 30x at `tol = 1e-6`, 700x at `1e-10` — over 11 and 41
