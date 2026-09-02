@@ -75,7 +75,8 @@ pub struct PanelSrp {
 }
 
 impl PanelSrp {
-    /// Create a panel-based (attitude-dependent) SRP model from surface panels.
+    /// Create a panel-based (attitude-dependent) SRP model from surface panels,
+    /// with the geocentric Sun and no shadow — see [`Self::new`].
     ///
     /// # Panics
     /// Panics unless every panel normal is unit length.
@@ -148,7 +149,14 @@ impl PanelSrp {
         })
     }
 
-    /// Create an SRP model without shadow.
+    /// Create an SRP model with the geocentric Sun and no shadow.
+    ///
+    /// The Sun direction is Earth's, so about another body the force points
+    /// where the Sun is not — from Mars in 2026 up to 176° off. For a
+    /// shadow-free model about `body`, take
+    /// [`Self::for_body`]`(body, shape)?.`[`without_shadow()`] instead.
+    ///
+    /// [`without_shadow()`]: Self::without_shadow
     ///
     /// # Panics
     /// Panics unless every panel normal is unit length.
@@ -160,6 +168,13 @@ impl PanelSrp {
             shadow_model: ShadowModel::Cylindrical,
             sun_position_fn: std::sync::Arc::new(sun::sun_position_eci),
         }
+    }
+
+    /// Drop the shadow, keeping the Sun direction this model was built with
+    /// (builder pattern).
+    pub fn without_shadow(mut self) -> Self {
+        self.shadow_body_radius = None;
+        self
     }
 
     /// Set or override the shadow body radius (builder pattern).
@@ -1864,6 +1879,66 @@ mod tests {
         assert!(
             along < -0.9,
             "the push is anti-sunward, away from Mars' Sun: {along} (a = {a:?})"
+        );
+    }
+
+    /// `without_shadow` drops the shadow and keeps the body's Sun.
+    ///
+    /// A shadow-free panel model used to be reachable only through `new`,
+    /// which reads Earth's Sun. On 2026-03-20 Mars' Sun direction is 152.8°
+    /// from Earth's, so a panel facing Mars' Sun is unlit through `new` and
+    /// the force comes out exactly zero. The builder route keeps Mars' Sun and
+    /// only the shadow goes away.
+    #[test]
+    fn without_shadow_keeps_the_body_sun() {
+        let epoch = Epoch::from_gregorian(2026, 3, 20, 12, 0, 0.0);
+        let mars = arika::body::KnownBody::Mars;
+        let mars_sun = sun::sun_position_from_body(mars, &epoch.to_tdb())
+            .expect("Mars has a Sun ephemeris")
+            .into_inner()
+            .normalize();
+
+        // Directly behind Mars, inside its shadow cylinder.
+        let position = -mars_sun * 20_000.0;
+        let panel = panel_facing(mars_sun);
+
+        let shaded = accel_at(
+            &PanelSrp::for_body(mars, panel.clone()).expect("Mars has a Sun ephemeris"),
+            position,
+            &epoch,
+        );
+        assert_eq!(
+            shaded,
+            Vector3::zeros(),
+            "Mars eclipses the satellite: {shaded:?}"
+        );
+
+        let lit = accel_at(
+            &PanelSrp::for_body(mars, panel.clone())
+                .expect("Mars has a Sun ephemeris")
+                .without_shadow(),
+            position,
+            &epoch,
+        );
+        assert!(
+            lit.magnitude() > 0.0,
+            "with the shadow gone the panel is lit: {lit:?}"
+        );
+        // On the anti-sun axis with the panel square to the Sun, the push is
+        // straight back along `-mars_sun`; measured -1.000000.
+        let along = lit.normalize().dot(&mars_sun);
+        assert!(
+            along < -0.999,
+            "the push is anti-sunward along Mars' Sun line: {along} (a = {lit:?})"
+        );
+
+        // The geocentric route reads the Sun 152.8° away, which leaves this
+        // panel facing away from it.
+        let geocentric = accel_at(&PanelSrp::new(panel), position, &epoch);
+        assert_eq!(
+            geocentric,
+            Vector3::zeros(),
+            "Earth's Sun direction leaves the panel unlit: {geocentric:?}"
         );
     }
 

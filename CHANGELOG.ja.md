@@ -155,6 +155,12 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   ([#372](https://github.com/sksat/orts/pull/372))
 - Sun 中心の伝播でも SRP は残る。Sun が原点なので衛星→Sun ベクトルは `-r_sat` で、
   遮るものもない。落ちるのは第三体項だけ。([#372](https://github.com/sksat/orts/pull/372))
+- `PanelSrp::without_shadow()` を追加。`SolarRadiationPressure::without_shadow()`
+  と同じく、影だけを外して構築時の Sun 方向を保つ。影なしの panel SRP は
+  `PanelSrp::new` からしか作れず、そちらは地球の Sun を読むので、他の天体では
+  照らす面を間違えていた。2026-03-20 の Mars の Sun 方向は地球のそれと 152.8° 離れ、
+  Mars の Sun を向けた panel は `new` 経由では力が厳密に 0 になる。
+  ([#372](https://github.com/sksat/orts/pull/372))
 - 磁場がモデル化されていない天体では、磁気センサと磁気トルカを拒否するようになった。
   `Igrf` と `TiltedDipole` は Earth のもので、磁場モデルはこの 2 つしかない。従来は
   Mars を回る衛星が Earth の磁場を読み、そこからトルクを作っていた。

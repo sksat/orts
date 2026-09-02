@@ -181,6 +181,13 @@ section is subdivided by package.
 - Sun-centred propagation keeps its SRP: the Sun is the origin there, so the
   satellite-to-Sun vector is `-r_sat` and nothing eclipses it. Only the
   third-body term drops out. ([#372](https://github.com/sksat/orts/pull/372))
+- `PanelSrp::without_shadow()` drops the shadow and keeps the Sun direction the
+  model was built with, the way `SolarRadiationPressure::without_shadow()` does.
+  A shadow-free panel model was reachable only through `PanelSrp::new`, which
+  reads Earth's Sun — so around another body it lit the wrong face. On
+  2026-03-20 Mars' Sun direction is 152.8° from Earth's, and a panel facing
+  Mars' Sun comes out with a force of exactly zero through `new`.
+  ([#372](https://github.com/sksat/orts/pull/372))
 - A magnetometer or magnetorquer is refused around a body whose magnetic field
   is not modelled. `Igrf` and `TiltedDipole` are Earth's, and they are the only
   field models there are, so a spacecraft around Mars read Earth's field and made
