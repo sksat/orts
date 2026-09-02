@@ -228,10 +228,23 @@ impl HistoryBuffer {
                 // states, so a permanently unwritable spill directory costs
                 // one failed write per `capacity` pushes instead of one per
                 // push.
+                //
+                // Kept at or below the memory cap, because the cap is what
+                // bounds the length: a threshold above it is never reached
+                // again, and a directory that becomes writable later would
+                // never be tried. Measured with an unclamped threshold: after
+                // 100 failing pushes at capacity 4 the threshold sat at 36
+                // against a cap of 32, and 100 further pushes to a writable
+                // directory wrote no segment.
+                //
                 // `saturating_add`: the capacity comes from the caller, and a
                 // wrapped sum would put the retry threshold below the current
                 // length, spilling on every push — the opposite of the backoff.
-                self.flush_at = self.states.len().saturating_add(self.capacity);
+                self.flush_at = self
+                    .states
+                    .len()
+                    .saturating_add(self.capacity)
+                    .min(self.memory_cap());
             }
         }
     }
@@ -248,8 +261,13 @@ impl HistoryBuffer {
     /// Called from `push`, so the cap holds between write attempts too. A
     /// failed write moves the next attempt `capacity` pushes out, and those
     /// pushes would otherwise sit above the cap.
+    /// The most states the buffer holds while its writes keep failing.
+    fn memory_cap(&self) -> usize {
+        self.capacity.saturating_mul(MAX_RETAINED_BUFFERS)
+    }
+
     fn enforce_memory_cap(&mut self) {
-        let cap = self.capacity.saturating_mul(MAX_RETAINED_BUFFERS);
+        let cap = self.memory_cap();
         if self.states.len() <= cap {
             return;
         }
@@ -1958,5 +1976,55 @@ mod tests {
         assert_eq!(buf.segment_count, 0, "every write failed");
 
         std::fs::remove_file(&dir).ok();
+    }
+
+    /// A directory that becomes writable again is written to again.
+    ///
+    /// The retry threshold is `len + capacity`, and the memory cap holds the
+    /// length at or below `capacity * MAX_RETAINED_BUFFERS`. A threshold above
+    /// the cap is therefore never reached: measured without the clamp, after
+    /// 100 failing pushes at capacity 4 the threshold sat at 36 against a cap
+    /// of 32, and 100 further pushes to a writable directory wrote nothing.
+    #[test]
+    fn a_writable_directory_is_used_again_after_the_cap_is_reached() {
+        let dir = temp_data_dir("recover-after-cap");
+        cleanup_dir(&dir);
+        // A regular file where the directory should be: every write fails.
+        std::fs::write(&dir, b"not a directory").expect("place the blocker");
+
+        let capacity = 4usize;
+        let mut buf = HistoryBuffer::new(capacity, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+        for i in 0..100 {
+            buf.push(make_state(i as f64));
+        }
+        assert_eq!(buf.segment_count, 0, "every write failed");
+        assert!(
+            buf.failed_spills > 1,
+            "the run has to keep retrying for this to test anything: {} attempts",
+            buf.failed_spills
+        );
+        assert!(
+            buf.flush_at <= capacity * MAX_RETAINED_BUFFERS,
+            "the threshold has to stay reachable: {} against a cap of {}",
+            buf.flush_at,
+            capacity * MAX_RETAINED_BUFFERS
+        );
+
+        std::fs::remove_file(&dir).expect("remove the blocker");
+        std::fs::create_dir_all(&dir).expect("make the directory");
+        for i in 100..200 {
+            buf.push(make_state(i as f64));
+        }
+        assert!(
+            buf.segment_count > 0,
+            "writes resume once the directory takes them"
+        );
+        assert!(
+            buf.states.len() <= capacity,
+            "and the buffer drains back to the normal band: {}",
+            buf.states.len()
+        );
+
+        cleanup_dir(&dir);
     }
 }
