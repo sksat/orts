@@ -37,6 +37,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - WIT v0 plugin interface に msg-io / stream-io チャネルを追加。([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
 #### Changed
+- **BREAKING**: `setup::build_orbital_system` / `build_spacecraft_dynamics` に
+  末尾引数 `gravity_field: Option<Arc<SphericalHarmonicField>>` を追加。`Some` で
+  `SphericalHarmonicGravity` (Earth 専用、epoch 必須、`mu` は場の GM と一致すること
+  を assert)、`None` で従来の `ZonalGravity`。([#411](https://github.com/sksat/orts/issues/411))
 - `SatelliteParams` が `SpacecraftShape` を optional で持ち、
   `build_spacecraft_dynamics` がそれを見て等方面の `SolarRadiationPressure` /
   `AtmosphericDrag` の代わりに `PanelSrp` / `PanelDrag` を install するように
@@ -179,6 +183,14 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `orts-cli` (Rust, crates.io, binary)
 
 #### Added
+- `[gravity_field]` config table (`path`, `degree`, `order`) と `run` / `serve` の
+  `--gravity-field <PATH> [--gravity-degree N] [--gravity-order M]`: ICGEM `.gfc`
+  の完全球面調和重力場を J2/J3/J4 の zonal model の代わりに登録し、ファイルの GM を
+  simulation の μ (初期状態、energy 派生値、CSV/RRD metadata、WS `info`) に使う。
+  Earth 専用。`degree >= 2`、`order <= degree` は `config validate` で検査し、
+  ファイルは実行時に開く。WebSocket の `start_simulation` では受け付けない
+  (server 側のファイルを指すため)。伝播 frame は `SimpleEci` のままなので、場の
+  回転は ERA のみ。([#411](https://github.com/sksat/orts/issues/411))
 - `[[satellites.panels]]` で衛星に平板の外形を与えられるようにした
   (`area`, `normal`, `cd`, `specular`, `diffuse`, `cp_offset`, `two_sided`
   ([#399](https://github.com/sksat/orts/pull/399))、`back` ([#395](https://github.com/sksat/orts/pull/395)))。

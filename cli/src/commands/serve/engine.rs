@@ -557,6 +557,7 @@ impl ServeEngine {
                     &sat_params(spec),
                     &third_bodies,
                     params.build_atmosphere_model(),
+                    params.gravity_field(),
                 );
                 let initial = spec
                     .initial_state(params.mu, params.epoch)
@@ -1049,6 +1050,7 @@ impl ServeEngine {
             &sat_params(&spec),
             &third_bodies,
             self.params.build_atmosphere_model(),
+            self.params.gravity_field(),
         );
         // Evaluate the initial state at the instant the satellite enters the
         // running sim (epoch + current_t), so a TLE/OMM is propagated to "now"
@@ -1063,7 +1065,7 @@ impl ServeEngine {
         let sat_info = SatelliteInfo {
             id: spec.entity_path().to_string(),
             name: spec.name.clone(),
-            altitude: spec.altitude(&self.params.body),
+            altitude: spec.altitude(&self.params.body, self.params.mu),
             period: spec.period,
             perturbations: vec![],
             shape: spec.shape,
@@ -1198,7 +1200,7 @@ impl ServeEngine {
         let sat_info = SatelliteInfo {
             id: spec.entity_path().to_string(),
             name: spec.name.clone(),
-            altitude: spec.altitude(&self.params.body),
+            altitude: spec.altitude(&self.params.body, self.params.mu),
             period: spec.period,
             perturbations: vec![],
             shape: spec.shape,
@@ -1292,6 +1294,7 @@ fn build_info_message(params: &SimParams) -> WsMessage {
                     &sat_params(s),
                     &third_bodies,
                     params.build_atmosphere_model(),
+                    params.gravity_field(),
                 )
                 .model_names()
                 .into_iter()
@@ -1301,7 +1304,7 @@ fn build_info_message(params: &SimParams) -> WsMessage {
             SatelliteInfo {
                 id: s.entity_path().to_string(),
                 name: s.name.clone(),
-                altitude: s.altitude(&params.body),
+                altitude: s.altitude(&params.body, params.mu),
                 period: s.period,
                 perturbations,
                 shape: s.shape,
@@ -2077,5 +2080,35 @@ orbit = { type = "circular", altitude = 500 }
             .err()
             .expect("an id naming an entity already in the fleet must be refused");
         assert!(err.contains("unique"), "got: {err}");
+    }
+
+    /// `[gravity_field]` swaps the oblateness model: the spherical-harmonic
+    /// field is installed and the zonal one is not (both carry J2).
+    #[test]
+    fn serve_installs_the_gravity_field_instead_of_zonal_gravity() {
+        let toml = format!(
+            r#"
+epoch = "2024-03-20T12:00:00Z"
+
+[gravity_field]
+path = "{}"
+degree = 8
+
+[[satellites]]
+id = "sat-a"
+orbit = {{ type = "circular", altitude = 500 }}
+attitude = {{ inertia_diag = [10, 20, 30], mass = 50 }}
+"#,
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../tobari/tests/fixtures/orekit_geopotential_70x70.gfc"
+            )
+        );
+        let names = serve_model_names(&toml);
+        assert!(
+            names.iter().any(|n| n == "spherical_harmonic_gravity"),
+            "{names:?}"
+        );
+        assert!(!names.iter().any(|n| n == "zonal_gravity"), "{names:?}");
     }
 }

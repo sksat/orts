@@ -220,6 +220,16 @@ fn validate_sim_config(config: &SimConfig) -> Result<(), String> {
     // `orts serve --config` rejects must not slip in through a WebSocket
     // `start_simulation` and have its uplinks dropped instead.
     config.ensure_serve_supported()?;
+    // `[gravity_field]` names a file on the server's filesystem. A WebSocket
+    // client must not be able to make the server open arbitrary paths (or
+    // panic on a missing one), so the field is CLI / config-file only.
+    if config.gravity_field.is_some() {
+        return Err(
+            "gravity_field is not accepted over WebSocket: start `orts serve` with \
+                    `--gravity-field <PATH>` or a `--config` file carrying `[gravity_field]`"
+                .to_string(),
+        );
+    }
 
     let body = crate::satellite::parse_body(&config.body);
     let mu = body.properties().mu;
@@ -733,5 +743,24 @@ attitude = { inertia_diag = [10, 10, 10], mass = 50 }
                 "Earth config tripped the body guard: {e}"
             );
         }
+    }
+
+    /// `[gravity_field]` names a server-side file, so a WebSocket client must
+    /// not be able to set it.
+    #[test]
+    fn ws_start_rejects_gravity_field() {
+        let config: SimConfig = toml::from_str(
+            r#"
+[gravity_field]
+path = "/etc/passwd"
+
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+"#,
+        )
+        .expect("valid test toml");
+        let err = validate_sim_config(&config).unwrap_err();
+        assert!(err.contains("not accepted over WebSocket"), "got: {err}");
     }
 }

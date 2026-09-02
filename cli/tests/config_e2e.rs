@@ -381,3 +381,28 @@ fn config_validate_json_carries_the_unread_keys() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// `[gravity_field]` on a non-Earth body is a structural error `orts config
+/// validate` reports without touching the file (the path need not exist).
+#[test]
+fn test_config_validate_rejects_non_earth_gravity_field() {
+    let dir = unique_dir("gravity-field-moon");
+    let path = dir.join("moon.toml");
+    std::fs::write(
+        &path,
+        "body = \"moon\"\n\n[gravity_field]\npath = \"GRGM.gfc\"\n\n[[satellites]]\nid = \"a\"\n\n[satellites.orbit]\ntype = \"circular\"\naltitude = 100\n",
+    )
+    .unwrap();
+    let out = orts()
+        .args(["config", "validate", path.to_str().unwrap(), "--json"])
+        .output()
+        .expect("validate");
+    assert_eq!(out.status.code(), Some(2), "expected exit code 2: {out:?}");
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json on stdout");
+    assert_eq!(v["status"], "error");
+    assert!(
+        v["error"].as_str().unwrap_or("").contains("Earth-only"),
+        "error should name the rule: {v}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
