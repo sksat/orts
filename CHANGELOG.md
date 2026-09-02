@@ -207,11 +207,6 @@ section is subdivided by package.
   empty `back = {}` says the same as the flag). Either way the area, `cd` and
   centre of pressure are shared, and `two_sided = false` beside `back` is
   rejected as a contradiction. Writing panels
-  `area`, `normal`, `cd`, `specular`, `diffuse`, `cp_offset` and `back` ([#395](https://github.com/sksat/orts/pull/395)).
-  A panel is one face, so `back` is what gives a thin plate — a solar array —
-  its far side: the area, `cd` and centre of pressure are shared and the
-  reflectivities are its own, with an empty table (`back = {}`) copying the
-  front's. Writing panels
   makes SRP and drag attitude-dependent, and an off-centre centre of pressure
   turns them into attitude disturbances — which is what the isotropic
   `srp_area_to_mass` / `ballistic_coeff` cannot express. Panels require
