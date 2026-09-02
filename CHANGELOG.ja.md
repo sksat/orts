@@ -137,7 +137,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `PanelSrp::for_body` が `KnownBody` を取り、`default_third_bodies` と 2 つの
   `build_*` builder が `Result` を返す。Sun ephemeris を持たない中心天体は、Sun を
   誤った位置に置いたまま伝播せず報告される。panel SRP も対象で、panel と Sun 方向の
-  角度が力とトルクの両方を決めるため、どちらも向きが変わる。([#372](https://github.com/sksat/orts/pull/372))
+  角度が力とトルクの両方を決めるため、どちらも向きが変わる。
+
+  **BREAKING**: `SolarRadiationPressure` に private な `sun_position_fn` field が
+  増える。他の field は `pub` なので downstream は struct literal で直接構築できて
+  いたが、それがコンパイルできなくなる。`for_earth` / `for_body` と `with_*`
+  builder を使う（crate 自身は元からこの経路で構築している）。`PanelSrp` と
+  `SunSensor` も同じ field を持つが、こちらの field は元から private。([#372](https://github.com/sksat/orts/pull/372))
 - sun sensor の Sun 方向も中心天体から取るようになった (`SunSensor::for_body`)。
   地心ベクトルを読んでいたため、Mars では力モデルが正しくても姿勢制御の入力だけが
   最大 176° ずれていた。([#372](https://github.com/sksat/orts/pull/372))

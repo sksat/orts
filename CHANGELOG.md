@@ -159,7 +159,14 @@ section is subdivided by package.
   return `Result`, so a central body with no Sun ephemeris is reported instead
   of propagated with the Sun in the wrong place. Panel SRP is included: it turns
   both the force and the torque, since the panel's angle to the Sun line decides
-  each. ([#372](https://github.com/sksat/orts/pull/372))
+  each.
+
+  **BREAKING**: `SolarRadiationPressure` gains a private `sun_position_fn`
+  field. Its other fields are `pub`, so a downstream struct literal built one
+  directly; that no longer compiles. Construct it through `for_earth` or
+  `for_body` and the `with_*` builders, which is how the crate has always built
+  it. `PanelSrp` and `SunSensor` gain the same field, and their fields were
+  already private. ([#372](https://github.com/sksat/orts/pull/372))
 - The sun sensor's Sun direction comes from the central body too
   (`SunSensor::for_body`). It read the geocentric vector, so on Mars the force
   models were right while the attitude-control input was up to 176° off.
