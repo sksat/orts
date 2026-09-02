@@ -619,8 +619,8 @@ section is subdivided by package.
   accepted state passed six tests, and freezing `Rk4::step` passed the two
   RK4 conservation tests. The symplectic tests now cap the drift relative to
   the initial energy, the two RK4 tests require the state to travel, and the
-  Lotka-Volterra one keeps both populations positive, since a `ln` reads
-  them. `tight_tolerance_dop853_fewer_evaluations` also
+  Lotka-Volterra one keeps both populations positive, since its invariant
+  reads `ln x` and `ln y`. `tight_tolerance_dop853_fewer_evaluations` also
   requires both integrations to complete at `t_end` with the right answer
   before comparing what they cost. ([#409](https://github.com/sksat/orts/pull/409))
 
