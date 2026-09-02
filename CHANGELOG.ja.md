@@ -545,7 +545,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   に置き換えると 167 件のうち 147 件が通り、各状態を 1 ステップ遅れて通知する
   欠陥はどのテストも検出しなかった。調和振動子の一周期テストはどちらも検出
   できない (一周期後の解が初期状態と同じ)。crate 内のどの試験系も `t` を
-  使っていなかった。([#TBD](https://github.com/sksat/orts/pull/TBD))
+  使っていなかった。([#408](https://github.com/sksat/orts/pull/408))
 
 #### Fixed
 - `Integrator::try_integrate` が、結果が非有限になった最初のステップで

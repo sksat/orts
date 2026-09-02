@@ -609,7 +609,7 @@ section is subdivided by package.
   passing, and reporting each state one step late was caught by nothing at
   all. A one-period harmonic-oscillator test cannot see either, because after
   one period the answer is the initial state, and no test system in the crate
-  used `t`. ([#TBD](https://github.com/sksat/orts/pull/TBD))
+  used `t`. ([#408](https://github.com/sksat/orts/pull/408))
 
 #### Fixed
 - `Integrator::try_integrate` stops with `IntegrationError::NonFiniteState` at
