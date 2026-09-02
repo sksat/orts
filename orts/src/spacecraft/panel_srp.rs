@@ -79,7 +79,12 @@ impl PanelSrp {
     /// with the geocentric Sun and no shadow — see [`Self::new`].
     ///
     /// # Panics
-    /// Panics unless every panel normal is unit length.
+    /// Panics unless every panel normal is unit length and every outline is
+    /// consistent with its panel — positive finite extents whose product is a
+    /// finite non-zero area matching `area`, and a unit in-plane axis
+    /// perpendicular to the normal. Both are re-checked here because
+    /// `SurfacePanel`'s fields are public, so a struct literal can bypass the
+    /// constructors that establish them.
     pub fn panels(panels: Vec<super::SurfacePanel>) -> Self {
         Self::new(SpacecraftShape::panels(panels))
     }
@@ -93,7 +98,12 @@ impl PanelSrp {
     /// [`PanelOptics`]: super::PanelOptics
     ///
     /// # Panics
-    /// Panics unless every panel normal is unit length.
+    /// Panics unless every panel normal is unit length and every outline is
+    /// consistent with its panel — positive finite extents whose product is a
+    /// finite non-zero area matching `area`, and a unit in-plane axis
+    /// perpendicular to the normal. Both are re-checked here because
+    /// `SurfacePanel`'s fields are public, so a struct literal can bypass the
+    /// constructors that establish them.
     pub fn for_earth(shape: SpacecraftShape) -> Self {
         shape.assert_normals_are_unit();
         shape.assert_outlines_are_consistent();
@@ -160,7 +170,12 @@ impl PanelSrp {
     /// [`without_shadow()`]: Self::without_shadow
     ///
     /// # Panics
-    /// Panics unless every panel normal is unit length.
+    /// Panics unless every panel normal is unit length and every outline is
+    /// consistent with its panel — positive finite extents whose product is a
+    /// finite non-zero area matching `area`, and a unit in-plane axis
+    /// perpendicular to the normal. Both are re-checked here because
+    /// `SurfacePanel`'s fields are public, so a struct literal can bypass the
+    /// constructors that establish them.
     pub fn new(shape: SpacecraftShape) -> Self {
         shape.assert_normals_are_unit();
         shape.assert_outlines_are_consistent();
@@ -849,6 +864,24 @@ mod tests {
             outline: Some(crate::spacecraft::PanelOutline::Rectangle {
                 half_extent: [1.0, 1.0],
                 in_plane_x: normal, // parallel, so both in-plane axes degenerate
+            }),
+        };
+        let _ = PanelSrp::for_earth(SpacecraftShape::panels(vec![panel]));
+    }
+
+    /// An infinite stored area passes a relative comparison against itself.
+    #[test]
+    #[should_panic(expected = "area must be positive and finite")]
+    fn a_struct_literal_with_an_infinite_area_is_rejected() {
+        let panel = SurfacePanel {
+            area: f64::INFINITY,
+            normal: Vector3::new(1.0, 0.0, 0.0),
+            cd: 2.2,
+            optics: PanelOptics::absorber(),
+            cp_offset: Vector3::zeros(),
+            outline: Some(crate::spacecraft::PanelOutline::Rectangle {
+                half_extent: [1.0, 1.0],
+                in_plane_x: Vector3::new(0.0, 1.0, 0.0),
             }),
         };
         let _ = PanelSrp::for_earth(SpacecraftShape::panels(vec![panel]));

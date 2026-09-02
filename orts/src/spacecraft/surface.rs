@@ -96,7 +96,12 @@ impl PanelOptics {
 /// answers whether a point is inside — so a new shape means a new arm in each
 /// of those and nothing else. Containment cannot be derived from the corners:
 /// a triangle's three corners span a parallelogram larger than the triangle.
+///
+/// `#[non_exhaustive]` so that adding a shape stays a minor change: without it
+/// a downstream `match` could be exhaustive today and stop compiling the day a
+/// triangle arrives, which would defeat the reason this is an enum.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub enum PanelOutline {
     /// A rectangle centred on the panel's `cp_offset`.
     ///
@@ -385,8 +390,9 @@ impl SpacecraftShape {
     /// Create a panel model from an arbitrary set of panels.
     ///
     /// # Panics
-    /// Panics unless every panel normal is unit length — see
-    /// [`Self::assert_normals_are_unit`].
+    /// Panics unless every panel normal is unit length and every outline is
+    /// consistent with its panel — see [`Self::assert_normals_are_unit`] and
+    /// [`Self::assert_outlines_are_consistent`].
     pub fn panels(panels: Vec<SurfacePanel>) -> Self {
         let shape = Self::Panels(panels);
         shape.assert_normals_are_unit();
@@ -438,6 +444,13 @@ impl SpacecraftShape {
             assert!(
                 area.is_finite() && area > 0.0,
                 "panel {i}: outline half-extents {half_extent:?} give an area of {area}"
+            );
+            // Finite first: with `panel.area` infinite both sides of the
+            // relative comparison are infinite, and `inf <= inf` holds.
+            assert!(
+                panel.area.is_finite() && panel.area > 0.0,
+                "panel {i}: area must be positive and finite, got {}",
+                panel.area
             );
             assert!(
                 (area - panel.area).abs() <= 1e-9 * area.max(panel.area),
@@ -605,7 +618,12 @@ impl PanelDrag<frame::SimpleEci> {
     /// Uses piecewise exponential atmosphere and WGS-84 geodetic altitude by default.
     ///
     /// # Panics
-    /// Panics unless every panel normal is unit length.
+    /// Panics unless every panel normal is unit length and every outline is
+    /// consistent with its panel — positive finite extents whose product is a
+    /// finite non-zero area matching `area`, and a unit in-plane axis
+    /// perpendicular to the normal. Both are re-checked here because
+    /// `SurfacePanel`'s fields are public, so a struct literal can bypass the
+    /// constructors that establish them.
     pub fn for_earth(shape: SpacecraftShape) -> Self {
         Self::for_earth_in_frame(shape, ())
     }
@@ -616,7 +634,12 @@ impl<F: EarthFixedTransform> PanelDrag<F> {
     /// `F`, with that frame's EOP storage (`()` for `SimpleEci`).
     ///
     /// # Panics
-    /// Panics unless every panel normal is unit length.
+    /// Panics unless every panel normal is unit length and every outline is
+    /// consistent with its panel — positive finite extents whose product is a
+    /// finite non-zero area matching `area`, and a unit in-plane axis
+    /// perpendicular to the normal. Both are re-checked here because
+    /// `SurfacePanel`'s fields are public, so a struct literal can bypass the
+    /// constructors that establish them.
     pub fn for_earth_in_frame(shape: SpacecraftShape, eop: F::EopStorage) -> Self {
         shape.assert_normals_are_unit();
         shape.assert_outlines_are_consistent();
