@@ -237,16 +237,33 @@ impl SimParams {
 impl SimParams {
     /// Build SimParams from CLI arguments.
     /// `is_serve`: when true and no orbit args are given, defaults to SSO+ISS.
+    ///
+    /// Loads `--gravity-field` itself and panics on a bad file, like a bad
+    /// `--space-weather` file; the CLI entry points load it first with
+    /// [`load_gravity_field`](Self::load_gravity_field) and call
+    /// [`from_sim_args_with_gravity_field`](Self::from_sim_args_with_gravity_field)
+    /// so the failure is a normal error.
     pub fn from_sim_args(args: &SimArgs, is_serve: bool) -> Self {
-        let body = parse_body(&args.body);
-        // The gravity field is resolved before `mu` because `mu` is *its* GM
-        // when one is configured — and `mu` sizes every satellite's period
-        // and initial state below.
         let gravity_field = Self::load_gravity_field(
             args.gravity_field.as_deref(),
             args.gravity_degree,
             args.gravity_order,
-        );
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
+        Self::from_sim_args_with_gravity_field(args, is_serve, gravity_field)
+    }
+
+    /// [`from_sim_args`](Self::from_sim_args) with the gravity field already
+    /// loaded (it is the one the flags name; `None` = zonal model).
+    pub fn from_sim_args_with_gravity_field(
+        args: &SimArgs,
+        is_serve: bool,
+        gravity_field: Option<Arc<tobari::gravity::SphericalHarmonicField>>,
+    ) -> Self {
+        let body = parse_body(&args.body);
+        // `mu` is the field's GM when one is configured, and it sizes every
+        // satellite's period and initial state below — so it is resolved
+        // before the satellites.
         let mu = Self::resolve_mu(body, gravity_field.as_deref());
 
         // An explicit `--epoch` wins; `None` defers the default — a TLE/OMM
@@ -364,13 +381,28 @@ impl SimParams {
     }
 
     /// Build SimParams from a config file.
+    ///
+    /// Loads `[gravity_field]` itself and panics on a bad file (see
+    /// [`from_sim_args`](Self::from_sim_args)); `orts run` / `orts serve` load
+    /// it first and call
+    /// [`from_config_with_gravity_field`](Self::from_config_with_gravity_field).
+    /// A WebSocket `start_simulation` cannot carry `[gravity_field]`
+    /// (`serve::manager::validate_sim_config` rejects it), so it never
+    /// reaches the panic.
     pub fn from_config(config: &SimConfig) -> Self {
+        let gravity_field =
+            Self::load_config_gravity_field(config).unwrap_or_else(|e| panic!("{e}"));
+        Self::from_config_with_gravity_field(config, gravity_field)
+    }
+
+    /// [`from_config`](Self::from_config) with `[gravity_field]` already
+    /// loaded (`None` = the config has no table, zonal model).
+    pub fn from_config_with_gravity_field(
+        config: &SimConfig,
+        gravity_field: Option<Arc<tobari::gravity::SphericalHarmonicField>>,
+    ) -> Self {
         let body = config.known_body();
-        // Field before `mu`: see `from_sim_args`.
-        let gravity_field = config
-            .gravity_field
-            .as_ref()
-            .and_then(|gf| Self::load_gravity_field(Some(gf.path.as_str()), gf.degree, gf.order));
+        // Field before `mu`: see `from_sim_args_with_gravity_field`.
         let mu = Self::resolve_mu(body, gravity_field.as_deref());
 
         // `None` defers the default; resolved from the element-set epoch after
@@ -444,31 +476,22 @@ impl SimParams {
     }
 
     /// Load and truncate a spherical-harmonic gravity field from an ICGEM
-    /// `.gfc` path.
+    /// `.gfc` path; `Ok(None)` when no path is given.
     ///
-    /// The constructors are infallible, so a bad file panics here like a bad
-    /// `--space-weather` file does. Callers that can report an error cleanly
-    /// run [`preflight_gravity_field`](Self::preflight_gravity_field) first —
-    /// `orts serve` builds its `SimParams` inside a spawned task, where a
-    /// panic would only kill that task and leave the server up without a
-    /// simulation manager.
-    fn load_gravity_field(
+    /// The entry points call this once, on the main task, and hand the result
+    /// to `*_with_gravity_field`: a missing or malformed file is then a normal
+    /// error, the file is parsed once, and there is no second open that could
+    /// fail differently. (`orts serve` builds its `SimParams` inside a spawned
+    /// task, where a panic would only kill that task and leave the server up
+    /// without a simulation manager.)
+    pub fn load_gravity_field(
         path: Option<&str>,
         degree: Option<usize>,
         order: Option<usize>,
-    ) -> Option<Arc<tobari::gravity::SphericalHarmonicField>> {
-        let path = path?;
-        Some(Arc::new(
-            Self::try_load_gravity_field(path, degree, order).unwrap_or_else(|e| panic!("{e}")),
-        ))
-    }
-
-    /// Open, parse and truncate the field, or say why not.
-    fn try_load_gravity_field(
-        path: &str,
-        degree: Option<usize>,
-        order: Option<usize>,
-    ) -> Result<tobari::gravity::SphericalHarmonicField, String> {
+    ) -> Result<Option<Arc<tobari::gravity::SphericalHarmonicField>>, String> {
+        let Some(path) = path else {
+            return Ok(None);
+        };
         let field =
             tobari::gravity::SphericalHarmonicField::from_icgem_file(std::path::Path::new(path))
                 .map_err(|e| format!("Failed to load gravity field {path}: {e}"))?;
@@ -479,23 +502,17 @@ impl SimParams {
                 "gravity field truncation {degree}x{order}: need degree >= 2 and order <= degree"
             ));
         }
-        Ok(field.truncated(degree, order))
+        Ok(Some(Arc::new(field.truncated(degree, order))))
     }
 
-    /// Check that a configured gravity field can actually be loaded, so the
-    /// failure is a normal error at the command line instead of a panic in
-    /// `from_config` / `from_sim_args` (see [`load_gravity_field`](Self::load_gravity_field)).
-    /// The field is parsed once more when the parameters are built; a 70×70
-    /// file is ~140 KB, so the second read is not worth threading the value
-    /// through.
-    pub fn preflight_gravity_field(
-        path: Option<&str>,
-        degree: Option<usize>,
-        order: Option<usize>,
-    ) -> Result<(), String> {
-        match path {
-            Some(path) => Self::try_load_gravity_field(path, degree, order).map(drop),
-            None => Ok(()),
+    /// [`load_gravity_field`](Self::load_gravity_field) for a config's
+    /// `[gravity_field]` table.
+    pub fn load_config_gravity_field(
+        config: &SimConfig,
+    ) -> Result<Option<Arc<tobari::gravity::SphericalHarmonicField>>, String> {
+        match &config.gravity_field {
+            Some(gf) => Self::load_gravity_field(Some(&gf.path), gf.degree, gf.order),
+            None => Ok(None),
         }
     }
 
@@ -1421,14 +1438,33 @@ orbit = { type = "circular", altitude = 570 }
     }
 
     #[test]
-    fn preflight_gravity_field_reports_instead_of_panicking() {
-        assert!(SimParams::preflight_gravity_field(None, None, None).is_ok());
-        assert!(SimParams::preflight_gravity_field(Some(GFC_FIXTURE), Some(8), Some(8)).is_ok());
-        let missing = SimParams::preflight_gravity_field(Some("/nonexistent/EGM.gfc"), None, None)
-            .unwrap_err();
+    fn load_gravity_field_reports_instead_of_panicking() {
+        assert!(
+            SimParams::load_gravity_field(None, None, None)
+                .unwrap()
+                .is_none()
+        );
+        let field = SimParams::load_gravity_field(Some(GFC_FIXTURE), Some(8), Some(8))
+            .unwrap()
+            .expect("a field");
+        assert_eq!((field.max_degree(), field.max_order()), (8, 8));
+        let missing =
+            SimParams::load_gravity_field(Some("/nonexistent/EGM.gfc"), None, None).unwrap_err();
         assert!(missing.contains("/nonexistent/EGM.gfc"), "{missing}");
-        let bad =
-            SimParams::preflight_gravity_field(Some(GFC_FIXTURE), Some(8), Some(9)).unwrap_err();
+        let bad = SimParams::load_gravity_field(Some(GFC_FIXTURE), Some(8), Some(9)).unwrap_err();
         assert!(bad.contains("order <= degree"), "{bad}");
+    }
+
+    /// The loaded field is the one the parameters carry — no second open.
+    #[test]
+    fn from_config_with_gravity_field_uses_the_given_field() {
+        let cfg = config_with_field("degree = 8");
+        let field = SimParams::load_config_gravity_field(&cfg).unwrap();
+        let params = SimParams::from_config_with_gravity_field(&cfg, field.clone());
+        assert!(Arc::ptr_eq(
+            params.gravity_field.as_ref().unwrap(),
+            field.as_ref().unwrap()
+        ));
+        assert_eq!(params.mu, 398600.4415);
     }
 }

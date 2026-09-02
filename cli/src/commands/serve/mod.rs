@@ -296,16 +296,15 @@ async fn async_server(
         textures::spawn_texture_downloader(Arc::clone(&texture_cache), tx.clone());
     let bridge = Arc::new(StreamBridge::new());
 
-    // A configured gravity field is opened here, on the main task, so a
-    // missing or malformed file is a fatal configuration error. Inside the
-    // spawned manager it would only kill that task and leave the HTTP /
-    // WebSocket server up with nobody behind the command channel.
-    if let Some(cfg) = &initial_config
-        && let Some(gf) = &cfg.gravity_field
-    {
-        SimParams::preflight_gravity_field(Some(&gf.path), gf.degree, gf.order)
-            .map_err(CmdError::failure)?;
-    }
+    // A configured gravity field is loaded here, on the main task, and handed
+    // to the manager: a missing or malformed file is a fatal configuration
+    // error. Inside the spawned manager it would only kill that task and
+    // leave the HTTP / WebSocket server up with nobody behind the command
+    // channel.
+    let initial_gravity_field = match &initial_config {
+        Some(cfg) => SimParams::load_config_gravity_field(cfg).map_err(CmdError::failure)?,
+        None => None,
+    };
 
     // Spawn simulation manager
     let mgr_tx = tx.clone();
@@ -318,13 +317,15 @@ async fn async_server(
         // restart) honors them too.
         // Same reason as in `run`: this path skips `SimConfig::validate`.
         crate::commands::run::validate_sim_args(sim)?;
-        SimParams::preflight_gravity_field(
+        let field = SimParams::load_gravity_field(
             sim.gravity_field.as_deref(),
             sim.gravity_degree,
             sim.gravity_order,
         )
         .map_err(CmdError::failure)?;
-        let params = Arc::new(SimParams::from_sim_args(sim, true));
+        let params = Arc::new(SimParams::from_sim_args_with_gravity_field(
+            sim, true, field,
+        ));
         crate::satellite::ensure_unique_ids(&params.satellites)?;
         tokio::spawn(manager::simulation_manager_with_params(
             params,
@@ -337,6 +338,7 @@ async fn async_server(
     } else {
         tokio::spawn(manager::simulation_manager(
             initial_config,
+            initial_gravity_field,
             plugin_overrides,
             cmd_rx,
             mgr_tx,

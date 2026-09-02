@@ -195,6 +195,7 @@ pub(super) async fn simulation_manager_with_params(
                 // Delegate to the standard manager for subsequent runs.
                 simulation_manager(
                     Some(config),
+                    None,
                     cli_plugin_overrides,
                     returned_rx,
                     tx,
@@ -297,6 +298,9 @@ async fn idle_loop(cmd_rx: &mut mpsc::Receiver<SimCommand>) -> Option<SimConfig>
 /// Loops between idle and running states; after terminate it returns to idle.
 pub(super) async fn simulation_manager(
     initial_config: Option<SimConfig>,
+    // The `[gravity_field]` of `initial_config`, loaded by the caller (see
+    // `serve::run_serve`); `None` when the config has no table.
+    initial_gravity_field: Option<Arc<tobari::gravity::SphericalHarmonicField>>,
     cli_plugin_overrides: PluginBackendOverrides,
     mut cmd_rx: mpsc::Receiver<SimCommand>,
     tx: broadcast::Sender<String>,
@@ -312,8 +316,18 @@ pub(super) async fn simulation_manager(
     };
 
     // Main manager loop: start simulation, run until terminated, return to idle.
+    // Only the initial config can carry a field (a WebSocket `start_simulation`
+    // is refused if it does, see `validate_sim_config`), so the preloaded one
+    // is used exactly once; later configs go through `from_config`, whose
+    // loader is a no-op for a config without the table.
+    let mut initial_gravity_field = initial_gravity_field;
     while let Some(config) = next_config {
-        let mut params_inner = SimParams::from_config(&config);
+        let mut params_inner = match (&config.gravity_field, initial_gravity_field.take()) {
+            (Some(_), Some(field)) => {
+                SimParams::from_config_with_gravity_field(&config, Some(field))
+            }
+            _ => SimParams::from_config(&config),
+        };
         cli_plugin_overrides.apply(&mut params_inner);
         let params = Arc::new(params_inner);
 

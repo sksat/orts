@@ -74,16 +74,6 @@ fn reject_gravity_flags_with_config(sim: &SimArgs, config_path: &str) -> Result<
     )))
 }
 
-/// Open the config's gravity field now, so a missing or malformed file is a
-/// normal error rather than a panic in `SimParams::from_config`.
-fn preflight_config_gravity_field(config: &crate::config::SimConfig) -> Result<(), CmdError> {
-    match &config.gravity_field {
-        Some(gf) => SimParams::preflight_gravity_field(Some(&gf.path), gf.degree, gf.order)
-            .map_err(CmdError::failure),
-        None => Ok(()),
-    }
-}
-
 /// The `[gravity_field]` rules for the flag spelling: the same structural
 /// checks `GravityFieldConfig::validate` runs for a config (Earth only,
 /// degree ≥ 2, order ≤ degree), plus "truncation without a field" — which the
@@ -119,32 +109,35 @@ pub fn run_simulation_cmd(
     format: OutputFormat,
     json: bool,
 ) -> Result<(), CmdError> {
+    // The gravity field is loaded here, once, and handed to the constructor:
+    // a missing or malformed file is a normal error, not a panic inside
+    // `SimParams`, and the file is not opened a second time.
     let mut params = if let Some(config_path) = &sim.config {
         reject_gravity_flags_with_config(sim, config_path)?;
         let config =
             crate::config::load_config_reporting_unread_keys(std::path::Path::new(config_path))?;
-        preflight_config_gravity_field(&config)?;
-        SimParams::from_config(&config)
+        let field = SimParams::load_config_gravity_field(&config).map_err(CmdError::failure)?;
+        SimParams::from_config_with_gravity_field(&config, field)
     } else if sim.has_orbit_args() {
         // The direct-CLI path bypasses `SimConfig::validate`, so apply the
         // same time/tolerance checks here rather than letting a bad `--dt`
         // hang the propagation loop or panic inside step-size control.
         validate_sim_args(sim)?;
-        SimParams::preflight_gravity_field(
+        let field = SimParams::load_gravity_field(
             sim.gravity_field.as_deref(),
             sim.gravity_degree,
             sim.gravity_order,
         )
         .map_err(CmdError::failure)?;
-        SimParams::from_sim_args(sim, false)
+        SimParams::from_sim_args_with_gravity_field(sim, false, field)
     } else {
         // Auto-detect orts.toml in the current directory
         let config_path = std::path::Path::new("orts.toml");
         if config_path.exists() {
             reject_gravity_flags_with_config(sim, "orts.toml")?;
             let config = crate::config::load_config_reporting_unread_keys(config_path)?;
-            preflight_config_gravity_field(&config)?;
-            SimParams::from_config(&config)
+            let field = SimParams::load_config_gravity_field(&config).map_err(CmdError::failure)?;
+            SimParams::from_config_with_gravity_field(&config, field)
         } else {
             return Err(CmdError::usage(
                 "no simulation configuration found.\n\
