@@ -526,38 +526,23 @@ jobs:
         run: |
           cd plugin-sdk/examples && cargo component build -p orts-example-plugin-pd-rw-control -p orts-example-plugin-commandable-mode-ff -p orts-example-plugin-stream-framed-commander --release
 
-      # Real kble binary for the stream-bridge E2E. The version stays in a shell
-      # assignment because that is the shape renovate.json's custom manager
-      # matches (crates datasource); the cache key and the install both read it
-      # from here, so they cannot end up on different versions.
-      - name: Resolve kble version
-        id: kble
-        run: |
-          # renovate: datasource=crate depName=kble
-          KBLE_VERSION=0.5.0
-          echo "version=${KBLE_VERSION}" >> "$GITHUB_OUTPUT"
-
-      # cargo-binstall took 50 s per run to fetch and unpack the release
-      # (measured); the binary is one file and its version is pinned.
-      - name: Cache kble
-        id: kble-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cargo/bin/kble
-          key: kble-${{ steps.kble.outputs.version }}-${{ runner.os }}-${{ runner.arch }}
-
+      # Real kble binary for the stream-bridge E2E. Installed via
+      # cargo-binstall with the version resolved against crates.io;
+      # Renovate bumps KBLE_VERSION via the custom regex manager in
+      # renovate.json (crates datasource).
       - name: Install cargo-binstall
-        if: steps.kble-cache.outputs.cache-hit != 'true'
         uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
         with:
           tool: cargo-binstall
       - name: Install kble
-        if: steps.kble-cache.outputs.cache-hit != 'true'
-        run: cargo binstall --no-confirm "kble@${{ steps.kble.outputs.version }}"
+        run: |
+          # renovate: datasource=crate depName=kble
+          KBLE_VERSION=0.5.0
+          cargo binstall --no-confirm "kble@${KBLE_VERSION}"
 
-      # Named explicitly so the kble suites fail if the cache ever restores
-      # nothing: their fallback is a PATH lookup, and a missing binary there
-      # makes them soft-skip, which would hide the breakage.
+      # Named explicitly so the kble suites fail if the install ever puts the
+      # binary somewhere else: their fallback is a PATH lookup, and finding
+      # nothing there makes them soft-skip, which hides the breakage.
       - name: Point the kble suites at the binary
         run: echo "KBLE_BIN=$HOME/.cargo/bin/kble" >> "$GITHUB_ENV"
 
@@ -599,11 +584,11 @@ jobs:
           ORTS_BIN: ${{ github.workspace }}/bin/orts
         run: |
           # The suites the build step above already compiled, in one
-          # invocation. Nine separate ones each re-resolved the workspace and
-          # re-checked freshness before running anything: measured 226 s for
-          # 123 s of tests. Cargo still runs the binaries one after another and
-          # prints `Running tests/<suite>.rs` before each, so a failure still
-          # names its suite.
+          # invocation. Nine separate ones each re-resolved the workspace
+          # first, which measured 0.6 s apiece — small, but so is the reason to
+          # repeat the same command nine times. Cargo still runs the binaries
+          # one after another and prints `Running tests/<suite>.rs` before each,
+          # so a failure still names its suite.
           #
           # `e2e` stays separate because it needs a filter, and a filter in a
           # combined invocation would apply to every target.
