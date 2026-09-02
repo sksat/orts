@@ -529,7 +529,8 @@ impl PanelConfig {
                 // product underflows for `[1e-300, 1e-300]` and overflows for
                 // `[1e200, 1e200]`. A zero area is the worse of the two — it
                 // validates, runs, and produces no force.
-                let area = 4.0 * half_extent[0] * half_extent[1];
+                // Extents first, so the two orders agree — see `rectangle`.
+                let area = half_extent[0] * half_extent[1] * 4.0;
                 if !area.is_finite() || area <= 0.0 {
                     return Err(format!(
                         "panels[{index}].half_extent gives an area of {area} ({} × {})",

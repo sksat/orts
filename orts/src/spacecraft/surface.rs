@@ -220,7 +220,11 @@ impl SurfacePanel {
         // The product needs its own check: `[1e-300, 1e-300]` underflows to a
         // zero area and `[1e200, 1e200]` overflows to infinity, and each
         // half-extent is positive and finite in both.
-        let area = 4.0 * half_extent[0] * half_extent[1];
+        //
+        // The two extents multiply first. `4.0 * h[0] * h[1]` would overflow on
+        // `4.0 * 1e308` before ever seeing the second extent, so the same
+        // geometry passed or failed depending on which order it was written in.
+        let area = half_extent[0] * half_extent[1] * 4.0;
         assert!(
             area.is_finite() && area > 0.0,
             "panel half-extents {half_extent:?} give an area of {area}"
@@ -1959,6 +1963,87 @@ mod tests {
             PanelOptics::absorber(),
         );
         assert!(ok.area > 0.0 && ok.area.is_finite());
+    }
+
+    /// The same geometry is accepted whichever order the extents are written in.
+    ///
+    /// `4.0 * h[0] * h[1]` overflowed on `4.0 * 1e308` before it ever saw the
+    /// second extent, so `[1e308, 1e-308]` was rejected and `[1e-308, 1e308]`
+    /// was not.
+    #[test]
+    fn the_area_check_does_not_depend_on_the_extent_order() {
+        let build = |half_extent: [f64; 2]| {
+            SurfacePanel::rectangle(
+                half_extent,
+                Vector3::new(0.0, 1.0, 0.0),
+                Vector3::new(1.0, 0.0, 0.0),
+                2.2,
+                PanelOptics::absorber(),
+            )
+        };
+        let a = build([1e308, 1e-308]);
+        let b = build([1e-308, 1e308]);
+        assert_eq!(a.area, b.area, "the product is commutative");
+        assert!(a.area.is_finite() && a.area > 0.0, "got {}", a.area);
+    }
+
+    /// The cube's faces carry outlines, so a panel added behind one is found.
+    ///
+    /// The doc says so and nothing tested it: the existing cube tests look at
+    /// areas, normals and pressure centres, and the SRP smoke test only asks
+    /// for a nonzero result.
+    #[test]
+    fn a_panel_behind_a_cube_face_is_shaded_by_it() {
+        let optics = PanelOptics::absorber();
+        let SpacecraftShape::Panels(faces) = SpacecraftShape::cube(0.5, 2.2, optics) else {
+            panic!("cube is panelled");
+        };
+
+        // Smaller than a face and tucked just behind it, for each of the six.
+        for face in &faces {
+            let hidden = SurfacePanel::rectangle(
+                [0.2, 0.2],
+                // Any in-plane axis of this face works; take one from the face.
+                match face.outline.expect("cube faces carry outlines") {
+                    PanelOutline::Rectangle { in_plane_x, .. } => in_plane_x,
+                },
+                face.normal,
+                2.2,
+                optics,
+            )
+            .with_cp_offset(face.cp_offset - face.normal * 0.1);
+
+            let mut panels = faces.clone();
+            panels.push(hidden);
+
+            // Face-on to that face, and obliquely across it.
+            let oblique = (face.normal
+                + match face.outline.expect("outline") {
+                    PanelOutline::Rectangle { in_plane_x, .. } => in_plane_x * 0.6,
+                })
+            .normalize();
+            for upstream in [face.normal, oblique] {
+                assert!(
+                    is_fully_occluded(&panels[6], &panels, &upstream),
+                    "the panel behind face {:?} has to be shaded from {upstream:?}",
+                    face.normal
+                );
+                // The faces turned toward the incoming direction stay lit:
+                // the panel tucked behind one of them must not shade it back.
+                // The far faces of a box are genuinely behind the near ones, so
+                // they are occluded as well as back-facing — either way they
+                // contribute nothing.
+                for (i, f) in faces.iter().enumerate() {
+                    if f.normal.dot(&upstream) <= 0.0 {
+                        continue;
+                    }
+                    assert!(
+                        !is_fully_occluded(f, &panels, &upstream),
+                        "cube face {i} faces the source and must stay lit"
+                    );
+                }
+            }
+        }
     }
 
     /// A caster edge-on to the incoming direction covers nothing.
