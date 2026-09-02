@@ -512,24 +512,56 @@ export function App() {
   }, [satellites, selectedSatelliteId]);
 
   /**
-   * Which arrows the attitude view will actually draw — asked of the resolver the
-   * scene uses, not re-derived from "is the input present". A position can be
-   * there and still not yield a direction (zero, or non-finite from a file
-   * source), and a control that offers an arrow the scene then drops is lying.
+   * Which arrows a scene would draw for a spacecraft at this position — asked of
+   * the resolver the scenes use, not re-derived from "is the input present". A
+   * position can be there and still not yield a direction (zero, or non-finite
+   * from a file source), and a control that offers an arrow the scene then drops
+   * is lying.
    *
    * The kinds a resolver returns do not depend on the display frame, so the
    * inertial one stands in; the Sun's own direction is computed inside the scene,
    * so an epoch is all the app can know about it.
    */
-  const attitudeVectorKinds = useMemo<readonly DirectionVectorKind[]>(() => {
-    if (attitudeBody == null) return [];
-    return resolveDirectionVectors({
-      frame: LEGEND_FRAME,
-      sunEci: epochJd != null ? SUN_PRESENT : null,
-      positionEci: attitudeBody.position ?? null,
-      options: directionVectors,
-    }).map((v) => v.kind);
-  }, [directionVectors, epochJd, attitudeBody]);
+  const resolvedVectorKinds = useCallback(
+    (
+      position: DisplayVec3 | null | undefined,
+      options: DirectionVectorOptions,
+    ): readonly DirectionVectorKind[] =>
+      resolveDirectionVectors({
+        frame: LEGEND_FRAME,
+        sunEci: epochJd != null ? SUN_PRESENT : null,
+        positionEci: position ?? null,
+        options,
+      }).map((v) => v.kind),
+    [epochJd],
+  );
+
+  /** What the attitude view draws right now — the legend names exactly these. */
+  const attitudeVectorKinds = useMemo<readonly DirectionVectorKind[]>(
+    () =>
+      attitudeBody == null ? [] : resolvedVectorKinds(attitudeBody.position, directionVectors),
+    [resolvedVectorKinds, attitudeBody, directionVectors],
+  );
+
+  /**
+   * What each view *could* draw, which is the separate question a disabled
+   * control answers: a direction switched off is not an unavailable one.
+   */
+  const attitudeDrawableKinds = useMemo<readonly DirectionVectorKind[]>(
+    () =>
+      attitudeBody == null
+        ? []
+        : resolvedVectorKinds(attitudeBody.position, DEFAULT_DIRECTION_VECTORS),
+    [resolvedVectorKinds, attitudeBody],
+  );
+
+  const orbitDrawableKinds = useMemo<readonly DirectionVectorKind[]>(
+    () =>
+      centredSatellite == null
+        ? []
+        : resolvedVectorKinds(centredSatellite.position, DEFAULT_DIRECTION_VECTORS),
+    [resolvedVectorKinds, centredSatellite],
+  );
 
   /**
    * The display orientation the attitude view actually renders in.
@@ -645,7 +677,7 @@ export function App() {
               directionVectors={directionVectors}
               onDirectionVectorsChange={setDirectionVectors}
               centredSatelliteId={centredSatelliteId}
-              hasCentredPosition={centredSatellite?.position != null}
+              drawableVectorKinds={orbitDrawableKinds}
             />
           ) : (
             <AttitudeOverlay
@@ -668,9 +700,7 @@ export function App() {
               }
               sunUnavailable={epochJd == null ? "Requires epoch" : undefined}
               nadirUnavailable={
-                attitudeVectorKinds.includes("nadir") || directionVectors.nadir === false
-                  ? undefined
-                  : "Requires a position"
+                attitudeDrawableKinds.includes("nadir") ? undefined : "Requires a position"
               }
               directionVectors={directionVectors}
               onDirectionVectorsChange={setDirectionVectors}
