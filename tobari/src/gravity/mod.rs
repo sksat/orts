@@ -268,9 +268,10 @@ impl SphericalHarmonicField {
 
     /// Gravitational parameter of the field \[km³/s²\].
     ///
-    /// Use this same value for the point-mass term: a field's GM differs from
-    /// WGS-84's by ~3e-7 relative, which alone drifts a LEO orbit by ~100 m/day
-    /// along-track if the two disagree.
+    /// Use this same value for the point-mass term. EGM2008's GM
+    /// (398600.4415) differs from WGS-84's (398600.4418) by 7.5e-10 — only
+    /// ~0.3 m/day along-track at LEO, but the central term and the harmonics
+    /// are one model, so do not mix two GMs.
     pub fn gm(&self) -> f64 {
         self.gm_km3_s2
     }

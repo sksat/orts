@@ -25,9 +25,9 @@
 //! - **Not together with `ZonalGravity`**: both contain J2/J3/J4, so the
 //!   oblateness would be counted twice. Install one or the other.
 //! - Use the field's own [`gm()`](SphericalHarmonicField::gm) for the point
-//!   mass. A field's GM differs from WGS-84's `398600.4418` by ~3e-7 relative;
-//!   left inconsistent, that alone drifts a LEO orbit by ~100 m/day
-//!   along-track, which defeats the purpose of a 70×70 field.
+//!   mass. EGM2008's GM (398600.4415) differs from WGS-84's (398600.4418) by
+//!   7.5e-10, worth ~0.3 m/day along-track at LEO — small, but the central
+//!   term and the harmonics are one model, so do not mix two GMs.
 //!
 //! # Epoch
 //!
