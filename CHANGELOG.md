@@ -625,6 +625,16 @@ section is subdivided by package.
   before comparing what they cost. ([#409](https://github.com/sksat/orts/pull/409))
 
 #### Fixed
+- Every integrate loop asks its event predicate about the state it was given,
+  before taking a step — the five in `utsuroi` and the fixed-step ones
+  `IndependentGroup` and `CoupledGroup` run themselves. A level-triggered event — "below the surface", "past
+  this altitude" — can already hold at `t0`, and the loops stepped first, so
+  they reported it one step late at a state the predicate itself calls
+  invalid. `orts run --sat altitude=50 --duration 100` (Earth's atmosphere
+  boundary is the 100 km Kármán line) reported "atmospheric entry at 50.0 km"
+  at t = 10 s and recorded a sample there, 78 km of arc past the entry it was
+  reporting; it now terminates at t = 0 with the state it started from.
+  ([#TBD](https://github.com/sksat/orts/pull/TBD))
 - `Integrator::try_integrate` stops with `IntegrationError::NonFiniteState` at
   the first step whose result is not finite, the check
   `integrate_with_events` already made. It ran the whole span on a `NaN` state

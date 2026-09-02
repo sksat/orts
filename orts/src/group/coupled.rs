@@ -505,6 +505,29 @@ where
                 let mut current_t = self.t;
                 let mut current_state = self.state.clone();
 
+                // The predicate is asked about the state this call starts
+                // from, before any step. A level-triggered event can already
+                // hold there, and stepping first reports it one step late.
+                if let Some(ref checker) = self.event_checker {
+                    for (id, sat_state) in self.ids.iter().zip(&current_state.states) {
+                        if let ControlFlow::Break(reason) = checker(current_t, sat_state) {
+                            self.state = current_state;
+                            self.t = current_t;
+                            self.terminated = true;
+                            self.is_event_termination = true;
+                            let term = SatelliteTermination {
+                                satellite_id: id.clone(),
+                                t: current_t,
+                                reason,
+                            };
+                            self.termination = Some(term.clone());
+                            return Ok(PropGroupOutcome {
+                                terminations: vec![term],
+                            });
+                        }
+                    }
+                }
+
                 while current_t < t_target - 1e-12 {
                     let h = dt.min(t_target - current_t);
                     // `h > 0` after the validate() above, but for large

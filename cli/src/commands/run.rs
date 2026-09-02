@@ -733,16 +733,20 @@ where
                 "Simulation terminated at t={:.2}s for {}: {}",
                 term.t, term.satellite_id, term.reason
             );
-            // Record final state for terminated satellites
+            // Record final state for terminated satellites, unless that
+            // state is already recorded: an event that holds at t0 terminates
+            // there, where the initial sample sits.
             if let Some(i) = params
                 .satellites
                 .iter()
                 .position(|s| s.id.as_str() == AsRef::<str>::as_ref(&term.satellite_id))
                 && let Some(entry) = group.satellite(&term.satellite_id)
+                && (entry.t - last_output_t[i]) > 1e-9
             {
                 let tp = TimePoint::new().with_sim_time(entry.t).with_step(steps[i]);
                 log_state(&mut rec, &sat_paths[i], &tp, &entry.state);
                 steps[i] += 1;
+                last_output_t[i] = entry.t;
             }
         }
     }

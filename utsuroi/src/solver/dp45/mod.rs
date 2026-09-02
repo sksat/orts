@@ -152,6 +152,14 @@ impl<'a, S: DynamicalSystem> AdaptiveStepper<'a, S> {
         // while sitting at its old time.
         validate_time_span(self.t, t_target)?;
 
+        // The predicate is asked about the state the stepper holds, before
+        // any step. A level-triggered event — "below the surface", "past this
+        // altitude" — can already hold here, and stepping first reports it one
+        // step late with a state the caller's own predicate calls invalid.
+        if let ControlFlow::Break(reason) = event_check(self.t, &self.state) {
+            return Ok(AdvanceOutcome::Event { reason });
+        }
+
         while self.t < t_target {
             let h = self.dt.min(t_target - self.t);
             // `h > 0` holds, but for large `|self.t|` it can still be below
@@ -1093,5 +1101,42 @@ mod tests {
     #[test]
     fn advance_to_still_succeeds_for_valid_input() {
         assert!(advance(0.1, Tolerances::default(), 1.0).is_ok());
+    }
+
+    /// An event that already holds at `t0` stops there, without a step.
+    ///
+    /// A level-triggered predicate — "below the surface", "past this
+    /// altitude" — can be true of the state the caller hands in. This loop
+    /// stepped once before asking, so it reported the event one step late, at
+    /// a state the predicate itself calls invalid. Measured through the CLI
+    /// before the fix: `orts run --sat altitude=50 --duration 100` (Earth's
+    /// atmosphere boundary is the 100 km Karman line) reported "atmospheric
+    /// entry at 50.0 km" at t = 10 s and wrote a sample there, 78 km of arc
+    /// after the entry it was reporting.
+    #[test]
+    fn an_event_true_at_t0_stops_before_stepping() {
+        let system = HarmonicOscillator;
+        let initial = State::<3, 2>::new(vector![7000.0, 0.0, 0.0], vector![0.0, 7.5, 0.0]);
+        let tol = Tolerances::default();
+        let mut callbacks = 0usize;
+        let outcome = DormandPrince.integrate_adaptive_with_events(
+            &system,
+            initial.clone(),
+            0.0,
+            100.0,
+            1.0,
+            &tol,
+            |_, _| callbacks += 1,
+            // True of anything, so it is true of the initial state.
+            |_, _| ControlFlow::Break("already there"),
+        );
+        let IntegrationOutcome::Terminated { state, t, reason } = outcome else {
+            panic!("an event true at t0 terminates, got {outcome:?}");
+        };
+        assert_eq!(reason, "already there");
+        assert_eq!(t, 0.0, "it stops at t0, not a step later");
+        assert_eq!(*state.y(), *initial.y(), "the state is the one handed in");
+        assert_eq!(*state.dy(), *initial.dy());
+        assert_eq!(callbacks, 0, "no step was taken, so nothing to report");
     }
 }
