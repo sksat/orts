@@ -98,9 +98,6 @@ impl PanelOptics {
 /// Both force models assume `normal` is unit length. [`Self::at_com`] and
 /// [`SpacecraftShape::cube`] guarantee that; a struct literal does not, and the
 /// SRP force is cubic in `|normal|` through its specular term.
-/// The most corners any [`PanelOutline`] shape has.
-pub(crate) const MAX_PANEL_CORNERS: usize = 4;
-
 /// A panel's extent within its own plane.
 ///
 /// A panel needs none of this to produce a force: the flat-plate law uses the
@@ -129,6 +126,25 @@ pub enum PanelOutline {
     },
 }
 
+/// The most corners any [`PanelOutline`] shape has.
+pub(crate) const MAX_PANEL_CORNERS: usize = 4;
+
+/// A flat surface panel on a spacecraft body.
+///
+/// Represents one face of the spacecraft's outer surface for computing
+/// aerodynamic and SRP forces.  Each panel has an outward-pointing normal in
+/// the body frame, a drag coefficient, optical properties, and a
+/// centre-of-pressure offset from the centre of mass.
+///
+/// For thin surfaces like solar panels where both sides are exposed to the
+/// flow, model each side as a separate panel with opposite normals; the two
+/// sides may then carry different optical properties. [`Self::back_face`]
+/// builds the second one from the first.
+///
+/// Both force models assume `normal` is unit length. [`Self::at_com`],
+/// [`Self::rectangle`] and [`SpacecraftShape::cube`] guarantee that; a struct
+/// literal does not, and the SRP force is cubic in `|normal|` through its
+/// specular term.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SurfacePanel {
     /// Panel area [m²].
@@ -279,8 +295,8 @@ impl SurfacePanel {
             }) => {
                 let d = point - self.cp_offset;
                 let y = self.normal.cross(&in_plane_x);
-                d.dot(&in_plane_x).abs() <= hx + OCCLUSION_EPS
-                    && d.dot(&y).abs() <= hy + OCCLUSION_EPS
+                d.dot(&in_plane_x).abs() <= hx + OUTLINE_EDGE_EPS
+                    && d.dot(&y).abs() <= hy + OUTLINE_EDGE_EPS
             }
         }
     }
@@ -429,20 +445,38 @@ impl SpacecraftShape {
     }
 }
 
-/// Corners on an outline's edge count as inside, and a shadow caster has to
-/// stand this far in front to count [m].
+/// How far in front a shadow caster has to stand to count [m].
 ///
-/// The two together stop a shadow from flickering as a corner grazes an edge,
-/// and stop the two faces of a thin plate — which share a plane — from
-/// shadowing each other.
-const OCCLUSION_EPS: f64 = 1e-9;
+/// Absolute, and compared against a distance along the incoming direction, so
+/// for a caster nearly edge-on to it the same value admits a much smaller gap
+/// between the planes (`gap = t · cos θ`). Coplanar plates built through
+/// [`SurfacePanel::rectangle`] land within 2e-14 m of each other even at 100 m
+/// from the CoM, so this leaves several decades of margin — and the force it
+/// could wrongly drop scales with `cos θ`, which is what makes the asymmetry
+/// harmless. It is what stops the two faces of a thin plate, which share a
+/// plane, from shadowing each other.
+const OCCLUSION_DEPTH_EPS: f64 = 1e-9;
+
+/// How far outside an outline a corner may fall and still count as inside [m].
+///
+/// Absolute, so its size relative to the panel varies: 1 nm is 2e-7 of a 1 cm
+/// panel's half-extent and 1e-10 of a 10 m one. Either way it is a nanometre —
+/// far below any geometry a spacecraft model states on purpose — and it stops a
+/// shadow from flickering as a corner grazes an edge.
+const OUTLINE_EDGE_EPS: f64 = 1e-9;
 
 /// Whether every corner of `panel` lies behind one other panel, seen from
 /// `upstream`.
 ///
 /// `upstream` points from the spacecraft toward where the light or the flow
-/// comes from: `s_body` for SRP, `-v̂_body` for drag. It must be unit length.
-/// `skip` is `panel`'s own index in `others`.
+/// comes from. SRP passes `s_body`; drag passes `-v̂_body`, which is the side
+/// its own facing test treats as upwind — see the note there. It must be unit
+/// length.
+///
+/// `others` may contain `panel` itself, and no index is needed to exclude it: a
+/// corner sitting on its own panel's plane gives `t = 0`, which the depth test
+/// rejects. Taking an index instead would put an obligation on the caller that
+/// nothing can check — a wrong one silently drops a real shadow.
 ///
 /// A panel without an outline neither casts a shadow nor receives one, so a
 /// fleet of area-only panels behaves exactly as it did before outlines existed.
@@ -454,21 +488,15 @@ const OCCLUSION_EPS: f64 = 1e-9;
 pub(crate) fn is_fully_occluded(
     panel: &SurfacePanel,
     others: &[SurfacePanel],
-    skip: usize,
     upstream: &Vector3<f64>,
 ) -> bool {
     let mut buf = [Vector3::zeros(); MAX_PANEL_CORNERS];
     let Some(corners) = panel.corners_into(&mut buf) else {
         return false;
     };
-    let n = corners.len();
-    let mut own = [Vector3::zeros(); MAX_PANEL_CORNERS];
-    own[..n].copy_from_slice(corners);
-
     others
         .iter()
-        .enumerate()
-        .any(|(i, other)| i != skip && blocks_all(&own[..n], other, upstream))
+        .any(|other| blocks_all(corners, other, upstream))
 }
 
 /// Whether `caster` stands in front of every one of `corners`.
@@ -479,19 +507,19 @@ pub(crate) fn is_fully_occluded(
 /// through the panel a full shadow: its centre can sit in front while one edge
 /// is behind, and a projection cannot tell.
 fn blocks_all(corners: &[Vector3<f64>], caster: &SurfacePanel, upstream: &Vector3<f64>) -> bool {
-    if caster.outline.is_none() {
-        return false;
-    }
+    // Two cases need no guard of their own, measured by removing them:
+    //
+    // A caster with no outline: `outline_contains` answers `false`.
+    //
+    // A caster edge-on to the incoming direction: `denom` is zero or nearly so,
+    // `t` runs to infinity, and the hit lands outside the outline. Special-casing
+    // it would only avoid the arithmetic, not change the answer.
     let denom = caster.normal.dot(upstream);
-    if denom.abs() < OCCLUSION_EPS {
-        // Edge-on to the incoming direction: it covers nothing.
-        return false;
-    }
 
     corners.iter().all(|corner| {
         // Where the ray from `corner` toward `upstream` meets the caster plane.
         let t = caster.normal.dot(&(caster.cp_offset - corner)) / denom;
-        if t <= OCCLUSION_EPS {
+        if t <= OCCLUSION_DEPTH_EPS {
             return false; // level with the corner, or behind it
         }
         caster.outline_contains(&(corner + upstream * t))
@@ -655,10 +683,13 @@ impl<F: EarthFixedTransform> PanelDrag<F> {
                 let mut total_force_body = Vector3::zeros(); // N
                 let mut total_torque_body = Vector3::zeros(); // N·m
 
-                // The flow arrives from `-v̂`, which is the direction an
-                // occluding panel has to stand in.
+                // The side this model treats as upwind, which is the side an
+                // occluding panel has to stand on. It is `-v̂` because the
+                // facing test below is `n̂·(-v̂)`; whether that matches the
+                // physics is a separate question from whether the shadow
+                // follows it, and this follows it.
                 let upstream = -v_hat_body;
-                for (i, panel) in panels.iter().enumerate() {
+                for panel in panels {
                     // cos(θ) = n̂ · (-v̂): panel must face the flow
                     let cos_theta = panel.normal.dot(&upstream).max(0.0);
                     if cos_theta <= 0.0 {
@@ -666,7 +697,7 @@ impl<F: EarthFixedTransform> PanelDrag<F> {
                     }
                     // A panel upwind of this one shields it. Panels without an
                     // outline never do, so an area-only fleet is unaffected.
-                    if is_fully_occluded(panel, panels, i, &upstream) {
+                    if is_fully_occluded(panel, panels, &upstream) {
                         continue;
                     }
 
@@ -1901,6 +1932,94 @@ mod tests {
         assert!(
             (t0 + t180).magnitude() / t0.magnitude() < 1e-10,
             "reversing the flow reverses the torque: {t0:?} vs {t180:?}"
+        );
+    }
+
+    /// A caster edge-on to the incoming direction covers nothing.
+    ///
+    /// It has no projected area to cover anything with. This falls out of the
+    /// ray arithmetic rather than needing a case of its own — `t` runs to
+    /// infinity and the hit lands outside the outline — so the test pins the
+    /// property, not the way it is reached.
+    #[test]
+    fn an_edge_on_caster_covers_nothing() {
+        let shaded = SurfacePanel::rectangle(
+            [1.0, 1.0],
+            Vector3::new(0.0, 1.0, 0.0),
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
+        // Big enough to cover it if it were facing the right way, and turned
+        // edge-on to the incoming direction.
+        let caster = SurfacePanel::rectangle(
+            [4.0, 4.0],
+            Vector3::new(1.0, 0.0, 0.0),
+            Vector3::new(0.0, 1.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        )
+        .with_cp_offset(Vector3::new(2.0, 0.0, 0.0));
+
+        let upstream = Vector3::new(1.0, 0.0, 0.0);
+        assert_eq!(
+            caster.normal.dot(&upstream),
+            0.0,
+            "the caster has to be exactly edge-on for this to be the guard's case"
+        );
+        let panels = vec![shaded, caster];
+        assert!(
+            !is_fully_occluded(&panels[0], &panels, &upstream),
+            "an edge-on caster has no projected area to cover anything with"
+        );
+    }
+
+    /// Drag skips a shaded panel too, and on the side its own facing test uses.
+    ///
+    /// The occlusion tests otherwise all sit in `panel_srp`, which leaves the
+    /// sign of this model's `upstream` resting on a cube test that cannot see
+    /// it: a cube's faces shade nothing either way round.
+    #[test]
+    fn drag_skips_a_panel_another_stands_in_front_of() {
+        // `iss_state` at identity has velocity along +y, and this model treats
+        // `-v̂` as upwind, so a panel facing -y is the one it considers lit.
+        let lit_normal = Vector3::new(0.0, -1.0, 0.0);
+        let shaded = SurfacePanel::rectangle(
+            [1.0, 1.0],
+            Vector3::new(1.0, 0.0, 0.0),
+            lit_normal,
+            2.2,
+            PanelOptics::absorber(),
+        );
+        let caster = SurfacePanel::rectangle(
+            [2.0, 2.0],
+            Vector3::new(1.0, 0.0, 0.0),
+            lit_normal,
+            2.2,
+            PanelOptics::absorber(),
+        )
+        .with_cp_offset(lit_normal * 2.0);
+
+        let alone = PanelDrag::for_earth(SpacecraftShape::panels(vec![shaded.clone()]));
+        let behind = PanelDrag::for_earth(SpacecraftShape::panels(vec![shaded, caster.clone()]));
+        let just_caster = PanelDrag::for_earth(SpacecraftShape::panels(vec![caster]));
+
+        let alone = alone
+            .eval(0.0, &iss_state(), None)
+            .acceleration_inertial
+            .magnitude();
+        assert!(alone > 0.0, "the small panel is lit on its own");
+        let behind = behind
+            .eval(0.0, &iss_state(), None)
+            .acceleration_inertial
+            .magnitude();
+        let just_caster = just_caster
+            .eval(0.0, &iss_state(), None)
+            .acceleration_inertial
+            .magnitude();
+        assert!(
+            (behind - just_caster).abs() / just_caster < 1e-12,
+            "the shaded panel must contribute nothing: {behind:e} vs {just_caster:e}"
         );
     }
 

@@ -30,6 +30,15 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - WIT v0 plugin interface に msg-io / stream-io チャネルを追加。([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
 #### Changed
+- **BREAKING**: `SurfacePanel` に public な `outline: Option<PanelOutline>` が
+  増えたので、struct literal はこの field を書く必要がある。`PanelSrp` と
+  `PanelDrag` は、別のパネルが手前に立っているパネルを飛ばすようになった (以前は
+  全面照射として計算していた)。判定に参加するのは輪郭を持つパネルだけで、`at_com`
+  で作ったパネルは従来と同じ力を出し、遮蔽もしないし遮蔽もされない。輪郭を持つ
+  パネルは `SurfacePanel::rectangle` で作り、面積は半寸法から導出する。
+  `SpacecraftShape::cube` の 6 面も輪郭を持つようになった (面自身の力は変わらないが、
+  cube の隣に足したパネルが面の陰にいることを判定できる)。見つかるのは 1 枚に完全に
+  隠れる場合だけで、2 枚の和で覆われる配置は照射扱いのままである。([#PR](https://github.com/sksat/orts/pull/PR))
 - `SatelliteParams` が `SpacecraftShape` を optional で持ち、
   `build_spacecraft_dynamics` がそれを見て等方面の `SolarRadiationPressure` /
   `AtmosphericDrag` の代わりに `PanelSrp` / `PanelDrag` を install するように

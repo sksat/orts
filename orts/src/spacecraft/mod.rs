@@ -11,7 +11,7 @@ pub use mtq::{Mtq, MtqAssembly, MtqAssemblyCore, MtqCommand};
 pub use panel_srp::PanelSrp;
 pub use reaction_wheel::{ReactionWheelAssembly, RwCommand};
 pub use state::SpacecraftState;
-pub use surface::{PanelDrag, PanelOptics, SpacecraftShape, SurfacePanel};
+pub use surface::{PanelDrag, PanelOptics, PanelOutline, SpacecraftShape, SurfacePanel};
 pub use thruster::{
     BurnWindow, ConstantThrottle, G0, ScheduledBurn, ThrustProfile, Thruster, ThrusterAssembly,
     ThrusterAssemblyCore, ThrusterSpec,

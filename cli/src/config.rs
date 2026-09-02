@@ -491,6 +491,14 @@ impl PanelConfig {
     /// otherwise assert on, so malformed config reports an error instead of
     /// panicking.
     fn validate(&self, index: usize) -> Result<(), String> {
+        // First, because the in-plane axis is checked against it below.
+        let n = self.normal;
+        let norm_sq = n[0] * n[0] + n[1] * n[1] + n[2] * n[2];
+        if !norm_sq.is_finite() || norm_sq <= 0.0 {
+            return Err(format!(
+                "panels[{index}].normal must be a non-zero finite vector"
+            ));
+        }
         match (self.half_extent, self.in_plane_x) {
             (Some(_), None) => {
                 return Err(format!(
@@ -502,7 +510,7 @@ impl PanelConfig {
                     "panels[{index}].in_plane_x describes no extent without half_extent"
                 ));
             }
-            (Some(half_extent), Some(_)) => {
+            (Some(half_extent), Some(in_plane_x)) => {
                 if self.area.is_some() {
                     return Err(format!(
                         "panels[{index}]: area and half_extent both give the size; keep one"
@@ -511,6 +519,45 @@ impl PanelConfig {
                 if !half_extent.iter().all(|h| h.is_finite() && *h > 0.0) {
                     return Err(format!(
                         "panels[{index}].half_extent components must be positive and finite"
+                    ));
+                }
+                // The area is derived, so it needs the same finiteness the
+                // `area` arm gets: half-extents of 1e200 each are finite and
+                // positive on their own and multiply to infinity, which reaches
+                // the integrator as a non-finite state rather than an error.
+                let area = 4.0 * half_extent[0] * half_extent[1];
+                if !area.is_finite() {
+                    return Err(format!(
+                        "panels[{index}].half_extent gives a non-finite area ({} × {})",
+                        half_extent[0], half_extent[1]
+                    ));
+                }
+                // `SurfacePanel::rectangle` asserts all of this. Without the
+                // check here a config reaches it and panics — inside the server
+                // for a satellite added over the websocket.
+                let x = nalgebra::Vector3::from_row_slice(&in_plane_x);
+                if !x.iter().all(|c| c.is_finite()) {
+                    return Err(format!(
+                        "panels[{index}].in_plane_x components must be finite"
+                    ));
+                }
+                // Finite as well as non-zero: `[1e300, 1e300, 0]` has finite
+                // components but its magnitude overflows, and `normalize` then
+                // returns the zero vector — which reads as perpendicular to
+                // everything.
+                let mag = x.magnitude();
+                if !mag.is_finite() || mag == 0.0 {
+                    return Err(format!(
+                        "panels[{index}].in_plane_x must be a non-zero vector with a finite length"
+                    ));
+                }
+                let cos = nalgebra::Vector3::from_row_slice(&self.normal)
+                    .normalize()
+                    .dot(&x.normalize());
+                if cos.abs() >= 1e-9 {
+                    return Err(format!(
+                        "panels[{index}].in_plane_x must be perpendicular to normal, \
+                         got n·x = {cos}"
                     ));
                 }
             }
@@ -528,13 +575,6 @@ impl PanelConfig {
         if !self.cd.is_finite() || self.cd < 0.0 {
             return Err(format!(
                 "panels[{index}].cd must be non-negative and finite"
-            ));
-        }
-        let n = self.normal;
-        let norm_sq = n[0] * n[0] + n[1] * n[1] + n[2] * n[2];
-        if !norm_sq.is_finite() || norm_sq <= 0.0 {
-            return Err(format!(
-                "panels[{index}].normal must be a non-zero finite vector"
             ));
         }
         validate_optics(
@@ -3207,6 +3247,50 @@ attitude = {{ inertia_diag = [10, 10, 10], mass = 50 }}
         .expect("parses");
         let err = config.satellites[0].validate().unwrap_err();
         assert!(err.contains("half_extent components"), "got: {err}");
+    }
+
+    /// Every `in_plane_x` that `SurfacePanel::rectangle` asserts on has to be
+    /// rejected here first.
+    ///
+    /// `orts config validate` said OK for all of these and `orts run` then
+    /// panicked; over the websocket the panic landed inside the running server,
+    /// which is what the `satellite.validate()` calls on that path exist to
+    /// prevent.
+    #[test]
+    fn a_bad_in_plane_axis_is_rejected_before_it_can_panic() {
+        let cases = [
+            ("[1, 0, 0]", "perpendicular to normal"),     // parallel
+            ("[0.001, 1, 0]", "perpendicular to normal"), // 0.06 deg off
+            ("[0, 0, 0]", "non-zero vector with a finite length"),
+            ("[1e300, 1e300, 0]", "non-zero vector with a finite length"),
+            ("[nan, 1, 0]", "components must be finite"),
+            ("[inf, 1, 0]", "components must be finite"),
+        ];
+        for (axis, expected) in cases {
+            let toml_src = panel_sat_toml(&format!(
+                "normal = [1, 0, 0]\ncd = 2.2\nhalf_extent = [1.0, 1.0]\nin_plane_x = {axis}"
+            ));
+            let config: SimConfig =
+                toml::from_str(&toml_src).unwrap_or_else(|e| panic!("{axis}: {e}"));
+            let err = config.satellites[0]
+                .validate()
+                .expect_err(&format!("{axis} has to be rejected"));
+            assert!(err.contains(expected), "{axis}: got {err}");
+        }
+    }
+
+    /// Half-extents that are each finite and positive can still multiply to an
+    /// infinite area, which the integrator reports as a non-finite state and an
+    /// exit code of 0 rather than as a config error.
+    #[test]
+    fn half_extents_multiplying_to_infinity_are_rejected() {
+        let config: SimConfig = toml::from_str(&panel_sat_toml(
+            "normal = [1, 0, 0]\ncd = 2.2\nhalf_extent = [1e200, 1e200]\n\
+             in_plane_x = [0, 1, 0]",
+        ))
+        .expect("parses");
+        let err = config.satellites[0].validate().unwrap_err();
+        assert!(err.contains("non-finite area"), "got: {err}");
     }
 
     /// `two_sided = true` is the short way to say what an empty `back` says.

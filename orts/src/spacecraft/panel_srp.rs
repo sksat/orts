@@ -255,11 +255,16 @@ impl PanelSrp {
                 let mut total_force_body = Vector3::zeros(); // [N]
                 let mut total_torque_body = Vector3::zeros(); // [N·m]
 
-                for (i, panel) in panels.iter().enumerate() {
+                for panel in panels {
+                    // Facing first: a back-facing panel produces nothing either
+                    // way, and the occlusion scan is O(N) per panel.
+                    if panel.normal.dot(&s_body) <= 0.0 {
+                        continue;
+                    }
                     // A panel standing in the Sun's way keeps this one dark.
                     // Panels without an outline never do, so an area-only fleet
                     // is unaffected.
-                    if crate::spacecraft::surface::is_fully_occluded(panel, panels, i, &s_body) {
+                    if crate::spacecraft::surface::is_fully_occluded(panel, panels, &s_body) {
                         continue;
                     }
                     let force = panel_force(panel, &s_body, base_pressure); // [N]
@@ -761,7 +766,7 @@ mod tests {
         };
         let mut total = Vector3::zeros();
         for (i, panel) in panels.iter().enumerate() {
-            if crate::spacecraft::surface::is_fully_occluded(panel, &panels, i, s_body) {
+            if crate::spacecraft::surface::is_fully_occluded(panel, &panels, s_body) {
                 continue;
             }
             total += panel_force(panel, s_body, TEST_PRESSURE);
@@ -822,8 +827,8 @@ mod tests {
         };
         let occluded = |sun: Vector3<f64>| {
             (
-                crate::spacecraft::surface::is_fully_occluded(&panels[0], &panels, 0, &sun),
-                crate::spacecraft::surface::is_fully_occluded(&panels[1], &panels, 1, &sun),
+                crate::spacecraft::surface::is_fully_occluded(&panels[0], &panels, &sun),
+                crate::spacecraft::surface::is_fully_occluded(&panels[1], &panels, &sun),
             )
         };
 
@@ -856,7 +861,7 @@ mod tests {
 
         let panels = vec![bare.clone(), big.clone()];
         assert!(
-            !crate::spacecraft::surface::is_fully_occluded(&panels[0], &panels, 0, &sun),
+            !crate::spacecraft::surface::is_fully_occluded(&panels[0], &panels, &sun),
             "a panel with no outline cannot be shaded"
         );
 
@@ -877,7 +882,7 @@ mod tests {
         .with_cp_offset(Vector3::new(2.0, 0.0, 0.0));
         let panels = vec![far, bare_near];
         assert!(
-            !crate::spacecraft::surface::is_fully_occluded(&panels[0], &panels, 0, &sun),
+            !crate::spacecraft::surface::is_fully_occluded(&panels[0], &panels, &sun),
             "a panel with no outline cannot shade"
         );
     }
@@ -897,7 +902,7 @@ mod tests {
         for sun in [Vector3::new(1.0, 0.0, 0.0), Vector3::new(-1.0, 0.0, 0.0)] {
             for (i, panel) in panels.iter().enumerate() {
                 assert!(
-                    !crate::spacecraft::surface::is_fully_occluded(panel, &panels, i, &sun),
+                    !crate::spacecraft::surface::is_fully_occluded(panel, &panels, &sun),
                     "coincident faces must not shade each other (sun {sun:?}, panel {i})"
                 );
             }

@@ -33,6 +33,16 @@ section is subdivided by package.
 - WIT v0 plugin interface extended with the msg-io and stream-io channels. ([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
 #### Changed
+- **BREAKING**: `SurfacePanel` gains a public `outline: Option<PanelOutline>`
+  field, so a struct literal has to name it. `PanelSrp` and `PanelDrag` now skip
+  a panel that another panel stands in front of, which they previously computed
+  as fully lit. Only panels carrying an outline take part: a panel built with
+  `at_com` produces the same force it always did and neither casts a shadow nor
+  receives one. `SurfacePanel::rectangle` builds one with a boundary, deriving
+  the area from the half-extents, and `SpacecraftShape::cube`'s six faces now
+  carry theirs — their own forces are unchanged, but a panel added beside the
+  cube can be found behind a face. Only single-panel occlusion is found: a panel
+  covered by two others between them still counts as lit. ([#PR](https://github.com/sksat/orts/pull/PR))
 - `SatelliteParams` carries an optional `SpacecraftShape`, and
   `build_spacecraft_dynamics` installs `PanelSrp` and `PanelDrag` from it in
   place of the isotropic `SolarRadiationPressure` and `AtmosphericDrag`. The
