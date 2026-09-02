@@ -14,8 +14,10 @@ use crate::{
 /// Dormand-Prince 8(5,3) adaptive step-size integrator (DOP853).
 ///
 /// Uses a 12-stage embedded Runge-Kutta pair. The 8th-order solution is
-/// propagated (local extrapolation); the 5th and 3rd-order solutions are
-/// used for error estimation. Based on Hairer, Norsett & Wanner (1993).
+/// propagated (local extrapolation), and the step size is controlled on the
+/// 5th-order difference alone. Hairer, Norsett & Wanner (1993) combine that
+/// with a 3rd-order difference; this does not — see
+/// <https://github.com/sksat/orts/issues/410> for what that costs.
 pub struct Dop853;
 
 /// Internal DOP853 candidate computation: stages 2..12 (11 evaluations).
@@ -166,14 +168,21 @@ fn dop853_candidate<S: DynamicalSystem>(
         .scale(dt);
 
     // Hairer's step control divides by a denominator built from both
-    // differences, `err = |h| E / sqrt(n (E + 0.01 F))` with `E` and `F` the
-    // sums of the squared scaled err5 and err3 components. The norm this
-    // returns to is `sqrt(E / n)`, which is that expression with `F = 0`, so
-    // it is never smaller: the ratio is `sqrt(E / (E + 0.01 F)) <= 1`. The
-    // stepper therefore takes smaller steps than DOP853 is designed to, and
-    // returns more accuracy than the caller asked for — measured on one
-    // period of a harmonic oscillator, 30x at `tol = 1e-6` and 700x at
-    // `1e-10`.
+    // differences. Writing `E` and `F` for the sums of the squared
+    // tolerance-scaled components of `err5` and `err3` as they are below —
+    // both already multiplied by `dt` — his estimate is
+    //
+    //     err = E / sqrt(n (E + 0.01 F))
+    //
+    // (the published form carries an explicit `|h|` because there the
+    // difference vectors exclude it). `OdeState::error_norm` computes
+    // `sqrt(E / n)`, which is the same expression with `F = 0`, so it never
+    // returns less: the ratio is `sqrt(E / (E + 0.01 F)) <= 1`. A larger
+    // estimate means the controller accepts less, and on one period of a
+    // harmonic oscillator that measured as more accuracy than the tolerance
+    // asked for — 30x at `tol = 1e-6`, 700x at `1e-10` — over 11 and 41
+    // accepted steps. Whether that holds on a given problem is the
+    // controller's business, not a guarantee of this norm.
     //
     // TODO(#410): implement the composite norm, or drop `err3` and document
     // the estimate as the 5th-order difference. `OdeState::error_norm` takes
