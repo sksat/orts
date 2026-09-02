@@ -227,8 +227,12 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 
 #### Added
 - `[[satellites.panels]]` で衛星に平板の外形を与えられるようにした
-  (`area`, `normal`, `cd`, `specular`, `diffuse`, `cp_offset`, `two_sided`
+  (`area` または `half_extent` + `in_plane_x` ([#PR](https://github.com/sksat/orts/pull/PR))、`normal`, `cd`,
+  `specular`, `diffuse`, `cp_offset`, `two_sided`
   ([#399](https://github.com/sksat/orts/pull/399))、`back` ([#395](https://github.com/sksat/orts/pull/395)))。
+  `half_extent` を書くとパネルに輪郭ができ、別のパネルがその手前に立っていることを
+  判定できるようになる。`area` だけのパネルは、照らされたときの力は同じだが遮蔽の
+  判定には関与しない。
   パネルは片面なので、薄板 (太陽電池パドル) には裏面を書く。表裏が同じなら
   `two_sided = true`、光学的に違うなら `back` に違う分の反射率を書く (空の
   `back = {}` は `two_sided = true` と同じ)。面積 / `cd` / 圧力中心はどちらでも

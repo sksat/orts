@@ -23,9 +23,22 @@ import type { PanelBackConfig } from "./PanelBackConfig";
  */
 export type PanelConfig = { 
 /**
- * Panel area [m²].
+ * Panel area [m²]. Write this or `half_extent`, not both.
  */
-area: number, 
+area?: number, 
+/**
+ * In-plane half-extents [m]: along `in_plane_x`, then along
+ * `normal × in_plane_x`. The area follows from these.
+ *
+ * Writing them gives the panel a boundary, which is what lets another
+ * panel be found standing in front of it. Without them the panel still
+ * produces the same force when lit, but takes no part in shadowing.
+ */
+half_extent?: [number, number], 
+/**
+ * In-plane reference axis for `half_extent`, perpendicular to `normal`.
+ */
+in_plane_x?: [number, number, number], 
 /**
  * Outward-pointing normal in the body frame. Normalised internally.
  */
