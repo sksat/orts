@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { AttitudeSceneContents } from "../components/AttitudeSceneContents.js";
 import { useSunLighting } from "../components/SunLighting.js";
-import { resolveDirectionVectors } from "../directionVectors.js";
+import { type DirectionVectorOptions, resolveDirectionVectors } from "../directionVectors.js";
 import {
   type DisplayOrientation,
   displayQuaternion,
@@ -75,8 +75,35 @@ export function AttitudeScene({
   const effectiveEpochJd = arikaReady ? epoch : null;
 
   const t = finiteOrNull(body.time ?? time) ?? 0;
-  const position = body.position ?? null;
-  const velocity = body.velocity ?? null;
+
+  // The caller's tuples are copied here, and everything downstream keys its
+  // memoisation on these copies. Keying on the caller's array would key on its
+  // *identity*: an embedder feeding a high-rate stream may reuse one array and
+  // write the new sample into it — this framework hands out a mutable
+  // `TrailBuffer` for exactly that shape of feed — and the local-orbital basis
+  // and the nadir arrow would then stay frozen at the first sample while the
+  // attitude kept moving. A wrong picture, drawn confidently.
+  const [px, py, pz] = body.position ?? [];
+  const [vx, vy, vz] = body.velocity ?? [];
+  const position = useMemo<Vec3 | null>(
+    () => (px != null && py != null && pz != null ? [px, py, pz] : null),
+    [px, py, pz],
+  );
+  const velocity = useMemo<Vec3 | null>(
+    () => (vx != null && vy != null && vz != null ? [vx, vy, vz] : null),
+    [vx, vy, vz],
+  );
+
+  // Same reasoning for the options object.
+  const drawSun = directionVectors?.sun;
+  const drawNadir = directionVectors?.nadir;
+  const vectorOptions = useMemo<DirectionVectorOptions | undefined>(
+    () =>
+      drawSun === undefined && drawNadir === undefined
+        ? undefined
+        : { sun: drawSun, nadir: drawNadir },
+    [drawSun, drawNadir],
+  );
 
   // The requested orientation, gated on what this central body supports.
   const requested: DisplayOrientation =
@@ -115,9 +142,9 @@ export function AttitudeScene({
         // fine for lighting and wrong for an arrow claiming where the Sun is.
         sunEci: effectiveEpochJd != null ? sunDirectionEci : null,
         positionEci: position,
-        options: directionVectors,
+        options: vectorOptions,
       }),
-    [frame, effectiveEpochJd, sunDirectionEci, position, directionVectors],
+    [frame, effectiveEpochJd, sunDirectionEci, position, vectorOptions],
   );
 
   const displayQuat = displayQuaternion(frame, body.attitude);
