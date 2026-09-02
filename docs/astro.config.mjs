@@ -6,6 +6,7 @@ import rehypeKatex from "rehype-katex";
 import remarkMath from "remark-math";
 import starlightLlmsTxt from "starlight-llms-txt";
 import starlightRustdoc from "starlight-rustdoc";
+import starlightThemeNext from "starlight-theme-next";
 import starlightTypeDoc from "starlight-typedoc";
 import rewriteTypedocLinks from "./src/integrations/rewrite-typedoc-links";
 import remarkRewriteRootMdLinks from "./src/plugins/remark-rewrite-root-md-links";
@@ -138,6 +139,25 @@ export default defineConfig({
       ],
       social: [{ icon: "github", label: "GitHub", href: "https://github.com/sksat/orts" }],
       plugins: [
+        // Visual base for the site, and deliberately a theme that overrides no
+        // Starlight component: it only appends `customCss` and retunes
+        // Expressive Code, so the layout, the mobile sidebar drawer, collapsed
+        // sidebar groups and every translated UI string stay Starlight's own.
+        //
+        // starlight-theme-black was tried first and rejected for the opposite
+        // reason. It replaces eight components and re-lays-out the header and
+        // sidebar for a desktop-only sidebar: its MobileNav walks the sidebar
+        // one level deep and only over group entries, which reached 5 of the
+        // 484 links on `/orts/en/getting-started/`, and it zeroes
+        // `.main-frame`'s inline padding below 64rem. Both are fine for a
+        // shallow hand-written sidebar; ours is one group per package with
+        // generated API trees underneath.
+        //
+        // It brings Geist Sans/Mono as `--sl-font` / `--sl-font-mono`, bundled
+        // in the package rather than fetched at build time, and sets the
+        // accent to the Next.js blues — brand colours land on top of it in a
+        // later change.
+        starlightThemeNext(),
         starlightTypeDoc({
           entryPoints: ["../uneri/src/index.ts"],
           tsconfig: "../uneri/tsconfig.json",
