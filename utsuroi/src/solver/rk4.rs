@@ -224,20 +224,32 @@ mod tests {
         let initial_energy = 0.5 * (initial.dy().norm_squared() + initial.y().norm_squared());
 
         let mut max_energy_drift: f64 = 0.0;
+        // A state that never moves conserves energy exactly, so the drift
+        // alone says nothing: measured, freezing `Rk4::step` to return its
+        // input passed this test. The oscillator swings from x = 1 to
+        // x = -1, so its furthest excursion from the start is 2.
+        let mut max_excursion: f64 = 0.0;
 
         let t_end = 2.0 * std::f64::consts::PI;
         let dt = 0.01;
+        let start = initial.clone();
 
         Rk4.integrate(&system, initial, 0.0, t_end, dt, |_t, state| {
             let energy = 0.5 * (state.dy().norm_squared() + state.y().norm_squared());
             let drift = (energy - initial_energy).abs();
             max_energy_drift = max_energy_drift.max(drift);
+            max_excursion = max_excursion.max((state.y() - start.y()).norm());
         });
 
         let threshold = 1e-8;
         assert!(
             max_energy_drift < threshold,
             "Energy drift {max_energy_drift:.2e} exceeds threshold {threshold:.2e}"
+        );
+        assert!(
+            max_excursion > 1.9,
+            "the oscillator has to travel: furthest excursion {max_excursion:.3} \
+             of the 2.0 a full swing covers (measured 1.999998)"
         );
     }
 
@@ -472,20 +484,38 @@ mod tests {
         let steps = 10000; // 10 time units
         let mut t = 0.0;
         let mut max_drift: f64 = 0.0;
+        // The invariant holds for a state that never moves too, so it says
+        // nothing on its own: measured, freezing `Rk4::step` to return its
+        // input passed this test. Both populations also have to stay
+        // positive, or `ln` would be reading a state the model cannot reach.
+        let mut max_excursion: f64 = 0.0;
         for _ in 0..steps {
             state = Rk4.step(&system, t, &state, dt);
             t += dt;
             let x = state.components[0][0];
             let y = state.components[0][1];
+            assert!(
+                x > 0.0 && y > 0.0,
+                "populations stay positive: x = {x}, y = {y} at t = {t}"
+            );
             let h = delta * x - gamma * x.ln() + beta * y - alpha * y.ln();
             max_drift = max_drift.max((h - h0).abs());
+            max_excursion = max_excursion.max(((x - x0).powi(2) + (y - y0).powi(2)).sqrt());
         }
 
         assert!(
             max_drift < 1e-6,
             "Lotka-Volterra invariant drift: {max_drift:.2e}"
         );
+        assert!(
+            max_excursion > MIN_LOTKA_VOLTERRA_EXCURSION,
+            "the orbit has to travel: furthest excursion {max_excursion:.3}, \
+             floor {MIN_LOTKA_VOLTERRA_EXCURSION}"
+        );
     }
+
+    /// Half the 0.874 excursion measured over the ten time units above.
+    const MIN_LOTKA_VOLTERRA_EXCURSION: f64 = 0.4;
 
     #[test]
     fn integrate_with_events_callback_fires_on_termination_step() {

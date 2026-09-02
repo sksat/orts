@@ -61,6 +61,10 @@ proptest! {
 // the max |ΔE| in each half. For symplectic methods the ratio ≈ 1.0 (bounded);
 // for non-symplectic the ratio ≈ 2.0 (linear growth).
 
+/// The energy of the oscillator `energy_drift_halves` starts from:
+/// `0.5 (v² + x²)` at `x = (1,0,0)`, `v = 0`.
+const INITIAL_ENERGY: f64 = 0.5;
+
 /// Measure max energy deviation in the first and second halves of an integration.
 fn energy_drift_halves<F>(integrator: F, t_end: f64, dt: f64) -> (f64, f64)
 where
@@ -75,7 +79,7 @@ where
 {
     let system = HarmonicOscillator;
     let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
-    let initial_energy = 0.5;
+    let initial_energy = INITIAL_ENERGY;
     let t_mid = t_end / 2.0;
 
     let mut first_half: f64 = 0.0;
@@ -100,7 +104,6 @@ where
 
 #[test]
 fn verlet_no_secular_energy_drift() {
-    // Symplectic: max |ΔE| in the second half ≈ first half (ratio ≈ 1.0).
     let dt = 0.05;
     let t_end = 1000.0 * 2.0 * std::f64::consts::PI; // 1000 periods
 
@@ -110,6 +113,19 @@ fn verlet_no_secular_energy_drift() {
         dt,
     );
 
+    // The drift has to be small, and only then does comparing the halves say
+    // anything. A solver that zeroed the state would drift by the whole
+    // initial energy in both halves, so the ratio alone reads as 1.0 —
+    // measured, that passed a `.scale(0.0)` mutation of every accepted state.
+    let relative = first.max(second) / INITIAL_ENERGY;
+    assert!(
+        relative < VERLET_RELATIVE_DRIFT_CAP,
+        "Verlet drifts by {relative:e} of the initial energy, over the cap \
+         {VERLET_RELATIVE_DRIFT_CAP:e} (first={first:.2e}, second={second:.2e})"
+    );
+    // Bounded rather than growing: for a symplectic method the second half's
+    // peak matches the first, while a non-symplectic one grows into it (see
+    // `rk4_has_secular_energy_drift`, which measures 2.0 here).
     let ratio = second / first;
     assert!(
         ratio < 1.2,
@@ -117,6 +133,10 @@ fn verlet_no_secular_energy_drift() {
          (first={first:.2e}, second={second:.2e})"
     );
 }
+
+/// Ten times the drift measured at `dt = 0.05` over 1000 periods (6.2e-4).
+/// Second order, so this scales as `dt²` and is not a bound to derive.
+const VERLET_RELATIVE_DRIFT_CAP: f64 = 6e-3;
 
 #[test]
 fn rk4_has_secular_energy_drift() {

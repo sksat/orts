@@ -1027,23 +1027,27 @@ mod tests {
         };
 
         let mut dop853_steps = 0u64;
-        let _: IntegrationOutcome<State<3, 2>, ()> = Dop853.integrate_adaptive_with_events(
-            &system,
-            initial.clone(),
-            0.0,
-            t_end,
-            1.0,
-            &tol,
-            |_t, _state| {
-                dop853_steps += 1;
-            },
-            |_t, _state| ControlFlow::Continue(()),
-        );
+        let mut dop853_last_t = 0.0;
+        let dop853_outcome: IntegrationOutcome<State<3, 2>, ()> = Dop853
+            .integrate_adaptive_with_events(
+                &system,
+                initial.clone(),
+                0.0,
+                t_end,
+                1.0,
+                &tol,
+                |t, _state| {
+                    dop853_steps += 1;
+                    dop853_last_t = t;
+                },
+                |_t, _state| ControlFlow::Continue(()),
+            );
         let dop853_evals = system.count();
 
         let system = crate::projection::Counting::new(&HarmonicOscillator);
         let mut dp45_steps = 0u64;
-        let _: IntegrationOutcome<State<3, 2>, ()> = crate::DormandPrince
+        let mut dp45_last_t = 0.0;
+        let dp45_outcome: IntegrationOutcome<State<3, 2>, ()> = crate::DormandPrince
             .integrate_adaptive_with_events(
                 &system,
                 initial,
@@ -1051,12 +1055,37 @@ mod tests {
                 t_end,
                 1.0,
                 &tol,
-                |_t, _state| {
+                |t, _state| {
                     dp45_steps += 1;
+                    dp45_last_t = t;
                 },
                 |_t, _state| ControlFlow::Continue(()),
             );
         let dp45_evals = system.count();
+
+        // Cheaper only counts if both got there. With the outcomes dropped,
+        // an integration that gave up early was the cheapest of all.
+        let IntegrationOutcome::Completed(dop853_final) = dop853_outcome else {
+            panic!("DOP853 must complete the span, got {dop853_outcome:?}");
+        };
+        let IntegrationOutcome::Completed(dp45_final) = dp45_outcome else {
+            panic!("DP45 must complete the span, got {dp45_outcome:?}");
+        };
+        for (label, last_t) in [("DOP853", dop853_last_t), ("DP45", dp45_last_t)] {
+            assert!(
+                (last_t - t_end).abs() < 1e-9,
+                "{label} must report its last state at t_end: {last_t} vs {t_end}"
+            );
+        }
+        // Ten whole periods, so the oscillator is back where it started.
+        for (label, final_state) in [("DOP853", &dop853_final), ("DP45", &dp45_final)] {
+            let error = (final_state.y() - vector![1.0, 0.0, 0.0]).norm();
+            assert!(
+                error < 1e-9,
+                "{label} ends a whole number of periods back at x = (1,0,0), \
+                 off by {error:e}"
+            );
+        }
 
         // Pin the stage structure: DOP853 spends 11 evaluations per trial plus
         // one first-stage evaluation per accepted step; DP45 spends 6 per
