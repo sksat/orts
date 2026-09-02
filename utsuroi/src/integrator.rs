@@ -136,7 +136,11 @@ pub trait Integrator {
         // step. A level-triggered event — "below the surface", "past this
         // altitude" — can already hold at `t0`, and stepping first reports it
         // one step late with a state the caller's own predicate calls invalid.
-        if let ControlFlow::Break(reason) = event_check(t0, &state) {
+        // Only for a span that advances: an empty span takes no step, so it
+        // reports nothing and asks nothing, and comes back as it went in.
+        if t0 < t_end
+            && let ControlFlow::Break(reason) = event_check(t0, &state)
+        {
             return IntegrationOutcome::Terminated {
                 state,
                 t: t0,

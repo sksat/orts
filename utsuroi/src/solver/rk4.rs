@@ -579,4 +579,34 @@ mod tests {
         assert_eq!(*state.dy(), *initial.dy());
         assert_eq!(callbacks, 0, "no step was taken, so nothing to report");
     }
+
+    /// An empty span asks the predicate nothing.
+    ///
+    /// The initial check is for a span that advances: reporting an event for a
+    /// call that takes no step would make `propagate_to(t)` at the current
+    /// time terminate a run. No step, no callback, no predicate call — the
+    /// state comes back as it went in.
+    #[test]
+    fn an_empty_span_does_not_consult_the_event_check() {
+        let system = HarmonicOscillator;
+        let initial = State::<3, 2>::new(vector![7000.0, 0.0, 0.0], vector![0.0, 7.5, 0.0]);
+        let asked = std::cell::Cell::new(0usize);
+        let outcome = Rk4.integrate_with_events(
+            &system,
+            initial.clone(),
+            5.0,
+            5.0,
+            1.0,
+            |_, _| {},
+            |_, _| {
+                asked.set(asked.get() + 1);
+                ControlFlow::Break("would fire")
+            },
+        );
+        let IntegrationOutcome::Completed(state) = outcome else {
+            panic!("an empty span completes, got {outcome:?}");
+        };
+        assert_eq!(*state.y(), *initial.y(), "the state is the one handed in");
+        assert_eq!(asked.get(), 0, "no step was taken, so nothing was asked");
+    }
 }

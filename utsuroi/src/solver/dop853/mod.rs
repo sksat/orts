@@ -272,7 +272,11 @@ impl<'a, S: DynamicalSystem> AdaptiveStepper853<'a, S> {
         // any step. A level-triggered event — "below the surface", "past this
         // altitude" — can already hold here, and stepping first reports it one
         // step late with a state the caller's own predicate calls invalid.
-        if let ControlFlow::Break(reason) = event_check(self.t, &self.state) {
+        // Only for a target that advances: `advance_to(self.t, ..)` takes no
+        // step, so it reports nothing and asks nothing.
+        if self.t < t_target
+            && let ControlFlow::Break(reason) = event_check(self.t, &self.state)
+        {
             return Ok(AdvanceOutcome853::Event { reason });
         }
 
@@ -1284,5 +1288,36 @@ mod tests {
         assert_eq!(*state.y(), *initial.y(), "the state is the one handed in");
         assert_eq!(*state.dy(), *initial.dy());
         assert_eq!(callbacks, 0, "no step was taken, so nothing to report");
+    }
+
+    /// A target the stepper already reached asks the predicate nothing.
+    ///
+    /// The initial check is for a target that advances. Driven through the
+    /// stepper rather than the wrapper: the wrapper sizes its first step as
+    /// `dt.min(t_end - t0)`, which is zero for an empty span, so it answers
+    /// with the step-size error before reaching this check.
+    #[test]
+    fn a_target_already_reached_does_not_consult_the_event_check() {
+        let system = HarmonicOscillator;
+        let initial = State::<3, 2>::new(vector![7000.0, 0.0, 0.0], vector![0.0, 7.5, 0.0]);
+        let tol = Tolerances::default();
+        let asked = std::cell::Cell::new(0usize);
+        let mut stepper = Dop853.stepper(&system, initial, 5.0, 1.0, tol);
+        let outcome = stepper
+            .advance_to(
+                5.0,
+                |_, _| {},
+                |_, _| {
+                    asked.set(asked.get() + 1);
+                    ControlFlow::Break("would fire")
+                },
+            )
+            .expect("a target already reached is valid");
+        assert!(
+            matches!(outcome, AdvanceOutcome853::Reached),
+            "nothing to advance to, so the stepper reports Reached"
+        );
+        assert_eq!(asked.get(), 0, "no step was taken, so nothing was asked");
+        assert_eq!(stepper.t(), 5.0, "the clock did not move");
     }
 }
