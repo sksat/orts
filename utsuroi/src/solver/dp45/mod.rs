@@ -132,6 +132,15 @@ pub struct AdaptiveStepper<'a, S: DynamicalSystem> {
 impl<'a, S: DynamicalSystem> AdaptiveStepper<'a, S> {
     /// Advance adaptively to `t_target`.
     ///
+    /// - `event_check` runs first on the state the stepper currently holds,
+    ///   before any step. A level-triggered event can already hold there, and
+    ///   reporting it after a step would name a state the predicate itself
+    ///   rejects. Terminating there leaves the stepper where it was and calls
+    ///   no callback, since the callback reports accepted steps and none was
+    ///   taken. A later `advance_to` therefore re-evaluates the state it
+    ///   stopped at: for a predicate that only reads the state that is the
+    ///   same answer, but one carrying its own counters sees the endpoint
+    ///   twice.
     /// - Each accepted step calls `callback(t, &state)`.
     /// - If `event_check` returns `Break(reason)`, returns `Event { reason }`.
     /// - On success returns `Reached` with internal state updated to `t_target`.

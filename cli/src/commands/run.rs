@@ -735,13 +735,18 @@ where
             );
             // Record final state for terminated satellites, unless that
             // state is already recorded: an event that holds at t0 terminates
-            // there, where the initial sample sits.
+            // there, where the initial sample sits. `last_output_t` carries
+            // the exact time of the last sample written for this satellite,
+            // and a t0 termination carries that same value, so the comparison
+            // is strict — a tolerance here would also drop a termination that
+            // lands a fraction of a nanosecond after a sample, which is a
+            // different state.
             if let Some(i) = params
                 .satellites
                 .iter()
                 .position(|s| s.id.as_str() == AsRef::<str>::as_ref(&term.satellite_id))
                 && let Some(entry) = group.satellite(&term.satellite_id)
-                && (entry.t - last_output_t[i]) > 1e-9
+                && entry.t > last_output_t[i]
             {
                 let tp = TimePoint::new().with_sim_time(entry.t).with_step(steps[i]);
                 log_state(&mut rec, &sat_paths[i], &tp, &entry.state);

@@ -1308,6 +1308,50 @@ mod tests {
         assert!(group.current_t() < 10000.0);
     }
 
+    /// A satellite already below the surface terminates the group at t0.
+    ///
+    /// `CoupledGroup` runs its own fixed-step RK4 loop rather than
+    /// `Integrator::integrate_with_events`, so it needs the initial check of
+    /// its own. The tests above cross the boundary after stepping, which the
+    /// loop caught either way.
+    #[test]
+    fn coupled_group_rk4_event_true_at_t0_terminates_there() {
+        // Inside the Earth: the predicate below holds before any step.
+        let buried_position = Vector3::new(EARTH_RADIUS - 100.0, 0.0, 0.0);
+        let buried = OrbitalState::new(buried_position, Vector3::new(0.0, 7.5, 0.0));
+
+        let mut group: CoupledGroup<TwoBodySystem> = CoupledGroup::rk4(10.0)
+            .with_event_checker(move |_t: f64, state: &OrbitalState| {
+                if state.position().magnitude() < EARTH_RADIUS {
+                    ControlFlow::Break("collision".to_string())
+                } else {
+                    ControlFlow::Continue(())
+                }
+            })
+            .add_satellite("safe", iss_state(), TwoBodySystem { mu: MU_EARTH })
+            .add_satellite("buried", buried, TwoBodySystem { mu: MU_EARTH });
+
+        let outcome = group.propagate_to(1000.0).unwrap();
+
+        assert_eq!(outcome.terminations.len(), 1);
+        assert_eq!(outcome.terminations[0].satellite_id, SatId::from("buried"));
+        assert!(outcome.terminations[0].reason.contains("collision"));
+        assert_eq!(
+            outcome.terminations[0].t, 0.0,
+            "the event holds at t0, so that is where it stops"
+        );
+        assert!(group.is_terminated());
+        assert_eq!(group.current_t(), 0.0, "the group did not step");
+
+        // The terminated state is the one handed in: `current_t` above says
+        // the clock never moved, and the group reports the satellite that
+        // was already inside the body rather than one it integrated into it.
+        assert!(
+            group.snapshot().positions.is_empty(),
+            "a terminated group reports no positions, as it did before"
+        );
+    }
+
     #[test]
     fn coupled_group_multiple_events_first_wins() {
         // Two decaying satellites: first one detected wins
