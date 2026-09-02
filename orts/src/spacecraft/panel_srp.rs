@@ -367,6 +367,7 @@ mod tests {
             cd: 2.2,
             optics: PanelOptics::absorber(),
             cp_offset: Vector3::zeros(),
+            outline: None,
         }]);
         PanelSrp::for_earth(shape);
     }
@@ -1224,6 +1225,7 @@ mod tests {
             cd: 2.2,
             optics: PanelOptics::absorber(),
             cp_offset: Vector3::new(0.0, 1.0, 0.0), // 1 m offset in +y
+            outline: None,
         };
         let srp = PanelSrp::new(SpacecraftShape::panels(vec![panel]));
         let epoch = test_epoch();
@@ -1265,6 +1267,7 @@ mod tests {
             cd: 2.2,
             optics: PanelOptics::absorber(),
             cp_offset: Vector3::new(0.0, 1.0, 0.0),
+            outline: None,
         };
         let srp = PanelSrp::new(SpacecraftShape::panels(vec![panel]));
         let epoch = test_epoch();
@@ -1321,6 +1324,7 @@ mod tests {
             cd: 2.2,
             optics,
             cp_offset,
+            outline: None,
         };
 
         let loads = PanelSrp::new(SpacecraftShape::panels(vec![panel])).eval(
@@ -1377,6 +1381,7 @@ mod tests {
             cd: 2.2,
             optics,
             cp_offset,
+            outline: None,
         };
 
         let loads =

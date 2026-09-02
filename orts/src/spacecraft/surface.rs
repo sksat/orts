@@ -98,6 +98,37 @@ impl PanelOptics {
 /// Both force models assume `normal` is unit length. [`Self::at_com`] and
 /// [`SpacecraftShape::cube`] guarantee that; a struct literal does not, and the
 /// SRP force is cubic in `|normal|` through its specular term.
+/// The most corners any [`PanelOutline`] shape has.
+pub(crate) const MAX_PANEL_CORNERS: usize = 4;
+
+/// A panel's extent within its own plane.
+///
+/// A panel needs none of this to produce a force: the flat-plate law uses the
+/// projected area, the normal and the optics, and never the boundary. It is
+/// here so that one panel can be found to stand between another and the Sun or
+/// the flow, which needs the boundary and nothing else.
+///
+/// An enum because the shapes will not stay one: a mesh read from CAD gives
+/// triangles. Everything that consumes an outline goes through
+/// [`SurfacePanel::corners_into`], so a new shape is a new variant rather than
+/// a change at every use.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PanelOutline {
+    /// A rectangle centred on the panel's `cp_offset`.
+    ///
+    /// For a plate with uniform properties, fully lit, the centre of pressure
+    /// *is* the area centroid, so centring on it is exact. A shape whose
+    /// centroid moves away from the centre of pressure would have to carry its
+    /// own reference point.
+    Rectangle {
+        /// Half-extents [m]: along `in_plane_x`, then along
+        /// `normal × in_plane_x`.
+        half_extent: [f64; 2],
+        /// In-plane reference axis (unit length, perpendicular to the normal).
+        in_plane_x: Vector3<f64>,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SurfacePanel {
     /// Panel area [m²].
@@ -110,6 +141,12 @@ pub struct SurfacePanel {
     pub optics: PanelOptics,
     /// Centre-of-pressure offset from the spacecraft CoM [m, body frame].
     pub cp_offset: Vector3<f64>,
+    /// In-plane extent, when the panel has one.
+    ///
+    /// Only panels that carry it take part in occlusion — a panel without an
+    /// outline neither casts a shadow on another panel nor receives one. The
+    /// force a lit panel produces is the same either way.
+    pub outline: Option<PanelOutline>,
 }
 
 impl SurfacePanel {
@@ -136,6 +173,7 @@ impl SurfacePanel {
             cd,
             optics,
             cp_offset: Vector3::zeros(),
+            outline: None,
         }
     }
 
@@ -152,6 +190,76 @@ impl SurfacePanel {
     pub fn with_cp_offset(mut self, cp_offset: Vector3<f64>) -> Self {
         self.cp_offset = cp_offset;
         self
+    }
+
+    /// Create a rectangular panel with a known extent, centred on `cp_offset`.
+    ///
+    /// The area follows from the half-extents, so this is the constructor to
+    /// reach for when the panel's boundary matters — a panel built with
+    /// [`Self::at_com`] has an area and no boundary, and takes no part in
+    /// occlusion.
+    ///
+    /// # Panics
+    /// Panics if either vector is zero-length, if the half-extents are not
+    /// positive and finite, or if `in_plane_x` is not perpendicular to `normal`
+    /// (to within 1e-9 after normalisation). An axis off the plane describes a
+    /// rectangle that is not on the panel; projecting it onto the plane would
+    /// build a panel the caller did not ask for, so it is rejected instead.
+    pub fn rectangle(
+        half_extent: [f64; 2],
+        in_plane_x: Vector3<f64>,
+        normal: Vector3<f64>,
+        cd: f64,
+        optics: PanelOptics,
+    ) -> Self {
+        assert!(
+            half_extent.iter().all(|h| h.is_finite() && *h > 0.0),
+            "panel half-extents must be positive and finite, got {half_extent:?}"
+        );
+        let n = normal.normalize();
+        assert!(n.magnitude() > 0.5, "Panel normal must be non-zero");
+        let x = in_plane_x.normalize();
+        assert!(x.magnitude() > 0.5, "Panel in-plane axis must be non-zero");
+        assert!(
+            n.dot(&x).abs() < 1e-9,
+            "panel in-plane axis must be perpendicular to the normal, got n·x = {}",
+            n.dot(&x)
+        );
+        Self {
+            area: 4.0 * half_extent[0] * half_extent[1],
+            normal: n,
+            cd,
+            optics,
+            cp_offset: Vector3::zeros(),
+            outline: Some(PanelOutline::Rectangle {
+                half_extent,
+                in_plane_x: x,
+            }),
+        }
+    }
+
+    /// Write the outline's corners in order into `buf`, or `None` without one.
+    ///
+    /// Corner-count varies by shape, so the filled prefix is returned rather
+    /// than a fixed array. Takes a buffer because occlusion runs per panel pair
+    /// per integrator stage, where an allocation would not pay for itself.
+    pub(crate) fn corners_into<'b>(
+        &self,
+        buf: &'b mut [Vector3<f64>; MAX_PANEL_CORNERS],
+    ) -> Option<&'b [Vector3<f64>]> {
+        match self.outline? {
+            PanelOutline::Rectangle {
+                half_extent: [hx, hy],
+                in_plane_x,
+            } => {
+                let y = self.normal.cross(&in_plane_x);
+                buf[0] = self.cp_offset + in_plane_x * hx + y * hy;
+                buf[1] = self.cp_offset + in_plane_x * hx - y * hy;
+                buf[2] = self.cp_offset - in_plane_x * hx - y * hy;
+                buf[3] = self.cp_offset - in_plane_x * hx + y * hy;
+                Some(&buf[..4])
+            }
+        }
     }
 
     /// The other side of the same thin plate: the normal is negated, and the
@@ -192,6 +300,7 @@ impl SurfacePanel {
             cd: self.cd,
             optics,
             cp_offset: self.cp_offset,
+            outline: self.outline,
         }
     }
 }
@@ -275,54 +384,23 @@ impl SpacecraftShape {
     /// Create a cube with the given half-size, drag coefficient, and optical
     /// properties, shared by all six faces.
     ///
-    /// Generates 6 panels (±x, ±y, ±z), each with area `(2 * half_size)²` m²
-    /// and centre of pressure at the face centre (`half_size` m from CoM along
-    /// the face normal).
+    /// Generates 6 panels (±x, ±y, ±z), each `2 * half_size` on a side, with the
+    /// centre of pressure at the face centre (`half_size` m from CoM along the
+    /// face normal). The faces carry their outline, so a panel added beside the
+    /// cube — a solar array, say — can be found standing in front of one.
     pub fn cube(half_size: f64, cd: f64, optics: PanelOptics) -> Self {
-        let face_area = (2.0 * half_size) * (2.0 * half_size);
+        let face = |normal: Vector3<f64>, in_plane_x: Vector3<f64>| {
+            SurfacePanel::rectangle([half_size, half_size], in_plane_x, normal, cd, optics)
+                .with_cp_offset(normal * half_size)
+        };
+        let (x, y, z) = (Vector3::x(), Vector3::y(), Vector3::z());
         let panels = vec![
-            SurfacePanel {
-                area: face_area,
-                normal: Vector3::new(1.0, 0.0, 0.0),
-                cd,
-                optics,
-                cp_offset: Vector3::new(half_size, 0.0, 0.0),
-            },
-            SurfacePanel {
-                area: face_area,
-                normal: Vector3::new(-1.0, 0.0, 0.0),
-                cd,
-                optics,
-                cp_offset: Vector3::new(-half_size, 0.0, 0.0),
-            },
-            SurfacePanel {
-                area: face_area,
-                normal: Vector3::new(0.0, 1.0, 0.0),
-                cd,
-                optics,
-                cp_offset: Vector3::new(0.0, half_size, 0.0),
-            },
-            SurfacePanel {
-                area: face_area,
-                normal: Vector3::new(0.0, -1.0, 0.0),
-                cd,
-                optics,
-                cp_offset: Vector3::new(0.0, -half_size, 0.0),
-            },
-            SurfacePanel {
-                area: face_area,
-                normal: Vector3::new(0.0, 0.0, 1.0),
-                cd,
-                optics,
-                cp_offset: Vector3::new(0.0, 0.0, half_size),
-            },
-            SurfacePanel {
-                area: face_area,
-                normal: Vector3::new(0.0, 0.0, -1.0),
-                cd,
-                optics,
-                cp_offset: Vector3::new(0.0, 0.0, -half_size),
-            },
+            face(x, y),
+            face(-x, y),
+            face(y, z),
+            face(-y, z),
+            face(z, x),
+            face(-z, x),
         ];
         Self::Panels(panels)
     }
@@ -631,6 +709,7 @@ mod tests {
             cd: 2.2,
             optics: PanelOptics::absorber(),
             cp_offset: Vector3::zeros(),
+            outline: None,
         }]);
     }
 
@@ -647,6 +726,7 @@ mod tests {
             cd: 2.2,
             optics: PanelOptics::absorber(),
             cp_offset: Vector3::zeros(),
+            outline: None,
         }]);
         PanelDrag::for_earth(shape);
     }
@@ -1013,6 +1093,7 @@ mod tests {
                 cd: 2.2,
                 optics: PanelOptics::absorber(),
                 cp_offset: Vector3::new(0.0, 1.5, 0.0),
+                outline: None,
             },
             SurfacePanel {
                 area: 2.0,
@@ -1020,6 +1101,7 @@ mod tests {
                 cd: 2.2,
                 optics: PanelOptics::absorber(),
                 cp_offset: Vector3::new(0.0, 0.4, 0.0),
+                outline: None,
             },
             SurfacePanel {
                 area: 0.5,
@@ -1027,6 +1109,7 @@ mod tests {
                 cd: 2.2,
                 optics: PanelOptics::absorber(),
                 cp_offset: Vector3::new(0.0, 0.0, -0.8),
+                outline: None,
             },
             SurfacePanel {
                 area: 0.5,
@@ -1034,6 +1117,7 @@ mod tests {
                 cd: 2.2,
                 optics: PanelOptics::absorber(),
                 cp_offset: Vector3::new(0.9, 0.0, 0.0),
+                outline: None,
             },
         ])
     }
@@ -1395,6 +1479,7 @@ mod tests {
             cd: 2.2,
             optics: PanelOptics::absorber(),
             cp_offset: Vector3::new(1.0, 0.0, 0.0), // 1 m offset in +x
+            outline: None,
         };
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
         let loads = drag.eval(0.0, &iss_state(), None);
@@ -1419,6 +1504,7 @@ mod tests {
             cd: 2.2,
             optics: PanelOptics::absorber(),
             cp_offset: Vector3::new(offset, 0.0, 0.0),
+            outline: None,
         };
 
         let drag1 = PanelDrag::for_earth(SpacecraftShape::panels(vec![make_panel(1.0)]));
@@ -1825,6 +1911,7 @@ mod tests {
             cd: 2.2,
             optics: PanelOptics::absorber(),
             cp_offset: Vector3::new(1.0, 0.0, 0.0),
+            outline: None,
         };
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
         let loads = drag.eval(0.0, &iss_state(), None);
@@ -1913,6 +2000,7 @@ mod tests {
                 cd: 2.2,
                 optics: PanelOptics::absorber(),
                 cp_offset: Vector3::new(1.0, 0.0, 0.0),
+                outline: None,
             },
             SurfacePanel::at_com(
                 5.0,
@@ -1967,6 +2055,7 @@ mod tests {
                 cd: 2.2,
                 optics: PanelOptics::absorber(),
                 cp_offset: Vector3::new(1.0, 0.0, 0.0),
+                outline: None,
             },
             SurfacePanel {
                 area: 8.0,
@@ -1974,6 +2063,7 @@ mod tests {
                 cd: 2.0,
                 optics: PanelOptics::absorber(),
                 cp_offset: Vector3::new(0.0, 0.0, 0.5),
+                outline: None,
             },
         ];
         let drag = mock_drag(SpacecraftShape::panels(panels), 1e-12);
@@ -2108,6 +2198,7 @@ mod tests {
                 cd: 2.2,
                 optics: PanelOptics::absorber(),
                 cp_offset: Vector3::new(1.0, 0.0, 0.0),
+                outline: None,
             },
             SurfacePanel::at_com(
                 5.0,
@@ -2146,6 +2237,7 @@ mod tests {
             cd: 2.2,
             optics: PanelOptics::absorber(),
             cp_offset: Vector3::new(1.0, 0.0, 0.0),
+            outline: None,
         }];
 
         let drag1 = mock_drag(SpacecraftShape::panels(panels.clone()), 1e-12);
