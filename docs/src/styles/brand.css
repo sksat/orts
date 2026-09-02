@@ -1,3 +1,116 @@
+/*
+ * orts brand palette for the documentation site.
+ *
+ * The brand is specified in assets/README.md as ink #0E0E10, paper #F5F1E8,
+ * blue oklch(0.58 0.12 240) and amber oklch(0.72 0.12 70). Those two accents
+ * are what the logo is drawn in, so everything derived from them below moves
+ * only L, keeping C and H at the brand values — that is what makes the site's
+ * blue and the mark's blue the same blue.
+ *
+ * Layer order: starlight-theme-next declares `@layer starlight, nextjs;`, so
+ * restating those names and appending `orts` puts these rules after both. No
+ * `!important` and no specificity games are needed as a result.
+ *
+ * The grays keep the exact L the theme chose for each step, so its visual
+ * weight is unchanged, and add chroma tapering to near-zero at both ends (a
+ * tinted white reads as a colour cast). Dark uses hue 250: the brand blue is
+ * 240 and the viewer's hairline blue #4488cc measures 250.6, so 250 sits
+ * between the two things the docs have to look related to. Ink itself measures
+ * C=0.004, so its hue is numerical noise and is not used. Light uses paper's
+ * own measured hue, 86.8, which is a real warm cast — a warm light mode is the
+ * most orts-specific thing in this file.
+ *
+ * Every ratio in the comments is computed against that theme's ground with the
+ * WCAG relative-luminance formula, and every value was checked to be inside
+ * sRGB. Two L values deviate from the theme deliberately, both marked below.
+ */
+@layer starlight, nextjs, orts;
+
+@layer orts {
+  /* Dark theme (Starlight's default). Ground is brand ink. */
+  :root {
+    --sl-color-white: #fff; /* 19.28:1 */
+    --sl-color-gray-1: oklch(0.894 0.007 250); /* #d9dde1  14.07:1 */
+    --sl-color-gray-2: oklch(0.732 0.016 250); /* #a1a9b2   8.12:1  body text */
+    /* L raised from the theme's 0.556, which lands at 4.09:1 — this token
+       carries muted body text, so it has to clear 4.5:1. */
+    --sl-color-gray-3: oklch(0.588 0.021 250); /* #737e89   4.66:1  muted */
+    --sl-color-gray-4: oklch(0.409 0.021 250); /* #424b55   2.18:1 */
+    --sl-color-gray-5: oklch(0.305 0.018 250); /* #283038   1.44:1  hairline */
+    --sl-color-gray-6: oklch(0.222 0.014 250); /* #161c22   1.12:1  sidebar */
+    --sl-color-gray-7: oklch(0.178 0.012 250); /* #0d1216   1.02:1 */
+    --sl-color-black: #0e0e10; /* brand ink */
+
+    /* Brand blue at L 0.62 rather than the brand's own 0.58, which reaches
+       only 3.74:1 on ink. The theme's stock accent is chroma 0.208 — nearly
+       twice the brand's — and lands at 3.36:1, under AA for link text. */
+    --sl-color-accent-low: oklch(0.28 0.06 240); /* #042c43 */
+    --sl-color-accent: oklch(0.62 0.12 240); /* #338fc7   5.38:1 */
+    --sl-color-accent-high: oklch(0.8 0.1 240); /* #80c7f8  10.47:1 */
+
+    /* Brand amber, unmodified: it already clears AA on ink. Retunes the
+       `caution` aside and badge, which is the one place amber belongs. */
+    --sl-color-orange-low: oklch(0.3 0.06 70);
+    --sl-color-orange: oklch(0.72 0.12 70); /* #d49648   7.61:1 */
+    --sl-color-orange-high: oklch(0.86 0.09 70);
+
+    /* Keep the informational blue in step with the accent, so a `note` aside
+       does not sit beside a differently-blue link. green, purple and red stay
+       at Starlight's values: they are semantic, rare, and retuning them would
+       be a separate decision. */
+    --sl-color-blue-low: var(--sl-color-accent-low);
+    --sl-color-blue: var(--sl-color-accent);
+    --sl-color-blue-high: var(--sl-color-accent-high);
+
+    /* The theme's translucent header sits on its own copy of the ground
+       colour, so it has to follow ink or the header reads as a different
+       surface than the page. */
+    --sl-nextjs-header-bg-color: rgb(14 14 16 / 60%);
+  }
+
+  /* Light theme. Ground is brand paper. */
+  :root[data-theme="light"] {
+    --sl-color-white: oklch(0.209 0.012 86.8); /* #1a1812  15.75:1 */
+    --sl-color-gray-1: oklch(0.273 0.015 86.8); /* #2a271f  13.25:1 */
+    --sl-color-gray-2: oklch(0.341 0.018 86.8); /* #3c382e  10.40:1  body text */
+    --sl-color-gray-3: oklch(0.46 0.02 86.8); /* #5d584c   6.31:1  muted */
+    /* L lowered from the theme's 0.637, which lands at 3.02:1 — right on the
+       non-text minimum with no margin. */
+    --sl-color-gray-4: oklch(0.63 0.018 86.8); /* #8e897d   3.10:1 */
+    --sl-color-gray-5: oklch(0.814 0.011 86.8); /* #c5c2ba   1.58:1  hairline */
+    --sl-color-gray-6: oklch(0.949 0.003 86.8); /* #efeeec   1.03:1 */
+    --sl-color-gray-7: oklch(0.973 0.002 86.8); /* #f7f6f5   1.04:1 */
+    --sl-color-black: #f5f1e8; /* brand paper */
+
+    /* L 0.53 is the darkest the brand chroma survives here: 0.50 and below
+       fall outside sRGB at C 0.12. */
+    --sl-color-accent-low: oklch(0.9 0.05 240); /* #c1e3fc */
+    --sl-color-accent: oklch(0.53 0.12 240); /* #0573aa   4.61:1 */
+    --sl-color-accent-high: oklch(0.4 0.09 240); /* #034d73   8.08:1 */
+
+    /* C 0.11 rather than the brand's 0.12: at the L this needs to reach AA on
+       paper, 0.12 falls outside sRGB. The difference is not visible. */
+    --sl-color-orange-low: oklch(0.9 0.05 70);
+    --sl-color-orange: oklch(0.54 0.11 70); /* #976213   4.60:1 */
+    --sl-color-orange-high: oklch(0.4 0.09 70);
+
+    --sl-color-blue-low: var(--sl-color-accent-low);
+    --sl-color-blue: var(--sl-color-accent);
+    --sl-color-blue-high: var(--sl-color-accent-high);
+
+    --sl-nextjs-header-bg-color: rgb(245 241 232 / 50%);
+  }
+}
+
+/*
+ * Header sizing for the wordmark, from before the theme. Unlayered, so it
+ * overrides both Starlight and the theme; the nav has to be tall enough for a
+ * 700x400 mark and the mark sits flush to the viewport edge.
+ *
+ * TODO: revisit with the header navigation work. The theme computes
+ * `--sl-nav-pad-x` above 800px to centre the content column, which the flush
+ * rule below overrides on the inline-start side.
+ */
 :root {
   --sl-nav-height: 6rem;
 }
@@ -7,7 +120,6 @@ a.site-title img {
   max-height: none;
 }
 
-/* Pull the brand wordmark flush to the viewport edge */
 header.header {
   padding-inline-start: 0;
 }
