@@ -141,7 +141,19 @@ fn unhonored_sim_args(sim: &SimArgs) -> Vec<&'static str> {
     // that range resolves to the same interval a bare command line would give.
     // Comparing the written value would refuse `serve --stream-interval 20`
     // (bare defaults clamp both to 10), which changes nothing when dropped.
-    let clamp_stream = |v: f64| v.clamp(sim.dt.min(output_interval), output_interval);
+    //
+    // `f64::clamp` panics on a `NaN` bound, and clap takes `NaN` for these
+    // flags: measured, `serve --output-interval NaN --stream-interval 1`
+    // panicked here with "min > max, or either was NaN". A non-finite interval
+    // is named as written, which is what the caller has to fix anyway — and
+    // `validate_sim_args` refuses it a moment later.
+    let clamp_stream = |v: f64| {
+        let low = sim.dt.min(output_interval);
+        if !low.is_finite() || !output_interval.is_finite() {
+            return v;
+        }
+        v.clamp(low, output_interval)
+    };
     [
         ("--body", sim.body != default.body),
         ("--dt", sim.dt != default.dt),
@@ -567,6 +579,32 @@ mod tests {
                 "50"
             ])),
             vec!["--dt", "--output-interval"]
+        );
+    }
+
+    /// A non-finite interval is named, not a panic.
+    ///
+    /// `f64::clamp` panics on a `NaN` bound, and clap takes `NaN` for these
+    /// flags. Measured before the guard: `serve --output-interval NaN
+    /// --stream-interval 1` panicked with "min > max, or either was NaN".
+    #[test]
+    fn a_non_finite_interval_is_named_rather_than_panicking() {
+        for extra in [
+            vec!["--output-interval", "NaN", "--stream-interval", "1"],
+            vec!["--dt", "NaN", "--stream-interval", "1"],
+            vec!["--output-interval", "inf", "--stream-interval", "1"],
+            vec!["--stream-interval", "NaN"],
+        ] {
+            let named = unhonored_sim_args(&args(&extra));
+            assert!(
+                named.contains(&"--stream-interval"),
+                "{extra:?} names the stream interval: {named:?}"
+            );
+        }
+        // The value itself is refused a moment later, by the shared check.
+        assert!(
+            crate::commands::run::validate_sim_args(&args(&["--dt", "NaN"])).is_err(),
+            "a non-finite dt is refused"
         );
     }
 }
