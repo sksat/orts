@@ -99,11 +99,13 @@ pub trait Integrator {
 
     /// Integrate a dynamical system with event detection and NaN/Inf checking.
     ///
-    /// `event_check(t0, &initial)` runs first, before any step: a
-    /// level-triggered event can already hold at `t0`, and reporting it after
-    /// a step would name a state the predicate itself rejects. Terminating
-    /// there returns the initial state at `t0` and calls no callback, since
-    /// the callback reports accepted steps and none was taken.
+    /// For a span that advances, `event_check(t0, &initial)` runs first,
+    /// before any step: a level-triggered event can already hold at `t0`, and
+    /// reporting it after a step would name a state the predicate itself
+    /// rejects. Terminating there returns the initial state at `t0` and calls
+    /// no callback, since the callback reports accepted steps and none was
+    /// taken. A span with `t0 == t_end` takes no step, so it asks nothing and
+    /// returns the initial state as it came in.
     ///
     /// Then, after each step:
     /// 1. Checks for NaN/Inf in state → returns `IntegrationOutcome::Error`
