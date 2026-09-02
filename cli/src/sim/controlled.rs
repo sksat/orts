@@ -126,8 +126,14 @@ fn validate_tick_advances(start_t: f64, sample_period: f64) -> Result<(), String
     // The ULP grows with the magnitude of the time, so a period accepted here
     // can still collide far enough into a run. That is the case the doc above
     // describes and does not rule out: a 0.1 s period needs t of about 1e15 s.
+    // The resolution at the anchor, and at the first tick: crossing a binade
+    // doubles the ULP, so a period equal to the anchor's can be half of one
+    // just above it. Measured: at `start_t = 8.0f64.next_down()` with
+    // `period = 8.0 - start_t`, ticks 1 and 2 both land on 8.0.
     let ulp = start_t.next_up() - start_t;
-    if sample_period >= ulp {
+    let first = start_t + sample_period;
+    let ulp_at_first = first.next_up() - first;
+    if sample_period >= ulp && sample_period >= ulp_at_first {
         Ok(())
     } else {
         Err(format!(
@@ -477,7 +483,23 @@ pub fn tick_controller(
     // command whose length does not match the actuator, and a schedule advanced
     // past a tick that failed would resume on the wrong phase.
     apply_held_commands(sat)?;
+    // The schedule has to advance, or the caller's `while sat.tick_due_at(to)`
+    // would tick again at this instant and never finish. Construction refuses
+    // a period below the clock's resolution there, but the resolution halves
+    // going up a binade and grows with the time, so the invariant is checked
+    // where it has to hold rather than only where the satellite was built.
+    let taken = sat.next_tick_t();
     sat.ticks_done += 1;
+    let following = sat.next_tick_t();
+    // `partial_cmp` rather than `!(following > taken)`: a NaN either side is
+    // incomparable, and that has to count as "did not advance" too.
+    if following.partial_cmp(&taken) != Some(core::cmp::Ordering::Greater) {
+        return Err(format!(
+            "controller sample period {} cannot advance the schedule past \
+             t={taken}: the next tick lands on the same instant",
+            sat.controller.sample_period()
+        ));
+    }
     Ok(())
 }
 
@@ -834,6 +856,17 @@ mod tests {
         // One ULP exactly is the smallest period that keeps the ticks apart.
         validate_tick_advances(5.0, 5.0f64.next_up() - 5.0)
             .expect("one ULP separates every consecutive pair");
+        // Just below a binade boundary the ULP doubles on the way up, so a
+        // period equal to the anchor's own ULP is half of one above it.
+        let below_eight = 8.0f64.next_down();
+        let one_ulp_there = 8.0 - below_eight;
+        assert_eq!(
+            below_eight + one_ulp_there,
+            below_eight + 2.0 * one_ulp_there,
+            "precondition: ticks 1 and 2 both land on 8.0"
+        );
+        validate_tick_advances(below_eight, one_ulp_there)
+            .expect_err("a period that collides across the binade must be refused");
         // The same period is fine from zero, where it is representable.
         validate_tick_advances(0.0, 1e-16).expect("representable at t=0");
         validate_tick_advances(5.0, 0.1).expect("an ordinary period is fine");
