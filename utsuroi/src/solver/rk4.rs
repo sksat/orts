@@ -514,7 +514,7 @@ mod tests {
         );
     }
 
-    /// Half the 0.874 excursion measured over the ten time units above.
+    /// Roughly half the 0.874 excursion measured over the ten time units above.
     const MIN_LOTKA_VOLTERRA_EXCURSION: f64 = 0.4;
 
     #[test]

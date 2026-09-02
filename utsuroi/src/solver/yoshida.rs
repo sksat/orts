@@ -428,8 +428,9 @@ mod tests {
         assert!(first > 0.0, "Should have some energy oscillation");
         // Small first, and only then does the ratio mean anything: a solver
         // that zeroed the state would drift by the whole initial energy in
-        // both halves, which reads as a ratio of 1.0. The cap is ten times
-        // the 4.8e-7 measured at dt = 0.05 over 1000 periods.
+        // both halves, which reads as a ratio of 1.0. The cap is an order of
+        // magnitude above the 4.8e-7 measured at dt = 0.05 over 1000
+        // periods.
         let relative = first.max(second) / INITIAL_ENERGY;
         assert!(
             relative < 5e-6,
@@ -452,8 +453,9 @@ mod tests {
         assert!(first > 0.0);
         // Small first, and only then does the ratio mean anything: a solver
         // that zeroed the state would drift by the whole initial energy in
-        // both halves, which reads as a ratio of 1.0. The cap is ten times
-        // the 4.0e-9 measured at dt = 0.1 over 1000 periods.
+        // both halves, which reads as a ratio of 1.0. The cap is an order of
+        // magnitude above the 4.0e-9 measured at dt = 0.1 over 1000
+        // periods.
         let relative = first.max(second) / INITIAL_ENERGY;
         assert!(
             relative < 4e-8,
@@ -476,8 +478,9 @@ mod tests {
         assert!(first > 0.0);
         // Small first, and only then does the ratio mean anything: a solver
         // that zeroed the state would drift by the whole initial energy in
-        // both halves, which reads as a ratio of 1.0. The cap is ten times
-        // the 3.4e-10 measured at dt = 0.1 over 1000 periods.
+        // both halves, which reads as a ratio of 1.0. The cap is an order of
+        // magnitude above the 3.4e-10 measured at dt = 0.1 over 1000
+        // periods.
         let relative = first.max(second) / INITIAL_ENERGY;
         assert!(
             relative < 4e-9,

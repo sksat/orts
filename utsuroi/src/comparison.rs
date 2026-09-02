@@ -134,8 +134,9 @@ fn verlet_no_secular_energy_drift() {
     );
 }
 
-/// Ten times the drift measured at `dt = 0.05` over 1000 periods (6.2e-4).
-/// Second order, so this scales as `dt²` and is not a bound to derive.
+/// An order of magnitude above the drift measured at `dt = 0.05` over 1000
+/// periods (6.2e-4). Second order, so it scales as `dt²`, and the constant
+/// belongs to the problem rather than to anything derivable here.
 const VERLET_RELATIVE_DRIFT_CAP: f64 = 6e-3;
 
 #[test]

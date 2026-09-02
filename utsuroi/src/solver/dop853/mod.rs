@@ -1077,13 +1077,22 @@ mod tests {
                 "{label} must report its last state at t_end: {last_t} vs {t_end}"
             );
         }
-        // Ten whole periods, so the oscillator is back where it started.
+        // Ten whole periods, so the oscillator is back where it started, at
+        // rest. Velocity too: a phase error shows up linearly there and only
+        // quadratically in position, so a position-only check at a period
+        // boundary would admit a phase error of about 4e-5.
         for (label, final_state) in [("DOP853", &dop853_final), ("DP45", &dp45_final)] {
-            let error = (final_state.y() - vector![1.0, 0.0, 0.0]).norm();
+            let position_error = (final_state.y() - vector![1.0, 0.0, 0.0]).norm();
+            let velocity_error = final_state.dy().norm();
             assert!(
-                error < 1e-9,
+                position_error < 1e-9,
                 "{label} ends a whole number of periods back at x = (1,0,0), \
-                 off by {error:e}"
+                 off by {position_error:e}"
+            );
+            assert!(
+                velocity_error < 1e-9,
+                "{label} ends a whole number of periods back at rest, off by \
+                 {velocity_error:e}"
             );
         }
 

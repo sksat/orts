@@ -617,9 +617,10 @@ section is subdivided by package.
   of the second half of a long integration against the first, which reads as
   bounded when all the energy is lost at once. Measured: zeroing every
   accepted state passed six tests, and freezing `Rk4::step` passed the two
-  RK4 conservation tests. Each now caps the drift relative to the initial
-  energy, checks the state travelled, and keeps the populations positive
-  where a `ln` reads them. `tight_tolerance_dop853_fewer_evaluations` also
+  RK4 conservation tests. The symplectic tests now cap the drift relative to
+  the initial energy, the two RK4 tests require the state to travel, and the
+  Lotka-Volterra one keeps both populations positive, since a `ln` reads
+  them. `tight_tolerance_dop853_fewer_evaluations` also
   requires both integrations to complete at `t_end` with the right answer
   before comparing what they cost. ([#TBD](https://github.com/sksat/orts/pull/TBD))
 
