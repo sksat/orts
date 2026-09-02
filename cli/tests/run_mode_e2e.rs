@@ -720,3 +720,60 @@ fn test_gravity_field_flag_sets_mu_to_the_fields_gm() {
     );
     assert!(!data_lines(&stdout).is_empty(), "no data rows:\n{stdout}");
 }
+
+/// A `[gravity_field]` whose file does not exist is a clean error at the
+/// command line — the exit is non-zero, the message names the path, and
+/// nothing panicked on the way.
+#[test]
+fn test_missing_gravity_field_file_is_a_clean_error() {
+    let out = run_config(
+        "gravity-field-missing",
+        r#"
+[gravity_field]
+path = "/nonexistent/EGM2008.gfc"
+
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 570 }
+"#,
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "run should fail: {stderr}");
+    assert!(stderr.contains("/nonexistent/EGM2008.gfc"), "{stderr}");
+    assert!(
+        !stderr.contains("panicked"),
+        "should be an error, not a panic: {stderr}"
+    );
+}
+
+/// `run --config` builds from the config alone, so a gravity flag next to it
+/// is refused rather than dropped.
+#[test]
+fn test_run_config_refuses_gravity_flags() {
+    let dir = unique_dir("gravity-flag-with-config");
+    let path = dir.join("orts.toml");
+    std::fs::write(
+        &path,
+        "[[satellites]]\nid = \"a\"\norbit = { type = \"circular\", altitude = 570 }\n",
+    )
+    .unwrap();
+    let out = orts()
+        .args([
+            "run",
+            "--config",
+            path.to_str().unwrap(),
+            "--gravity-field",
+            "x.gfc",
+            "--output",
+            "-",
+        ])
+        .output()
+        .expect("failed to execute orts");
+    std::fs::remove_dir_all(&dir).ok();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("--gravity-field cannot be honored"),
+        "{stderr}"
+    );
+}

@@ -444,25 +444,59 @@ impl SimParams {
     }
 
     /// Load and truncate a spherical-harmonic gravity field from an ICGEM
-    /// `.gfc` path. Like `load_space_weather`, a bad file is a fatal
-    /// configuration error here (the WebSocket path rejects `gravity_field`
-    /// before reaching this, see `serve::manager::validate_sim_config`).
+    /// `.gfc` path.
+    ///
+    /// The constructors are infallible, so a bad file panics here like a bad
+    /// `--space-weather` file does. Callers that can report an error cleanly
+    /// run [`preflight_gravity_field`](Self::preflight_gravity_field) first —
+    /// `orts serve` builds its `SimParams` inside a spawned task, where a
+    /// panic would only kill that task and leave the server up without a
+    /// simulation manager.
     fn load_gravity_field(
         path: Option<&str>,
         degree: Option<usize>,
         order: Option<usize>,
     ) -> Option<Arc<tobari::gravity::SphericalHarmonicField>> {
         let path = path?;
+        Some(Arc::new(
+            Self::try_load_gravity_field(path, degree, order).unwrap_or_else(|e| panic!("{e}")),
+        ))
+    }
+
+    /// Open, parse and truncate the field, or say why not.
+    fn try_load_gravity_field(
+        path: &str,
+        degree: Option<usize>,
+        order: Option<usize>,
+    ) -> Result<tobari::gravity::SphericalHarmonicField, String> {
         let field =
             tobari::gravity::SphericalHarmonicField::from_icgem_file(std::path::Path::new(path))
-                .unwrap_or_else(|e| panic!("Failed to load gravity field {path}: {e}"));
+                .map_err(|e| format!("Failed to load gravity field {path}: {e}"))?;
         let degree = degree.unwrap_or(field.max_degree());
         let order = order.unwrap_or(degree);
-        assert!(
-            degree >= 2 && order <= degree,
-            "gravity field truncation {degree}x{order}: need degree >= 2 and order <= degree"
-        );
-        Some(Arc::new(field.truncated(degree, order)))
+        if degree < 2 || order > degree {
+            return Err(format!(
+                "gravity field truncation {degree}x{order}: need degree >= 2 and order <= degree"
+            ));
+        }
+        Ok(field.truncated(degree, order))
+    }
+
+    /// Check that a configured gravity field can actually be loaded, so the
+    /// failure is a normal error at the command line instead of a panic in
+    /// `from_config` / `from_sim_args` (see [`load_gravity_field`](Self::load_gravity_field)).
+    /// The field is parsed once more when the parameters are built; a 70×70
+    /// file is ~140 KB, so the second read is not worth threading the value
+    /// through.
+    pub fn preflight_gravity_field(
+        path: Option<&str>,
+        degree: Option<usize>,
+        order: Option<usize>,
+    ) -> Result<(), String> {
+        match path {
+            Some(path) => Self::try_load_gravity_field(path, degree, order).map(drop),
+            None => Ok(()),
+        }
     }
 
     /// Load space weather provider from a source string.
@@ -1384,5 +1418,17 @@ orbit = { type = "circular", altitude = 570 }
         )
         .unwrap();
         let _ = SimParams::from_config(&cfg);
+    }
+
+    #[test]
+    fn preflight_gravity_field_reports_instead_of_panicking() {
+        assert!(SimParams::preflight_gravity_field(None, None, None).is_ok());
+        assert!(SimParams::preflight_gravity_field(Some(GFC_FIXTURE), Some(8), Some(8)).is_ok());
+        let missing = SimParams::preflight_gravity_field(Some("/nonexistent/EGM.gfc"), None, None)
+            .unwrap_err();
+        assert!(missing.contains("/nonexistent/EGM.gfc"), "{missing}");
+        let bad =
+            SimParams::preflight_gravity_field(Some(GFC_FIXTURE), Some(8), Some(9)).unwrap_err();
+        assert!(bad.contains("order <= degree"), "{bad}");
     }
 }

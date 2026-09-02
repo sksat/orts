@@ -296,6 +296,17 @@ async fn async_server(
         textures::spawn_texture_downloader(Arc::clone(&texture_cache), tx.clone());
     let bridge = Arc::new(StreamBridge::new());
 
+    // A configured gravity field is opened here, on the main task, so a
+    // missing or malformed file is a fatal configuration error. Inside the
+    // spawned manager it would only kill that task and leave the HTTP /
+    // WebSocket server up with nobody behind the command channel.
+    if let Some(cfg) = &initial_config
+        && let Some(gf) = &cfg.gravity_field
+    {
+        SimParams::preflight_gravity_field(Some(&gf.path), gf.degree, gf.order)
+            .map_err(CmdError::failure)?;
+    }
+
     // Spawn simulation manager
     let mgr_tx = tx.clone();
     let plugin_overrides = manager::PluginBackendOverrides::from_sim_args(sim);
@@ -307,6 +318,12 @@ async fn async_server(
         // restart) honors them too.
         // Same reason as in `run`: this path skips `SimConfig::validate`.
         crate::commands::run::validate_sim_args(sim)?;
+        SimParams::preflight_gravity_field(
+            sim.gravity_field.as_deref(),
+            sim.gravity_degree,
+            sim.gravity_order,
+        )
+        .map_err(CmdError::failure)?;
         let params = Arc::new(SimParams::from_sim_args(sim, true));
         crate::satellite::ensure_unique_ids(&params.satellites)?;
         tokio::spawn(manager::simulation_manager_with_params(
