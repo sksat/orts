@@ -1481,9 +1481,12 @@ impl SatelliteConfig {
 ///
 /// Each value is load-bearing:
 /// - `dt` drives `while t < t_end`, so zero never advances.
-/// - `output_interval` drives `t += output_interval` in `run`, so zero never
-///   reaches the time the fleet stops at (`duration` when given, otherwise the
-///   longest satellite period).
+/// - `output_interval` drives `t += output_interval` in the orbit-only and
+///   spacecraft `run` loops, so zero never reaches the time they stop at
+///   (`duration` when given, otherwise the longest satellite period). The
+///   controlled loop advances on controller ticks instead and only compares
+///   `output_interval` to decide when to log, so zero there means logging every
+///   tick rather than a clock that cannot move.
 /// - `stream_interval` is a divisor in the serve loop's pacing, where zero
 ///   yields `0 * inf = NaN` and panics `Duration::from_secs_f64`.
 /// - `duration` is how far `run` propagates the fleet.
