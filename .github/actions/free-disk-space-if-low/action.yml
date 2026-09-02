@@ -23,10 +23,13 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        avail=$(df --block-size=1G --output=avail / | tail -1 | tr -d ' ')
-        threshold='${{ inputs.threshold-gib }}'
-        echo "available: ${avail} GiB (cleanup threshold ${threshold} GiB)"
-        if [ "$avail" -lt "$threshold" ]; then
+        # Compared in bytes: `df --block-size=1G` rounds up, so 44.1 GiB
+        # available would report as 45 and skip a cleanup the threshold asks for.
+        avail_bytes=$(df --block-size=1 --output=avail / | tail -1 | tr -d ' ')
+        threshold_bytes=$(( ${{ inputs.threshold-gib }} * 1024 * 1024 * 1024 ))
+        echo "available: $((avail_bytes / 1024 / 1024)) MiB" \
+             "(cleanup threshold ${{ inputs.threshold-gib }} GiB)"
+        if [ "$avail_bytes" -lt "$threshold_bytes" ]; then
           echo "low=true" >> "$GITHUB_OUTPUT"
         else
           echo "low=false" >> "$GITHUB_OUTPUT"
