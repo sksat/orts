@@ -506,8 +506,9 @@ mod tests {
         );
     }
 
-    /// On Earth `for_body` is `for_earth`, and on the Sun the direction is
-    /// outward from the origin with no body to eclipse it.
+    /// On Earth `for_body` is `for_earth`. At the Sun the origin *is* the Sun,
+    /// so the direction points inward from the spacecraft (`-r_sat`), with no
+    /// body to eclipse it.
     #[test]
     fn for_body_on_earth_and_on_the_sun() {
         let epoch = Epoch::j2000();

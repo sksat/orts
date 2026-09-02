@@ -170,6 +170,13 @@ section is subdivided by package.
 - The sun sensor's Sun direction comes from the central body too
   (`SunSensor::for_body`). It read the geocentric vector, so on Mars the force
   models were right while the attitude-control input was up to 176° off.
+  **The CLI's sensor now sees an eclipse.** It was built with
+  `SunSensor::new()`, which carries no shadow body, so the reading was sunlit
+  everywhere including behind the Earth; `for_body` gives it the central
+  body's conical shadow. Measured at 7000 km directly behind the Earth:
+  `direction: Some(..), illumination: 1.0` before, `direction: None,
+  illumination: 0.0` after. A controller plugin that unwrapped the direction
+  now has to handle its absence.
   ([#372](https://github.com/sksat/orts/pull/372))
 - Sun-centred propagation keeps its SRP: the Sun is the origin there, so the
   satellite-to-Sun vector is `-r_sat` and nothing eclipses it. Only the

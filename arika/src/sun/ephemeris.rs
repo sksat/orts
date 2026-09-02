@@ -265,11 +265,12 @@ impl std::error::Error for SunPositionError {}
 /// geocentric Sun direction is up to 176° away from the true one, and the
 /// distance ratio scales the third-body term by up to 3.8x.
 ///
-/// The Moon's vector is exact rather than approximated: Moon-to-Sun is
-/// `(Earth → Sun) − (Earth → Moon)`, and both terms are already available. The
-/// `&str` helper shares Earth's vector for the Moon, which is a 0.15°
-/// approximation — nine times this ephemeris's own ~1′ accuracy, so there is no
-/// reason to keep it where the Moon position is one subtraction away.
+/// The Moon's vector carries lunar parallax: Moon-to-Sun is
+/// `(Earth → Sun) − (Earth → Moon)`, and both terms are already available (as
+/// exact as those two analytical series are, which is ~1′ here). The `&str`
+/// helper shares Earth's vector for the Moon instead, dropping a parallax of
+/// up to 0.15° — nine times that ~1′ — so there is no reason to keep it where
+/// the Moon position is one subtraction away.
 pub fn sun_position_from_body(
     body: KnownBody,
     epoch: &Epoch<Tdb>,

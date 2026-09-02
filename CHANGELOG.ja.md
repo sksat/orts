@@ -146,7 +146,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `SunSensor` も同じ field を持つが、こちらの field は元から private。([#372](https://github.com/sksat/orts/pull/372))
 - sun sensor の Sun 方向も中心天体から取るようになった (`SunSensor::for_body`)。
   地心ベクトルを読んでいたため、Mars では力モデルが正しくても姿勢制御の入力だけが
-  最大 176° ずれていた。([#372](https://github.com/sksat/orts/pull/372))
+  最大 176° ずれていた。**CLI のセンサが食を見るようになる**: これまでは
+  `SunSensor::new()` で組んでいて遮蔽天体を持たなかったので、地球の裏側でも
+  日照として読めていた。`for_body` は中心天体の円錐影を入れる。地球の真裏
+  7000 km での実測は `direction: Some(..), illumination: 1.0` から
+  `direction: None, illumination: 0.0` へ変わる。direction を unwrap していた
+  controller plugin は不在を扱う必要がある。
+  ([#372](https://github.com/sksat/orts/pull/372))
 - Sun 中心の伝播でも SRP は残る。Sun が原点なので衛星→Sun ベクトルは `-r_sat` で、
   遮るものもない。落ちるのは第三体項だけ。([#372](https://github.com/sksat/orts/pull/372))
 - 磁場がモデル化されていない天体では、磁気センサと磁気トルカを拒否するようになった。
