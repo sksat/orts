@@ -1,5 +1,5 @@
 import styles from "../App.module.css";
-import type { DirectionVectorOptions } from "../directionVectors.js";
+import type { DirectionVectorKind, DirectionVectorOptions } from "../directionVectors.js";
 import type { SatelliteInfo, SimInfo } from "../hooks/useWebSocket.js";
 import type { ReferenceFrame } from "../referenceFrame.js";
 import type { MarkerShape } from "../satelliteShapes.js";
@@ -36,8 +36,13 @@ export interface OrbitOverlayProps {
   onDirectionVectorsChange: (value: DirectionVectorOptions) => void;
   /** The centred satellite, or null in a central-body view (no arrows there). */
   centredSatelliteId: string | null;
-  /** Whether that satellite has a position, which nadir needs. */
-  hasCentredPosition: boolean;
+  /**
+   * Which arrows the scene could draw for that satellite, as its own resolver
+   * answers. Not "does it have a position": a position that is present but zero
+   * or non-finite yields no nadir, and a control offering an arrow the scene then
+   * drops is lying.
+   */
+  drawableVectorKinds: readonly DirectionVectorKind[];
 }
 
 /**
@@ -65,7 +70,7 @@ export function OrbitOverlay({
   directionVectors,
   onDirectionVectorsChange,
   centredSatelliteId,
-  hasCentredPosition,
+  drawableVectorKinds,
 }: OrbitOverlayProps) {
   const noCentre = centredSatelliteId == null ? "Centre on a satellite to draw it" : undefined;
   return (
@@ -88,8 +93,9 @@ export function OrbitOverlay({
         value={directionVectors}
         onChange={onDirectionVectorsChange}
         unavailable={{
-          sun: noCentre ?? (epochJd == null ? "Requires epoch" : undefined),
-          nadir: noCentre ?? (hasCentredPosition ? undefined : "Requires a position"),
+          sun: noCentre ?? (drawableVectorKinds.includes("sun") ? undefined : "Requires epoch"),
+          nadir:
+            noCentre ?? (drawableVectorKinds.includes("nadir") ? undefined : "Requires a position"),
         }}
       />
       {orbitInfo && (
