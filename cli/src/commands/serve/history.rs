@@ -196,7 +196,12 @@ impl HistoryBuffer {
     /// The states are written from a borrow and drained only after the write
     /// succeeded, so the in-memory buffer stays the single source of truth
     /// for everything not yet on disk: a failed flush degrades to "memory
-    /// holds more than `capacity`", never to lost history.
+    /// holds more than `capacity`" rather than to lost history.
+    ///
+    /// One flush costs no history. Repeated failures eventually do:
+    /// `enforce_memory_cap` discards the oldest states once the buffer
+    /// reaches `capacity * MAX_RETAINED_BUFFERS`, which is what bounds
+    /// memory in a long-running `serve`.
     pub fn flush(&mut self) {
         let flush_count = self.states.len() / 2;
         if flush_count == 0 {
