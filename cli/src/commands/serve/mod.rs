@@ -136,6 +136,12 @@ fn unhonored_sim_args(sim: &SimArgs) -> Vec<&'static str> {
     // `from_sim_args`: output_interval falls back to dt, stream_interval to
     // output_interval.
     let output_interval = sim.output_interval.unwrap_or(sim.dt);
+    // `SimParams::from_sim_args` clamps the stream interval into
+    // `[min(dt, output_interval), output_interval]`, so a written value outside
+    // that range resolves to the same interval a bare command line would give.
+    // Comparing the written value would refuse `serve --stream-interval 20`
+    // (bare defaults clamp both to 10), which changes nothing when dropped.
+    let clamp_stream = |v: f64| v.clamp(sim.dt.min(output_interval), output_interval);
     [
         ("--body", sim.body != default.body),
         ("--dt", sim.dt != default.dt),
@@ -145,7 +151,8 @@ fn unhonored_sim_args(sim: &SimArgs) -> Vec<&'static str> {
         ),
         (
             "--stream-interval",
-            sim.stream_interval.is_some_and(|v| v != output_interval),
+            sim.stream_interval
+                .is_some_and(|v| clamp_stream(v) != output_interval),
         ),
         ("--epoch", sim.epoch.is_some()),
         ("--duration", sim.duration.is_some()),
@@ -513,6 +520,53 @@ mod tests {
         assert!(
             refusal(&["--config", "mission.toml"]).is_none(),
             "a bare --config must still be accepted"
+        );
+    }
+
+    /// A stream interval the clamp erases is accepted; one it keeps is refused.
+    ///
+    /// `SimParams::from_sim_args` clamps the value into
+    /// `[min(dt, output_interval), output_interval]`, so `--stream-interval 20`
+    /// against the bare defaults resolves to the same 10 s a bare command line
+    /// gives. Refusing it would fail a command that changes nothing.
+    #[test]
+    fn a_stream_interval_the_clamp_erases_is_accepted() {
+        // Bare defaults: dt = output_interval = 10, so the clamp range is
+        // [10, 10] and any written value lands on 10.
+        assert_eq!(
+            unhonored_sim_args(&args(&["--stream-interval", "20"])),
+            Vec::<&str>::new()
+        );
+        assert_eq!(
+            unhonored_sim_args(&args(&["--stream-interval", "0.001"])),
+            Vec::<&str>::new()
+        );
+
+        // With room between dt and output_interval, a value inside the range
+        // survives the clamp and does change the resolved parameters.
+        assert_eq!(
+            unhonored_sim_args(&args(&[
+                "--dt",
+                "1",
+                "--output-interval",
+                "10",
+                "--stream-interval",
+                "5"
+            ])),
+            vec!["--dt", "--output-interval", "--stream-interval"]
+        );
+        // Above the range it is clamped back to `output_interval`, which is
+        // where a bare `--dt 1 --output-interval 10` would leave it anyway.
+        assert_eq!(
+            unhonored_sim_args(&args(&[
+                "--dt",
+                "1",
+                "--output-interval",
+                "10",
+                "--stream-interval",
+                "50"
+            ])),
+            vec!["--dt", "--output-interval"]
         );
     }
 }
