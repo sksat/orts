@@ -984,4 +984,76 @@ mod tests {
             "a gyroscope needs no field"
         );
     }
+    /// A magnetorquer is refused on a body whose field is not modelled.
+    ///
+    /// The guard sits where the actuators are built, which the magnetometer
+    /// test above never reaches: measured, deleting the magnetorquer's
+    /// `require_earth_field` call left every test in `orts-cli` passing.
+    ///
+    /// Built from a config, the way a user reaches it. The controller points
+    /// at a path that does not exist, and actuators are built before the
+    /// controller, so the refusal has to name the magnetorquer rather than
+    /// the missing plugin.
+    #[test]
+    fn a_magnetorquer_needs_a_body_whose_field_is_modelled() {
+        let config_for = |body: &str| -> crate::config::SimConfig {
+            toml::from_str(&format!(
+                r#"
+dt = 1.0
+body = "{body}"
+
+[[satellites]]
+[satellites.orbit]
+type = "circular"
+altitude = 400.0
+
+[satellites.attitude]
+inertia_diag = [10.0, 10.0, 10.0]
+mass = 100.0
+
+[satellites.magnetorquers]
+type = "three_axis"
+max_moment = 0.2
+
+[satellites.controller]
+type = "wasm"
+path = "does-not-exist.wasm"
+"#
+            ))
+            .expect("the config parses")
+        };
+
+        let build = |body: &str| {
+            let config = config_for(body);
+            let params = SimParams::from_config(&config);
+            let spec = params.satellites[0].clone();
+            #[cfg(feature = "plugin-wasm")]
+            let mut cache =
+                orts::plugin::wasm::WasmPluginCache::new().expect("a cache needs no plugin file");
+            let mut ctx = ControlledBuildContext {
+                params: &params,
+                #[cfg(feature = "plugin-wasm")]
+                wasm_cache: &mut cache,
+                #[cfg(feature = "plugin-wasm")]
+                plugin_backend: params.resolve_plugin_backend(),
+            };
+            build_controlled_satellite(&spec, None, &mut ctx).map(|_| ())
+        };
+
+        for body in ["mars", "moon"] {
+            let err = build(body).expect_err("no field model, so an MTQ needs refusing");
+            assert!(
+                err.contains("magnetorquer") && err.contains("Earth's"),
+                "{body}: {err}"
+            );
+        }
+
+        // On Earth the magnetorquer is fine, so the build gets as far as the
+        // plugin path and fails there instead.
+        let err = build("earth").expect_err("the plugin path does not exist");
+        assert!(
+            !err.contains("magnetorquer"),
+            "Earth's field is modelled, so the refusal must come from elsewhere: {err}"
+        );
+    }
 }

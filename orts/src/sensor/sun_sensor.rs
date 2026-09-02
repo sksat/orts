@@ -452,4 +452,116 @@ mod tests {
             _ => panic!("expected Fine output"),
         }
     }
+    /// `for_body` reads the Sun from the central body, not from Earth.
+    ///
+    /// The force models have their own tests for this; the sensor needs its
+    /// own, because the reading is the attitude controller's input and can
+    /// regress on its own. Around Mars in 2026 the geocentric direction is up
+    /// to 176° away from where Mars sees the Sun, so a sensor still reading
+    /// the geocentric vector points the controller at the wrong sky.
+    #[test]
+    fn for_body_reads_the_sun_from_that_body() {
+        let epoch = Epoch::j2000();
+        let mars_sun = sun::sun_position_from_body(KnownBody::Mars, &epoch.to_tdb())
+            .expect("Mars is within the planetary elements");
+
+        let mut sensor = SunSensor::for_body(KnownBody::Mars).expect("Mars has a Sun vector");
+        // A state far enough out that Mars cannot eclipse it, so the reading is
+        // the direction rather than a shadow decision.
+        let state = SpacecraftState {
+            orbit: OrbitalState::new(
+                mars_sun.into_inner().normalize() * 1.0e5,
+                Vector3::new(0.0, 1.0, 0.0),
+            ),
+            attitude: AttitudeState {
+                quaternion: Vector4::new(1.0, 0.0, 0.0, 0.0),
+                angular_velocity: Vector3::zeros(),
+            },
+            mass: 50.0,
+        };
+
+        let SunSensorOutput::Fine { direction, .. } = sensor.measure(&state, &epoch) else {
+            panic!("a sunlit sensor reports Fine");
+        };
+        let measured = direction
+            .expect("sunlit, so there is a direction")
+            .into_inner()
+            .into_inner();
+
+        let to_mars_sun = (mars_sun.into_inner() - *state.orbit.position()).normalize();
+        assert!(
+            measured.dot(&to_mars_sun) > 0.999_999,
+            "the reading follows Mars's Sun: cos = {}",
+            measured.dot(&to_mars_sun)
+        );
+
+        // The geocentric vector is what this used to read. It has to be a
+        // different direction here, or the assertion above proves nothing.
+        let earth_sun = sun::sun_position_eci(&epoch.to_tdb());
+        let to_earth_sun = (earth_sun.into_inner() - *state.orbit.position()).normalize();
+        assert!(
+            to_mars_sun.dot(&to_earth_sun) < 0.999,
+            "the two Sun directions have to differ for this test to mean anything: cos = {}",
+            to_mars_sun.dot(&to_earth_sun)
+        );
+    }
+
+    /// On Earth `for_body` is `for_earth`, and on the Sun the direction is
+    /// outward from the origin with no body to eclipse it.
+    #[test]
+    fn for_body_on_earth_and_on_the_sun() {
+        let epoch = Epoch::j2000();
+        let state = leo_state();
+
+        let mut for_body = SunSensor::for_body(KnownBody::Earth).expect("Earth has a Sun vector");
+        let mut for_earth = SunSensor::for_earth();
+        let a = for_body.measure(&state, &epoch);
+        let b = for_earth.measure(&state, &epoch);
+        match (a, b) {
+            (
+                SunSensorOutput::Fine {
+                    direction: Some(da),
+                    illumination: ia,
+                },
+                SunSensorOutput::Fine {
+                    direction: Some(db),
+                    illumination: ib,
+                },
+            ) => {
+                assert_eq!(da.into_inner(), db.into_inner(), "same direction on Earth");
+                assert_eq!(ia, ib, "same illumination on Earth");
+            }
+            other => panic!("both report Fine on a sunlit LEO state: {other:?}"),
+        }
+
+        // At the Sun the origin *is* the Sun, so the direction points inward
+        // from the spacecraft and nothing can shadow it.
+        let mut at_sun = SunSensor::for_body(KnownBody::Sun).expect("the Sun needs no ephemeris");
+        let SunSensorOutput::Fine {
+            direction,
+            illumination,
+        } = at_sun.measure(&state, &epoch)
+        else {
+            panic!("nothing eclipses a spacecraft at the Sun");
+        };
+        let measured = direction.expect("sunlit").into_inner().into_inner();
+        let inward = -state.orbit.position().normalize();
+        assert!(
+            measured.dot(&inward) > 0.999_999,
+            "the Sun is at the origin, so its direction is -r: cos = {}",
+            measured.dot(&inward)
+        );
+        assert!((illumination - 1.0).abs() < 1e-15, "no eclipse at the Sun");
+    }
+
+    /// A body outside the planetary elements is refused at construction.
+    #[test]
+    fn for_body_refuses_a_body_with_no_sun_ephemeris() {
+        for body in [KnownBody::Uranus, KnownBody::Neptune] {
+            assert!(
+                SunSensor::for_body(body).is_err(),
+                "{body:?} has no planetary elements, so the sensor cannot read a Sun"
+            );
+        }
+    }
 }
