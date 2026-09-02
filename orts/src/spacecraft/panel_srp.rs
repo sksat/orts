@@ -61,8 +61,9 @@ fn panel_force(panel: &SurfacePanel, s_body: &Vector3<f64>, pressure: f64) -> Ve
 /// [`PanelOptics`]: super::PanelOptics
 pub struct PanelSrp {
     shape: SpacecraftShape,
-    /// Central body radius for shadow model [km].
-    /// `None` disables shadow computation (always sunlit).
+    /// Central body radius for the eclipse model [km].
+    /// `None` disables the eclipse test, so the spacecraft is never in a
+    /// body's shadow. Panel-to-panel occlusion is separate and always applies.
     shadow_body_radius: Option<f64>,
     /// Shadow model to use (default: Cylindrical).
     shadow_model: ShadowModel,
@@ -160,7 +161,7 @@ impl PanelSrp {
         })
     }
 
-    /// Create an SRP model with the geocentric Sun and no shadow.
+    /// Create an SRP model with the geocentric Sun and no central-body eclipse.
     ///
     /// The Sun direction is Earth's, so about another body the force points
     /// where the Sun is not — from Mars in 2026 up to 176° off. For a
@@ -168,6 +169,11 @@ impl PanelSrp {
     /// [`Self::for_body`]`(body, shape)?.`[`without_shadow()`] instead.
     ///
     /// [`without_shadow()`]: Self::without_shadow
+    ///
+    /// Panels still shade each other. That is a property of the shape rather
+    /// than of an orbit, so it is not something either constructor turns off:
+    /// an outlined panel standing behind another one contributes nothing here
+    /// too.
     ///
     /// # Panics
     /// Panics unless every panel normal is unit length and every outline is

@@ -91,11 +91,15 @@ impl PanelOptics {
 /// the flow, which needs the boundary and nothing else.
 ///
 /// An enum because the shapes will not stay one: a mesh read from CAD gives
-/// triangles. Two operations know the shapes — `SurfacePanel::corners_into`,
-/// which lists the corners, and `SurfacePanel::outline_contains`, which
-/// answers whether a point is inside — so a new shape means a new arm in each
-/// of those and nothing else. Containment cannot be derived from the corners:
-/// a triangle's three corners span a parallelogram larger than the triangle.
+/// triangles. Three operations know the shapes — `SurfacePanel::corners_into`,
+/// which lists the corners, `SurfacePanel::outline_contains`, which answers
+/// whether a point is inside, and
+/// `SpacecraftShape::assert_outlines_are_consistent`, which checks a shape's
+/// own invariants — so a new shape means a new arm in each of those and
+/// nothing else. Each of the three destructures this enum without a fallback
+/// arm, so a new variant that misses one of them does not compile.
+/// Containment cannot be derived from the corners: a triangle's three corners
+/// span a parallelogram larger than the triangle.
 ///
 /// `#[non_exhaustive]` so that adding a shape stays a minor change: without it
 /// a downstream `match` could be exhaustive today and stop compiling the day a
@@ -468,13 +472,18 @@ impl SpacecraftShape {
             return;
         };
         for (i, panel) in panels.iter().enumerate() {
-            let Some(PanelOutline::Rectangle {
-                half_extent,
-                in_plane_x,
-            }) = panel.outline
-            else {
+            // The two cases are separate on purpose. No outline is nothing to
+            // check — a panel without a boundary takes no part in occlusion.
+            // A shape this does not recognise is a gap, so the enum is
+            // destructured irrefutably: adding a variant stops this compiling
+            // rather than skipping the panel.
+            let Some(outline) = panel.outline else {
                 continue;
             };
+            let PanelOutline::Rectangle {
+                half_extent,
+                in_plane_x,
+            } = outline;
             assert!(
                 half_extent.iter().all(|h| h.is_finite() && *h > 0.0),
                 "panel {i}: outline half-extents must be positive and finite, got {half_extent:?}"
