@@ -1257,7 +1257,12 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Result<Record
             }
         }
 
-        t += dt;
+        // The event time itself, not `t + dt`. The subtraction that made `dt`
+        // is exact at every magnitude measured (base 0 through 1e15, 0.1 s
+        // period), so the two agree today — but the tick schedule is
+        // `base + n × period` and this keeps the clock on it by construction
+        // rather than by an argument about rounding.
+        t = next_t;
 
         // 可視性は出力間引きと独立に、制御 tick ごとにサンプリングする。
         if let Some(monitors) = visibility.as_mut() {
