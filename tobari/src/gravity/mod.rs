@@ -301,9 +301,11 @@ impl SphericalHarmonicField {
     }
 
     /// The unnormalized zonal coefficient `J2 = −√5 · C̄20`, for comparison
-    /// with zonal-only models.
+    /// with zonal-only models. `0` for a field truncated below degree 2 (it
+    /// has no oblateness term to report).
     pub fn j2(&self) -> f64 {
-        -(5.0f64).sqrt() * self.c[tri_index(2, 0)]
+        self.coefficient(2, 0)
+            .map_or(0.0, |(c20, _)| -(5.0f64).sqrt() * c20)
     }
 
     /// Non-central disturbing potential `U` \[km²/s²\] at a body-fixed
@@ -710,6 +712,22 @@ mod tests {
     fn j2_is_minus_sqrt5_c20() {
         let f = single(2, 0, -4.84165143790815e-4, 0.0);
         assert!((f.j2() - 1.08262617385222e-3).abs() < 1e-15, "{}", f.j2());
+    }
+
+    /// Truncating below degree 2 leaves nothing to evaluate; every accessor
+    /// and the evaluator must still be total (no out-of-bounds on the shorter
+    /// coefficient arrays).
+    #[test]
+    fn fields_below_degree_two_are_inert_not_panicking() {
+        let full = synthetic_field(6, 6);
+        for (d, o) in [(0, 0), (1, 1), (1, 0)] {
+            let f = full.truncated(d, o);
+            assert_eq!(f.j2(), 0.0);
+            assert_eq!(f.coefficient(2, 0), None);
+            let pos = Vector3::new(4000.0, -3000.0, 5000.0);
+            assert_eq!(f.acceleration_ecef(&pos), Vector3::zeros());
+            assert_eq!(f.potential_ecef(&pos), 0.0);
+        }
     }
 
     #[test]

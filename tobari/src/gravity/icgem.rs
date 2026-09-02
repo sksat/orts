@@ -207,7 +207,14 @@ pub(super) fn parse(text: &str) -> Result<ParsedIcgem, IcgemError> {
                 break;
             }
             "product_type" => product_type = value,
-            "modelname" => model_name = value.map(|v| v.to_string()),
+            // Model names may contain spaces ("EIGEN-6C4 (static part)"), so
+            // keep the whole remainder of the line, not the first token.
+            "modelname" => {
+                model_name = line
+                    .split_once(char::is_whitespace)
+                    .map(|(_, rest)| rest.trim().to_string())
+                    .filter(|v| !v.is_empty());
+            }
             "radius" => {
                 let v = value.ok_or(IcgemError::MissingHeader("radius"))?;
                 radius = Some(
@@ -614,6 +621,19 @@ gfc    2    2  2.439383573283130E-06 -1.400273703859340E-06 7.2306E-11 7.3020E-1
         let p = parse(&text).unwrap();
         assert_eq!(p.c[tri_index(0, 0)], 1.0);
         assert_eq!(p.c[tri_index(1, 0)], 0.0);
+    }
+
+    #[test]
+    fn model_name_keeps_the_whole_line_after_the_keyword() {
+        let text = MINIMAL.replace(
+            "modelname               TEST2",
+            "modelname               EIGEN-6C4 (static part)   ",
+        );
+        let p = parse(&text).unwrap();
+        assert_eq!(p.model_name.as_deref(), Some("EIGEN-6C4 (static part)"));
+        // A bare keyword with no name is `None`, not `Some("")`.
+        let text = MINIMAL.replace("modelname               TEST2", "modelname");
+        assert_eq!(parse(&text).unwrap().model_name, None);
     }
 
     #[test]
