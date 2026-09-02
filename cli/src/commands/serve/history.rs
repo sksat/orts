@@ -268,7 +268,12 @@ impl HistoryBuffer {
 
     fn enforce_memory_cap(&mut self) {
         let cap = self.memory_cap();
-        if self.states.len() <= cap {
+        // At the cap, not only past it. A failed write leaves the length there
+        // and the retry threshold there, so waiting for one more push would
+        // spend a second failed write on the same cycle — measured, attempts
+        // landed on pushes 31 and 32, then 36 and 37, against a documented one
+        // per `capacity` pushes.
+        if self.states.len() < cap {
             return;
         }
         let keep = cap.saturating_sub(self.capacity);
@@ -2026,5 +2031,48 @@ mod tests {
         );
 
         cleanup_dir(&dir);
+    }
+
+    /// A failing spill costs one write per `capacity` pushes, not two.
+    ///
+    /// The doc promises that cadence, and it is what keeps a permanently
+    /// unwritable directory cheap. Measured while the cap only trimmed *past*
+    /// itself: attempts landed on pushes 31 and 32, then 36 and 37 — a length
+    /// sitting exactly at the cap with the threshold there too spent a second
+    /// write on the same cycle.
+    #[test]
+    fn a_failing_spill_attempts_one_write_per_capacity_pushes() {
+        let dir = temp_data_dir("cadence");
+        cleanup_dir(&dir);
+        // A regular file where the directory should be: every write fails.
+        std::fs::write(&dir, b"not a directory").expect("place the blocker");
+
+        let capacity = 4usize;
+        let cap = capacity * MAX_RETAINED_BUFFERS;
+        let mut buf = HistoryBuffer::new(capacity, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+        let mut attempts_at = Vec::new();
+        let mut seen = 0u32;
+        for i in 0..80 {
+            buf.push(make_state(i as f64));
+            if buf.failed_spills != seen {
+                attempts_at.push(i);
+                seen = buf.failed_spills;
+            }
+        }
+
+        // Past the cap the buffer is in its steady state, so the gaps are the
+        // cadence. Before it the buffer is still growing into the cap.
+        let steady: Vec<usize> = attempts_at.into_iter().filter(|i| *i > cap).collect();
+        assert!(
+            steady.len() > 5,
+            "enough cycles to read a cadence: {steady:?}"
+        );
+        let gaps: Vec<usize> = steady.windows(2).map(|w| w[1] - w[0]).collect();
+        assert!(
+            gaps.iter().all(|g| *g == capacity),
+            "one attempt per {capacity} pushes: gaps {gaps:?} at {steady:?}"
+        );
+
+        std::fs::remove_file(&dir).ok();
     }
 }
