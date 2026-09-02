@@ -557,7 +557,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   には `ln` が読む個体数の正値性を加えた。
   `tight_tolerance_dop853_fewer_evaluations` も、評価回数を比べる前に両者が
   `t_end` まで完走して正しい解に達したことを要求する。
-  ([#TBD](https://github.com/sksat/orts/pull/TBD))
+  ([#409](https://github.com/sksat/orts/pull/409))
 
 #### Fixed
 - `Integrator::try_integrate` が、結果が非有限になった最初のステップで

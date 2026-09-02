@@ -622,7 +622,7 @@ section is subdivided by package.
   Lotka-Volterra one keeps both populations positive, since a `ln` reads
   them. `tight_tolerance_dop853_fewer_evaluations` also
   requires both integrations to complete at `t_end` with the right answer
-  before comparing what they cost. ([#TBD](https://github.com/sksat/orts/pull/TBD))
+  before comparing what they cost. ([#409](https://github.com/sksat/orts/pull/409))
 
 #### Fixed
 - `Integrator::try_integrate` stops with `IntegrationError::NonFiniteState` at
