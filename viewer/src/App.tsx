@@ -453,18 +453,27 @@ export function App() {
   }, [referenceFrame, satellites]);
   const centredSatelliteId = centredSatellite?.id ?? null;
 
-  // Keep the attitude view's subject on a spacecraft the viewer still has. A
-  // satellite-centred orbit view hands over its centre; otherwise the previous
-  // choice stands while it is still in the list, and the first spacecraft takes
-  // over when it is not — which happens when the source changes, not when a
-  // satellite terminates: a terminated one keeps its buffers and its last state,
-  // and its final attitude is worth looking at. The centre is only a candidate
-  // while it is in the list too, since a frame can name a satellite the current
-  // source never had.
-  useEffect(() => {
-    if (selectedSatelliteId != null && satellites.some((s) => s.id === selectedSatelliteId)) return;
-    const fallback = centredSatelliteId ?? satellites[0]?.id ?? null;
-    if (fallback !== selectedSatelliteId) setSelectedSatelliteId(fallback);
+  // The attitude view's subject: a spacecraft the viewer still has. Derived
+  // rather than kept in sync, so there is no render where the list holds
+  // spacecraft and the subject is still null — the `<select>` would be showing a
+  // value none of its options carry.
+  //
+  // A satellite-centred orbit view hands over its centre; otherwise the reader's
+  // own choice stands while it is still in the list, and the first spacecraft
+  // takes over when it is not — which happens when the source changes, not when
+  // a satellite terminates: a terminated one keeps its buffers and its last
+  // state, and its final attitude is worth looking at. The centre is only a
+  // candidate while it is in the list too, since a frame can name a satellite the
+  // current source never had.
+  //
+  // The chosen id is left alone when its spacecraft goes missing, so a source
+  // that brings it back returns to it rather than stranding the reader on a
+  // fallback they never picked.
+  const attitudeSubjectId = useMemo(() => {
+    if (selectedSatelliteId != null && satellites.some((s) => s.id === selectedSatelliteId)) {
+      return selectedSatelliteId;
+    }
+    return centredSatelliteId ?? satellites[0]?.id ?? null;
   }, [satellites, centredSatelliteId, selectedSatelliteId]);
 
   const handleViewChange = useCallback(
@@ -497,7 +506,7 @@ export function App() {
    * present "no data" as "pointing at the reference frame".
    */
   const attitudeBody = useMemo<AttitudeBodyState | null>(() => {
-    const sat = satellites.find((s) => s.id === selectedSatelliteId);
+    const sat = satellites.find((s) => s.id === attitudeSubjectId);
     if (sat?.attitude == null) return null;
     return {
       id: sat.id,
@@ -509,7 +518,7 @@ export function App() {
       color: sat.color,
       markerShape: sat.markerShape,
     };
-  }, [satellites, selectedSatelliteId]);
+  }, [satellites, attitudeSubjectId]);
 
   /**
    * Which arrows a scene would draw for a spacecraft at this position — asked of
@@ -682,7 +691,7 @@ export function App() {
           ) : (
             <AttitudeOverlay
               satellites={attitudeSubjects}
-              selectedSatelliteId={selectedSatelliteId}
+              selectedSatelliteId={attitudeSubjectId}
               onSelectedSatelliteChange={setSelectedSatelliteId}
               orientation={attitudeFrame}
               onOrientationChange={setAttitudeFrame}
