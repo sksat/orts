@@ -258,8 +258,14 @@ pub struct SimArgs {
     /// "gcrs": IAU 2006/2000A CIO chain with observed EOP (needs --eop).
     /// `gcrs` covers orbit-only `run`; attitude, controllers and `serve` are
     /// SimpleEci-only.
-    #[arg(long, default_value = "simple-eci")]
-    pub frame: FrameChoice,
+    ///
+    /// `Option` rather than a defaulted value because presence matters:
+    /// `--frame simple-eci` next to a `frame = "gcrs"` config is an explicit
+    /// disagreement, and a defaulted value could not tell it from no flag at
+    /// all. Absent means [`FrameChoice::SimpleEci`], via
+    /// [`SimArgs::frame`](Self::frame).
+    #[arg(long = "frame")]
+    pub frame_arg: Option<FrameChoice>,
 
     /// Earth Orientation Parameters for --frame gcrs.
     /// "auto": download finals2000A.all from IERS (cached for 24h).
@@ -327,6 +333,11 @@ pub struct SimArgs {
 }
 
 impl SimArgs {
+    /// The selected frame, defaulting to `SimpleEci` when `--frame` is absent.
+    pub fn frame(&self) -> FrameChoice {
+        self.frame_arg.unwrap_or(FrameChoice::SimpleEci)
+    }
+
     /// Returns true if explicit orbit-specifying arguments were provided.
     pub fn has_orbit_args(&self) -> bool {
         !self.sats.is_empty()

@@ -224,6 +224,17 @@ fn validate_sim_config(config: &SimConfig) -> Result<(), String> {
     // `[gravity_field]` names a file on the server's filesystem. A WebSocket
     // client must not be able to make the server open arbitrary paths (or
     // panic on a missing one), so the field is CLI / config-file only.
+    // Same reason as `--frame gcrs` in `run_serve`: the serve engine is
+    // `SimpleEci`-only, so a client asking for `gcrs` must be told, not
+    // served the other frame.
+    if config.try_frame_choice()? == crate::cli::FrameChoice::Gcrs {
+        return Err(
+            "frame = \"gcrs\" is not supported by `orts serve`: the serve engine and \
+                    the plugin controller ABI propagate in SimpleEci. Use `orts run --frame \
+                    gcrs` for the IAU 2006 path."
+                .to_string(),
+        );
+    }
     if config.gravity_field.is_some() {
         return Err(
             "gravity_field is not accepted over WebSocket: start `orts serve` with \
@@ -776,5 +787,24 @@ orbit = { type = "circular", altitude = 500 }
         .expect("valid test toml");
         let err = validate_sim_config(&config).unwrap_err();
         assert!(err.contains("not accepted over WebSocket"), "got: {err}");
+    }
+
+    /// A WebSocket `start_simulation` asking for `gcrs` is told, not served
+    /// the `SimpleEci` propagation the engine actually does.
+    #[test]
+    fn ws_start_rejects_the_gcrs_frame() {
+        let config: SimConfig = toml::from_str(
+            r#"
+frame = "gcrs"
+eop = "zero"
+
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+"#,
+        )
+        .expect("valid test toml");
+        let err = validate_sim_config(&config).unwrap_err();
+        assert!(err.contains("not supported by `orts serve`"), "got: {err}");
     }
 }

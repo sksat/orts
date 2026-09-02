@@ -185,6 +185,7 @@ fn unhonored_sim_args(sim: &SimArgs) -> Vec<&'static str> {
         ("--gravity-degree", sim.gravity_degree.is_some()),
         ("--gravity-order", sim.gravity_order.is_some()),
         ("--eop", sim.eop.is_some()),
+        ("--frame", sim.frame_arg.is_some()),
     ]
     .into_iter()
     .filter_map(|(flag, differs)| differs.then_some(flag))
@@ -296,6 +297,27 @@ async fn async_server(
     let texture_request_tx =
         textures::spawn_texture_downloader(Arc::clone(&texture_cache), tx.clone());
     let bridge = Arc::new(StreamBridge::new());
+
+    // `serve` propagates in `SimpleEci` only: `ServeEngine` builds its states
+    // and systems through the non-generic APIs, and the plugin controller ABI
+    // is `SimpleEci` by design. Accepting `gcrs` would run the ERA-only frame
+    // behind an explicit request for the IAU 2006 one.
+    if sim.frame() == crate::cli::FrameChoice::Gcrs {
+        return Err(CmdError::usage(
+            "--frame gcrs is not supported by `orts serve`: the serve engine and the plugin \
+             controller ABI propagate in SimpleEci. Use `orts run --frame gcrs` for the \
+             IAU 2006 path.",
+        ));
+    }
+    if let Some(cfg) = &initial_config
+        && cfg.try_frame_choice().map_err(CmdError::usage)? == crate::cli::FrameChoice::Gcrs
+    {
+        return Err(CmdError::usage(
+            "frame = \"gcrs\" is not supported by `orts serve`: the serve engine and the \
+             plugin controller ABI propagate in SimpleEci. Use `orts run` for the IAU 2006 \
+             path, or set frame = \"simple-eci\".",
+        ));
+    }
 
     // A configured gravity field is loaded here, on the main task, and handed
     // to the manager: a missing or malformed file is a fatal configuration
@@ -661,5 +683,18 @@ mod tests {
         let err = refusal(&["--config", "mission.toml", "--gravity-field", "x.gfc"])
             .expect("serve --config must refuse the flag");
         assert!(err.contains("--gravity-field"), "{err}");
+    }
+
+    /// `serve` propagates in `SimpleEci` only, so `--frame gcrs` is named as
+    /// unhonored rather than served in the other frame.
+    #[test]
+    fn serve_names_the_frame_flag_when_it_cannot_honor_it() {
+        assert_eq!(
+            unhonored_sim_args(&args(&["--frame", "gcrs", "--eop", "zero"])),
+            vec!["--eop", "--frame"]
+        );
+        let err = refusal(&["--config", "mission.toml", "--frame", "gcrs"])
+            .expect("serve --config must refuse the flag");
+        assert!(err.contains("--frame"), "{err}");
     }
 }
