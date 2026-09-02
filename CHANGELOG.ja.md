@@ -156,6 +156,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   占めており、writer スレッドの Arrow IPC + LZ4 は 55ms、665KB のファイル書き込みは
   0.2ms だった。batcher を迂回して chunk の境界が呼び出し側の責任になるため、
   8192 行で分割する。([#379](https://github.com/sksat/orts/pull/379))
+- SRP shadow model が中心天体の半径を使うように修正。`build_orbital_system` /
+  `build_spacecraft_dynamics` は `for_earth` で SRP を構築しており、shadow
+  半径が中心天体によらず地球の 6378 km だった — Moon 中心のシミュレーション
+  では shadow cylinder が約 3.7 倍広く、衛星を誤って eclipse 判定し SRP が
+  過小適用されていた。両 builder が共通の `build_srp` helper 経由で
+  `BodyProperties::radius` に shadow をサイズするようになった。
+  ([#385](https://github.com/sksat/orts/pull/385))
 
 #### Removed
 - **BREAKING**: `orts::tle` module を削除。TLE パースは `arika::tle`

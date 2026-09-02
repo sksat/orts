@@ -2,7 +2,7 @@ use nalgebra::Matrix3;
 
 use crate::orbital::gravity::{self, GravityField};
 use crate::spacecraft::SpacecraftDynamics;
-use arika::body::KnownBody;
+use arika::body::{BodyProperties, KnownBody};
 use arika::epoch::Epoch;
 
 use crate::attitude::CoupledGravityGradient;
@@ -88,6 +88,16 @@ pub fn default_third_bodies(body: &KnownBody) -> Vec<ThirdBodyGravity> {
     bodies
 }
 
+/// SRP with the shadow model sized to the actual central body,
+/// not the Earth default baked into `for_earth`.
+fn build_srp(props: &BodyProperties, sat: &SatelliteParams, am: f64) -> SolarRadiationPressure {
+    let mut srp = SolarRadiationPressure::for_earth(Some(am)).with_shadow_body(props.radius);
+    if let Some(cr) = sat.srp_cr {
+        srp = srp.with_cr(cr);
+    }
+    srp
+}
+
 /// Build an OrbitalSystem for the given body, automatically configuring gravity,
 /// third-body perturbations, drag, and SRP based on the provided parameters.
 ///
@@ -137,13 +147,8 @@ pub fn build_orbital_system(
     if epoch.is_some()
         && let Some(am) = sat.srp_area_to_mass
     {
-        let mut srp = SolarRadiationPressure::for_earth(Some(am));
-        if let Some(cr) = sat.srp_cr {
-            srp = srp.with_cr(cr);
-        }
-        system = system.with_model(srp);
+        system = system.with_model(build_srp(&props, sat, am));
     }
-
     system
 }
 
@@ -236,18 +241,13 @@ pub fn build_spacecraft_dynamics(
             (Some(shape), _) => {
                 // The shadow is cast by whatever the spacecraft orbits, so the
                 // Earth radius `for_earth` bakes in is only right for Earth.
-                // #385 is giving the cannonball arm below a `build_srp` helper
-                // that does the same thing; both arms should go through it once
-                // it lands.
+                // TODO: route this arm through `build_srp` too so both SRP
+                // paths size the shadow in one place.
                 system = system
                     .with_model(PanelSrp::for_earth(shape.clone()).with_shadow_body(props.radius));
             }
             (None, Some(am)) => {
-                let mut srp = SolarRadiationPressure::for_earth(Some(am));
-                if let Some(cr) = sat.srp_cr {
-                    srp = srp.with_cr(cr);
-                }
-                system = system.with_model(srp);
+                system = system.with_model(build_srp(&props, sat, am));
             }
             (None, None) => {}
         }
@@ -259,7 +259,6 @@ pub fn build_spacecraft_dynamics(
     if sat.disturbances.gravity_gradient {
         system = system.with_model(CoupledGravityGradient::new(mu, inertia));
     }
-
     system
 }
 
@@ -645,5 +644,22 @@ mod tests {
         let names = system.model_names();
         assert!(!names.contains(&"third_body_sun"));
         assert!(!names.contains(&"third_body_moon"));
+    }
+    #[test]
+    fn srp_shadow_radius_matches_central_body() {
+        let sat = SatelliteParams {
+            has_drag: false,
+            ballistic_coeff: None,
+            srp_area_to_mass: None,
+            srp_cr: None,
+            disturbances: DisturbanceTorques::default(),
+            shape: None,
+        };
+        let moon = KnownBody::Moon.properties();
+        let srp = build_srp(&moon, &sat, 0.02);
+        assert_eq!(srp.shadow_body_radius, Some(moon.radius));
+        let earth = KnownBody::Earth.properties();
+        let srp = build_srp(&earth, &sat, 0.02);
+        assert_eq!(srp.shadow_body_radius, Some(earth.radius));
     }
 }
