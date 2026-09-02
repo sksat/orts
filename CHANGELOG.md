@@ -598,6 +598,18 @@ section is subdivided by package.
 - `IntegrationError` now implements `core::error::Error` (by hand, no
   `thiserror`, works under `no_std`), so it participates in `?` chains and
   `Box<dyn Error>`. ([#147](https://github.com/sksat/orts/pull/147))
+- Tests: contract tests for all eight integrate loops — a plain and an
+  event-checking one each for the `Integrator` default, Verlet and Yoshida,
+  plus the two adaptive steppers. Each checks that the loop reports states,
+  reports them at increasing times, reports the state it just computed rather
+  than the one before it, lands the last one on `t_end`, shortens its final
+  step to get there, and matches the analytic solution of a system whose
+  derivative depends on `t`. Measured: replacing five of the loops with
+  "return the initial state and report nothing" left 147 of 167 tests
+  passing, and reporting each state one step late was caught by nothing at
+  all. A one-period harmonic-oscillator test cannot see either, because after
+  one period the answer is the initial state, and no test system in the crate
+  used `t`. ([#TBD](https://github.com/sksat/orts/pull/TBD))
 
 #### Fixed
 - `Integrator::try_integrate` stops with `IntegrationError::NonFiniteState` at

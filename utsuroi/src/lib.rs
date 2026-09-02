@@ -9,6 +9,8 @@ mod state;
 #[cfg(test)]
 mod comparison;
 #[cfg(test)]
+mod contract;
+#[cfg(test)]
 mod projection;
 #[cfg(test)]
 pub(crate) mod test_systems;

@@ -536,6 +536,16 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 #### Added
 - `IntegrationError` が `core::error::Error` を実装 (手書き、`thiserror` 不使用、
   `no_std` でも動作)。`?` 連鎖や `Box<dyn Error>` に乗るようになった。([#147](https://github.com/sksat/orts/pull/147))
+- テスト: 8 つの積分ループすべてに contract test を追加 (`Integrator` の既定
+  実装・Verlet・Yoshida がそれぞれ event 検査なし/ありの 2 本、adaptive stepper
+  2 つ)。各ループについて、状態を通知すること、通知時刻が増加すること、直前の
+  状態ではなく計算した状態を通知すること、最後の通知が `t_end` に着地すること、
+  そのために最終ステップを短縮すること、導関数が `t` に依存する系で解析解に
+  一致することを検査する。実測: 5 つのループを「初期状態を返して何も通知しない」
+  に置き換えると 167 件のうち 147 件が通り、各状態を 1 ステップ遅れて通知する
+  欠陥はどのテストも検出しなかった。調和振動子の一周期テストはどちらも検出
+  できない (一周期後の解が初期状態と同じ)。crate 内のどの試験系も `t` を
+  使っていなかった。([#TBD](https://github.com/sksat/orts/pull/TBD))
 
 #### Fixed
 - `Integrator::try_integrate` が、結果が非有限になった最初のステップで
