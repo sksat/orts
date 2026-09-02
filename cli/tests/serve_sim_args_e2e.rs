@@ -20,10 +20,31 @@ fn test_port(offset: u16) -> u16 {
 }
 
 /// A spawned `orts serve` with its stderr streamed into a shared buffer.
+///
+/// The child and its reader sit in `Option`s so that both the consuming
+/// methods and [`Drop`] can take them. Dropping a `std::process::Child` does
+/// not kill the process, so an assertion that panics before `shutdown` or
+/// `wait_for_exit` would otherwise leave an idle server holding its port for
+/// the rest of the suite.
 struct Server {
-    child: Child,
+    child: Option<Child>,
     lines: Arc<Mutex<Vec<String>>>,
-    reader: JoinHandle<()>,
+    reader: Option<JoinHandle<()>>,
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            child.kill().ok();
+            child.wait().ok();
+        }
+        if let Some(reader) = self.reader.take() {
+            // The child is gone, so the pipe is closed and the reader returns.
+            // `join` can only fail if the reader itself panicked, which the
+            // consuming methods report; a drop during unwinding stays quiet.
+            let _ = reader.join();
+        }
+    }
 }
 
 impl Server {
@@ -48,9 +69,9 @@ impl Server {
             }
         });
         Server {
-            child,
+            child: Some(child),
             lines,
-            reader,
+            reader: Some(reader),
         }
     }
 
@@ -93,16 +114,13 @@ impl Server {
     }
 
     /// Stop the server and drain its stderr to EOF.
-    fn shutdown(self) -> String {
-        let Server {
-            mut child,
-            lines,
-            reader,
-        } = self;
+    fn shutdown(mut self) -> String {
+        let mut child = self.child.take().expect("the server is spawned once");
+        let reader = self.reader.take().expect("the server is spawned once");
         child.kill().ok();
         child.wait().ok();
         reader.join().expect("stderr reader thread panicked");
-        lines.lock().unwrap().join("\n")
+        self.lines.lock().unwrap().join("\n")
     }
 
     /// Wait for the process to exit on its own and drain stderr to EOF.
@@ -110,12 +128,10 @@ impl Server {
     /// Waits with a deadline instead of `Command::output()`: a `serve` that
     /// does *not* refuse its args keeps serving forever, and that regression
     /// must fail the test rather than hang the suite.
-    fn wait_for_exit(self, timeout: Duration) -> (Option<i32>, String) {
-        let Server {
-            mut child,
-            lines,
-            reader,
-        } = self;
+    fn wait_for_exit(mut self, timeout: Duration) -> (Option<i32>, String) {
+        let mut child = self.child.take().expect("the server is spawned once");
+        let reader = self.reader.take().expect("the server is spawned once");
+        let lines = Arc::clone(&self.lines);
         let deadline = Instant::now() + timeout;
         let status = loop {
             match child.try_wait().expect("failed to poll orts serve") {
