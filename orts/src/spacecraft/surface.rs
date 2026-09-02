@@ -208,11 +208,14 @@ impl SurfacePanel {
     /// occlusion.
     ///
     /// # Panics
-    /// Panics if either vector is zero-length, if the half-extents are not
-    /// positive and finite, or if `in_plane_x` is not perpendicular to `normal`
-    /// (to within 1e-9 after normalisation). An axis off the plane describes a
-    /// rectangle that is not on the panel; projecting it onto the plane would
-    /// build a panel the caller did not ask for, so it is rejected instead.
+    /// Panics if either vector is zero-length or non-finite (both leave a
+    /// non-finite length, which normalising cannot recover), if the half-extents
+    /// are not positive and finite, if their product underflows to zero or
+    /// overflows to infinity, or if `in_plane_x` is not perpendicular to
+    /// `normal` (to within 1e-9 after normalisation). An axis off the plane
+    /// describes a rectangle that is not on the panel; projecting it onto the
+    /// plane would build a panel the caller did not ask for, so it is rejected
+    /// instead.
     pub fn rectangle(
         half_extent: [f64; 2],
         in_plane_x: Vector3<f64>,
@@ -412,6 +415,20 @@ impl SpacecraftShape {
     ///
     /// # Panics
     /// Panics if any panel normal is not unit length. `Sphere` never panics.
+    pub(crate) fn assert_normals_are_unit(&self) {
+        let Self::Panels(panels) = self else {
+            return;
+        };
+        for (i, panel) in panels.iter().enumerate() {
+            let len = panel.normal.magnitude();
+            assert!(
+                (len - 1.0).abs() < 1e-9,
+                "Panel {i} normal must be unit length, got |n|={len}. \
+                 `SurfacePanel::at_com` normalises; a struct literal does not."
+            );
+        }
+    }
+
     /// Check what [`SurfacePanel::rectangle`] asserts, for panels that did not
     /// come through it.
     ///
@@ -470,20 +487,6 @@ impl SpacecraftShape {
         }
     }
 
-    pub(crate) fn assert_normals_are_unit(&self) {
-        let Self::Panels(panels) = self else {
-            return;
-        };
-        for (i, panel) in panels.iter().enumerate() {
-            let len = panel.normal.magnitude();
-            assert!(
-                (len - 1.0).abs() < 1e-9,
-                "Panel {i} normal must be unit length, got |n|={len}. \
-                 `SurfacePanel::at_com` normalises; a struct literal does not."
-            );
-        }
-    }
-
     /// Create a cube with the given half-size, drag coefficient, and optical
     /// properties, shared by all six faces.
     ///
@@ -491,6 +494,11 @@ impl SpacecraftShape {
     /// centre of pressure at the face centre (`half_size` m from CoM along the
     /// face normal). The faces carry their outline, so a panel added beside the
     /// cube — a solar array, say — can be found standing in front of one.
+    ///
+    /// # Panics
+    /// Panics unless `half_size` is positive and finite, and unless the area it
+    /// implies is too — it builds the faces through [`SurfacePanel::rectangle`],
+    /// so `half_size` of `1e200` overflows and `1e-300` underflows.
     pub fn cube(half_size: f64, cd: f64, optics: PanelOptics) -> Self {
         let face = |normal: Vector3<f64>, in_plane_x: Vector3<f64>| {
             SurfacePanel::rectangle([half_size, half_size], in_plane_x, normal, cd, optics)
