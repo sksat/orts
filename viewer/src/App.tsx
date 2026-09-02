@@ -8,7 +8,6 @@ const arikaReady = initArika();
 import type { TimeRange } from "@sksat/uneri";
 import appStyles from "./App.module.css";
 import { AttitudeOverlay } from "./components/AttitudeOverlay.js";
-import { DIRECTION_VECTOR_KINDS } from "./components/DirectionVectorControls.js";
 import { GraphPanel } from "./components/GraphPanel.js";
 import { InitialCameraFit } from "./components/InitialCameraFit.js";
 import { OrbitOverlay } from "./components/OrbitOverlay.js";
@@ -16,6 +15,8 @@ import { PlaybackBar } from "./components/PlaybackBar.js";
 import { SimConfigModal } from "./components/SimConfigModal.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { type ViewMode, ViewSelector } from "./components/ViewSelector.js";
+import { type DirectionVectorKind, resolveDirectionVectors } from "./directionVectors.js";
+import type { DisplayFrame, Vec3 as DisplayVec3 } from "./displayFrame.js";
 import { toViewerReferenceFrame } from "./frameToViewer.js";
 import { CSV_SOURCE_ID, RRD_SOURCE_ID, useFileSource } from "./hooks/useFileSource.js";
 import { useRealtimePlayback } from "./hooks/useRealtimePlayback.js";
@@ -32,7 +33,7 @@ import {
 import type { ClientMessage } from "./protocol/generated/ClientMessage.js";
 import { DEFAULT_FRAME, type ReferenceFrame } from "./referenceFrame.js";
 import { type MarkerShape, readSatShapeParam, writeSatShapeParam } from "./satelliteShapes.js";
-import { DEFAULT_CAMERA_POSITION, SCENE_UP } from "./sceneFrame.js";
+import { computeLvlhAxes, DEFAULT_CAMERA_POSITION, SCENE_UP } from "./sceneFrame.js";
 import { useSourceRuntime } from "./sources/useSourceRuntime.js";
 import { useWebSocketSource, WS_SOURCE_ID } from "./sources/useWebSocketSource.js";
 import { resolveTextureBaseUrl } from "./textureBaseUrl.js";
@@ -54,6 +55,15 @@ const DEFAULT_WS_URL: string = resolveDefaultWsUrl({
 
 // Build-time texture base URL — present when VITE_TEXTURE_BASE_URL is set at Vite startup.
 const VITE_TEXTURE_BASE_URL = import.meta.env.VITE_TEXTURE_BASE_URL;
+
+/**
+ * Frame the legend asks the resolver with. Which arrows resolve depends on their
+ * inputs, not on the frame, so any frame answers the question.
+ */
+const LEGEND_FRAME: DisplayFrame = { kind: "inertial", origin: null };
+
+/** Stands in for "the scene will have a Sun direction", which it computes itself. */
+const SUN_PRESENT: DisplayVec3 = [1, 0, 0];
 
 /** Both reference-direction arrows on, the starting state for either view. */
 const DEFAULT_DIRECTION_VECTORS: DirectionVectorOptions = { sun: true, nadir: true };
@@ -501,18 +511,25 @@ export function App() {
     };
   }, [satellites, selectedSatelliteId]);
 
-  // Which arrows the attitude view can actually draw, for its legend.
-  const attitudeVectorKinds = useMemo(
-    () =>
-      attitudeBody == null
-        ? []
-        : DIRECTION_VECTOR_KINDS.filter((kind) => {
-            if (directionVectors[kind] === false) return false;
-            if (kind === "sun") return epochJd != null;
-            return attitudeBody.position != null;
-          }),
-    [directionVectors, epochJd, attitudeBody],
-  );
+  /**
+   * Which arrows the attitude view will actually draw — asked of the resolver the
+   * scene uses, not re-derived from "is the input present". A position can be
+   * there and still not yield a direction (zero, or non-finite from a file
+   * source), and a control that offers an arrow the scene then drops is lying.
+   *
+   * The kinds a resolver returns do not depend on the display frame, so the
+   * inertial one stands in; the Sun's own direction is computed inside the scene,
+   * so an epoch is all the app can know about it.
+   */
+  const attitudeVectorKinds = useMemo<readonly DirectionVectorKind[]>(() => {
+    if (attitudeBody == null) return [];
+    return resolveDirectionVectors({
+      frame: LEGEND_FRAME,
+      sunEci: epochJd != null ? SUN_PRESENT : null,
+      positionEci: attitudeBody.position ?? null,
+      options: directionVectors,
+    }).map((v) => v.kind);
+  }, [directionVectors, epochJd, attitudeBody]);
 
   /**
    * The display orientation the attitude view actually renders in.
@@ -521,11 +538,17 @@ export function App() {
    * selection is normalised here rather than left showing "LVLH" over inertial
    * axes — the data behind a choice can disappear after it was made (a satellite
    * terminates, a source without velocities takes over).
+   *
+   * Local-orbital asks `computeLvlhAxes`, the same function the scene resolves
+   * with: a position and a velocity can both be present and still not span an
+   * orbit frame (parallel, zero, non-finite).
    */
   const attitudeFrameAvailable = useCallback(
     (frame: AttitudeFrame) => {
       if (frame === "localOrbital") {
-        return attitudeBody?.position != null && attitudeBody?.velocity != null;
+        return (
+          computeLvlhAxes(attitudeBody?.position ?? null, attitudeBody?.velocity ?? null) != null
+        );
       }
       if (frame === "bodyFixed") return epochJd != null && centralBody === "earth";
       return true;
@@ -631,10 +654,24 @@ export function App() {
               onSelectedSatelliteChange={setSelectedSatelliteId}
               orientation={attitudeFrame}
               onOrientationChange={setAttitudeFrame}
-              hasEpoch={epochJd != null}
-              hasPosition={attitudeBody?.position != null}
-              hasVelocity={attitudeBody?.velocity != null}
-              supportsBodyFixed={centralBody === "earth"}
+              localOrbitalUnavailable={
+                attitudeFrameAvailable("localOrbital")
+                  ? undefined
+                  : "Requires a position and velocity"
+              }
+              bodyFixedUnavailable={
+                centralBody !== "earth"
+                  ? "The viewer models only Earth's rotation"
+                  : epochJd == null
+                    ? "Requires epoch"
+                    : undefined
+              }
+              sunUnavailable={epochJd == null ? "Requires epoch" : undefined}
+              nadirUnavailable={
+                attitudeVectorKinds.includes("nadir") || directionVectors.nadir === false
+                  ? undefined
+                  : "Requires a position"
+              }
               directionVectors={directionVectors}
               onDirectionVectorsChange={setDirectionVectors}
               drawnVectorKinds={attitudeVectorKinds}
