@@ -130,9 +130,11 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   [トルクの向き](docs/src/assets/srp-flat-panel/torque-direction.svg)。
   ([#377](https://github.com/sksat/orts/pull/377))
 - Sun 由来の力モデルが中心天体から幾何を取るようになった。既定の第三体 Sun と
-  cannonball SRP はどちらも、中心天体に関わらず地心 Sun ベクトルと Earth 半径を
-  使っていた。2026 年の Mars では Sun が Mars から見た方向と最大 176° ずれ、SRP は
+  cannonball SRP はどちらも、中心天体に関わらず地心 Sun ベクトルを読んでいた。
+  2026 年の Mars では Sun が Mars から見た方向と最大 176° ずれ、SRP は
   ベクトルとして 242〜311% 誤り（逆向きに働く）、潮汐項は最大 3.8 倍になっていた。
+  SRP はさらに影の半径に Earth 半径を使っており、大きさの違う天体では食の位置が
+  ずれていた。第三体重力に影はなく、誤りはベクトルだけだった。
   `ThirdBodyGravity::sun_from_body`、`SolarRadiationPressure::for_body`、
   `PanelSrp::for_body` が `KnownBody` を取り、`default_third_bodies` と 2 つの
   `build_*` builder が `Result` を返す。Sun ephemeris を持たない中心天体は、Sun を

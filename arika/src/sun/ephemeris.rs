@@ -872,8 +872,8 @@ mod tests {
     }
 
     /// Uranus and Neptune have no elements here, so they are refused rather
-    /// than answered with Earth's vector — which the `&str` helper does by
-    /// falling back to `+X`.
+    /// than answered with a direction nothing computed — which is what the
+    /// `&str` helper does, falling back to `+X`.
     #[test]
     fn sun_position_from_an_unsupported_planet_is_an_error() {
         let epoch = Epoch::from_gregorian(2026, 1, 1, 0, 0, 0.0).to_tdb();

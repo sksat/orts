@@ -150,10 +150,13 @@ section is subdivided by package.
   [torque direction](docs/src/assets/srp-flat-panel/torque-direction.svg).
   ([#377](https://github.com/sksat/orts/pull/377))
 - Solar force models take their geometry from the central body. The default
-  third-body Sun and the cannonball SRP both used the geocentric Sun vector and
-  Earth's radius whatever the central body, so from Mars in 2026 the Sun sat up
-  to 176° away from where Mars sees it — SRP pushed the wrong way, 242–311% off
-  as a vector — and the tidal term was scaled by up to 3.8x. `ThirdBodyGravity::
+  third-body Sun and the cannonball SRP both read the geocentric Sun vector
+  whatever the central body, so from Mars in 2026 the Sun sat up to 176° away
+  from where Mars sees it — SRP pushed the wrong way, 242–311% off as a vector
+  — and the tidal term was scaled by up to 3.8x. SRP also took Earth's radius
+  for its shadow, which put the eclipse at the wrong distance from a body of
+  another size; third-body gravity has no shadow and was wrong in the vector
+  alone. `ThirdBodyGravity::
   sun_from_body`, `SolarRadiationPressure::for_body` and `PanelSrp::for_body`
   take a `KnownBody`; `default_third_bodies` and the two `build_*` builders
   return `Result`, so a central body with no Sun ephemeris is reported instead
