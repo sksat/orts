@@ -64,7 +64,7 @@ impl<F: EarthRotationPole> ZonalGravity<F> {
     /// Each zonal term is `A·r + B·p̂` where `p̂` is the pole unit vector,
     /// `ζ = r·p̂`, and `s² = (ζ/r)²`. For `p̂ = +Z` this reduces to the classic
     /// `position.z`-based formula (pinned by the characterization test).
-    fn acceleration(&self, position: &Vector3<f64>, utc: &Epoch<Utc>) -> Vector3<f64> {
+    pub(crate) fn acceleration(&self, position: &Vector3<f64>, utc: &Epoch<Utc>) -> Vector3<f64> {
         let pole = F::earth_pole(utc).into_inner();
         let r = *position;
 

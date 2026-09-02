@@ -93,6 +93,29 @@ hf = HolmesFeatherstoneAttractionModel(FramesFactory.getEME2000(), provider)
 propagator.addForceModel(hf)
 ```
 
+### Gravity (full spherical harmonics, order > 0)
+
+Tesseral terms are fixed to the rotating Earth, so the body frame must be
+**ITRF** (`simpleEOP=True` matches our EOP table, which carries no tidal
+corrections). Use the provider's own GM for the orbit / point mass, and write
+the provider's coefficients out as the `.gfc` the Rust side reads so both
+evaluate identical numbers (see `tools/generate_orekit_geopotential_fixtures.py`).
+
+```python
+provider = GravityFieldFactory.getNormalizedProvider(70, 70)
+itrf = FramesFactory.getITRF(IERSConventions.IERS_2010, True)
+propagator.addForceModel(HolmesFeatherstoneAttractionModel(itrf, provider))
+# pointwise, body frame: hf.gradient(date, Vector3D(x, y, z), provider.getMu())  # m/s²
+```
+
+**Rust equivalent**:
+```rust
+let field = Arc::new(SphericalHarmonicField::from_icgem(gfc_text)?.truncated(70, 70));
+OrbitalSystem::<Gcrs>::new(field.gm(), Box::new(PointMass))
+    .with_epoch(epoch)
+    .with_model(SphericalHarmonicGravity::<Gcrs>::new(field, eop));
+```
+
 ### Third-body (Sun/Moon)
 
 ```python
@@ -210,6 +233,7 @@ density = msise_model.getDensity(epoch_date, pos_ecef, itrf)  # kg/m³
 | `tools/generate_nrlmsise00_fixtures.py` | `tobari/tests/fixtures/nrlmsise00_reference.json` | `uv run tools/generate_nrlmsise00_fixtures.py` |
 | `tools/generate_iss_decay_fixtures.py` | `orbits/tests/fixtures/iss_decay_reference.json` | `uv run tools/generate_iss_decay_fixtures.py` |
 | `tools/generate_cssi_test_fixture.py` | `tobari/tests/fixtures/cssi_test_weather.txt` | `uv run tools/generate_cssi_test_fixture.py` |
+| `tools/generate_orekit_geopotential_fixtures.py` | `tobari/tests/fixtures/orekit_geopotential_70x70.gfc`, `tobari/tests/fixtures/orekit_geopotential_gradient_reference.json`, `orts/tests/fixtures/orekit_geopotential_propagation_reference.json` | `uv run tools/generate_orekit_geopotential_fixtures.py` |
 
 ## Known Differences (Orekit vs Rust)
 
@@ -219,4 +243,5 @@ density = msise_model.getDensity(epoch_date, pos_ecef, itrf)  # kg/m³
 | Moon position (DE405 vs analytical) | ~10' | Third-body |
 | LST (precise vs UT+lon/15) | ~16 min | NRLMSISE-00 density (1-5%) |
 | Gravity (HolmesFeatherstone vs explicit) | J2 diff ~3e-9 | Sub-meter at 10 orbits |
+| Gravity 70×70 (`SphericalHarmonicField` vs HolmesFeatherstone) | 1e-13·GM/r² pointwise; 0.93 m after 24 h LEO (EOP series + integrator floor, zonal-only case 0.90 m) | `oracle_geopotential` |
 | Geodetic altitude | Both WGS-84 | Matched after geo.rs fix |

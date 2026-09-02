@@ -1,0 +1,12 @@
+error[E0271]: type mismatch resolving `<SpacecraftState as HasFrame>::Frame == Gcrs`
+  --> tests/trybuild/spherical_harmonic_gravity_in_another_frame.rs:18:30
+   |
+18 |     install_for_simple_eci::<SphericalHarmonicGravity<Gcrs>>();
+   |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Gcrs`, found `SimpleEci`
+   |
+   = note: required for `SphericalHarmonicGravity<arika::frame::Gcrs>` to implement `Model<SpacecraftState>`
+note: required by a bound in `install_for_simple_eci`
+  --> tests/trybuild/spherical_harmonic_gravity_in_another_frame.rs:15:30
+   |
+15 | fn install_for_simple_eci<M: Model<SpacecraftState<SimpleEci>>>() {}
+   |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `install_for_simple_eci`
