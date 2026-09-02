@@ -33,6 +33,11 @@ area?: number,
  * Writing them gives the panel a boundary, which is what lets another
  * panel be found standing in front of it. Without them the panel still
  * produces the same force when lit, but takes no part in shadowing.
+ *
+ * The boundary is centred on `cp_offset`, so these are half-widths about
+ * that point rather than about the CoM: a plate 2 m across, on an arm
+ * 1.5 m out along that same axis, spans 0.5 m to 2.5 m from the CoM.
+ * Moving the arm moves the plate.
  */
 half_extent?: [number, number], 
 /**
@@ -58,7 +63,9 @@ diffuse?: number,
 /**
  * Centre-of-pressure offset from the CoM [m, body frame] (default: zero).
  *
- * This is what makes a panel force an attitude disturbance.
+ * This is what makes a panel force an attitude disturbance. With
+ * `half_extent` it also places the plate, whose boundary is centred here —
+ * so it is where the panel *is*, not only the arm its force acts on.
  */
 cp_offset?: [number, number, number], 
 /**

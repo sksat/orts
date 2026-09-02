@@ -214,11 +214,13 @@ impl SurfacePanel {
     /// occlusion.
     ///
     /// # Panics
-    /// Panics unless both vectors have a finite non-zero magnitude — see
-    /// [`Self::at_com`] for the finite-component cases that fail this — if the
-    /// half-extents are not positive and finite, if their product underflows to
-    /// zero or overflows to infinity, or if `in_plane_x` is not perpendicular
-    /// to `normal` (to within 1e-9 after normalisation). An axis off the plane
+    /// Panics unless both vectors have a finite non-zero magnitude, which
+    /// finite components alone do not give: `[1e300, 1e300, 0]` squares to a
+    /// norm that overflows and `[1e-200; 3]` to one that underflows, and
+    /// neither can be normalised. Panics too if the half-extents are not
+    /// positive and finite, if their product underflows to zero or overflows to
+    /// infinity, or if `in_plane_x` is not perpendicular to `normal` (to within
+    /// 1e-9 after normalisation). An axis off the plane
     /// describes a rectangle that is not on the panel; projecting it onto the
     /// plane would build a panel the caller did not ask for, so it is rejected
     /// instead.
