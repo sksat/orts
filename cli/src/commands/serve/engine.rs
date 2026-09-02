@@ -350,6 +350,14 @@ pub(super) struct ServeEngine {
     /// unbounded growth in long-running sims with many deorbiting satellites.
     terminated_events: VecDeque<String>,
     current_t: f64,
+    /// How many `stream_step` boundaries have been crossed. The next boundary
+    /// is `(steps_done + 1) * stream_step`, not `current_t + stream_step`:
+    /// repeated addition drifts below the exact multiple — measured, six 0.1 s
+    /// steps accumulate to 0.6 while `6 * 0.1` is 0.6000000000000001 — and a
+    /// controller tick scheduled on the exact multiple would then fall outside
+    /// the interval that should have run it, and be taken a whole interval
+    /// late.
+    steps_done: u64,
     has_perturbations: bool,
     /// Each satellite's declared stream names, indexed like `metas`. The
     /// engine iterates these to pump the injected [`StreamIo`]; resolving a
@@ -676,6 +684,7 @@ impl ServeEngine {
             info_json,
             terminated_events: VecDeque::new(),
             current_t: 0.0,
+            steps_done: 0,
             has_perturbations,
             sat_streams,
             stream_step,
@@ -785,7 +794,7 @@ impl ServeEngine {
         let body_radius = self.params.body.properties().radius;
 
         for _ in 0..outputs_per_chunk {
-            let target_t = self.current_t + self.stream_step;
+            let target_t = (self.steps_done + 1) as f64 * self.stream_step;
 
             // Orbit boundary reset (only for unperturbed 2-body, orbit-only mode)
             if !self.has_perturbations {
@@ -900,6 +909,7 @@ impl ServeEngine {
             }
 
             self.current_t = target_t;
+            self.steps_done += 1;
         }
 
         all_outputs.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap());
@@ -1388,6 +1398,46 @@ orbit = { type = "circular", altitude = 500 }
         assert_eq!(init.engine.current_t(), 0.0);
         // No declared streams → empty layout entry for the one satellite.
         assert_eq!(init.stream_layout, vec![("sat-a".to_string(), vec![])]);
+    }
+
+    /// Output boundaries are exact multiples of the step, not an accumulated
+    /// sum.
+    ///
+    /// `current_t + stream_step` drifts below `n * stream_step`: measured,
+    /// six 0.1 s steps accumulate to 0.6 while `6 * 0.1` is
+    /// 0.6000000000000001. A controller tick is scheduled on the exact
+    /// multiple (`tick_base_t + n * sample_period`), so a boundary that lands
+    /// below it leaves the tick outside the interval that should have run it,
+    /// and it is taken a whole interval late.
+    #[test]
+    fn output_boundaries_are_exact_multiples_of_the_step() {
+        let mut init = engine_from_toml(
+            r#"
+dt = 0.01
+output_interval = 0.1
+stream_interval = 0.1
+
+[[satellites]]
+id = "sat-a"
+orbit = { type = "circular", altitude = 500 }
+"#,
+        )
+        .expect("engine builds");
+        let step = init.engine.effective_step();
+        assert!((step - 0.1).abs() < 1e-12, "the step is the one configured");
+
+        // Past the sixth boundary, where accumulation starts trailing.
+        for n in 1..=12u32 {
+            init.engine
+                .step_chunk(1, &mut NullStreamIo)
+                .expect("a stable orbit propagates");
+            let expected = f64::from(n) * step;
+            assert_eq!(
+                init.engine.current_t(),
+                expected,
+                "boundary {n} must be n * step exactly, not an accumulated sum"
+            );
+        }
     }
 
     #[test]

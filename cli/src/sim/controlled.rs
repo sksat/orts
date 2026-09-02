@@ -107,10 +107,19 @@ impl ControlledSatellite {
 /// period that clears one ULP at the anchor does not clear one at every later
 /// tick: far enough out, `base + n · period` and `base + (n+1) · period` round
 /// together. That is not a run anyone reaches — a 0.1 s period needs t of about
-/// 1e15 s, some 32 million years, before an ULP catches up with it — but it is
-/// not what this check rules out.
+/// 1e15 s, some 32 million years, before an ULP catches up with it — and this
+/// check does not rule it out. What it does rule out is a period that cannot
+/// separate the first two ticks from each other at the start.
 fn validate_tick_advances(start_t: f64, sample_period: f64) -> Result<(), String> {
-    if start_t + sample_period > start_t {
+    // The first two tick times the schedule will generate, formed the way
+    // `next_tick_t` forms them. Both have to be distinct: requiring only
+    // `start_t + period > start_t` accepts a period that separates the first
+    // tick from the start but not the ticks from each other — measured, at
+    // `start_t = 5.0` and `period = 5e-16` both of these round to
+    // 5.000000000000001, so the controller would tick twice at one instant.
+    let first = start_t + sample_period;
+    let second = start_t + 2.0 * sample_period;
+    if first > start_t && second > first {
         Ok(())
     } else {
         Err(format!(
@@ -335,16 +344,6 @@ fn apply_held_commands(sat: &mut ControlledSatellite) -> Result<(), String> {
     Ok(())
 }
 
-/// Integrate `[t0, t1]` under the command the actuators already hold.
-///
-/// No controller call: `t1` is wherever the caller needs the state next — an
-/// output sample, a stream flush, the end of the run — and those boundaries do
-/// not have to be controller ticks. `PluginController::sample_period` is a
-/// *fixed* period, so a controller runs on its own schedule via
-/// [`tick_controller`] and nothing else may move it.
-///
-/// `params_dt` is the requested ODE step; it is capped by the span so a step
-/// cannot reach past `t1`.
 /// The next moment anything happens in a fleet: the earliest controller tick
 /// due, or `horizon` if none falls before it.
 ///
@@ -382,6 +381,16 @@ pub fn advance_controlled(
     propagate_controlled(sat, t, to, params_dt)
 }
 
+/// Integrate `[t0, t1]` under the command the actuators already hold.
+///
+/// No controller call: `t1` is wherever the caller needs the state next — an
+/// output sample, a stream flush, the end of the run — and those boundaries do
+/// not have to be controller ticks. `PluginController::sample_period` is a
+/// *fixed* period, so a controller runs on its own schedule via
+/// [`tick_controller`] and nothing else may move it.
+///
+/// `params_dt` is the requested ODE step; it is capped by the span so a step
+/// cannot reach past `t1`.
 pub fn propagate_controlled(
     sat: &mut ControlledSatellite,
     t0: f64,
@@ -786,6 +795,17 @@ mod tests {
     fn a_period_below_the_clock_resolution_is_rejected() {
         validate_tick_advances(5.0, 1e-16)
             .expect_err("a period that cannot move the clock must be refused");
+        // Separates the first tick from the start, but not the ticks from each
+        // other: `5.0 + 1*5e-16` and `5.0 + 2*5e-16` both round to
+        // 5.000000000000001, so accepting it would tick twice at one instant.
+        assert_ne!(5.0 + 5e-16, 5.0, "precondition: the first tick does move");
+        assert_eq!(
+            5.0 + 5e-16,
+            5.0 + 2.0 * 5e-16,
+            "precondition: the first two ticks land on the same f64"
+        );
+        validate_tick_advances(5.0, 5e-16)
+            .expect_err("a period that cannot separate two ticks must be refused");
         // The same period is fine from zero, where it is representable.
         validate_tick_advances(0.0, 1e-16).expect("representable at t=0");
         validate_tick_advances(5.0, 0.1).expect("an ordinary period is fine");
