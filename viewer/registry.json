@@ -18,14 +18,34 @@
       ],
       "files": [
         {
+          "path": "src/axisTriad.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/axisTriad.ts"
+        },
+        {
           "path": "src/bodies.ts",
           "type": "registry:lib",
           "target": "@components/orbit-viewer/bodies.ts"
         },
         {
+          "path": "src/components/Arrow.tsx",
+          "type": "registry:component",
+          "target": "@components/orbit-viewer/components/Arrow.tsx"
+        },
+        {
           "path": "src/components/AttitudeSceneContents.tsx",
           "type": "registry:component",
           "target": "@components/orbit-viewer/components/AttitudeSceneContents.tsx"
+        },
+        {
+          "path": "src/components/AxisLabels.tsx",
+          "type": "registry:component",
+          "target": "@components/orbit-viewer/components/AxisLabels.tsx"
+        },
+        {
+          "path": "src/components/AxisTriad.tsx",
+          "type": "registry:component",
+          "target": "@components/orbit-viewer/components/AxisTriad.tsx"
         },
         {
           "path": "src/components/BodyAxes.tsx",
@@ -246,11 +266,6 @@
           "path": "src/utils/TrailBuffer.ts",
           "type": "registry:lib",
           "target": "@components/orbit-viewer/utils/TrailBuffer.ts"
-        },
-        {
-          "path": "src/utils/dimMaterials.ts",
-          "type": "registry:lib",
-          "target": "@components/orbit-viewer/utils/dimMaterials.ts"
         },
         {
           "path": "src/wasm/arikaInit.ts",

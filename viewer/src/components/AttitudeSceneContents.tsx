@@ -1,17 +1,16 @@
 import { OrbitControls, type OrbitControlsProps } from "@react-three/drei";
-import { useCallback } from "react";
-import type * as THREE from "three";
 import type { DirectionVector } from "../directionVectors.js";
 import type { Quat, Vec3 } from "../displayFrame.js";
 import { getSatelliteModelConfig } from "../satelliteModels.js";
 import { type MarkerShape, resolveMarkerShape } from "../satelliteShapes.js";
 import {
   axisLengthForSpan,
+  frameAxisArrows,
   frameAxisLengthForSpan,
   NOMINAL_SPACECRAFT_SPAN,
   spanNormalizedModelScale,
 } from "../spacecraftScale.js";
-import { dimMaterials } from "../utils/dimMaterials.js";
+import { AxisTriad } from "./AxisTriad.js";
 import { DirectionArrows } from "./DirectionArrows.js";
 import { SpacecraftVisual } from "./SpacecraftVisual.js";
 
@@ -33,14 +32,13 @@ const FRAME_AXES_OPACITY = 0.4;
 /**
  * The reference frame's axes: the scene axes themselves, drawn at the origin.
  *
- * Dimmed and longer than the body axes so the two RGB triads read apart when the
- * spacecraft happens to be near-aligned with the frame.
+ * Longer, fainter and slenderer than the body axes, so the two RGB triads read
+ * apart by form and not only by colour when the spacecraft happens to be
+ * near-aligned with the frame. Both carry X / Y / Z, since neither triad's
+ * identity can be recovered from its colours alone.
  */
-function ReferenceAxes({ length }: { length: number }) {
-  const dim = useCallback((helper: THREE.AxesHelper | null) => {
-    dimMaterials(helper, FRAME_AXES_OPACITY);
-  }, []);
-  return <axesHelper ref={dim} args={[length]} />;
+function ReferenceAxes({ length, span }: { length: number; span: number }) {
+  return <AxisTriad geometry={frameAxisArrows(length, span)} opacity={FRAME_AXES_OPACITY} labels />;
 }
 
 export interface AttitudeSceneContentsProps {
@@ -117,7 +115,7 @@ export function AttitudeSceneContents({
         ]}
       />
 
-      {axes && <ReferenceAxes length={frameAxisLengthForSpan(span)} />}
+      {axes && <ReferenceAxes length={frameAxisLengthForSpan(span)} span={span} />}
 
       <SpacecraftVisual
         position={ORIGIN}
@@ -129,6 +127,7 @@ export function AttitudeSceneContents({
         markerSize={span / 2}
         axisLength={axisLengthForSpan(span)}
         modelScale={modelScale}
+        visualSpan={span}
       />
 
       <DirectionArrows position={ORIGIN} vectors={vectors} visualSpan={span} debugId={satId} />

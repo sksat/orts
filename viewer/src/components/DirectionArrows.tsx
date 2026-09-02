@@ -1,70 +1,10 @@
 import { useEffect, useMemo, useRef } from "react";
-import * as THREE from "three";
+import type * as THREE from "three";
 import { type DrawnArrow, registerDirectionVectors } from "../debug/directionVectors.js";
 import type { DirectionVector } from "../directionVectors.js";
 import type { Vec3 } from "../displayFrame.js";
-import { type ArrowGeometry, arrowGeometryForSpan } from "../spacecraftScale.js";
-
-/** Cylinder and cone geometries are built along +Y; arrows are rotated from it. */
-const GEOMETRY_AXIS = new THREE.Vector3(0, 1, 0);
-
-/** Radial segments. Arrows are thin annotations, not subjects. */
-const SHAFT_SEGMENTS = 8;
-const HEAD_SEGMENTS = 12;
-
-interface ArrowProps extends ArrowGeometry {
-  /** Unit vector in scene axes. */
-  direction: Vec3;
-  color: number;
-  /** Receives the head mesh, whose world position gives the drawn direction. */
-  headRef?: (mesh: THREE.Object3D | null) => void;
-}
-
-/**
- * One arrow: a shaft and a head, unlit so it reads at any Sun angle.
- *
- * Meshes rather than `THREE.ArrowHelper` because the shaft needs a thickness —
- * WebGL ignores `linewidth`, so a helper's shaft is always one pixel wide.
- */
-function Arrow({
-  direction,
-  color,
-  length,
-  shaftRadius,
-  headLength,
-  headRadius,
-  startOffset,
-  headRef,
-}: ArrowProps) {
-  const quaternion = useMemo(
-    () =>
-      new THREE.Quaternion().setFromUnitVectors(
-        GEOMETRY_AXIS,
-        new THREE.Vector3(...direction).normalize(),
-      ),
-    [direction],
-  );
-
-  // A head longer than the arrow would invert the shaft; clamp instead of
-  // drawing a mesh with negative height.
-  const head = Math.min(headLength, length);
-  const shaftLength = length - head;
-
-  return (
-    <group quaternion={quaternion}>
-      {shaftLength > 0 && (
-        <mesh position={[0, startOffset + shaftLength / 2, 0]}>
-          <cylinderGeometry args={[shaftRadius, shaftRadius, shaftLength, SHAFT_SEGMENTS]} />
-          <meshBasicMaterial color={color} />
-        </mesh>
-      )}
-      <mesh ref={headRef} position={[0, startOffset + shaftLength + head / 2, 0]}>
-        <coneGeometry args={[headRadius, head, HEAD_SEGMENTS]} />
-        <meshBasicMaterial color={color} />
-      </mesh>
-    </group>
-  );
-}
+import { arrowGeometryForSpan } from "../spacecraftScale.js";
+import { Arrow } from "./Arrow.js";
 
 interface DirectionArrowsProps {
   /** Spacecraft position in scene units — where the arrows start. */

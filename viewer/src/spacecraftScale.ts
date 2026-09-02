@@ -13,6 +13,7 @@
  * {@link NOMINAL_SPACECRAFT_SPAN} and works back to a model scale.
  */
 
+import { axisLabelExtent } from "./axisTriad.js";
 import type { SatelliteModelConfig } from "./satelliteModels.js";
 
 /** Apparent size of the spacecraft in a scene that has no other length scale. */
@@ -101,16 +102,69 @@ export function arrowGeometryForSpan(span: number): ArrowGeometry {
   };
 }
 
+/**
+ * Axis-arrow thickness, as ratios of the spacecraft's apparent size.
+ *
+ * Thickness comes from the spacecraft rather than from each triad's own length:
+ * the reference-frame axes are the longer pair, and sizing their shafts by their
+ * own length would make the subordinate triad the heaviest thing on screen.
+ *
+ * The body triad is the thickest annotation in the scene — it is what the view is
+ * for. The reference frame is a background against which to read it, so its
+ * arrows are slender; drawn at the body's thickness, six heavy arrows leave the
+ * spacecraft between them hard to see.
+ *
+ * Heads are shorter and narrower than a direction arrow's, since three of them
+ * meet the labels at the tips.
+ */
+const BODY_AXIS_SHAFT_RADIUS_RATIO = 0.02;
+const BODY_AXIS_HEAD_LENGTH_RATIO = 0.12;
+const BODY_AXIS_HEAD_RADIUS_RATIO = 0.05;
+const FRAME_AXIS_SHAFT_RADIUS_RATIO = 0.008;
+const FRAME_AXIS_HEAD_LENGTH_RATIO = 0.07;
+const FRAME_AXIS_HEAD_RADIUS_RATIO = 0.026;
+
+/**
+ * Body-axis arrows: `length` sets the extent, `span` the thickness.
+ *
+ * The extent is passed in rather than derived, because the caller that draws the
+ * body axes already owns their length (the orbit view sizes them from the model
+ * scale, the attitude view from the span).
+ */
+export function bodyAxisArrows(length: number, span: number): ArrowGeometry {
+  return {
+    length,
+    shaftRadius: span * BODY_AXIS_SHAFT_RADIUS_RATIO,
+    headLength: span * BODY_AXIS_HEAD_LENGTH_RATIO,
+    headRadius: span * BODY_AXIS_HEAD_RADIUS_RATIO,
+    startOffset: 0,
+  };
+}
+
+/** Reference-frame axis arrows, sized as {@link bodyAxisArrows} but slender. */
+export function frameAxisArrows(length: number, span: number): ArrowGeometry {
+  return {
+    length,
+    shaftRadius: span * FRAME_AXIS_SHAFT_RADIUS_RATIO,
+    headLength: span * FRAME_AXIS_HEAD_LENGTH_RATIO,
+    headRadius: span * FRAME_AXIS_HEAD_RADIUS_RATIO,
+    startOffset: 0,
+  };
+}
+
 /** Empty space kept between the outermost drawn thing and the viewport edge. */
 const VIEW_MARGIN = 1.15;
 
 /**
  * Distance from the origin to the furthest thing drawn around the spacecraft:
- * whichever reaches further, the reference-frame axes or an arrow's tip.
+ * whichever reaches further, the reference-frame triad or a direction arrow's tip.
+ *
+ * The triad's term is its *labels*, not its axes — the letters sit past the tips,
+ * so fitting the axes alone crops them.
  */
 export function drawnExtentForSpan(span: number): number {
   const arrow = arrowGeometryForSpan(span);
-  return Math.max(frameAxisLengthForSpan(span), arrow.startOffset + arrow.length);
+  return Math.max(axisLabelExtent(frameAxisLengthForSpan(span)), arrow.startOffset + arrow.length);
 }
 
 /**
