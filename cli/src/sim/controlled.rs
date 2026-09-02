@@ -111,8 +111,10 @@ impl ControlledSatellite {
 /// check does not rule it out. What it does rule out is a period that cannot
 /// separate the first two ticks from each other at the start.
 fn validate_tick_advances(start_t: f64, sample_period: f64) -> Result<(), String> {
-    // At least one ULP of the start time, so consecutive `start_t + n · period`
-    // always land on different f64 values.
+    // At least one ULP, so the ticks this schedule generates near the start
+    // land on different f64 values. Later ticks are the runtime guard's
+    // business: the ULP grows with the time, and no check here can bound
+    // that (see the doc above).
     //
     // Sampling the first few ticks instead is not enough. `start_t + period >
     // start_t` accepts a period that separates the first tick from the start
@@ -136,10 +138,13 @@ fn validate_tick_advances(start_t: f64, sample_period: f64) -> Result<(), String
     if sample_period >= ulp && sample_period >= ulp_at_first {
         Ok(())
     } else {
+        // Name the resolution that the period actually fell short of: at a
+        // binade boundary the anchor's is met and the first tick's is not.
+        let needed = ulp.max(ulp_at_first);
         Err(format!(
             "controller sample period {sample_period} is below the sim clock's \
-             resolution at t={start_t} ({ulp}), so consecutive ticks would \
-             land on the same instant"
+             resolution around t={start_t} ({needed}), so consecutive ticks \
+             would land on the same instant"
         ))
     }
 }
@@ -865,8 +870,14 @@ mod tests {
             below_eight + 2.0 * one_ulp_there,
             "precondition: ticks 1 and 2 both land on 8.0"
         );
-        validate_tick_advances(below_eight, one_ulp_there)
+        let err = validate_tick_advances(below_eight, one_ulp_there)
             .expect_err("a period that collides across the binade must be refused");
+        // The message has to name the bound that failed: here the anchor's own
+        // resolution is met and the first tick's is not.
+        assert!(
+            err.contains(&format!("{}", 8.0f64.next_up() - 8.0)),
+            "the message should report the first tick's resolution: {err}"
+        );
         // The same period is fine from zero, where it is representable.
         validate_tick_advances(0.0, 1e-16).expect("representable at t=0");
         validate_tick_advances(5.0, 0.1).expect("an ordinary period is fine");

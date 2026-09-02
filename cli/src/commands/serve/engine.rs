@@ -1333,14 +1333,23 @@ fn invalid_path_segment(s: &str) -> bool {
 /// The single sample period shared by all controllers, or an error when the
 /// fleet mixes periods (the stream-io bridge steps every controller on the
 /// same global tick, so mixed rates would over-step the slower ones).
+///
+/// Exact equality, not a tolerance. The first period becomes the interval the
+/// bridge pumps on, and each controller now ticks on its own
+/// `base + n · period`: with `[0.1, 0.1000000005]` the second controller's
+/// first tick falls just past the 0.1 boundary, so it does not tick in that
+/// interval and instead ticks on the next pump — after the bytes staged for
+/// the later interval were already handed over. A tolerance that once only
+/// smoothed over rounding now decides which interval a controller sees.
 fn uniform_tick(periods: &[f64]) -> Result<f64, String> {
     let Some(&first) = periods.first() else {
         return Err("stream-io bridge requires at least one controller".to_string());
     };
-    if periods.iter().any(|p| (p - first).abs() > 1e-9) {
+    if periods.iter().any(|p| *p != first) {
         return Err(format!(
-            "stream-io bridge requires a uniform controller sample period, got {periods:?}; \
-             mixed-rate fleets are not supported with streams yet"
+            "stream-io bridge requires one controller sample period, got {periods:?}; \
+             the bridge pumps on a single interval, and a period that differs even \
+             slightly ticks in a different interval than the bytes it should read"
         ));
     }
     Ok(first)
@@ -1920,6 +1929,13 @@ streams = ["comlink"]
         // A 1.0 s controller stepped on a 0.1 s global tick would update
         // 10x too often — must be rejected, not silently mis-simulated.
         assert!(uniform_tick(&[0.1, 1.0]).is_err());
+        // And a period that differs only slightly: the bridge pumps on the
+        // first one, so the second controller's ticks fall in a different
+        // interval than the bytes staged for them.
+        assert!(
+            uniform_tick(&[0.1, 0.100_000_000_5]).is_err(),
+            "a near-equal period still reads the wrong interval"
+        );
     }
 
     #[test]
