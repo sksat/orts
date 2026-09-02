@@ -79,25 +79,25 @@ impl EntityOverview {
     }
 }
 
-/// Bounded buffer that accumulates history states and periodically spills the
+/// Bounded buffer that accumulates history states and periodically flushes the
 /// oldest half to a segment file on disk.
 pub struct HistoryBuffer {
     /// Recent states kept in memory.
     pub states: VecDeque<HistoryState>,
     /// Maximum number of states to keep in memory before flushing.
     pub capacity: usize,
-    /// Directory for spilled segment files.
+    /// Directory for flushed segment files.
     pub data_dir: PathBuf,
     /// Number of segment files written so far.
     pub segment_count: u32,
-    /// In-memory length above which the next `push` attempts a spill.
+    /// In-memory length above which the next `push` attempts a flush.
     ///
-    /// Normally `capacity`. After a failed spill it is raised so the retry
+    /// Normally `capacity`. After a failed flush it is raised so the retry
     /// happens once the buffer has grown by another `capacity` states
     /// rather than on every push.
     flush_at: usize,
-    /// Consecutive failed spill attempts (reset by the next success).
-    failed_spills: u32,
+    /// Consecutive failed flush attempts (reset by the next success).
+    failed_flushes: u32,
     /// Gravitational parameter (for computing Keplerian elements from loaded data).
     pub mu: f64,
     /// Central body radius [km] (for computing derived values from loaded data).
@@ -108,7 +108,7 @@ pub struct HistoryBuffer {
     // Maintained in O(1) amortized per `push()` call, read in
     // O(num_entities * OVERVIEW_MAX_POINTS_PER_ENTITY) with no disk I/O.
     // This lets re-connects to long-running simulations return the history
-    // overview instantly, without re-reading every spilled segment from disk
+    // overview instantly, without re-reading every flushed segment from disk
     // on the manager task. Per-entity bookkeeping ensures every satellite
     // gets fair coverage regardless of push order or count.
     overview_per_entity: HashMap<EntityPath, EntityOverview>,
@@ -123,14 +123,14 @@ impl HistoryBuffer {
             data_dir,
             segment_count: 0,
             flush_at: capacity,
-            failed_spills: 0,
+            failed_flushes: 0,
             mu,
             body_radius,
             overview_per_entity: HashMap::new(),
         }
     }
 
-    /// Push a state into the buffer. Spills to disk if capacity is exceeded,
+    /// Push a state into the buffer. Flushes to disk if capacity is exceeded,
     /// and incrementally updates the per-entity overview buffers.
     ///
     /// Clone cost: non-sampling pushes perform one `state.clone()` into
@@ -168,7 +168,7 @@ impl HistoryBuffer {
         }
         // The cap is a promise about memory, so it holds on every push. The
         // retry cadence above only decides when the next write is attempted:
-        // measured before this call was here, a failing spill at capacity 4
+        // measured before this call was here, a failing flush at capacity 4
         // reached 35 states against a cap of 32, because the backoff moved the
         // next attempt three pushes past it.
         self.enforce_memory_cap();
@@ -191,11 +191,11 @@ impl HistoryBuffer {
         all
     }
 
-    /// Spill the oldest half of the buffer to a segment file.
+    /// Flush the oldest half of the buffer to a segment file.
     ///
     /// The states are written from a borrow and drained only after the write
     /// succeeded, so the in-memory buffer stays the single source of truth
-    /// for everything not yet on disk: a failed spill degrades to "memory
+    /// for everything not yet on disk: a failed flush degrades to "memory
     /// holds more than `capacity`", never to lost history.
     pub fn flush(&mut self) {
         let flush_count = self.states.len() / 2;
@@ -209,23 +209,23 @@ impl HistoryBuffer {
                 self.states.drain(..flush_count);
                 self.segment_count += 1;
                 self.flush_at = self.capacity;
-                self.failed_spills = 0;
+                self.failed_flushes = 0;
             }
             Err(e) => {
                 // Drop a half-written file: the next attempt writes this
                 // same index, and leaving a truncated segment behind only
                 // invites reading it.
                 let _ = std::fs::remove_file(&seg_path);
-                self.failed_spills += 1;
+                self.failed_flushes += 1;
                 eprintln!(
-                    "Warning: failed to spill history to {}: {e} \
+                    "Warning: failed to flush history to {}: {e} \
                      ({} states kept in memory)",
                     seg_path.display(),
                     self.states.len()
                 );
                 self.enforce_memory_cap();
                 // Retry once the buffer has grown by another `capacity`
-                // states, so a permanently unwritable spill directory costs
+                // states, so a permanently unwritable segment directory costs
                 // one failed write per `capacity` pushes instead of one per
                 // push.
                 //
@@ -239,7 +239,7 @@ impl HistoryBuffer {
                 //
                 // `saturating_add`: the capacity comes from the caller, and a
                 // wrapped sum would put the retry threshold below the current
-                // length, spilling on every push — the opposite of the backoff.
+                // length, flushing on every push — the opposite of the backoff.
                 self.flush_at = self
                     .states
                     .len()
@@ -249,12 +249,12 @@ impl HistoryBuffer {
         }
     }
 
-    /// Drop the oldest states once a failing spill has grown the buffer past
+    /// Drop the oldest states once a failing flush has grown the buffer past
     /// `capacity * MAX_RETAINED_BUFFERS`.
     ///
     /// Retaining unflushed history is the right trade against a transient
     /// write failure, but `serve` is a long-running process and a
-    /// permanently unwritable spill directory would otherwise grow the
+    /// permanently unwritable segment directory would otherwise grow the
     /// buffer without bound. Past the cap bounded memory wins — loudly, and
     /// the per-entity overview still covers the discarded span.
     ///
@@ -280,9 +280,9 @@ impl HistoryBuffer {
         let drop_count = self.states.len() - keep;
         let until_t = self.states.get(drop_count).map(|s| s.t);
         eprintln!(
-            "Warning: history spill has failed {} times; discarding the {drop_count} oldest \
+            "Warning: history flush has failed {} times; discarding the {drop_count} oldest \
              states to keep memory bounded (full-fidelity history before t = {} is gone)",
-            self.failed_spills,
+            self.failed_flushes,
             until_t.map_or("end of run".to_string(), |t| format!("{t}"))
         );
         self.states.drain(..drop_count);
@@ -330,7 +330,7 @@ impl HistoryBuffer {
         Ok(states)
     }
 
-    /// Load all data: spilled segments + in-memory buffer, sorted by time.
+    /// Load all data: flushed segments + in-memory buffer, sorted by time.
     pub fn load_all(&self) -> Vec<HistoryState> {
         let mut all = Vec::new();
 
@@ -357,7 +357,7 @@ impl HistoryBuffer {
     /// - **Fast path (no disk I/O)**: if `t_min` is newer than the oldest
     ///   point currently in the in-memory tail (`self.states`), every state
     ///   in the requested window must already be in memory. Filter the
-    ///   tail and skip reading any spilled segments.
+    ///   tail and skip reading any flushed segments.
     /// - **Slow path (full load)**: otherwise, the window reaches into
     ///   flushed segments on disk; fall back to `load_all()` + filter.
     ///
@@ -405,14 +405,15 @@ impl HistoryBuffer {
     }
 }
 
-/// How many `capacity`-sized buffers may accumulate in memory while the
-/// spill keeps failing, before history is discarded to bound memory.
+/// How many `capacity`-sized buffers may accumulate in memory while flushes
+/// keep failing, before history is discarded to bound memory.
 const MAX_RETAINED_BUFFERS: usize = 8;
 
-/// One line of a spilled history segment.
+/// One line of a flushed history segment.
 ///
-/// The spill is a private implementation detail of `serve` — it lives in a
-/// per-pid temp directory and nothing outside this module reads it — so it
+/// The segment format is a private implementation detail of `serve` — it
+/// lives in a per-pid temp directory and nothing outside this module reads
+/// it — so it
 /// stores the payload verbatim instead of going through `.rrd`: `RrdRow` has
 /// no room for the per-force acceleration breakdown (a map with
 /// model-defined keys) or for reaction-wheel momentum (one entry per wheel),
@@ -497,7 +498,7 @@ impl SegmentRecord {
 
 /// A float that survives a JSON round-trip exactly.
 ///
-/// Two hazards make plain JSON numbers unsafe for a lossless spill.
+/// Two hazards make plain JSON numbers unsafe for a lossless flush.
 /// `serde_json` writes NaN and ±∞ as `null`, which then fails to read back —
 /// a diverging run would lose exactly the rows an operator wants to look at.
 /// And its default number parser does not guarantee that the `f64` read back
@@ -506,7 +507,7 @@ impl SegmentRecord {
 /// travels as text: Rust's `f64` `Display`/`FromStr` pair round-trips every
 /// finite value bit for bit, and carries `NaN` and `±inf` across as
 /// themselves. (A `NaN`'s sign and payload are not preserved — `Display`
-/// folds every `NaN` to `"NaN"` — which is what a spilled history needs:
+/// folds every `NaN` to `"NaN"` — which is what a flushed history needs:
 /// "this row diverged", not which bit pattern the FPU produced.)
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct F64(f64);
@@ -1675,7 +1676,7 @@ mod tests {
 
     /// A state carrying every optional payload field: the per-force
     /// acceleration breakdown and reaction-wheel momentum are the parts the
-    /// old `.rrd` spill silently dropped.
+    /// old `.rrd` segments silently dropped.
     fn make_state_full(t: f64) -> HistoryState {
         let pos = nalgebra::Vector3::new(6778.0 + t, t * 0.1, 0.0);
         let vel = nalgebra::Vector3::new(0.0, 7.669, 0.0);
@@ -1711,7 +1712,7 @@ mod tests {
         path
     }
 
-    /// A failed spill must not cost history: the buffer is the only source of
+    /// A failed flush must not cost history: the buffer is the only source of
     /// truth for states that are not on disk, so it keeps them.
     #[test]
     fn flush_failure_keeps_states_in_memory() {
@@ -1731,7 +1732,7 @@ mod tests {
         let _ = std::fs::remove_file(&dir);
     }
 
-    /// A permanently failing spill must not grow memory without bound: past
+    /// A permanently failing flush must not grow memory without bound: past
     /// `capacity * MAX_RETAINED_BUFFERS` the oldest states are discarded (with
     /// a warning) rather than retained forever.
     #[test]
@@ -1761,7 +1762,7 @@ mod tests {
         let _ = std::fs::remove_file(&dir);
     }
 
-    /// Full round-trip through the spill: accelerations and RW momentum come
+    /// Full round-trip through a segment file: accelerations and RW momentum come
     /// back too. Losing them made the viewer chart a gravity acceleration of
     /// 0 for every flushed window.
     #[test]
@@ -1773,7 +1774,7 @@ mod tests {
         for hs in &pushed {
             buf.push(hs.clone());
         }
-        assert!(buf.segment_count > 0, "precondition: must have spilled");
+        assert!(buf.segment_count > 0, "precondition: must have flushed");
 
         let all = buf.load_all();
         assert_eq!(all.len(), pushed.len());
@@ -1781,7 +1782,7 @@ mod tests {
             assert_eq!(
                 serde_json::to_value(expected).unwrap(),
                 serde_json::to_value(actual).unwrap(),
-                "state at t = {} changed across the spill",
+                "state at t = {} changed across the segment file",
                 expected.t
             );
         }
@@ -1790,34 +1791,34 @@ mod tests {
     }
 
     /// Two-path consistency: the same states read through the in-memory tail
-    /// and through the spill must produce identical payloads.
+    /// and through a segment file must produce identical payloads.
     #[test]
-    fn in_memory_and_spilled_paths_agree() {
+    fn in_memory_and_on_disk_paths_agree() {
         let mem_dir = temp_data_dir("two-path-mem");
         let disk_dir = temp_data_dir("two-path-disk");
-        // Same states, one buffer large enough to never spill and one that
-        // spills almost everything.
+        // Same states, one buffer large enough to never flush and one that
+        // flushes almost everything.
         let mut in_memory = HistoryBuffer::new(1000, mem_dir.clone(), TEST_MU, TEST_BODY_RADIUS);
-        let mut spilled = HistoryBuffer::new(4, disk_dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+        let mut on_disk = HistoryBuffer::new(4, disk_dir.clone(), TEST_MU, TEST_BODY_RADIUS);
 
         for i in 0..40 {
             let hs = make_state_full(i as f64 * 5.0);
             in_memory.push(hs.clone());
-            spilled.push(hs);
+            on_disk.push(hs);
         }
 
         assert_eq!(in_memory.segment_count, 0, "must stay in memory");
-        assert!(spilled.segment_count > 0, "must have spilled");
+        assert!(on_disk.segment_count > 0, "must have flushed");
 
         let from_memory = in_memory.query_range(0.0, 200.0, None, None);
-        let from_disk = spilled.query_range(0.0, 200.0, None, None);
+        let from_disk = on_disk.query_range(0.0, 200.0, None, None);
         assert_eq!(from_memory.len(), 40);
         assert_eq!(from_disk.len(), 40);
         for (mem, disk) in from_memory.iter().zip(from_disk.iter()) {
             assert_eq!(
                 serde_json::to_value(mem).unwrap(),
                 serde_json::to_value(disk).unwrap(),
-                "payload at t = {} differs between the in-memory and spilled paths",
+                "payload at t = {} differs between the in-memory and on-disk paths",
                 mem.t
             );
         }
@@ -1827,7 +1828,7 @@ mod tests {
     }
 
     /// A diverged run is exactly what an operator wants to read back, so
-    /// non-finite values must survive the spill instead of taking their row
+    /// non-finite values must survive a segment file instead of taking their row
     /// down with them.
     #[test]
     fn flush_round_trip_preserves_non_finite_values() {
@@ -1857,7 +1858,7 @@ mod tests {
                 }),
             ));
         }
-        assert!(buf.segment_count > 0, "precondition: must have spilled");
+        assert!(buf.segment_count > 0, "precondition: must have flushed");
 
         let all = buf.load_all();
         assert_eq!(all.len(), 5, "non-finite rows must not be dropped");
@@ -1884,7 +1885,7 @@ mod tests {
         cleanup_dir(&dir);
     }
 
-    /// Every value that a spilled float must survive as: finite values bit
+    /// Every value that a flushed float must survive as: finite values bit
     /// for bit, non-finite values as themselves. (`NaN` payload and sign are
     /// deliberately outside the contract, see [`F64`].)
     #[test]
@@ -1922,14 +1923,14 @@ mod tests {
         }
     }
 
-    /// The buffer spills once it holds `capacity` states, not one more.
+    /// The buffer flushes once it holds `capacity` states, not one more.
     ///
     /// `capacity` is documented as the most it keeps in memory before
-    /// flushing, and the retry after a failed spill as happening once the
+    /// flushing, and the retry after a failed flush as happening once the
     /// buffer has grown by another `capacity`. Both were reached one push
-    /// late: measured with `capacity = 4`, the first spill came on push 5.
+    /// late: measured with `capacity = 4`, the first flush came on push 5.
     #[test]
-    fn the_buffer_spills_at_capacity() {
+    fn the_buffer_flushes_at_capacity() {
         let dir = std::env::temp_dir().join(format!(
             "hist_cap_{}_{:?}",
             std::process::id(),
@@ -1955,7 +1956,7 @@ mod tests {
     /// with the cap enforced only there: capacity 4 reached 35 states against a
     /// cap of 32, and 63 of 200 pushes sat above it.
     #[test]
-    fn a_failing_spill_never_leaves_the_buffer_over_the_cap() {
+    fn a_failing_flush_never_leaves_the_buffer_over_the_cap() {
         let dir = temp_data_dir("cap-every-push");
         cleanup_dir(&dir);
         // A regular file where the directory should be: every write fails.
@@ -2004,9 +2005,9 @@ mod tests {
         }
         assert_eq!(buf.segment_count, 0, "every write failed");
         assert!(
-            buf.failed_spills > 1,
+            buf.failed_flushes > 1,
             "the run has to keep retrying for this to test anything: {} attempts",
-            buf.failed_spills
+            buf.failed_flushes
         );
         assert!(
             buf.flush_at <= capacity * MAX_RETAINED_BUFFERS,
@@ -2033,7 +2034,7 @@ mod tests {
         cleanup_dir(&dir);
     }
 
-    /// A failing spill costs one write per `capacity` pushes, not two.
+    /// A failing flush costs one write per `capacity` pushes, not two.
     ///
     /// The doc promises that cadence, and it is what keeps a permanently
     /// unwritable directory cheap. Measured while the cap only trimmed *past*
@@ -2041,7 +2042,7 @@ mod tests {
     /// sitting exactly at the cap with the threshold there too spent a second
     /// write on the same cycle.
     #[test]
-    fn a_failing_spill_attempts_one_write_per_capacity_pushes() {
+    fn a_failing_flush_attempts_one_write_per_capacity_pushes() {
         let dir = temp_data_dir("cadence");
         cleanup_dir(&dir);
         // A regular file where the directory should be: every write fails.
@@ -2054,9 +2055,9 @@ mod tests {
         let mut seen = 0u32;
         for i in 0..80 {
             buf.push(make_state(i as f64));
-            if buf.failed_spills != seen {
+            if buf.failed_flushes != seen {
                 attempts_at.push(i);
-                seen = buf.failed_spills;
+                seen = buf.failed_flushes;
             }
         }
 
