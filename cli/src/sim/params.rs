@@ -132,7 +132,7 @@ pub(crate) fn validate_element_set_body(
     Ok(())
 }
 
-/// The half of [`validate_omm_body`] that a config settles on its own.
+/// The half of [`validate_element_set_body`] that a config settles on its own.
 ///
 /// Shared with [`crate::config::SimConfig::validate`], which knows a satellite
 /// declares `tle` or `norad` without building the spec — building it would fetch
