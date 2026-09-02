@@ -568,7 +568,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   --duration 100` (地球の大気境界は 100 km の Kármán line) は
   「atmospheric entry at 50.0 km」を t = 10 s で報告し、その時刻の sample も
   記録していた。報告している entry から 78 km 進んだ地点である。現在は t = 0 で
-  開始状態のまま停止する。([#TBD](https://github.com/sksat/orts/pull/TBD))
+  開始状態のまま停止する。([#419](https://github.com/sksat/orts/pull/419))
 - `Integrator::try_integrate` が、結果が非有限になった最初のステップで
   `IntegrationError::NonFiniteState` を返して停止するようになった
   (`integrate_with_events` が既に行っていた検査)。従来は `NaN` 状態のまま

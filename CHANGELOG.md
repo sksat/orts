@@ -634,7 +634,7 @@ section is subdivided by package.
   boundary is the 100 km Kármán line) reported "atmospheric entry at 50.0 km"
   at t = 10 s and recorded a sample there, 78 km of arc past the entry it was
   reporting; it now terminates at t = 0 with the state it started from.
-  ([#TBD](https://github.com/sksat/orts/pull/TBD))
+  ([#419](https://github.com/sksat/orts/pull/419))
 - `Integrator::try_integrate` stops with `IntegrationError::NonFiniteState` at
   the first step whose result is not finite, the check
   `integrate_with_events` already made. It ran the whole span on a `NaN` state
