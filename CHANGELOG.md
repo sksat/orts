@@ -312,6 +312,21 @@ section is subdivided by package.
   no error to the client. ([#351](https://github.com/sksat/orts/pull/351))
 
 #### Fixed
+- `duration` no longer replaces each satellite's orbital period. It is the
+  run's end time, but both were carried in one field, so `--duration 120` left
+  the CSV header, the RRD `meta/sim/period` and the WebSocket `SatelliteInfo`
+  all reporting 120 s as the period of an orbit that takes 5553.6 s — and
+  flattened a fleet onto one value, since every satellite was assigned the same
+  duration. The end time now comes from `duration.unwrap_or(period)` where a
+  horizon is wanted; with no `duration`, an orbit-only or spacecraft run still
+  covers one orbit of each satellite, and a controlled run still takes the
+  first satellite's period for the whole fleet.
+  ([#368](https://github.com/sksat/orts/pull/368))
+- A satellite added to a running `orts serve` re-anchors its orbit on its own
+  period. `serve` restarts an unperturbed orbit-only satellite's orbit at every
+  period boundary, and the boundary for a newly added satellite was read from
+  the *previous* entry in the fleet (or a hardcoded 5554 s when it was the
+  first). ([#368](https://github.com/sksat/orts/pull/368))
 - `orts` now writes its diagnostics to stderr. With no `log` backend installed
   every `log::` call was discarded, so a displaced stream-io stdio plug, a stream
   socket error, a halted `serve` simulation, and every line a WASM plugin logged

@@ -144,6 +144,24 @@ fn is_stdout_sentinel(s: &str) -> bool {
     s == "-" || s == "stdout"
 }
 
+/// How far to propagate one satellite [s].
+///
+/// `duration` is the run's end time and applies to the whole fleet; with none
+/// given, each satellite is propagated for one of its own orbits. The two used
+/// to be folded together by writing `duration` into
+/// [`SatelliteSpec::period`](crate::satellite::SatelliteSpec::period), which
+/// left every reader of the period — the CSV header, the RRD `meta/sim/period`,
+/// the WebSocket `SatelliteInfo` — reporting the end time as the orbital
+/// period.
+///
+/// Used by the orbit-only and spacecraft paths, which end each satellite
+/// separately. `run_controlled_simulation` steps the whole fleet on one clock,
+/// so it takes `duration` or the *first* satellite's period for all of them —
+/// a pre-existing difference between the modes, left as it is here.
+fn end_time_of(params: &SimParams, sat: &crate::satellite::SatelliteSpec) -> f64 {
+    params.duration.unwrap_or(sat.period)
+}
+
 /// Decide where the simulation data goes. With no `--output`, CSV defaults to
 /// stdout (text) while RRD defaults to `output.rrd` (binary should not land on
 /// a terminal).
@@ -546,7 +564,8 @@ pub fn run_simulation(params: &SimParams) -> Result<Recording, CmdError> {
             .initial_state(params.mu, params.epoch)
             .map_err(|e| CmdError::failure(format!("satellite '{}': {e}", sat.id)))?;
 
-        group = group.add_satellite_until(sat.id.as_str(), initial, sat.period, system);
+        group =
+            group.add_satellite_until(sat.id.as_str(), initial, end_time_of(params, sat), system);
     }
 
     propagate_and_record(params, group, |rec, entity, tp, state| {
@@ -596,7 +615,8 @@ pub fn run_spacecraft_simulation(params: &SimParams) -> Result<Recording, CmdErr
             mass: att.mass,
         };
         let initial = dynamics.initial_augmented_state(plant);
-        group = group.add_satellite_until(sat.id.as_str(), initial, sat.period, dynamics);
+        group =
+            group.add_satellite_until(sat.id.as_str(), initial, end_time_of(params, sat), dynamics);
     }
 
     propagate_and_record(params, group, |rec, entity, tp, state| {
@@ -663,17 +683,17 @@ where
     }
 
     // Propagate in output_interval steps
-    let max_period = params
+    let last_end_time = params
         .satellites
         .iter()
-        .map(|s| s.period)
+        .map(|s| end_time_of(params, s))
         .fold(0.0_f64, f64::max);
     let mut t = 0.0_f64;
 
     while !group.all_finished() {
         t += params.output_interval;
-        if t > max_period {
-            t = max_period;
+        if t > last_end_time {
+            t = last_end_time;
         }
 
         // Propagation errors are reported, not unwrapped: an invalid step size

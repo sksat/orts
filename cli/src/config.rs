@@ -1481,11 +1481,15 @@ impl SatelliteConfig {
 ///
 /// Each value is load-bearing:
 /// - `dt` drives `while t < t_end`, so zero never advances.
-/// - `output_interval` drives `t += output_interval` in `run`, so zero never
-///   reaches `max_period`.
+/// - `output_interval` drives `t += output_interval` in the orbit-only and
+///   spacecraft `run` loops, so zero never reaches the time they stop at
+///   (`duration` when given, otherwise the longest satellite period). The
+///   controlled loop advances on controller ticks instead and only compares
+///   `output_interval` to decide when to log, so zero there means logging every
+///   tick rather than a clock that cannot move.
 /// - `stream_interval` is a divisor in the serve loop's pacing, where zero
 ///   yields `0 * inf = NaN` and panics `Duration::from_secs_f64`.
-/// - `duration` becomes each satellite's propagation period.
+/// - `duration` is how far `run` propagates the fleet.
 ///
 /// `output_interval < dt` is rejected too: `SimParams` clamps
 /// `stream_interval` into `[dt, output_interval]`, which panics outright on
@@ -2666,7 +2670,7 @@ altitude = -100.0
         assert!(config.validate().is_ok(), "RK4 ignores tolerances");
     }
 
-    /// `output_interval = 0` never reaches `max_period` in `run`;
+    /// `output_interval = 0` never reaches the fleet's end time in `run`;
     /// `stream_interval = 0` is a divisor in the serve loop's pacing, where it
     /// produces `NaN` and panics `Duration::from_secs_f64`.
     #[test]

@@ -233,7 +233,8 @@ pub struct SimArgs {
     #[arg(long)]
     pub space_weather: Option<String>,
 
-    /// Total simulation duration in seconds (overrides orbital period)
+    /// Total simulation duration in seconds. Omit to cover one orbit
+    /// (`orts run`); `orts serve` streams without end either way.
     #[arg(long)]
     pub duration: Option<f64>,
 

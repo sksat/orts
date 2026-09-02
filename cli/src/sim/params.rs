@@ -308,19 +308,6 @@ impl SimParams {
             .unwrap_or(output_interval)
             .clamp(args.dt.min(output_interval), output_interval);
 
-        // Apply --duration override: replace each satellite's period with the user-specified duration
-        let satellites = if let Some(dur) = args.duration {
-            satellites
-                .into_iter()
-                .map(|mut s| {
-                    s.period = dur;
-                    s
-                })
-                .collect()
-        } else {
-            satellites
-        };
-
         // Resolve the deferred epoch: an explicit `--epoch` wins; otherwise it
         // defaults to the first TLE/OMM's element-set epoch (tsince = 0 for
         // that satellite only — see `element_set_epoch`); otherwise "now".
@@ -386,18 +373,6 @@ impl SimParams {
             .stream_interval
             .unwrap_or(output_interval)
             .clamp(config.dt.min(output_interval), output_interval);
-
-        let satellites = if let Some(dur) = config.duration {
-            satellites
-                .into_iter()
-                .map(|mut s| {
-                    s.period = dur;
-                    s
-                })
-                .collect()
-        } else {
-            satellites
-        };
 
         let epoch = epoch
             .or_else(|| element_set_epoch(&satellites))
@@ -615,6 +590,123 @@ impl SimParams {
 mod tests {
     use super::*;
     use crate::satellite::OrbitSpec;
+
+    /// `duration` is the run's end time, not the satellite's orbital period.
+    ///
+    /// The two used to share `SatelliteSpec::period`, so `--duration 120` left
+    /// every consumer of the period — the CSV header, the RRD `meta/sim/period`
+    /// and the WebSocket `SatelliteInfo` — reporting 120 s for an orbit that
+    /// takes 5553.6 s. The period is a property of the orbit and nothing on the
+    /// command line moves it.
+    #[test]
+    fn duration_does_not_overwrite_the_orbital_period() {
+        // 2π√(r³/μ) at r = 6778.137 km, the circular orbit 400 km up.
+        const PERIOD_400KM: f64 = 5553.6;
+
+        let mut args = sim_args_for_period_tests();
+        args.sats = vec!["altitude=400".to_string()];
+
+        let without = SimParams::from_sim_args(&args, false);
+        assert!(
+            (without.satellites[0].period - PERIOD_400KM).abs() < 1.0,
+            "period without --duration: {}",
+            without.satellites[0].period
+        );
+
+        args.duration = Some(120.0);
+        let with = SimParams::from_sim_args(&args, false);
+        assert!(
+            (with.satellites[0].period - PERIOD_400KM).abs() < 1.0,
+            "--duration 120 changed the orbital period to {}",
+            with.satellites[0].period
+        );
+        assert_eq!(
+            with.duration,
+            Some(120.0),
+            "the end time still has to reach SimParams"
+        );
+    }
+
+    /// Same for the config path, which resolves `duration` separately.
+    #[test]
+    fn config_duration_does_not_overwrite_the_orbital_period() {
+        const PERIOD_400KM: f64 = 5553.6;
+
+        let config: crate::config::SimConfig = toml::from_str(
+            r#"
+body = "earth"
+dt = 10.0
+duration = 120.0
+
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 400 }
+"#,
+        )
+        .expect("the fixture config parses");
+        let params = SimParams::from_config(&config);
+
+        assert!(
+            (params.satellites[0].period - PERIOD_400KM).abs() < 1.0,
+            "config duration changed the orbital period to {}",
+            params.satellites[0].period
+        );
+        assert_eq!(params.duration, Some(120.0));
+    }
+
+    /// A fleet keeps each satellite's own period under `--duration`.
+    ///
+    /// Overwriting the period flattened the fleet onto one value, which is what
+    /// made the collision invisible: both satellites reported the same period
+    /// because both had been assigned the same duration.
+    #[test]
+    fn duration_leaves_each_satellite_its_own_period() {
+        let mut args = sim_args_for_period_tests();
+        args.sats = vec![
+            "altitude=400,id=low".to_string(),
+            "altitude=800,id=high".to_string(),
+        ];
+        args.duration = Some(120.0);
+        let params = SimParams::from_sim_args(&args, false);
+
+        let (low, high) = (&params.satellites[0], &params.satellites[1]);
+        assert!(
+            high.period > low.period + 400.0,
+            "800 km must orbit slower than 400 km: {} vs {}",
+            high.period,
+            low.period
+        );
+    }
+
+    /// A `SimArgs` with every field at its default, for the tests above to
+    /// vary one field at a time.
+    fn sim_args_for_period_tests() -> SimArgs {
+        SimArgs {
+            body: "earth".to_string(),
+            dt: 10.0,
+            output_interval: None,
+            stream_interval: None,
+            epoch: None,
+            tle: None,
+            omm: None,
+            tle_line1: None,
+            tle_line2: None,
+            norad_id: None,
+            sats: vec![],
+            integrator: IntegratorChoice::Dp45,
+            atol: 1e-10,
+            rtol: 1e-8,
+            atmosphere: AtmosphereChoice::Exponential,
+            f107: 150.0,
+            ap: 15.0,
+            space_weather: None,
+            duration: None,
+            config: None,
+            plugin_backend: PluginBackendChoice::Auto,
+            plugin_backend_threshold: None,
+            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
+        }
+    }
 
     #[test]
     fn sim_params_stream_interval_defaults_to_output_interval() {

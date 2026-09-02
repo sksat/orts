@@ -860,6 +860,207 @@ fn test_cli_json_and_data_stdout_conflict() {
     );
 }
 
+/// The circular orbit 400 km up: `2π√(r³/μ)` at r = 6778.137 km.
+const PERIOD_400KM_S: f64 = 5553.624;
+/// The circular orbit 800 km up.
+const PERIOD_800KM_S: f64 = 6052.414;
+
+/// Return the last `t` reached in each satellite's CSV section.
+///
+/// Reads the section markers rather than the rows, because the single- and
+/// multi-satellite CSVs differ in shape: only the multi-satellite one prefixes
+/// each row with the id.
+fn final_t_per_section(csv: &str) -> Vec<(String, f64)> {
+    let mut out: Vec<(String, f64)> = Vec::new();
+    let mut multi = false;
+    for line in csv.lines() {
+        if let Some(rest) = line.strip_prefix("# --- ") {
+            let id = rest.trim_end_matches(" ---").to_string();
+            out.push((id, f64::NAN));
+            continue;
+        }
+        if line.starts_with("# satellite_id,") {
+            multi = true;
+            continue;
+        }
+        if line.starts_with('#') || line.trim().is_empty() || line.starts_with("t[") {
+            continue;
+        }
+        let cols: Vec<&str> = line.split(',').collect();
+        let t: f64 = cols[usize::from(multi)]
+            .parse()
+            .expect("a numeric t column");
+        match out.last_mut() {
+            Some(entry) => entry.1 = t,
+            None => out.push((String::from("(single)"), t)),
+        }
+    }
+    out
+}
+
+fn run_csv(args: &[&str]) -> String {
+    let binary = env!("CARGO_BIN_EXE_orts");
+    let output = Command::new(binary)
+        .args(["run", "--output", "stdout", "--format", "csv"])
+        .args(args)
+        .output()
+        .expect("failed to execute orts");
+    assert!(
+        output.status.success(),
+        "orts run {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+/// `--duration` sets how long the run covers; the reported period stays the
+/// orbit's own.
+///
+/// The two used to share one field, so `--duration 120` made the CSV header
+/// (and the RRD `meta/sim/period`, and the WebSocket `SatelliteInfo`) call
+/// 120 s the orbital period of an orbit that takes 5553.6 s.
+#[test]
+fn duration_sets_the_end_time_and_leaves_the_period_alone() {
+    let csv = run_csv(&["--sat", "altitude=400", "--duration", "120"]);
+
+    assert!(
+        csv.contains(&format!("# Period = {PERIOD_400KM_S:.1} s")),
+        "header should report the orbital period, got:\n{}",
+        csv.lines().take(10).collect::<Vec<_>>().join("\n")
+    );
+
+    let finals = final_t_per_section(&csv);
+    assert_eq!(finals.len(), 1, "one satellite, one section: {finals:?}");
+    assert!(
+        (finals[0].1 - 120.0).abs() < 1e-9,
+        "the run should still end at the requested duration, got {finals:?}"
+    );
+}
+
+/// A satellite with an attitude config ends at `duration` too.
+///
+/// The spacecraft path is a separate `add_satellite_until` call from the
+/// orbit-only one, so it took its end time from a separate expression.
+/// Measured: putting `sat.period` back there left every other test passing,
+/// because the E2E cases above are orbit-only and the `SimParams` tests stop
+/// before propagation.
+#[test]
+fn duration_sets_the_end_time_for_a_spacecraft_run() {
+    let dir = std::env::temp_dir().join(format!("orts_e2e_att_dur_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let config_path = dir.join("attitude_duration.toml");
+    std::fs::write(
+        &config_path,
+        r#"
+dt = 1.0
+duration = 120.0
+output_interval = 30.0
+
+[[satellites]]
+id = "att"
+[satellites.orbit]
+type = "circular"
+altitude = 400.0
+
+[satellites.attitude]
+inertia_diag = [10.0, 10.0, 10.0]
+mass = 100.0
+initial_angular_velocity = [0.0, 0.0, 0.01]
+"#,
+    )
+    .expect("write config");
+
+    let binary = env!("CARGO_BIN_EXE_orts");
+    let output = Command::new(binary)
+        .args([
+            "run",
+            "--output",
+            "stdout",
+            "--format",
+            "csv",
+            "--config",
+            config_path.to_str().expect("utf-8 path"),
+        ])
+        .output()
+        .expect("failed to execute orts");
+    assert!(
+        output.status.success(),
+        "orts run --config failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let csv = String::from_utf8_lossy(&output.stdout).into_owned();
+
+    // The attitude columns are what make this the spacecraft path.
+    assert!(
+        csv.contains("qw") || csv.contains("quaternion"),
+        "the run should carry attitude columns, got header:\n{}",
+        csv.lines().take(6).collect::<Vec<_>>().join("\n")
+    );
+    assert!(
+        csv.contains(&format!("# Period = {PERIOD_400KM_S:.1} s")),
+        "header should report the orbital period, got:\n{}",
+        csv.lines().take(10).collect::<Vec<_>>().join("\n")
+    );
+
+    let finals = final_t_per_section(&csv);
+    assert_eq!(finals.len(), 1, "one satellite, one section: {finals:?}");
+    assert!(
+        (finals[0].1 - 120.0).abs() < 1e-9,
+        "the spacecraft run should end at the requested duration, got {finals:?}"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Without `--duration`, each satellite is propagated for one of its own
+/// orbits — which is what made the shared field look consistent.
+#[test]
+fn a_fleet_without_duration_ends_each_satellite_at_its_own_period() {
+    let csv = run_csv(&[
+        "--sat",
+        "altitude=400,id=low",
+        "--sat",
+        "altitude=800,id=high",
+    ]);
+
+    let finals = final_t_per_section(&csv);
+    assert_eq!(finals.len(), 2, "two sections expected: {finals:?}");
+    let low = finals.iter().find(|(id, _)| id == "low").expect("low");
+    let high = finals.iter().find(|(id, _)| id == "high").expect("high");
+    assert!(
+        (low.1 - PERIOD_400KM_S).abs() < 1.0,
+        "low should end at its own period, got {}",
+        low.1
+    );
+    assert!(
+        (high.1 - PERIOD_800KM_S).abs() < 1.0,
+        "high should end at its own period, got {}",
+        high.1
+    );
+}
+
+/// `--duration` is a property of the run, so it applies to the whole fleet
+/// while each satellite keeps its own period.
+#[test]
+fn duration_applies_to_every_satellite_in_a_fleet() {
+    let csv = run_csv(&[
+        "--sat",
+        "altitude=400,id=low",
+        "--sat",
+        "altitude=800,id=high",
+        "--duration",
+        "120",
+    ]);
+
+    let finals = final_t_per_section(&csv);
+    assert_eq!(finals.len(), 2, "two sections expected: {finals:?}");
+    for (id, t) in &finals {
+        assert!(
+            (t - 120.0).abs() < 1e-9,
+            "satellite '{id}' should end at the run's duration, got {t}"
+        );
+    }
+}
 /// Two satellites resolving to the same id used to run: both wrote rows under
 /// one recording entity path / CSV section, so the fleet silently became one
 /// mislabeled satellite. The second entry here has no `id`, so it defaults to

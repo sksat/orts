@@ -275,6 +275,18 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   client への error も無い状態になっていた。([#351](https://github.com/sksat/orts/pull/351))
 
 #### Fixed
+- `duration` が各衛星の軌道周期を置き換えなくなった。`duration` は run の終了時刻だが
+  両方が 1 つの field に載っていたため、`--duration 120` は CSV header・RRD の
+  `meta/sim/period`・WebSocket の `SatelliteInfo` のすべてに、5553.6 s かかる軌道の
+  周期として 120 s を載せていた。全衛星に同じ duration が入るので fleet の周期も
+  1 つの値に潰れていた。horizon が必要な箇所は `duration.unwrap_or(period)` から
+  終了時刻を取る。`duration` 未指定なら、orbit-only と spacecraft の run は従来どおり
+  各衛星の 1 周分を回り、controlled の run は従来どおり最初の衛星の周期を fleet 全体の
+  終了時刻にする。([#368](https://github.com/sksat/orts/pull/368))
+- 走っている `orts serve` に追加した衛星が、自分自身の周期で軌道を再設定するように
+  なった。`serve` は無摂動の orbit-only 衛星を周期の境界ごとに初期軌道へ戻すが、
+  新規追加した衛星の境界は fleet の**直前**のエントリから読んでいた (最初の追加では
+  5554 s のハードコード)。([#368](https://github.com/sksat/orts/pull/368))
 - `orts` が診断ログを stderr に出力するようになった。logger を初期化していな
   かったため `log::` の呼び出しは全て破棄されており、stream-io stdio plug の
   displaced、stream の socket error、`serve` 中のシミュレーション停止、

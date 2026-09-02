@@ -36,7 +36,16 @@ pub struct SatelliteSpec {
     pub name: Option<String>,
     /// Orbit specification.
     pub orbit: OrbitSpec,
-    /// Orbital period for this satellite.
+    /// Orbital period of this satellite [s], from its own orbit: `2π√(r³/μ)`
+    /// for a circular orbit, the element set's mean motion for a TLE / OMM.
+    ///
+    /// A property of the orbit, so nothing on the command line moves it —
+    /// `duration` is the run's end time and lives on
+    /// [`SimParams`](crate::sim::params::SimParams). Where an end time is what
+    /// is wanted, the two combine as `duration.unwrap_or(period)`: with no
+    /// `duration`, an orbit-only or spacecraft run covers one orbit of each
+    /// satellite. A controlled run steps the fleet on one clock and takes the
+    /// first satellite's period for all of them.
     pub period: f64,
     /// Explicit ballistic coefficient Cd*A/(2m) [m²/kg] for drag.
     pub ballistic_coeff: Option<f64>,
