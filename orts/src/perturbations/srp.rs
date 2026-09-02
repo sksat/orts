@@ -50,6 +50,10 @@ pub const DEFAULT_AREA_TO_MASS: f64 = 0.02;
 /// with its centre of pressure taken at the centre of mass. Attitude-dependent
 /// SRP, including the torque an off-centre centre of pressure produces, is
 /// [`crate::spacecraft::PanelSrp`].
+///
+/// Built through [`for_body`](Self::for_body), [`for_earth`](Self::for_earth) or
+/// [`Default`], then the `with_*` builders. The Sun-position field is private,
+/// so a struct literal does not compile outside this crate.
 pub struct SolarRadiationPressure {
     /// Radiation pressure coefficient (1.0 = absorber, 2.0 = reflector)
     pub cr: f64,
@@ -72,8 +76,7 @@ pub struct SolarRadiationPressure {
 
 /// Where the Sun is at an epoch, relative to the central body [km].
 ///
-/// `Arc<dyn Fn>` for the same reasons as
-/// [`BodyPositionFn`](crate::perturbations::third_body::BodyPositionFn): the
+/// `Arc<dyn Fn>` for the same reasons as the third-body position closure: the
 /// model must be `Send + Sync`, and a captured ephemeris table has to fit.
 pub type SunPositionFn = Arc<dyn Fn(&Epoch<Tdb>) -> Vec3<frame::Gcrs> + Send + Sync>;
 

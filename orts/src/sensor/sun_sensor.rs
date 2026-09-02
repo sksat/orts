@@ -17,6 +17,7 @@ use nalgebra::Vector3;
 use super::noise::NoiseModel;
 use crate::SpacecraftState;
 use crate::model::HasAttitude;
+use crate::perturbations::SunPositionFn;
 use crate::plugin::tick_input::{SunDirectionBody, SunSensorOutput};
 
 /// Sun sensor that measures the sun direction in the body frame.
@@ -46,9 +47,6 @@ pub struct SunSensor {
     /// is only correct for Earth-centred propagation.
     sun_position_fn: SunPositionFn,
 }
-
-/// Where the Sun is at an epoch, relative to the central body [km].
-pub type SunPositionFn = Arc<dyn Fn(&Epoch<Tdb>) -> Vec3<frame::Gcrs> + Send + Sync>;
 
 impl SunSensor {
     /// Create an ideal sun sensor (no noise, no eclipse) for Earth orbit.
