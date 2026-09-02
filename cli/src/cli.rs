@@ -322,7 +322,7 @@ pub enum PluginBackendChoice {
     Auto,
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, ValueEnum)]
 pub enum IntegratorChoice {
     /// Fixed-step 4th-order Runge-Kutta
     Rk4,
@@ -332,7 +332,7 @@ pub enum IntegratorChoice {
     Dop853,
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, ValueEnum)]
 pub enum AtmosphereChoice {
     /// Piecewise exponential (US Standard Atmosphere 1976)
     Exponential,

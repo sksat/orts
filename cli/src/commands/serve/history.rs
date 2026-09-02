@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::collections::VecDeque;
-use std::path::PathBuf;
+use std::io::{BufRead, Write};
+use std::path::{Path, PathBuf};
 
-use orts::record::archetypes::OrbitalState;
 use orts::record::entity_path::EntityPath;
-use orts::record::recording::Recording;
-use orts::record::timeline::TimePoint;
+use serde::de::{self, Deserializer};
+use serde::{Deserialize, Serialize, Serializer};
 
 use crate::sim::core::{AttitudePayload, AttitudeSource, HistoryState, make_history_state};
 
@@ -79,16 +79,25 @@ impl EntityOverview {
     }
 }
 
-/// Bounded buffer that accumulates history states and periodically flushes to .rrd segments.
+/// Bounded buffer that accumulates history states and periodically flushes the
+/// oldest half to a segment file on disk.
 pub struct HistoryBuffer {
     /// Recent states kept in memory.
     pub states: VecDeque<HistoryState>,
     /// Maximum number of states to keep in memory before flushing.
     pub capacity: usize,
-    /// Directory for .rrd segment files.
+    /// Directory for flushed segment files.
     pub data_dir: PathBuf,
     /// Number of segment files written so far.
     pub segment_count: u32,
+    /// In-memory length above which the next `push` attempts a flush.
+    ///
+    /// Normally `capacity`. After a failed flush it is raised so the retry
+    /// happens once the buffer has grown by another `capacity` states
+    /// rather than on every push.
+    flush_at: usize,
+    /// Consecutive failed flush attempts (reset by the next success).
+    failed_flushes: u32,
     /// Gravitational parameter (for computing Keplerian elements from loaded data).
     pub mu: f64,
     /// Central body radius [km] (for computing derived values from loaded data).
@@ -99,7 +108,7 @@ pub struct HistoryBuffer {
     // Maintained in O(1) amortized per `push()` call, read in
     // O(num_entities * OVERVIEW_MAX_POINTS_PER_ENTITY) with no disk I/O.
     // This lets re-connects to long-running simulations return the history
-    // overview instantly, without re-reading every .rrd segment from disk
+    // overview instantly, without re-reading every flushed segment from disk
     // on the manager task. Per-entity bookkeeping ensures every satellite
     // gets fair coverage regardless of push order or count.
     overview_per_entity: HashMap<EntityPath, EntityOverview>,
@@ -113,13 +122,15 @@ impl HistoryBuffer {
             capacity,
             data_dir,
             segment_count: 0,
+            flush_at: capacity,
+            failed_flushes: 0,
             mu,
             body_radius,
             overview_per_entity: HashMap::new(),
         }
     }
 
-    /// Push a state into the buffer. Flushes to .rrd if capacity is exceeded,
+    /// Push a state into the buffer. Flushes to disk if capacity is exceeded,
     /// and incrementally updates the per-entity overview buffers.
     ///
     /// Clone cost: non-sampling pushes perform one `state.clone()` into
@@ -152,9 +163,15 @@ impl HistoryBuffer {
         }
 
         self.states.push_back(state);
-        if self.states.len() > self.capacity {
+        if self.states.len() >= self.flush_at {
             self.flush();
         }
+        // The cap is a promise about memory, so it holds on every push. The
+        // retry cadence above only decides when the next write is attempted:
+        // measured before this call was here, a failing flush at capacity 4
+        // reached 35 states against a cap of 32, because the backoff moved the
+        // next attempt three pushes past it.
+        self.enforce_memory_cap();
     }
 
     /// Return a snapshot of the overview: the union of every entity's
@@ -174,90 +191,159 @@ impl HistoryBuffer {
         all
     }
 
-    /// Flush the oldest half of the buffer to a .rrd segment file.
+    /// Flush the oldest half of the buffer to a segment file.
+    ///
+    /// The states are written from a borrow and drained only after the write
+    /// succeeded, so the in-memory buffer stays the single source of truth
+    /// for everything not yet on disk: a failed flush degrades to "memory
+    /// holds more than `capacity`" rather than to lost history.
+    ///
+    /// One flush costs no history. Repeated failures eventually do:
+    /// `enforce_memory_cap` discards the oldest states once the buffer
+    /// reaches `capacity * MAX_RETAINED_BUFFERS`, which is what bounds
+    /// memory in a long-running `serve`.
     pub fn flush(&mut self) {
         let flush_count = self.states.len() / 2;
         if flush_count == 0 {
             return;
         }
 
-        let to_flush: Vec<HistoryState> = self.states.drain(..flush_count).collect();
-
-        let mut rec = Recording::new();
-
-        for (i, hs) in to_flush.iter().enumerate() {
-            let sat_path = hs.entity_path.clone();
-            let tp = TimePoint::new().with_sim_time(hs.t).with_step(i as u64);
-            let os = OrbitalState::new(
-                nalgebra::Vector3::new(hs.position[0], hs.position[1], hs.position[2]),
-                nalgebra::Vector3::new(hs.velocity[0], hs.velocity[1], hs.velocity[2]),
-            );
-            let (q, w) = if let Some(att) = &hs.attitude {
-                (
-                    Some(orts::record::components::Quaternion4D(
-                        nalgebra::Vector4::from_row_slice(&att.quaternion_wxyz),
-                    )),
-                    Some(orts::record::components::AngularVelocity3D(
-                        nalgebra::Vector3::from_row_slice(&att.angular_velocity_body),
-                    )),
-                )
-            } else {
-                (None, None)
-            };
-            rec.log_orbital_state_with_attitude(&sat_path, &tp, &os, q.as_ref(), w.as_ref());
+        let seg_path = self.segment_path(self.segment_count);
+        match Self::write_segment(&seg_path, self.states.iter().take(flush_count)) {
+            Ok(()) => {
+                self.states.drain(..flush_count);
+                self.segment_count += 1;
+                self.flush_at = self.capacity;
+                self.failed_flushes = 0;
+            }
+            Err(e) => {
+                // Drop a half-written file: the next attempt writes this
+                // same index, and leaving a truncated segment behind only
+                // invites reading it.
+                let _ = std::fs::remove_file(&seg_path);
+                self.failed_flushes += 1;
+                eprintln!(
+                    "Warning: failed to flush history to {}: {e} \
+                     ({} states kept in memory)",
+                    seg_path.display(),
+                    self.states.len()
+                );
+                self.enforce_memory_cap();
+                // Retry once the buffer has grown by another `capacity`
+                // states, so a permanently unwritable segment directory costs
+                // one failed write per `capacity` pushes instead of one per
+                // push.
+                //
+                // Kept at or below the memory cap, because the cap is what
+                // bounds the length: a threshold above it is never reached
+                // again, and a directory that becomes writable later would
+                // never be tried. Measured with an unclamped threshold: after
+                // 100 failing pushes at capacity 4 the threshold sat at 36
+                // against a cap of 32, and 100 further pushes to a writable
+                // directory wrote no segment.
+                //
+                // `saturating_add`: the capacity comes from the caller, and a
+                // wrapped sum would put the retry threshold below the current
+                // length, flushing on every push — the opposite of the backoff.
+                self.flush_at = self
+                    .states
+                    .len()
+                    .saturating_add(self.capacity)
+                    .min(self.memory_cap());
+            }
         }
-
-        let seg_path = self
-            .data_dir
-            .join(format!("seg_{:04}.rrd", self.segment_count));
-        if let Err(e) =
-            orts::record::rerun_export::save_as_rrd(&rec, "orts", seg_path.to_str().unwrap())
-        {
-            eprintln!("Warning: failed to flush segment: {e}");
-            return;
-        }
-
-        self.segment_count += 1;
     }
 
-    /// Load all data: .rrd segments + in-memory buffer, sorted by time.
+    /// Drop the oldest states once a failing flush has grown the buffer past
+    /// `capacity * MAX_RETAINED_BUFFERS`.
+    ///
+    /// Retaining unflushed history is the right trade against a transient
+    /// write failure, but `serve` is a long-running process and a
+    /// permanently unwritable segment directory would otherwise grow the
+    /// buffer without bound. Past the cap bounded memory wins — loudly, and
+    /// the per-entity overview still covers the discarded span.
+    ///
+    /// Called from `push`, so the cap holds between write attempts too. A
+    /// failed write moves the next attempt `capacity` pushes out, and those
+    /// pushes would otherwise sit above the cap.
+    /// The most states the buffer holds while its writes keep failing.
+    fn memory_cap(&self) -> usize {
+        self.capacity.saturating_mul(MAX_RETAINED_BUFFERS)
+    }
+
+    fn enforce_memory_cap(&mut self) {
+        let cap = self.memory_cap();
+        // At the cap, not only past it. A failed write leaves the length there
+        // and the retry threshold there, so waiting for one more push would
+        // spend a second failed write on the same cycle — measured, attempts
+        // landed on pushes 31 and 32, then 36 and 37, against a documented one
+        // per `capacity` pushes.
+        if self.states.len() < cap {
+            return;
+        }
+        let keep = cap.saturating_sub(self.capacity);
+        let drop_count = self.states.len() - keep;
+        let until_t = self.states.get(drop_count).map(|s| s.t);
+        eprintln!(
+            "Warning: history flush has failed {} times; discarding the {drop_count} oldest \
+             states to keep memory bounded (full-fidelity history before t = {} is gone)",
+            self.failed_flushes,
+            until_t.map_or("end of run".to_string(), |t| format!("{t}"))
+        );
+        self.states.drain(..drop_count);
+    }
+
+    fn segment_path(&self, index: u32) -> PathBuf {
+        self.data_dir.join(format!("seg_{index:04}.jsonl"))
+    }
+
+    /// Write `states` as one JSON record per line.
+    fn write_segment<'a>(
+        path: &Path,
+        states: impl Iterator<Item = &'a HistoryState>,
+    ) -> std::io::Result<()> {
+        let mut w = std::io::BufWriter::new(std::fs::File::create(path)?);
+        for hs in states {
+            serde_json::to_writer(&mut w, &SegmentRecord::from_state(hs))
+                .map_err(std::io::Error::other)?;
+            w.write_all(b"\n")?;
+        }
+        w.flush()
+    }
+
+    /// Read back a segment written by [`Self::write_segment`].
+    ///
+    /// A malformed line is reported and skipped rather than failing the whole
+    /// segment: one bad record must not cost the rest of the window.
+    fn read_segment(&self, path: &Path) -> std::io::Result<Vec<HistoryState>> {
+        let reader = std::io::BufReader::new(std::fs::File::open(path)?);
+        let mut states = Vec::new();
+        for (i, line) in reader.lines().enumerate() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            match serde_json::from_str::<SegmentRecord>(&line) {
+                Ok(rec) => states.push(rec.into_state(self.mu, self.body_radius)),
+                Err(e) => eprintln!(
+                    "Warning: skipping malformed history record {}:{}: {e}",
+                    path.display(),
+                    i + 1
+                ),
+            }
+        }
+        Ok(states)
+    }
+
+    /// Load all data: flushed segments + in-memory buffer, sorted by time.
     pub fn load_all(&self) -> Vec<HistoryState> {
         let mut all = Vec::new();
 
-        // Read .rrd segment files in order
         for i in 0..self.segment_count {
-            let seg_path = self.data_dir.join(format!("seg_{i:04}.rrd"));
-            match orts::record::rerun_export::load_from_rrd(seg_path.to_str().unwrap()) {
-                Ok(rows) => {
-                    for row in rows {
-                        let pos = nalgebra::Vector3::new(row.x, row.y, row.z);
-                        let vel = nalgebra::Vector3::new(row.vx, row.vy, row.vz);
-                        let entity_path = row
-                            .entity_path
-                            .as_deref()
-                            .map(EntityPath::parse)
-                            .unwrap_or_else(|| EntityPath::parse("/world/sat/default"));
-                        let attitude = row.quaternion.map(|q| AttitudePayload {
-                            quaternion_wxyz: q,
-                            angular_velocity_body: row.angular_velocity.unwrap_or([0.0; 3]),
-                            source: AttitudeSource::Propagated,
-                            rw_momentum: None,
-                        });
-                        all.push(make_history_state(
-                            entity_path,
-                            row.t,
-                            &pos,
-                            &vel,
-                            self.mu,
-                            self.body_radius,
-                            HashMap::new(),
-                            attitude,
-                        ));
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Warning: failed to read segment {i}: {e}");
-                }
+            let seg_path = self.segment_path(i);
+            match self.read_segment(&seg_path) {
+                Ok(states) => all.extend(states),
+                Err(e) => eprintln!("Warning: failed to read segment {i}: {e}"),
             }
         }
 
@@ -276,7 +362,7 @@ impl HistoryBuffer {
     /// - **Fast path (no disk I/O)**: if `t_min` is newer than the oldest
     ///   point currently in the in-memory tail (`self.states`), every state
     ///   in the requested window must already be in memory. Filter the
-    ///   tail and skip reading any `.rrd` segments.
+    ///   tail and skip reading any flushed segments.
     /// - **Slow path (full load)**: otherwise, the window reaches into
     ///   flushed segments on disk; fall back to `load_all()` + filter.
     ///
@@ -321,6 +407,126 @@ impl HistoryBuffer {
     /// Downsample a list of states to at most `max_points`, always preserving first and last.
     pub fn downsample(states: &[HistoryState], max_points: usize) -> Vec<HistoryState> {
         crate::sim::core::downsample_states(states, max_points)
+    }
+}
+
+/// How many `capacity`-sized buffers may accumulate in memory while flushes
+/// keep failing, before history is discarded to bound memory.
+const MAX_RETAINED_BUFFERS: usize = 8;
+
+/// One line of a flushed history segment.
+///
+/// The segment format is a private implementation detail of `serve` — it
+/// lives in a per-pid temp directory and nothing outside this module reads
+/// it — so it
+/// stores the payload verbatim instead of going through `.rrd`: `RrdRow` has
+/// no room for the per-force acceleration breakdown (a map with
+/// model-defined keys) or for reaction-wheel momentum (one entry per wheel),
+/// and dropping them made the viewer draw flushed windows with a gravity
+/// acceleration of 0.
+///
+/// Only the independent state is stored; the derived columns (Keplerian
+/// elements, altitude, energy, …) are rebuilt on load by
+/// [`make_history_state`] — the same function that produced them for the
+/// in-memory copy — so a state read back from disk is field-for-field
+/// identical to the one that was pushed.
+#[derive(Serialize, Deserialize)]
+struct SegmentRecord {
+    entity_path: EntityPath,
+    t: F64,
+    position: [F64; 3],
+    velocity: [F64; 3],
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    accelerations: HashMap<String, F64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    attitude: Option<SegmentAttitude>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SegmentAttitude {
+    quaternion_wxyz: [F64; 4],
+    angular_velocity_body: [F64; 3],
+    source: AttitudeSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rw_momentum: Option<Vec<F64>>,
+}
+
+impl SegmentRecord {
+    fn from_state(hs: &HistoryState) -> Self {
+        SegmentRecord {
+            entity_path: hs.entity_path.clone(),
+            t: F64(hs.t),
+            position: hs.position.map(F64),
+            velocity: hs.velocity.map(F64),
+            accelerations: hs
+                .accelerations
+                .iter()
+                .map(|(k, v)| (k.clone(), F64(*v)))
+                .collect(),
+            attitude: hs.attitude.as_ref().map(|att| SegmentAttitude {
+                quaternion_wxyz: att.quaternion_wxyz.map(F64),
+                angular_velocity_body: att.angular_velocity_body.map(F64),
+                source: att.source.clone(),
+                rw_momentum: att
+                    .rw_momentum
+                    .as_ref()
+                    .map(|h| h.iter().copied().map(F64).collect()),
+            }),
+        }
+    }
+
+    fn into_state(self, mu: f64, body_radius: f64) -> HistoryState {
+        let position = self.position.map(|f| f.0);
+        let velocity = self.velocity.map(|f| f.0);
+        make_history_state(
+            self.entity_path,
+            self.t.0,
+            &nalgebra::Vector3::from_row_slice(&position),
+            &nalgebra::Vector3::from_row_slice(&velocity),
+            mu,
+            body_radius,
+            self.accelerations
+                .into_iter()
+                .map(|(k, v)| (k, v.0))
+                .collect(),
+            self.attitude.map(|att| AttitudePayload {
+                quaternion_wxyz: att.quaternion_wxyz.map(|f| f.0),
+                angular_velocity_body: att.angular_velocity_body.map(|f| f.0),
+                source: att.source,
+                rw_momentum: att
+                    .rw_momentum
+                    .map(|h| h.into_iter().map(|f| f.0).collect()),
+            }),
+        )
+    }
+}
+
+/// A float that survives a JSON round-trip exactly.
+///
+/// Two hazards make plain JSON numbers unsafe for a lossless flush.
+/// `serde_json` writes NaN and ±∞ as `null`, which then fails to read back —
+/// a diverging run would lose exactly the rows an operator wants to look at.
+/// And its default number parser does not guarantee that the `f64` read back
+/// is the one that was written (that needs the `float_roundtrip` feature):
+/// `0.03 + 2e-5` comes back one ulp away. Both disappear when the value
+/// travels as text: Rust's `f64` `Display`/`FromStr` pair round-trips every
+/// finite value bit for bit, and carries `NaN` and `±inf` across as
+/// themselves. (A `NaN`'s sign and payload are not preserved — `Display`
+/// folds every `NaN` to `"NaN"` — which is what a flushed history needs:
+/// "this row diverged", not which bit pattern the FPU produced.)
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct F64(f64);
+
+impl Serialize for F64 {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for F64 {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = <&str>::deserialize(deserializer)?;
+        text.parse().map(F64).map_err(de::Error::custom)
     }
 }
 
@@ -932,7 +1138,7 @@ mod tests {
         }
 
         assert_eq!(buf.segment_count, 1);
-        assert!(dir.join("seg_0000.rrd").exists());
+        assert!(dir.join("seg_0000.jsonl").exists());
         assert_eq!(buf.states.len(), 3);
 
         cleanup_dir(&dir);
@@ -1471,5 +1677,408 @@ mod tests {
         }
 
         cleanup_dir(&dir);
+    }
+
+    /// A state carrying every optional payload field: the per-force
+    /// acceleration breakdown and reaction-wheel momentum are the parts the
+    /// old `.rrd` segments silently dropped.
+    fn make_state_full(t: f64) -> HistoryState {
+        let pos = nalgebra::Vector3::new(6778.0 + t, t * 0.1, 0.0);
+        let vel = nalgebra::Vector3::new(0.0, 7.669, 0.0);
+        let mut accels = HashMap::new();
+        accels.insert("gravity".to_string(), 8.68e-3 + t * 1e-9);
+        accels.insert("drag".to_string(), -1.234e-9);
+        accels.insert("j2".to_string(), 1.1e-5);
+        make_history_state(
+            EntityPath::parse("/world/sat/full"),
+            t,
+            &pos,
+            &vel,
+            TEST_MU,
+            TEST_BODY_RADIUS,
+            accels,
+            Some(AttitudePayload {
+                quaternion_wxyz: [0.5, 0.5, 0.5, 0.5],
+                angular_velocity_body: [0.01, -0.02, 0.03 + t * 1e-6],
+                source: AttitudeSource::Propagated,
+                // Four wheels: a variable-length payload the fixed 3-vector
+                // rrd components could not express either.
+                rw_momentum: Some(vec![0.1, -0.2, 0.3, 4.0e-3]),
+            }),
+        )
+    }
+
+    /// A `data_dir` that can never hold a segment: the path is an existing
+    /// *file*, so both `create_dir_all` and `File::create` under it fail.
+    fn unwritable_data_dir(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("orts-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::write(&path, b"not a directory").expect("failed to create blocking file");
+        path
+    }
+
+    /// A failed flush must not cost history: the buffer is the only source of
+    /// truth for states that are not on disk, so it keeps them.
+    #[test]
+    fn flush_failure_keeps_states_in_memory() {
+        let dir = unwritable_data_dir("flush-fail-retain");
+        let mut buf = HistoryBuffer::new(4, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+
+        for i in 0..5 {
+            buf.push(make_state(i as f64 * 10.0));
+        }
+
+        assert_eq!(buf.segment_count, 0, "no segment can have been written");
+        let all = buf.load_all();
+        assert_eq!(all.len(), 5, "every pushed state must still be readable");
+        let times: Vec<f64> = all.iter().map(|s| s.t).collect();
+        assert_eq!(times, vec![0.0, 10.0, 20.0, 30.0, 40.0]);
+
+        let _ = std::fs::remove_file(&dir);
+    }
+
+    /// A permanently failing flush must not grow memory without bound: past
+    /// `capacity * MAX_RETAINED_BUFFERS` the oldest states are discarded (with
+    /// a warning) rather than retained forever.
+    #[test]
+    fn flush_failure_bounds_memory() {
+        let dir = unwritable_data_dir("flush-fail-bounded");
+        let capacity = 4;
+        let mut buf = HistoryBuffer::new(capacity, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+
+        for i in 0..500 {
+            buf.push(make_state(i as f64));
+        }
+
+        let cap = capacity * MAX_RETAINED_BUFFERS;
+        assert_eq!(buf.segment_count, 0);
+        assert!(
+            buf.states.len() <= cap,
+            "in-memory buffer grew to {} states, cap is {cap}",
+            buf.states.len()
+        );
+        // The newest states are the ones that survive.
+        assert!((buf.states.back().unwrap().t - 499.0).abs() < 1e-9);
+        // The overview still covers the discarded span, so a reconnecting
+        // client sees the whole run at reduced fidelity.
+        let overview = buf.overview();
+        assert!(overview.first().unwrap().t < 100.0);
+
+        let _ = std::fs::remove_file(&dir);
+    }
+
+    /// Full round-trip through a segment file: accelerations and RW momentum come
+    /// back too. Losing them made the viewer chart a gravity acceleration of
+    /// 0 for every flushed window.
+    #[test]
+    fn flush_round_trip_preserves_full_payload() {
+        let dir = temp_data_dir("flush-full-payload");
+        let mut buf = HistoryBuffer::new(4, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+
+        let pushed: Vec<HistoryState> = (0..10).map(|i| make_state_full(i as f64 * 10.0)).collect();
+        for hs in &pushed {
+            buf.push(hs.clone());
+        }
+        assert!(buf.segment_count > 0, "precondition: must have flushed");
+
+        let all = buf.load_all();
+        assert_eq!(all.len(), pushed.len());
+        for (expected, actual) in pushed.iter().zip(all.iter()) {
+            assert_eq!(
+                serde_json::to_value(expected).unwrap(),
+                serde_json::to_value(actual).unwrap(),
+                "state at t = {} changed across the segment file",
+                expected.t
+            );
+        }
+
+        cleanup_dir(&dir);
+    }
+
+    /// Two-path consistency: the same states read through the in-memory tail
+    /// and through a segment file must produce identical payloads.
+    #[test]
+    fn in_memory_and_on_disk_paths_agree() {
+        let mem_dir = temp_data_dir("two-path-mem");
+        let disk_dir = temp_data_dir("two-path-disk");
+        // Same states, one buffer large enough to never flush and one that
+        // flushes almost everything.
+        let mut in_memory = HistoryBuffer::new(1000, mem_dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+        let mut on_disk = HistoryBuffer::new(4, disk_dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+
+        for i in 0..40 {
+            let hs = make_state_full(i as f64 * 5.0);
+            in_memory.push(hs.clone());
+            on_disk.push(hs);
+        }
+
+        assert_eq!(in_memory.segment_count, 0, "must stay in memory");
+        assert!(on_disk.segment_count > 0, "must have flushed");
+
+        let from_memory = in_memory.query_range(0.0, 200.0, None, None);
+        let from_disk = on_disk.query_range(0.0, 200.0, None, None);
+        assert_eq!(from_memory.len(), 40);
+        assert_eq!(from_disk.len(), 40);
+        for (mem, disk) in from_memory.iter().zip(from_disk.iter()) {
+            assert_eq!(
+                serde_json::to_value(mem).unwrap(),
+                serde_json::to_value(disk).unwrap(),
+                "payload at t = {} differs between the in-memory and on-disk paths",
+                mem.t
+            );
+        }
+
+        cleanup_dir(&mem_dir);
+        cleanup_dir(&disk_dir);
+    }
+
+    /// A diverged run is exactly what an operator wants to read back, so
+    /// non-finite values must survive a segment file instead of taking their row
+    /// down with them.
+    #[test]
+    fn flush_round_trip_preserves_non_finite_values() {
+        let dir = temp_data_dir("flush-non-finite");
+        let mut buf = HistoryBuffer::new(4, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+
+        for i in 0..5 {
+            let t = i as f64 * 10.0;
+            let pos = nalgebra::Vector3::new(6778.0, f64::INFINITY, 0.0);
+            let vel = nalgebra::Vector3::new(f64::NAN, 7.669, f64::NEG_INFINITY);
+            let mut accels = HashMap::new();
+            accels.insert("gravity".to_string(), f64::NAN);
+            accels.insert("drag".to_string(), f64::NEG_INFINITY);
+            buf.push(make_history_state(
+                EntityPath::parse("/world/sat/diverged"),
+                t,
+                &pos,
+                &vel,
+                TEST_MU,
+                TEST_BODY_RADIUS,
+                accels,
+                Some(AttitudePayload {
+                    quaternion_wxyz: [f64::NAN, 0.0, 0.0, 0.0],
+                    angular_velocity_body: [f64::INFINITY, 0.0, 0.0],
+                    source: AttitudeSource::Propagated,
+                    rw_momentum: Some(vec![f64::NAN, 1.0]),
+                }),
+            ));
+        }
+        assert!(buf.segment_count > 0, "precondition: must have flushed");
+
+        let all = buf.load_all();
+        assert_eq!(all.len(), 5, "non-finite rows must not be dropped");
+        for hs in &all {
+            assert_eq!(hs.position[1].to_bits(), f64::INFINITY.to_bits());
+            assert!(hs.velocity[0].is_nan());
+            assert_eq!(hs.velocity[2].to_bits(), f64::NEG_INFINITY.to_bits());
+            assert!(hs.accelerations["gravity"].is_nan());
+            assert_eq!(
+                hs.accelerations["drag"].to_bits(),
+                f64::NEG_INFINITY.to_bits()
+            );
+            let att = hs.attitude.as_ref().expect("attitude must survive");
+            assert!(att.quaternion_wxyz[0].is_nan());
+            assert_eq!(
+                att.angular_velocity_body[0].to_bits(),
+                f64::INFINITY.to_bits()
+            );
+            let rw = att.rw_momentum.as_ref().expect("rw momentum must survive");
+            assert!(rw[0].is_nan());
+            assert_eq!(rw[1], 1.0);
+        }
+
+        cleanup_dir(&dir);
+    }
+
+    /// Every value that a flushed float must survive as: finite values bit
+    /// for bit, non-finite values as themselves. (`NaN` payload and sign are
+    /// deliberately outside the contract, see [`F64`].)
+    #[test]
+    fn f64_json_round_trip() {
+        // Bit-for-bit, including the sign of zero and the infinities.
+        for value in [
+            0.0,
+            -0.0,
+            1.0,
+            -7.669,
+            f64::MIN_POSITIVE,
+            f64::MAX,
+            f64::MIN,
+            1e-300,
+            0.03 + 20.0 * 1e-6,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ] {
+            let json = serde_json::to_string(&F64(value)).unwrap();
+            let back: F64 = serde_json::from_str(&json).unwrap();
+            assert_eq!(
+                back.0.to_bits(),
+                value.to_bits(),
+                "{value} did not round-trip through {json}"
+            );
+        }
+        // NaN comes back as a NaN. Asserting the bit pattern would claim more
+        // than the format carries: `Display` writes every NaN as "NaN", so
+        // the sign and payload do not survive (and are not wanted — what a
+        // reader needs is "this row diverged").
+        for value in [f64::NAN, -f64::NAN] {
+            let json = serde_json::to_string(&F64(value)).unwrap();
+            let back: F64 = serde_json::from_str(&json).unwrap();
+            assert!(back.0.is_nan(), "NaN did not survive as {json}");
+        }
+    }
+
+    /// The buffer flushes once it holds `capacity` states, not one more.
+    ///
+    /// `capacity` is documented as the most it keeps in memory before
+    /// flushing, and the retry after a failed flush as happening once the
+    /// buffer has grown by another `capacity`. Both were reached one push
+    /// late: measured with `capacity = 4`, the first flush came on push 5.
+    #[test]
+    fn the_buffer_flushes_at_capacity() {
+        let dir = std::env::temp_dir().join(format!(
+            "hist_cap_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let mut buf = HistoryBuffer::new(4, dir.clone(), 398600.4418, 6378.137);
+
+        for i in 0..3 {
+            buf.push(make_state(i as f64));
+        }
+        assert_eq!(buf.segment_count, 0, "three of four states is not full");
+
+        buf.push(make_state(3.0));
+        assert_eq!(buf.segment_count, 1, "the fourth state fills it");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The memory cap holds on every push, not only when a write is attempted.
+    ///
+    /// A failed write moves the next attempt `capacity` pushes out. Measured
+    /// with the cap enforced only there: capacity 4 reached 35 states against a
+    /// cap of 32, and 63 of 200 pushes sat above it.
+    #[test]
+    fn a_failing_flush_never_leaves_the_buffer_over_the_cap() {
+        let dir = temp_data_dir("cap-every-push");
+        cleanup_dir(&dir);
+        // A regular file where the directory should be: every write fails.
+        std::fs::write(&dir, b"not a directory").expect("place the blocker");
+
+        let capacity = 4usize;
+        let cap = capacity * MAX_RETAINED_BUFFERS;
+        let mut buf = HistoryBuffer::new(capacity, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+        let mut high = 0usize;
+        for i in 0..200 {
+            buf.push(make_state(i as f64));
+            high = high.max(buf.states.len());
+            assert!(
+                buf.states.len() <= cap,
+                "push {i} left {} states, over the cap of {cap}",
+                buf.states.len()
+            );
+        }
+        assert!(
+            high > cap - capacity,
+            "the run has to reach the cap for this to test anything: high water {high}"
+        );
+        assert_eq!(buf.segment_count, 0, "every write failed");
+
+        std::fs::remove_file(&dir).ok();
+    }
+
+    /// A directory that becomes writable again is written to again.
+    ///
+    /// The retry threshold is `len + capacity`, and the memory cap holds the
+    /// length at or below `capacity * MAX_RETAINED_BUFFERS`. A threshold above
+    /// the cap is therefore never reached: measured without the clamp, after
+    /// 100 failing pushes at capacity 4 the threshold sat at 36 against a cap
+    /// of 32, and 100 further pushes to a writable directory wrote nothing.
+    #[test]
+    fn a_writable_directory_is_used_again_after_the_cap_is_reached() {
+        let dir = temp_data_dir("recover-after-cap");
+        cleanup_dir(&dir);
+        // A regular file where the directory should be: every write fails.
+        std::fs::write(&dir, b"not a directory").expect("place the blocker");
+
+        let capacity = 4usize;
+        let mut buf = HistoryBuffer::new(capacity, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+        for i in 0..100 {
+            buf.push(make_state(i as f64));
+        }
+        assert_eq!(buf.segment_count, 0, "every write failed");
+        assert!(
+            buf.failed_flushes > 1,
+            "the run has to keep retrying for this to test anything: {} attempts",
+            buf.failed_flushes
+        );
+        assert!(
+            buf.flush_at <= capacity * MAX_RETAINED_BUFFERS,
+            "the threshold has to stay reachable: {} against a cap of {}",
+            buf.flush_at,
+            capacity * MAX_RETAINED_BUFFERS
+        );
+
+        std::fs::remove_file(&dir).expect("remove the blocker");
+        std::fs::create_dir_all(&dir).expect("make the directory");
+        for i in 100..200 {
+            buf.push(make_state(i as f64));
+        }
+        assert!(
+            buf.segment_count > 0,
+            "writes resume once the directory takes them"
+        );
+        assert!(
+            buf.states.len() <= capacity,
+            "and the buffer drains back to the normal band: {}",
+            buf.states.len()
+        );
+
+        cleanup_dir(&dir);
+    }
+
+    /// A failing flush costs one write per `capacity` pushes, not two.
+    ///
+    /// The doc promises that cadence, and it is what keeps a permanently
+    /// unwritable directory cheap. Measured while the cap only trimmed *past*
+    /// itself: attempts landed on pushes 31 and 32, then 36 and 37 — a length
+    /// sitting exactly at the cap with the threshold there too spent a second
+    /// write on the same cycle.
+    #[test]
+    fn a_failing_flush_attempts_one_write_per_capacity_pushes() {
+        let dir = temp_data_dir("cadence");
+        cleanup_dir(&dir);
+        // A regular file where the directory should be: every write fails.
+        std::fs::write(&dir, b"not a directory").expect("place the blocker");
+
+        let capacity = 4usize;
+        let cap = capacity * MAX_RETAINED_BUFFERS;
+        let mut buf = HistoryBuffer::new(capacity, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+        let mut attempts_at = Vec::new();
+        let mut seen = 0u32;
+        for i in 0..80 {
+            buf.push(make_state(i as f64));
+            if buf.failed_flushes != seen {
+                attempts_at.push(i);
+                seen = buf.failed_flushes;
+            }
+        }
+
+        // Past the cap the buffer is in its steady state, so the gaps are the
+        // cadence. Before it the buffer is still growing into the cap.
+        let steady: Vec<usize> = attempts_at.into_iter().filter(|i| *i > cap).collect();
+        assert!(
+            steady.len() > 5,
+            "enough cycles to read a cadence: {steady:?}"
+        );
+        let gaps: Vec<usize> = steady.windows(2).map(|w| w[1] - w[0]).collect();
+        assert!(
+            gaps.iter().all(|g| *g == capacity),
+            "one attempt per {capacity} pushes: gaps {gaps:?} at {steady:?}"
+        );
+
+        std::fs::remove_file(&dir).ok();
     }
 }
