@@ -3,9 +3,12 @@
  *
  * The brand is specified in assets/README.md as ink #0E0E10, paper #F5F1E8,
  * blue oklch(0.58 0.12 240) and amber oklch(0.72 0.12 70). Those two accents
- * are what the logo is drawn in, so everything derived from them below moves
- * only L, keeping C and H at the brand values — that is what makes the site's
- * blue and the mark's blue the same blue.
+ * are what the logo is drawn in, so `--sl-color-accent` and `--sl-color-orange`
+ * hold the brand values verbatim wherever contrast allows, and move only L
+ * where it does not — the site's blue and the mark's blue are the same blue.
+ * The `-low` and `-high` steps are a different job: they are backgrounds and
+ * fills that have to sit far from the accent to stay legible against it, so
+ * they take the brand hue and whatever chroma that lightness supports.
  *
  * Layer order: starlight-theme-next declares `@layer starlight, nextjs;`, so
  * restating those names and appending `orts` puts these rules after both. No
@@ -41,11 +44,12 @@
     --sl-color-gray-7: oklch(0.178 0.012 250); /* #0d1216   1.02:1 */
     --sl-color-black: #0e0e10; /* brand ink */
 
-    /* Brand blue at L 0.62 rather than the brand's own 0.58, which reaches
-       only 3.74:1 on ink. The theme's stock accent is chroma 0.208 — nearly
-       twice the brand's — and lands at 3.36:1, under AA for link text. */
+    /* The brand blue itself, unmodified — on ink it clears AA with nothing to
+       spare (4.5:1 required). What it replaces is worth recording: the theme's
+       stock accent is chroma 0.208, nearly twice the brand's, and lands at
+       3.36:1 — under AA for link text. */
     --sl-color-accent-low: oklch(0.28 0.06 240); /* #042c43 */
-    --sl-color-accent: oklch(0.62 0.12 240); /* #338fc7   5.38:1 */
+    --sl-color-accent: oklch(0.58 0.12 240); /* #2382ba   4.57:1 */
     --sl-color-accent-high: oklch(0.8 0.1 240); /* #80c7f8  10.47:1 */
 
     /* Brand amber, unmodified: it already clears AA on ink. Retunes the
@@ -82,8 +86,9 @@
     --sl-color-gray-7: oklch(0.973 0.002 86.8); /* #f7f6f5   1.04:1 */
     --sl-color-black: #f5f1e8; /* brand paper */
 
-    /* L 0.53 is the darkest the brand chroma survives here: 0.50 and below
-       fall outside sRGB at C 0.12. */
+    /* The one place the brand blue has to move: on paper its own L 0.58 is
+       3.74:1, so it has to go darker, and L 0.53 is as far as it can — 0.50
+       and below fall outside sRGB at C 0.12. */
     --sl-color-accent-low: oklch(0.9 0.05 240); /* #c1e3fc */
     --sl-color-accent: oklch(0.53 0.12 240); /* #0573aa   4.61:1 */
     --sl-color-accent-high: oklch(0.4 0.09 240); /* #034d73   8.08:1 */
