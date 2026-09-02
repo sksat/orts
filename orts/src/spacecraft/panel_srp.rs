@@ -96,6 +96,7 @@ impl PanelSrp {
     /// Panics unless every panel normal is unit length.
     pub fn for_earth(shape: SpacecraftShape) -> Self {
         shape.assert_normals_are_unit();
+        shape.assert_outlines_are_consistent();
         Self {
             shape,
             shadow_body_radius: Some(R_EARTH),
@@ -162,6 +163,7 @@ impl PanelSrp {
     /// Panics unless every panel normal is unit length.
     pub fn new(shape: SpacecraftShape) -> Self {
         shape.assert_normals_are_unit();
+        shape.assert_outlines_are_consistent();
         Self {
             shape,
             shadow_body_radius: None,
@@ -765,13 +767,109 @@ mod tests {
             panic!("expected panels");
         };
         let mut total = Vector3::zeros();
-        for (i, panel) in panels.iter().enumerate() {
+        for panel in &panels {
             if crate::spacecraft::surface::is_fully_occluded(panel, &panels, s_body) {
                 continue;
             }
             total += panel_force(panel, s_body, TEST_PRESSURE);
         }
         total
+    }
+
+    /// The shaded panel is excluded by `PanelSrp::eval`, not just by the
+    /// occlusion test called on its own.
+    ///
+    /// The tests below reach `is_fully_occluded` through a helper, so deleting
+    /// the call inside `eval` would leave them green. This one goes through the
+    /// model and checks the torque as well as the acceleration: the hidden
+    /// panel has its own `cp_offset`, so a force wrongly attributed to it shows
+    /// up there even when the magnitudes happen to be close.
+    #[test]
+    fn eval_excludes_a_shaded_panel_from_both_the_force_and_the_torque() {
+        let epoch = test_epoch();
+        let state = iss_state();
+        // Sun direction in the body frame, so the plates can be aimed at it.
+        let s_body = sat_to_sun_unit(&epoch);
+
+        let optics = PanelOptics::new(0.1, 0.2);
+        let in_plane = s_body.cross(&Vector3::new(0.0, 0.0, 1.0)).normalize();
+        // Behind the near plate, and off-centre so it would torque if it were lit.
+        let hidden = SurfacePanel::rectangle([0.4, 0.4], in_plane, s_body, 2.2, optics)
+            .with_cp_offset(in_plane * 1.5);
+        let near = SurfacePanel::rectangle([1.2, 1.2], in_plane, s_body, 2.2, optics)
+            .with_cp_offset(in_plane * 1.5 + s_body * 2.0);
+
+        let pair = PanelSrp::for_earth(SpacecraftShape::panels(vec![hidden.clone(), near.clone()]));
+        let alone = PanelSrp::for_earth(SpacecraftShape::panels(vec![near]));
+        let hidden_only = PanelSrp::for_earth(SpacecraftShape::panels(vec![hidden]));
+
+        let pair = pair.eval(0.0, &state, Some(&epoch));
+        let alone = alone.eval(0.0, &state, Some(&epoch));
+        let hidden_only = hidden_only.eval(0.0, &state, Some(&epoch));
+
+        assert!(
+            hidden_only.acceleration_inertial.magnitude() > 0.0,
+            "the hidden plate is lit when nothing is in front of it"
+        );
+        assert!(
+            hidden_only.torque_body.into_inner().magnitude() > 0.0,
+            "and it torques, so its exclusion is visible in the torque"
+        );
+
+        let (a_pair, a_alone) = (
+            pair.acceleration_inertial.into_inner(),
+            alone.acceleration_inertial.into_inner(),
+        );
+        assert!(
+            (a_pair - a_alone).magnitude() / a_alone.magnitude() < 1e-12,
+            "the pair's acceleration must be the near plate's alone: {a_pair:?} vs {a_alone:?}"
+        );
+        let (t_pair, t_alone) = (
+            pair.torque_body.into_inner(),
+            alone.torque_body.into_inner(),
+        );
+        assert!(
+            (t_pair - t_alone).magnitude() / t_alone.magnitude() < 1e-12,
+            "and its torque likewise: {t_pair:?} vs {t_alone:?}"
+        );
+    }
+
+    /// An outline written through a struct literal is checked where the panels
+    /// enter a model, since `rectangle`'s asserts can be bypassed.
+    #[test]
+    #[should_panic(expected = "perpendicular to the normal")]
+    fn a_struct_literal_outline_with_a_parallel_axis_is_rejected() {
+        let normal = Vector3::new(1.0, 0.0, 0.0);
+        let panel = SurfacePanel {
+            area: 4.0,
+            normal,
+            cd: 2.2,
+            optics: PanelOptics::absorber(),
+            cp_offset: Vector3::zeros(),
+            outline: Some(crate::spacecraft::PanelOutline::Rectangle {
+                half_extent: [1.0, 1.0],
+                in_plane_x: normal, // parallel, so both in-plane axes degenerate
+            }),
+        };
+        let _ = PanelSrp::for_earth(SpacecraftShape::panels(vec![panel]));
+    }
+
+    /// And an area that disagrees with the outline it claims.
+    #[test]
+    #[should_panic(expected = "does not match the outline")]
+    fn a_struct_literal_outline_inconsistent_with_the_area_is_rejected() {
+        let panel = SurfacePanel {
+            area: 99.0, // the outline says 4.0
+            normal: Vector3::new(1.0, 0.0, 0.0),
+            cd: 2.2,
+            optics: PanelOptics::absorber(),
+            cp_offset: Vector3::zeros(),
+            outline: Some(crate::spacecraft::PanelOutline::Rectangle {
+                half_extent: [1.0, 1.0],
+                in_plane_x: Vector3::new(0.0, 1.0, 0.0),
+            }),
+        };
+        let _ = PanelSrp::for_earth(SpacecraftShape::panels(vec![panel]));
     }
 
     #[test]

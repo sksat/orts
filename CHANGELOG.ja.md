@@ -38,7 +38,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   パネルは `SurfacePanel::rectangle` で作り、面積は半寸法から導出する。
   `SpacecraftShape::cube` の 6 面も輪郭を持つようになった (面自身の力は変わらないが、
   cube の隣に足したパネルが面の陰にいることを判定できる)。見つかるのは 1 枚に完全に
-  隠れる場合だけで、2 枚の和で覆われる配置は照射扱いのままである。([#PR](https://github.com/sksat/orts/pull/PR))
+  隠れる場合だけで、2 枚の和で覆われる配置は照射扱いのままである。([#424](https://github.com/sksat/orts/pull/424))
 - `SatelliteParams` が `SpacecraftShape` を optional で持ち、
   `build_spacecraft_dynamics` がそれを見て等方面の `SolarRadiationPressure` /
   `AtmosphericDrag` の代わりに `PanelSrp` / `PanelDrag` を install するように
@@ -236,7 +236,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 
 #### Added
 - `[[satellites.panels]]` で衛星に平板の外形を与えられるようにした
-  (`area` または `half_extent` + `in_plane_x` ([#PR](https://github.com/sksat/orts/pull/PR))、`normal`, `cd`,
+  (`area` または `half_extent` + `in_plane_x` ([#424](https://github.com/sksat/orts/pull/424))、`normal`, `cd`,
   `specular`, `diffuse`, `cp_offset`, `two_sided`
   ([#399](https://github.com/sksat/orts/pull/399))、`back` ([#395](https://github.com/sksat/orts/pull/395)))。
   `half_extent` を書くとパネルに輪郭ができ、別のパネルがその手前に立っていることを

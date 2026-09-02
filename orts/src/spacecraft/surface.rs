@@ -91,9 +91,11 @@ impl PanelOptics {
 /// the flow, which needs the boundary and nothing else.
 ///
 /// An enum because the shapes will not stay one: a mesh read from CAD gives
-/// triangles. Everything that consumes an outline goes through
-/// [`SurfacePanel::corners_into`], so a new shape is a new variant rather than
-/// a change at every use.
+/// triangles. Two operations know the shapes — [`SurfacePanel::corners_into`],
+/// which lists the corners, and [`SurfacePanel::outline_contains`], which
+/// answers whether a point is inside — so a new shape means a new arm in each
+/// of those and nothing else. Containment cannot be derived from the corners:
+/// a triangle's three corners span a parallelogram larger than the triangle.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PanelOutline {
     /// A rectangle centred on the panel's `cp_offset`.
@@ -388,6 +390,7 @@ impl SpacecraftShape {
     pub fn panels(panels: Vec<SurfacePanel>) -> Self {
         let shape = Self::Panels(panels);
         shape.assert_normals_are_unit();
+        shape.assert_outlines_are_consistent();
         shape
     }
 
@@ -403,6 +406,57 @@ impl SpacecraftShape {
     ///
     /// # Panics
     /// Panics if any panel normal is not unit length. `Sphere` never panics.
+    /// Check what [`SurfacePanel::rectangle`] asserts, for panels that did not
+    /// come through it.
+    ///
+    /// `outline` is a public field and `PanelOutline::Rectangle`'s fields are
+    /// public with it, so a struct literal can set an axis parallel to the
+    /// normal, a non-positive extent, or an area that does not match the
+    /// outline. A parallel axis makes both in-plane directions degenerate and
+    /// the containment test answers for a line rather than a rectangle, which
+    /// reports occlusion where there is none.
+    ///
+    /// # Panics
+    /// Panics with the offending panel's index.
+    pub(crate) fn assert_outlines_are_consistent(&self) {
+        let Self::Panels(panels) = self else {
+            return;
+        };
+        for (i, panel) in panels.iter().enumerate() {
+            let Some(PanelOutline::Rectangle {
+                half_extent,
+                in_plane_x,
+            }) = panel.outline
+            else {
+                continue;
+            };
+            assert!(
+                half_extent.iter().all(|h| h.is_finite() && *h > 0.0),
+                "panel {i}: outline half-extents must be positive and finite, got {half_extent:?}"
+            );
+            let area = half_extent[0] * half_extent[1] * 4.0;
+            assert!(
+                area.is_finite() && area > 0.0,
+                "panel {i}: outline half-extents {half_extent:?} give an area of {area}"
+            );
+            assert!(
+                (area - panel.area).abs() <= 1e-9 * area.max(panel.area),
+                "panel {i}: area {} does not match the outline's {area}",
+                panel.area
+            );
+            let len = in_plane_x.magnitude();
+            assert!(
+                len.is_finite() && (len - 1.0).abs() < 1e-9,
+                "panel {i}: outline in_plane_x must be unit length, got {len}"
+            );
+            let cos = panel.normal.dot(&in_plane_x);
+            assert!(
+                cos.abs() < 1e-9,
+                "panel {i}: outline in_plane_x must be perpendicular to the normal, got n·x = {cos}"
+            );
+        }
+    }
+
     pub(crate) fn assert_normals_are_unit(&self) {
         let Self::Panels(panels) = self else {
             return;
@@ -565,6 +619,7 @@ impl<F: EarthFixedTransform> PanelDrag<F> {
     /// Panics unless every panel normal is unit length.
     pub fn for_earth_in_frame(shape: SpacecraftShape, eop: F::EopStorage) -> Self {
         shape.assert_normals_are_unit();
+        shape.assert_outlines_are_consistent();
         Self {
             shape,
             atmosphere: Box::new(Exponential),
