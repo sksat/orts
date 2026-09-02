@@ -937,6 +937,81 @@ fn duration_sets_the_end_time_and_leaves_the_period_alone() {
     );
 }
 
+/// A satellite with an attitude config ends at `duration` too.
+///
+/// The spacecraft path is a separate `add_satellite_until` call from the
+/// orbit-only one, so it took its end time from a separate expression.
+/// Measured: putting `sat.period` back there left every other test passing,
+/// because the E2E cases above are orbit-only and the `SimParams` tests stop
+/// before propagation.
+#[test]
+fn duration_sets_the_end_time_for_a_spacecraft_run() {
+    let dir = std::env::temp_dir().join(format!("orts_e2e_att_dur_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let config_path = dir.join("attitude_duration.toml");
+    std::fs::write(
+        &config_path,
+        r#"
+dt = 1.0
+duration = 120.0
+output_interval = 30.0
+
+[[satellites]]
+id = "att"
+[satellites.orbit]
+type = "circular"
+altitude = 400.0
+
+[satellites.attitude]
+inertia_diag = [10.0, 10.0, 10.0]
+mass = 100.0
+initial_angular_velocity = [0.0, 0.0, 0.01]
+"#,
+    )
+    .expect("write config");
+
+    let binary = env!("CARGO_BIN_EXE_orts");
+    let output = Command::new(binary)
+        .args([
+            "run",
+            "--output",
+            "stdout",
+            "--format",
+            "csv",
+            "--config",
+            config_path.to_str().expect("utf-8 path"),
+        ])
+        .output()
+        .expect("failed to execute orts");
+    assert!(
+        output.status.success(),
+        "orts run --config failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let csv = String::from_utf8_lossy(&output.stdout).into_owned();
+
+    // The attitude columns are what make this the spacecraft path.
+    assert!(
+        csv.contains("qw") || csv.contains("quaternion"),
+        "the run should carry attitude columns, got header:\n{}",
+        csv.lines().take(6).collect::<Vec<_>>().join("\n")
+    );
+    assert!(
+        csv.contains(&format!("# Period = {PERIOD_400KM_S:.1} s")),
+        "header should report the orbital period, got:\n{}",
+        csv.lines().take(10).collect::<Vec<_>>().join("\n")
+    );
+
+    let finals = final_t_per_section(&csv);
+    assert_eq!(finals.len(), 1, "one satellite, one section: {finals:?}");
+    assert!(
+        (finals[0].1 - 120.0).abs() < 1e-9,
+        "the spacecraft run should end at the requested duration, got {finals:?}"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// Without `--duration`, each satellite is propagated for one of its own
 /// orbits — which is what made the shared field look consistent.
 #[test]
