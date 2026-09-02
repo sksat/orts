@@ -35,7 +35,7 @@ pub enum ResolvedPluginBackend {
 /// TODO: revisit this default. The constellation-phasing bench
 /// (N = 1, 8, 64 on a 16-thread CPU, sample_period = 0.1) found that
 /// async is already ~5× faster than sync from N = 8 because async
-/// throughput mode runs per-satellite `step_controlled()` in parallel
+/// throughput mode runs each satellite's control step in parallel
 /// via `rayon` (see cli/src/commands/run.rs parallel_step path),
 /// whereas sync's sim loop iterates satellites sequentially. The
 /// crossover is likely near N ≈ cores, not cores × 32. Before

@@ -287,6 +287,16 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   なった。`serve` は無摂動の orbit-only 衛星を周期の境界ごとに初期軌道へ戻すが、
   新規追加した衛星の境界は fleet の**直前**のエントリから読んでいた (最初の追加では
   5554 s のハードコード)。([#368](https://github.com/sksat/orts/pull/368))
+- 各 controller が自分の `sample_period` で動くようになった。2 つの loop がこれを
+  動かしていた。非 realtime の `orts serve` は `stream_interval` で timeline を切り、
+  切るたびに controller を 1 回呼んでいた。README quick start の config は
+  `output_interval` と `stream_interval` を `dt = 0.01` のままにし、`pd-rw-control` は
+  0.1 s を要求するので、10 Hz の controller が 100 Hz で回り、各コマンドの保持時間が
+  意図の 1/10 になっていた (実測: sim 時間 1 s あたり 10 回でなく 100 回)。`orts run` は
+  fleet の最短周期で全衛星を回すので、0.1 s の controller と並ぶ 1.0 s の controller が
+  毎秒 10 回 tick していた。どちらの loop も、保持中のコマンドのまま必要な境界まで
+  積分し、その時刻に due な衛星だけを tick する。
+  ([#369](https://github.com/sksat/orts/pull/369))
 - `orts` が診断ログを stderr に出力するようになった。logger を初期化していな
   かったため `log::` の呼び出しは全て破棄されており、stream-io stdio plug の
   displaced、stream の socket error、`serve` 中のシミュレーション停止、

@@ -327,6 +327,16 @@ section is subdivided by package.
   period boundary, and the boundary for a newly added satellite was read from
   the *previous* entry in the fleet (or a hardcoded 5554 s when it was the
   first). ([#368](https://github.com/sksat/orts/pull/368))
+- Each controller runs on its own `sample_period`. Two loops moved it: the
+  non-realtime `orts serve` cut the timeline at `stream_interval` and called the
+  controller once per cut, so the README quick start's config — which leaves
+  `output_interval` and `stream_interval` at `dt = 0.01` while `pd-rw-control`
+  asks for 0.1 s — ran a 10 Hz controller at 100 Hz and held each command for a
+  tenth of its intended span (measured: 100 ticks per second of sim time instead
+  of 10); and `orts run` drove every satellite on the fleet's shortest period,
+  so a 1.0 s controller beside a 0.1 s one ticked 10 times a second. Both loops
+  now propagate to whatever boundary they need under the held command and tick
+  only the satellites due there. ([#369](https://github.com/sksat/orts/pull/369))
 - `orts` now writes its diagnostics to stderr. With no `log` backend installed
   every `log::` call was discarded, so a displaced stream-io stdio plug, a stream
   socket error, a halted `serve` simulation, and every line a WASM plugin logged

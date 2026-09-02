@@ -1527,10 +1527,12 @@ pub fn validate_time_params(
 
 /// Reject a controller tick that cannot advance the control loop.
 ///
-/// Both controlled-run loops step with `dt = sample_period.min(remaining)`, so
-/// a zero period leaves `t += 0` spinning and a negative one walks backwards.
-/// The period comes from the plugin/controller rather than from user config,
-/// so it has to be checked where it is first used.
+/// Both controlled-run loops schedule ticks at `start_t + n · sample_period`,
+/// so a zero period leaves every tick on the start time and a negative one
+/// walks backwards. The period comes from the plugin/controller rather than
+/// from user config, so it has to be checked where it is first used. A period
+/// that is positive but below the sim clock's resolution at the satellite's
+/// start time is caught separately, where that start time is known.
 pub fn validate_sample_period(dt_ctrl: f64) -> Result<(), String> {
     if dt_ctrl.is_finite() && dt_ctrl > 0.0 {
         Ok(())

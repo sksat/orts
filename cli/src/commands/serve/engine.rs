@@ -113,16 +113,20 @@ impl SimGroup {
             return Ok(());
         };
         for sat in sats.iter_mut() {
-            let dt_ctrl = sat.controller.sample_period();
-            crate::config::validate_sample_period(dt_ctrl)?;
-            let dt_ode = params.dt.min(dt_ctrl);
-            let mut t = current_t;
-            while t < target_t - 1e-12 {
-                let dt = dt_ctrl.min(target_t - t);
-                crate::sim::controlled::step_controlled(sat, t, dt, dt_ode, params.epoch.as_ref())
-                    .map_err(|e| format!("controlled simulation error at t={t:.3}: {e}"))?;
-                t += dt;
-            }
+            crate::config::validate_sample_period(sat.controller.sample_period())?;
+            // `target_t - current_t` is the stream/output interval, which has
+            // no reason to be a multiple of the controller period: this used
+            // to call the controller once per span with `dt = span`, so a span
+            // shorter than the period ran the controller too often and
+            // shortened its hold.
+            crate::sim::controlled::advance_controlled(
+                sat,
+                current_t,
+                target_t,
+                params.dt,
+                params.epoch.as_ref(),
+            )
+            .map_err(|e| format!("controlled simulation error at t={current_t:.3}: {e}"))?;
         }
         Ok(())
     }
@@ -346,6 +350,14 @@ pub(super) struct ServeEngine {
     /// unbounded growth in long-running sims with many deorbiting satellites.
     terminated_events: VecDeque<String>,
     current_t: f64,
+    /// How many `stream_step` boundaries have been crossed. The next boundary
+    /// is `(steps_done + 1) * stream_step`, not `current_t + stream_step`:
+    /// repeated addition drifts below the exact multiple — measured, six 0.1 s
+    /// steps accumulate to 0.6 while `6 * 0.1` is 0.6000000000000001 — and a
+    /// controller tick scheduled on the exact multiple would then fall outside
+    /// the interval that should have run it, and be taken a whole interval
+    /// late.
+    steps_done: u64,
     has_perturbations: bool,
     /// Each satellite's declared stream names, indexed like `metas`. The
     /// engine iterates these to pump the injected [`StreamIo`]; resolving a
@@ -434,7 +446,7 @@ impl ServeEngine {
         };
 
         let group = if has_controller {
-            // Plugin-controlled mode: direct integration with step_controlled.
+            // Plugin-controlled mode: direct integration under the controller.
             let mut controlled_sats = Vec::new();
             {
                 #[cfg(feature = "plugin-wasm")]
@@ -452,6 +464,7 @@ impl ServeEngine {
                     let sat = crate::sim::controlled::build_controlled_satellite(
                         spec,
                         params.epoch,
+                        0.0,
                         &mut ctx,
                     )
                     .map_err(|e| format!("controlled satellite '{}': {e}", spec.id))?;
@@ -671,6 +684,7 @@ impl ServeEngine {
             info_json,
             terminated_events: VecDeque::new(),
             current_t: 0.0,
+            steps_done: 0,
             has_perturbations,
             sat_streams,
             stream_step,
@@ -780,7 +794,7 @@ impl ServeEngine {
         let body_radius = self.params.body.properties().radius;
 
         for _ in 0..outputs_per_chunk {
-            let target_t = self.current_t + self.stream_step;
+            let target_t = (self.steps_done + 1) as f64 * self.stream_step;
 
             // Orbit boundary reset (only for unperturbed 2-body, orbit-only mode)
             if !self.has_perturbations {
@@ -895,6 +909,7 @@ impl ServeEngine {
             }
 
             self.current_t = target_t;
+            self.steps_done += 1;
         }
 
         all_outputs.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap());
@@ -1159,8 +1174,13 @@ impl ServeEngine {
                 wasm_cache,
                 plugin_backend,
             };
-            crate::sim::controlled::build_controlled_satellite(&spec, initial_epoch, &mut ctx)
-                .map_err(|e| format!("build controlled satellite: {e}"))?
+            crate::sim::controlled::build_controlled_satellite(
+                &spec,
+                initial_epoch,
+                self.current_t,
+                &mut ctx,
+            )
+            .map_err(|e| format!("build controlled satellite: {e}"))?
         };
 
         let initial = new_sat.state.plant.orbit.clone();
@@ -1313,14 +1333,23 @@ fn invalid_path_segment(s: &str) -> bool {
 /// The single sample period shared by all controllers, or an error when the
 /// fleet mixes periods (the stream-io bridge steps every controller on the
 /// same global tick, so mixed rates would over-step the slower ones).
+///
+/// Exact equality, not a tolerance. The first period becomes the interval the
+/// bridge pumps on, and each controller now ticks on its own
+/// `base + n · period`: with `[0.1, 0.1000000005]` the second controller's
+/// first tick falls just past the 0.1 boundary, so it does not tick in that
+/// interval and instead ticks on the next pump — after the bytes staged for
+/// the later interval were already handed over. A tolerance that once only
+/// smoothed over rounding now decides which interval a controller sees.
 fn uniform_tick(periods: &[f64]) -> Result<f64, String> {
     let Some(&first) = periods.first() else {
         return Err("stream-io bridge requires at least one controller".to_string());
     };
-    if periods.iter().any(|p| (p - first).abs() > 1e-9) {
+    if periods.iter().any(|p| *p != first) {
         return Err(format!(
-            "stream-io bridge requires a uniform controller sample period, got {periods:?}; \
-             mixed-rate fleets are not supported with streams yet"
+            "stream-io bridge requires one controller sample period, got {periods:?}; \
+             the bridge pumps on a single interval, and a period that differs even \
+             slightly ticks in a different interval than the bytes it should read"
         ));
     }
     Ok(first)
@@ -1378,6 +1407,46 @@ orbit = { type = "circular", altitude = 500 }
         assert_eq!(init.engine.current_t(), 0.0);
         // No declared streams → empty layout entry for the one satellite.
         assert_eq!(init.stream_layout, vec![("sat-a".to_string(), vec![])]);
+    }
+
+    /// Output boundaries are exact multiples of the step, not an accumulated
+    /// sum.
+    ///
+    /// `current_t + stream_step` drifts below `n * stream_step`: measured,
+    /// six 0.1 s steps accumulate to 0.6 while `6 * 0.1` is
+    /// 0.6000000000000001. A controller tick is scheduled on the exact
+    /// multiple (`tick_base_t + n * sample_period`), so a boundary that lands
+    /// below it leaves the tick outside the interval that should have run it,
+    /// and it is taken a whole interval late.
+    #[test]
+    fn output_boundaries_are_exact_multiples_of_the_step() {
+        let mut init = engine_from_toml(
+            r#"
+dt = 0.01
+output_interval = 0.1
+stream_interval = 0.1
+
+[[satellites]]
+id = "sat-a"
+orbit = { type = "circular", altitude = 500 }
+"#,
+        )
+        .expect("engine builds");
+        let step = init.engine.effective_step();
+        assert!((step - 0.1).abs() < 1e-12, "the step is the one configured");
+
+        // Past the sixth boundary, where accumulation starts trailing.
+        for n in 1..=12u32 {
+            init.engine
+                .step_chunk(1, &mut NullStreamIo)
+                .expect("a stable orbit propagates");
+            let expected = f64::from(n) * step;
+            assert_eq!(
+                init.engine.current_t(),
+                expected,
+                "boundary {n} must be n * step exactly, not an accumulated sum"
+            );
+        }
     }
 
     #[test]
@@ -1860,6 +1929,13 @@ streams = ["comlink"]
         // A 1.0 s controller stepped on a 0.1 s global tick would update
         // 10x too often — must be rejected, not silently mis-simulated.
         assert!(uniform_tick(&[0.1, 1.0]).is_err());
+        // And a period that differs only slightly: the bridge pumps on the
+        // first one, so the second controller's ticks fall in a different
+        // interval than the bytes staged for them.
+        assert!(
+            uniform_tick(&[0.1, 0.100_000_000_5]).is_err(),
+            "a near-equal period still reads the wrong interval"
+        );
     }
 
     #[test]

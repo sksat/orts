@@ -66,9 +66,94 @@ pub struct ControlledSatellite {
     pub thruster_specs: Vec<ThrusterSpec>,
     /// Thruster assembly-level propellant floor [kg]。
     pub thruster_dry_mass: f64,
+    /// Sim time this satellite's controller schedule is anchored at [s]: where
+    /// the satellite entered the simulation.
+    tick_base_t: f64,
+    /// Ticks this controller has already run since `tick_base_t`.
+    ///
+    /// The schedule belongs to the satellite because `sample_period` is fixed
+    /// per controller and a fleet may mix rates. Output samples, stream flushes
+    /// and the end of a run all cut the timeline at their own boundaries, and
+    /// keeping the count here is what stops those cuts from moving the
+    /// controller.
+    ///
+    /// A count rather than a running `next_tick_t += sample_period`: the sum
+    /// drifts by a few ULPs per tick, which then has to be absorbed by a
+    /// tolerance on every boundary comparison — and a tolerance wide enough to
+    /// cover the drift also fires ticks that lie just past the boundary.
+    ticks_done: u64,
+}
+
+impl ControlledSatellite {
+    /// Sim time of this satellite's next controller tick [s].
+    pub fn next_tick_t(&self) -> f64 {
+        self.tick_base_t + (self.ticks_done + 1) as f64 * self.controller.sample_period()
+    }
+
+    /// Whether the next tick lands at or before `t`.
+    pub fn tick_due_at(&self, t: f64) -> bool {
+        self.next_tick_t() <= t
+    }
+}
+
+/// Reject a sample period too small to move the clock from `start_t`.
+///
+/// [`crate::config::validate_sample_period`] only asks for a positive finite
+/// period, which `1e-16` satisfies — and `5.0 + 1e-16 == 5.0`, so the schedule
+/// would never leave `start_t` and every loop waiting on it would spin.
+///
+/// What this guarantees is that the schedule leaves the anchor. A tick time is
+/// `base + n · period`, and an ULP grows with the magnitude of the value, so a
+/// period that clears one ULP at the anchor does not clear one at every later
+/// tick: far enough out, `base + n · period` and `base + (n+1) · period` round
+/// together. That is not a run anyone reaches — a 0.1 s period needs t of about
+/// 1e15 s, some 32 million years, before an ULP catches up with it — and this
+/// check does not rule it out. What it does rule out is a period that cannot
+/// separate the first two ticks from each other at the start.
+fn validate_tick_advances(start_t: f64, sample_period: f64) -> Result<(), String> {
+    // At least one ULP, so the ticks this schedule generates near the start
+    // land on different f64 values. Later ticks are the runtime guard's
+    // business: the ULP grows with the time, and no check here can bound
+    // that (see the doc above).
+    //
+    // Sampling the first few ticks instead is not enough. `start_t + period >
+    // start_t` accepts a period that separates the first tick from the start
+    // but not the ticks from each other (measured: at `start_t = 5.0` and
+    // `period = 5e-16`, ticks 1 and 2 both round to 5.000000000000001).
+    // Checking two ticks is not enough either: `3 · f64::EPSILON` is 0.75 ULP
+    // there, so ticks 1 and 2 do advance while tick 3 rounds back onto tick 2
+    // (5.000000000000002 twice), and the controller would run twice at one
+    // instant.
+    //
+    // The ULP grows with the magnitude of the time, so a period accepted here
+    // can still collide far enough into a run. That is the case the doc above
+    // describes and does not rule out: a 0.1 s period needs t of about 1e15 s.
+    // The resolution at the anchor, and at the first tick: crossing a binade
+    // doubles the ULP, so a period equal to the anchor's can be half of one
+    // just above it. Measured: at `start_t = 8.0f64.next_down()` with
+    // `period = 8.0 - start_t`, ticks 1 and 2 both land on 8.0.
+    let ulp = start_t.next_up() - start_t;
+    let first = start_t + sample_period;
+    let ulp_at_first = first.next_up() - first;
+    if sample_period >= ulp && sample_period >= ulp_at_first {
+        Ok(())
+    } else {
+        // Name the resolution that the period actually fell short of: at a
+        // binade boundary the anchor's is met and the first tick's is not.
+        let needed = ulp.max(ulp_at_first);
+        Err(format!(
+            "controller sample period {sample_period} is below the sim clock's \
+             resolution around t={start_t} ({needed}), so consecutive ticks \
+             would land on the same instant"
+        ))
+    }
 }
 
 /// Config からプラグイン制御付き衛星を構築する。
+///
+/// `start_t` is the sim time this satellite starts at [s]: 0 for a fleet built
+/// before the run, the current sim time for one added to a running `serve`. It
+/// sets the phase of the satellite's controller schedule.
 ///
 /// 複数衛星をループで構築する場合は、[`ControlledBuildContext`] 内の
 /// `wasm_cache` を使い回すことで WASM コンポーネントのコンパイルが
@@ -83,6 +168,7 @@ pub struct ControlledSatellite {
 pub fn build_controlled_satellite(
     spec: &SatelliteSpec,
     initial_epoch: Option<Epoch>,
+    start_t: f64,
     ctx: &mut ControlledBuildContext<'_>,
 ) -> Result<ControlledSatellite, String> {
     let params = ctx.params;
@@ -177,6 +263,9 @@ pub fn build_controlled_satellite(
     let sensors = build_sensor_bundle(spec.sensor_choices.as_deref());
 
     let actuators = ActuatorBundle::new();
+    let sample_period = controller.sample_period();
+    crate::config::validate_sample_period(sample_period)?;
+    validate_tick_advances(start_t, sample_period)?;
 
     Ok(ControlledSatellite {
         dynamics,
@@ -189,19 +278,18 @@ pub fn build_controlled_satellite(
         mtq_max_moment,
         thruster_specs,
         thruster_dry_mass,
+        tick_base_t: start_t,
+        ticks_done: 0,
     })
 }
 
-/// 1 制御サイクル分を積分し、コントローラを呼び出す。
-pub fn step_controlled(
-    sat: &mut ControlledSatellite,
-    t: f64,
-    dt_ctrl: f64,
-    dt_ode: f64,
-    epoch: Option<&Epoch>,
-) -> Result<(), String> {
-    let t_next = t + dt_ctrl;
-
+/// Push the commands the actuator bundle currently holds into the dynamics.
+///
+/// Called right after a controller tick, so any span propagated afterwards is
+/// pure integration under a held command. A command the controller did not name
+/// keeps its previous value — the zero-order hold the plugin contract promises —
+/// so this is also what carries a command across a span with no tick in it.
+fn apply_held_commands(sat: &mut ControlledSatellite) -> Result<(), String> {
     // 前 tick のコマンドで RW を設定。
     if sat.has_rw
         && sat.actuators.has_rw_command()
@@ -273,23 +361,85 @@ pub fn step_controlled(
             return Err("thruster_assembly model not registered in dynamics".into());
         }
     }
+    Ok(())
+}
 
-    // 結合伝播（軌道 + 姿勢 + RW）。
-    //
-    // `try_integrate` を使うのは、`integrate` が不正な刻み幅や停滞した時刻を
-    // panic にしてしまうため。この関数は `Result` を返すので、serve は
-    // graceful-halt 経路でクライアントへ Error を送れる。
+/// The next moment anything happens in a fleet: the earliest controller tick
+/// due, or `horizon` if none falls before it.
+///
+/// An empty fleet has no tick, so the horizon is the answer. Taking the
+/// shortest `sample_period` in the fleet instead — one tick rate for everyone
+/// — ran every slower controller at that rate.
+pub fn next_fleet_event_t(sats: &[ControlledSatellite], horizon: f64) -> f64 {
+    sats.iter()
+        .map(|sat| sat.next_tick_t())
+        .fold(f64::INFINITY, f64::min)
+        .min(horizon)
+}
+
+/// Advance one satellite across `[from, to]`.
+///
+/// Propagates to each tick due inside the span, ticks the controller there,
+/// then propagates the rest of the span under the command that tick left. The
+/// span is the caller's — `stream_interval` in `serve`, the gap between fleet
+/// events in `run` — and has no reason to be a multiple of the controller's
+/// period, so a span shorter than the period integrates without a tick.
+pub fn advance_controlled(
+    sat: &mut ControlledSatellite,
+    from: f64,
+    to: f64,
+    params_dt: f64,
+    epoch: Option<&Epoch>,
+) -> Result<(), String> {
+    let mut t = from;
+    while sat.tick_due_at(to) {
+        let tick_t = sat.next_tick_t();
+        propagate_controlled(sat, t, tick_t, params_dt)?;
+        tick_controller(sat, tick_t, epoch)?;
+        t = tick_t;
+    }
+    propagate_controlled(sat, t, to, params_dt)
+}
+
+/// Integrate `[t0, t1]` under the command the actuators already hold.
+///
+/// No controller call: `t1` is wherever the caller needs the state next — an
+/// output sample, a stream flush, the end of the run — and those boundaries do
+/// not have to be controller ticks. `PluginController::sample_period` is a
+/// *fixed* period, so a controller runs on its own schedule via
+/// [`tick_controller`] and nothing else may move it.
+///
+/// `params_dt` is the requested ODE step; it is capped by the span so a step
+/// cannot reach past `t1`.
+pub fn propagate_controlled(
+    sat: &mut ControlledSatellite,
+    t0: f64,
+    t1: f64,
+    params_dt: f64,
+) -> Result<(), String> {
+    if t1 <= t0 {
+        return Ok(());
+    }
+    let dt_ode = params_dt.min(t1 - t0);
+    // `try_integrate` rather than `integrate`: the latter panics on a bad step
+    // or a stalled clock, and this returns `Result` so serve can send the
+    // client an Error down its graceful-halt path.
     sat.state = Rk4
-        .try_integrate(
-            &sat.dynamics,
-            sat.state.clone(),
-            t,
-            t_next,
-            dt_ode,
-            |_, _| {},
-        )
-        .map_err(|e| format!("integration failed on [{t:.3}, {t_next:.3}]: {e}"))?;
+        .try_integrate(&sat.dynamics, sat.state.clone(), t0, t1, dt_ode, |_, _| {})
+        .map_err(|e| format!("integration failed on [{t0:.3}, {t1:.3}]: {e}"))?;
+    Ok(())
+}
 
+/// Run one controller tick at `t_next`: read the sensors, call the plugin, and
+/// hand the command it returns to the dynamics.
+///
+/// The state must already have been propagated to `t_next` — the sensors are
+/// read from it.
+pub fn tick_controller(
+    sat: &mut ControlledSatellite,
+    t_next: f64,
+    epoch: Option<&Epoch>,
+) -> Result<(), String> {
     // センサ評価 + プラグイン呼び出し。
     let current_epoch = epoch.map(|e| e.add_si_seconds(t_next));
     let sensors = sat
@@ -334,7 +484,28 @@ pub fn step_controlled(
             .apply(&cmd)
             .map_err(|e| format!("actuator error at t={t_next:.3}: {e}"))?;
     }
-
+    // Only once the whole tick has landed: `apply_held_commands` can reject a
+    // command whose length does not match the actuator, and a schedule advanced
+    // past a tick that failed would resume on the wrong phase.
+    apply_held_commands(sat)?;
+    // The schedule has to advance, or the caller's `while sat.tick_due_at(to)`
+    // would tick again at this instant and never finish. Construction refuses
+    // a period below the clock's resolution there, but that resolution doubles
+    // at each binade boundary, so a period wide enough at the anchor can be
+    // too narrow further along. The invariant is checked where it has to hold
+    // rather than only where the satellite was built.
+    let taken = sat.next_tick_t();
+    sat.ticks_done += 1;
+    let following = sat.next_tick_t();
+    // `partial_cmp` rather than `!(following > taken)`: a NaN either side is
+    // incomparable, and that has to count as "did not advance" too.
+    if following.partial_cmp(&taken) != Some(core::cmp::Ordering::Greater) {
+        return Err(format!(
+            "controller sample period {} cannot advance the schedule past \
+             t={taken}: the next tick lands on the same instant",
+            sat.controller.sample_period()
+        ));
+    }
     Ok(())
 }
 
@@ -429,5 +600,326 @@ fn build_sensor_bundle(choices: Option<&[SensorChoice]>) -> SensorBundle {
         } else {
             vec![]
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use orts::plugin::{Command, PluginError, TickInput};
+
+    /// A controller that records the `t` of every tick it is given.
+    ///
+    /// The point of the tests below is *when* the controller runs, so it
+    /// commands nothing and only keeps the schedule it saw.
+    struct TickRecorder {
+        period: f64,
+        ticks: Arc<std::sync::Mutex<Vec<f64>>>,
+    }
+
+    impl PluginController for TickRecorder {
+        fn name(&self) -> &str {
+            "tick-recorder"
+        }
+        fn sample_period(&self) -> f64 {
+            self.period
+        }
+        fn update(&mut self, input: &TickInput<'_>) -> Result<Option<Command>, PluginError> {
+            self.ticks
+                .lock()
+                .expect("no panics in these tests")
+                .push(input.t);
+            Ok(None)
+        }
+    }
+
+    /// Build a controlled satellite at 400 km with the given controller.
+    ///
+    /// Mirrors the dynamics `build_controlled_satellite` assembles, minus the
+    /// actuators and the WASM plugin the real builder needs: what is under test
+    /// is the tick schedule, and no command is ever issued.
+    fn satellite_with(
+        period: f64,
+        start_t: f64,
+    ) -> (ControlledSatellite, Arc<std::sync::Mutex<Vec<f64>>>) {
+        use orts::orbital::OrbitalState;
+        use orts::spacecraft::SpacecraftState;
+
+        let ticks = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let controller = TickRecorder {
+            period,
+            ticks: Arc::clone(&ticks),
+        };
+
+        let body = arika::body::KnownBody::Earth;
+        let mu = body.properties().mu;
+        let inertia = nalgebra::Matrix3::identity() * 10.0;
+        let dynamics = orts::setup::build_spacecraft_dynamics(
+            &body,
+            mu,
+            None,
+            &orts::setup::SatelliteParams {
+                has_drag: false,
+                ballistic_coeff: None,
+                srp_area_to_mass: None,
+                srp_cr: None,
+                // This test watches the controller's tick cadence, so the plant
+                // carries no disturbance torque and no panels to make one.
+                disturbances: orts::setup::DisturbanceTorques::default(),
+                shape: None,
+            },
+            &[],
+            inertia,
+            None,
+        );
+
+        // Circular orbit 400 km up, in the equatorial plane.
+        let r = body.properties().radius + 400.0;
+        let v = (mu / r).sqrt();
+        let plant = SpacecraftState {
+            orbit: OrbitalState::new(Vector3::new(r, 0.0, 0.0), Vector3::new(0.0, v, 0.0)),
+            attitude: orts::attitude::AttitudeState {
+                quaternion: nalgebra::Vector4::new(1.0, 0.0, 0.0, 0.0),
+                angular_velocity: Vector3::zeros(),
+            },
+            mass: 500.0,
+        };
+        let state = dynamics.initial_augmented_state(plant);
+
+        let sat = ControlledSatellite {
+            dynamics,
+            state,
+            controller: Box::new(controller),
+            sensors: SensorBundle::default(),
+            actuators: ActuatorBundle::new(),
+            has_rw: false,
+            has_mtq: false,
+            mtq_max_moment: 0.0,
+            thruster_specs: Vec::new(),
+            thruster_dry_mass: 0.0,
+            tick_base_t: start_t,
+            ticks_done: 0,
+        };
+        (sat, ticks)
+    }
+
+    /// Step one satellite the way a caller does — through the same function
+    /// `serve` and `run` call, so an error in that loop fails these tests.
+    fn advance(sat: &mut ControlledSatellite, from: f64, to: f64, params_dt: f64) {
+        advance_controlled(sat, from, to, params_dt, None).expect("integrates and ticks");
+    }
+
+    /// A span shorter than the sample period does not tick the controller.
+    ///
+    /// This is the serve case: `stream_interval` cuts the timeline every
+    /// 0.01 s while the controller asks for 0.1 s. The old loop called the
+    /// controller once per cut with `dt = 0.01`, so a 10 Hz controller ran at
+    /// 100 Hz and held each command for a tenth of the time it asked for.
+    #[test]
+    fn spans_shorter_than_the_period_do_not_tick_the_controller() {
+        let (mut sat, ticks) = satellite_with(0.1, 0.0);
+
+        // 1 s of sim time, cut into 0.01 s spans.
+        let mut t = 0.0;
+        for _ in 0..100 {
+            advance(&mut sat, t, t + 0.01, 0.01);
+            t += 0.01;
+        }
+
+        let seen = ticks.lock().unwrap().clone();
+        assert_eq!(
+            seen.len(),
+            10,
+            "10 Hz over 1 s is 10 ticks, got {} at {seen:?}",
+            seen.len()
+        );
+        for (i, tick_t) in seen.iter().enumerate() {
+            let expected = 0.1 * (i + 1) as f64;
+            assert!(
+                (tick_t - expected).abs() < 1e-9,
+                "tick {i} at {tick_t}, expected {expected}"
+            );
+        }
+    }
+
+    /// Ticks stay on the controller's own phase across spans that do not
+    /// divide it.
+    ///
+    /// 0.03 s spans never land on a 0.1 s tick, so every tick falls inside a
+    /// span. Truncating the remainder instead of carrying it would drift the
+    /// schedule.
+    #[test]
+    fn a_span_that_does_not_divide_the_period_keeps_the_phase() {
+        let (mut sat, ticks) = satellite_with(0.1, 0.0);
+
+        let mut t = 0.0;
+        for _ in 0..10 {
+            advance(&mut sat, t, t + 0.03, 0.01);
+            t += 0.03;
+        }
+        // 0.3 s of sim time: ticks at 0.1, 0.2, 0.3.
+        let seen = ticks.lock().unwrap().clone();
+        assert_eq!(seen.len(), 3, "expected 3 ticks in 0.3 s, got {seen:?}");
+        assert!((seen[2] - 0.3).abs() < 1e-9, "third tick at {}", seen[2]);
+    }
+
+    /// A satellite added mid-run takes its first tick one period after it
+    /// enters, not one period after `t = 0`.
+    ///
+    /// Pins the phase rule, not the wiring: the fixture below anchors the
+    /// schedule the same way `build_controlled_satellite` does, so a caller
+    /// passing the wrong `start_t` would still pass here. Reaching the real
+    /// builder needs a WASM plugin to construct the controller from.
+    #[test]
+    fn a_satellite_starting_late_phases_its_ticks_from_its_start() {
+        let (sat, _) = satellite_with(0.1, 5.0);
+        assert!(
+            (sat.next_tick_t() - 5.1).abs() < 1e-9,
+            "first tick at {}, expected 5.1",
+            sat.next_tick_t()
+        );
+    }
+
+    /// A span that stops just short of the next tick does not run it.
+    ///
+    /// The end of a run, or a stream flush that lands a hair before a tick,
+    /// must leave that tick for the next span. Comparing with a tolerance —
+    /// which a drifting `next_tick_t += period` needs — would fire it here and
+    /// integrate past the boundary the caller asked for.
+    #[test]
+    fn a_span_ending_just_before_a_tick_does_not_run_it() {
+        let (mut sat, ticks) = satellite_with(0.1, 0.0);
+
+        advance(&mut sat, 0.0, 0.1 - 1e-10, 0.01);
+        assert!(
+            ticks.lock().unwrap().is_empty(),
+            "a tick 1e-10 s past the span's end was run: {:?}",
+            ticks.lock().unwrap()
+        );
+
+        // And it is still there for the span that does contain it.
+        advance(&mut sat, 0.1 - 1e-10, 0.15, 0.01);
+        let seen = ticks.lock().unwrap().clone();
+        assert_eq!(seen.len(), 1, "the deferred tick should run next: {seen:?}");
+        assert!((seen[0] - 0.1).abs() < 1e-12, "at {}", seen[0]);
+    }
+
+    /// Repeated ticks do not drift off the period.
+    ///
+    /// `tick_base_t + n · period` is one multiply; summing `period` a thousand
+    /// times is not, and the accumulated error is what a boundary tolerance
+    /// would have had to cover.
+    #[test]
+    fn the_thousandth_tick_is_still_on_the_period() {
+        let (mut sat, ticks) = satellite_with(0.1, 0.0);
+        advance(&mut sat, 0.0, 100.0, 1.0);
+
+        let seen = ticks.lock().unwrap().clone();
+        assert_eq!(seen.len(), 1000, "100 s at 10 Hz is 1000 ticks");
+        assert_eq!(
+            seen[999], 100.0,
+            "the last tick should be exactly 100.0, got {}",
+            seen[999]
+        );
+    }
+
+    /// A period the sim clock cannot resolve is refused, not spun on.
+    ///
+    /// `validate_sample_period` accepts any positive finite period, and
+    /// `5.0 + 1e-16 == 5.0`: a schedule anchored there would never advance and
+    /// every loop waiting on the next tick would run forever.
+    #[test]
+    fn a_period_below_the_clock_resolution_is_rejected() {
+        validate_tick_advances(5.0, 1e-16)
+            .expect_err("a period that cannot move the clock must be refused");
+        // Separates the first tick from the start, but not the ticks from each
+        // other: `5.0 + 1*5e-16` and `5.0 + 2*5e-16` both round to
+        // 5.000000000000001, so accepting it would tick twice at one instant.
+        assert_ne!(5.0 + 5e-16, 5.0, "precondition: the first tick does move");
+        assert_eq!(
+            5.0 + 5e-16,
+            5.0 + 2.0 * 5e-16,
+            "precondition: the first two ticks land on the same f64"
+        );
+        validate_tick_advances(5.0, 5e-16)
+            .expect_err("a period that cannot separate two ticks must be refused");
+        // 0.75 ULP at 5.0: the first two ticks advance, and the third rounds
+        // back onto the second. Sampling a fixed number of ticks would accept
+        // this; requiring one ULP refuses it.
+        let three_eps = 3.0 * f64::EPSILON;
+        assert_ne!(5.0 + three_eps, 5.0, "precondition: tick 1 moves");
+        assert_ne!(
+            5.0 + 2.0 * three_eps,
+            5.0 + three_eps,
+            "precondition: tick 2 moves"
+        );
+        assert_eq!(
+            5.0 + 3.0 * three_eps,
+            5.0 + 2.0 * three_eps,
+            "precondition: tick 3 lands back on tick 2"
+        );
+        validate_tick_advances(5.0, three_eps).expect_err("a period below one ULP must be refused");
+        // One ULP exactly is the smallest period that keeps the ticks apart.
+        validate_tick_advances(5.0, 5.0f64.next_up() - 5.0)
+            .expect("one ULP separates every consecutive pair");
+        // Just below a binade boundary the ULP doubles on the way up, so a
+        // period equal to the anchor's own ULP is half of one above it.
+        let below_eight = 8.0f64.next_down();
+        let one_ulp_there = 8.0 - below_eight;
+        assert_eq!(
+            below_eight + one_ulp_there,
+            below_eight + 2.0 * one_ulp_there,
+            "precondition: ticks 1 and 2 both land on 8.0"
+        );
+        let err = validate_tick_advances(below_eight, one_ulp_there)
+            .expect_err("a period that collides across the binade must be refused");
+        // The message has to name the bound that failed: here the anchor's own
+        // resolution is met and the first tick's is not.
+        assert!(
+            err.contains(&format!("{}", 8.0f64.next_up() - 8.0)),
+            "the message should report the first tick's resolution: {err}"
+        );
+        // The same period is fine from zero, where it is representable.
+        validate_tick_advances(0.0, 1e-16).expect("representable at t=0");
+        validate_tick_advances(5.0, 0.1).expect("an ordinary period is fine");
+    }
+
+    /// Two controllers at different rates each run at their own.
+    ///
+    /// `orts run` used to drive the fleet on the shortest period, so the 1.0 s
+    /// controller here was called every 0.1 s — the very case the streams path
+    /// rejects outright rather than mis-simulate.
+    #[test]
+    fn a_mixed_rate_fleet_ticks_each_controller_at_its_own_period() {
+        let (fast, fast_ticks) = satellite_with(0.1, 0.0);
+        let (slow, slow_ticks) = satellite_with(1.0, 0.0);
+
+        // The event times come from the same function the run loop calls, so
+        // an error in that choice fails this test.
+        let mut fleet = vec![fast, slow];
+        let mut t = 0.0;
+        while t < 1.0 - 1e-12 {
+            let next_t = next_fleet_event_t(&fleet, 1.0);
+            for sat in &mut fleet {
+                propagate_controlled(sat, t, next_t, 0.01).expect("integrates");
+                if sat.tick_due_at(next_t) {
+                    tick_controller(sat, next_t, None).expect("ticks");
+                }
+            }
+            t = next_t;
+        }
+
+        assert_eq!(
+            fast_ticks.lock().unwrap().len(),
+            10,
+            "the 0.1 s controller should tick 10 times in 1 s"
+        );
+        let slow_seen = slow_ticks.lock().unwrap().clone();
+        assert_eq!(
+            slow_seen.len(),
+            1,
+            "the 1.0 s controller should tick once in 1 s, got {slow_seen:?}"
+        );
+        assert!((slow_seen[0] - 1.0).abs() < 1e-9, "at {}", slow_seen[0]);
     }
 }
