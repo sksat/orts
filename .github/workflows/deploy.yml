@@ -94,10 +94,13 @@ jobs:
         with:
           toolchain: nightly
 
+      # Shared with CI's build-site job, which builds the same site with the same
+      # toolchain and only reads this entry. Keeping them on separate keys cost
+      # 0.5 GB of a 10 GB budget the pull-request jobs are already over.
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          shared-key: deploy-site
+          shared-key: site
 
       - name: Install wasm-pack
         uses: ./.github/actions/install-wasm-pack
