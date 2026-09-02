@@ -97,7 +97,11 @@ export function resolveDisplayOrientation(
   orientation: DisplayOrientation,
   { era = null, originPosition = null, lvlhAxes = null }: DisplayFrameInputs,
 ): DisplayFrame {
-  if (orientation === "bodyFixed" && era != null) {
+  // A non-finite ERA is treated as no ERA. It would otherwise put NaN into every
+  // rotation derived from this frame — the spacecraft's quaternion, each
+  // direction, the camera — and the scene would come out blank rather than fall
+  // back to inertial. Same reason `computeLvlhAxes` refuses non-finite state.
+  if (orientation === "bodyFixed" && era != null && Number.isFinite(era)) {
     return { kind: "bodyFixed", era };
   }
   if (orientation === "localOrbital" && originPosition != null && lvlhAxes != null) {

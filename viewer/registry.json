@@ -268,6 +268,11 @@
           "target": "@components/orbit-viewer/utils/TrailBuffer.ts"
         },
         {
+          "path": "src/utils/finite.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/utils/finite.ts"
+        },
+        {
           "path": "src/wasm/arikaInit.ts",
           "type": "registry:lib",
           "target": "@components/orbit-viewer/wasm/arikaInit.ts"

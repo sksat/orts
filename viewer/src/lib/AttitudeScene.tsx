@@ -9,6 +9,7 @@ import {
   type Vec3,
 } from "../displayFrame.js";
 import { computeLvlhAxes } from "../sceneFrame.js";
+import { finiteOrNull } from "../utils/finite.js";
 import { earth_rotation_angle } from "../wasm/arikaInit.js";
 import { useArikaReady } from "../wasm/useArikaReady.js";
 import type { AttitudeSceneProps } from "./types.js";
@@ -63,11 +64,17 @@ export function AttitudeScene({
   controls = true,
   axes = true,
 }: AttitudeSceneProps) {
-  // Only load the arika WASM when an epoch is supplied (Sun direction / rotation).
-  const arikaReady = useArikaReady(epochJd != null);
-  const effectiveEpochJd = arikaReady ? (epochJd ?? null) : null;
+  // A non-finite epoch or time is treated as absent, at the boundary: it would
+  // otherwise reach `earth_rotation_angle`, the quantised Sun time and the
+  // light's position, and the fallbacks below exist precisely for the case of
+  // not knowing the epoch.
+  const epoch = finiteOrNull(epochJd);
 
-  const t = body.time ?? time;
+  // Only load the arika WASM when an epoch is supplied (Sun direction / rotation).
+  const arikaReady = useArikaReady(epoch != null);
+  const effectiveEpochJd = arikaReady ? epoch : null;
+
+  const t = finiteOrNull(body.time ?? time) ?? 0;
   const position = body.position ?? null;
   const velocity = body.velocity ?? null;
 

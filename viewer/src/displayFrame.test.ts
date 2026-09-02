@@ -426,6 +426,29 @@ describe("resolveDisplayFrame", () => {
       );
     }
   });
+
+  it("treats a non-finite ERA as no ERA, in both entry points", () => {
+    // An ERA of NaN would otherwise reach every rotation the frame produces —
+    // the spacecraft's quaternion, each direction, the camera — and the scene
+    // would come out blank instead of falling back to inertial.
+    const { r, v } = orbitState(7100, 0.7, 0.35);
+    const axes = computeLvlhAxes(r, v);
+    if (axes == null) throw new Error("degenerate orbit");
+    for (const era of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      expect(resolveDisplayOrientation("bodyFixed", { era }).kind).toBe("inertial");
+      expect(resolveDisplayFrame(ECEF_FRAME, { era }).kind).toBe("inertial");
+      // With the local-orbital geometry present it is that frame, not a
+      // body-fixed one built on a NaN angle, that the request falls back to.
+      expect(
+        resolveDisplayFrame(SAT_LVLH_FRAME, { era, originPosition: r, lvlhAxes: axes }).kind,
+      ).toBe("localOrbital");
+    }
+    // A finite ERA of zero is a real angle and still grants the request.
+    expect(resolveDisplayOrientation("bodyFixed", { era: 0 })).toEqual({
+      kind: "bodyFixed",
+      era: 0,
+    });
+  });
 });
 
 describe("trail transform key", () => {
