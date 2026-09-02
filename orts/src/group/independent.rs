@@ -105,12 +105,16 @@ where
         Self::new(IntegratorConfig::Rk4 { dt })
     }
 
-    /// Set an event checker, called on the state each `propagate_to` starts
-    /// from and after every accepted step.
+    /// Set an event checker, called on the state each *advancing*
+    /// `propagate_to` starts from and after every accepted step.
     ///
     /// The initial call is what catches a level-triggered event that already
     /// holds — a satellite starting below the surface, say. Terminating there
     /// leaves the satellite at the time and state it came in with.
+    ///
+    /// A satellite already at or past the target is skipped entirely, so a
+    /// call that asks it to advance nowhere evaluates nothing. That matches
+    /// the callback: no step, nothing reported.
     ///
     /// If the checker returns `ControlFlow::Break(reason)`, the satellite is
     /// terminated with that reason string.
