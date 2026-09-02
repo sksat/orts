@@ -573,10 +573,6 @@ fn build_controller(
     }
 }
 
-/// Build the declared sensors for a satellite about `body`.
-///
-/// The sun sensor's reading is a direction to the Sun, so it depends on the
-/// central body the same way the solar force models do.
 /// Reject a magnetic device on a body whose field `tobari` does not model.
 ///
 /// `Igrf` and `TiltedDipole` are Earth's, and they are the only field models
@@ -596,6 +592,10 @@ fn require_earth_field(body: arika::body::KnownBody, device: &str) -> Result<(),
     }
 }
 
+/// Build the declared sensors for a satellite about `body`.
+///
+/// The sun sensor's reading is a direction to the Sun, so it depends on the
+/// central body the same way the solar force models do.
 fn build_sensor_bundle(
     choices: Option<&[SensorChoice]>,
     body: arika::body::KnownBody,
@@ -953,6 +953,86 @@ mod tests {
             "the 1.0 s controller should tick once in 1 s, got {slow_seen:?}"
         );
         assert!((slow_seen[0] - 1.0).abs() < 1e-9, "at {}", slow_seen[0]);
+    }
+
+    /// A satellite at `position`, its body axes aligned with the inertial ones.
+    fn state_at(position: nalgebra::Vector3<f64>) -> orts::spacecraft::SpacecraftState {
+        SpacecraftState {
+            orbit: orts::orbital::OrbitalState::new(
+                position,
+                nalgebra::Vector3::new(0.0, 3.0, 0.0),
+            ),
+            attitude: orts::attitude::AttitudeState {
+                quaternion: nalgebra::Vector4::new(1.0, 0.0, 0.0, 0.0),
+                angular_velocity: nalgebra::Vector3::zeros(),
+            },
+            mass: 100.0,
+        }
+    }
+
+    fn sun_direction_read_by(
+        bundle: &mut SensorBundle,
+        state: &orts::spacecraft::SpacecraftState,
+        epoch: &Epoch,
+    ) -> Option<nalgebra::Vector3<f64>> {
+        match bundle.sun_sensors[0].measure(state, epoch) {
+            orts::plugin::SunSensorOutput::Fine { direction, .. } => {
+                direction.map(|d| d.into_inner().into_inner())
+            }
+            other => panic!("the CLI builds a fine sensor, got {other:?}"),
+        }
+    }
+
+    fn angle_deg(a: &nalgebra::Vector3<f64>, b: &nalgebra::Vector3<f64>) -> f64 {
+        a.normalize()
+            .dot(&b.normalize())
+            .clamp(-1.0, 1.0)
+            .acos()
+            .to_degrees()
+    }
+
+    /// The CLI's sun sensor reads the Sun from the central body.
+    ///
+    /// `SunSensor::for_body`'s own tests pass whichever way this line is
+    /// wired, so a regression to `SunSensor::new()` — Earth's Sun, no shadow —
+    /// would go unnoticed. Both halves are measured on 2026-03-20, when Mars'
+    /// Sun direction is 152.8° from Earth's.
+    #[test]
+    fn the_cli_sun_sensor_reads_the_sun_from_the_central_body() {
+        let epoch = Epoch::from_gregorian(2026, 3, 20, 12, 0, 0.0);
+        let mars_sun = arika::sun::sun_position_from_body(KnownBody::Mars, &epoch.to_tdb())
+            .expect("Mars has a Sun ephemeris")
+            .into_inner();
+        let earth_sun = arika::sun::sun_position_eci(&epoch.to_tdb()).into_inner();
+
+        // 20 000 km sunward of Mars, so nothing eclipses the satellite and the
+        // direction to Mars' Sun is parallel to `mars_sun`.
+        let sunward_of_mars = state_at(mars_sun.normalize() * 20_000.0);
+        let mut on_mars = build_sensor_bundle(Some(&[SensorChoice::SunSensor]), KnownBody::Mars)
+            .expect("Mars has a Sun ephemeris");
+        let read = sun_direction_read_by(&mut on_mars, &sunward_of_mars, &epoch)
+            .expect("sunward of Mars, so lit");
+        assert!(
+            angle_deg(&read, &mars_sun) < 1.0e-4,
+            "the reading follows Mars' Sun: {:.6}° away",
+            angle_deg(&read, &mars_sun)
+        );
+        // What the geocentric wiring would have read instead.
+        assert!(
+            angle_deg(&read, &earth_sun) > 150.0,
+            "Earth's Sun is nowhere near it: {:.3}°",
+            angle_deg(&read, &earth_sun)
+        );
+
+        // On Earth the same wiring carries Earth's conical shadow, so a
+        // satellite directly behind the Earth reads no direction at all.
+        let behind_earth = state_at(-earth_sun.normalize() * 7000.0);
+        let mut on_earth = build_sensor_bundle(Some(&[SensorChoice::SunSensor]), KnownBody::Earth)
+            .expect("Earth has a Sun ephemeris");
+        assert!(
+            sun_direction_read_by(&mut on_earth, &behind_earth, &epoch).is_none(),
+            "eclipsed, so the sensor reports no Sun direction"
+        );
     }
 
     /// A magnetometer is refused on a body whose field is not modelled.

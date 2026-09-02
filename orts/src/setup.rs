@@ -755,6 +755,70 @@ mod tests {
         }
     }
 
+    /// The third-body Sun built through the setup path is the body-relative one.
+    ///
+    /// `default_third_bodies` is checked by name elsewhere, and both wirings
+    /// are named `third_body_sun`, so the name says nothing about which Sun
+    /// vector is inside. Measured at J2000, 6000 km sunward of Mars: the
+    /// body-relative term is 1.767e-10 km/s² and the geocentric one
+    /// 2.633e-10, 148° away — so the magnitude alone separates them.
+    #[test]
+    fn build_orbital_system_gives_the_third_body_sun_the_body_relative_vector() {
+        use crate::orbital::OrbitalState;
+        let epoch = Epoch::j2000();
+        let sat = SatelliteParams {
+            has_drag: false,
+            ballistic_coeff: None,
+            // No SRP, so the breakdown carries the third-body term alone.
+            srp_area_to_mass: None,
+            srp_cr: None,
+            disturbances: DisturbanceTorques::default(),
+            shape: None,
+        };
+        let body = KnownBody::Mars;
+        let third_bodies = default_third_bodies(&body).expect("Mars is supported");
+        let system = build_orbital_system(
+            &body,
+            body.properties().mu,
+            Some(epoch),
+            &sat,
+            &third_bodies,
+            None,
+        )
+        .expect("Mars is supported");
+
+        let sun_mars = arika::sun::sun_position_from_body(body, &epoch.to_tdb())
+            .expect("Mars has a Sun ephemeris")
+            .into_inner();
+        let pos = sun_mars.normalize() * 6000.0;
+        let state = OrbitalState::new(pos, nalgebra::Vector3::new(0.0, 3.0, 0.0));
+
+        let wired = system
+            .acceleration_breakdown(0.0, &state)
+            .into_iter()
+            .find(|(name, _)| *name == "third_body_sun")
+            .expect("the third-body Sun is in the breakdown")
+            .1;
+
+        let body_relative = ThirdBodyGravity::sun_from_body(body)
+            .expect("Mars has a Sun ephemeris")
+            .acceleration(&pos, Some(&epoch))
+            .norm();
+        let geocentric = ThirdBodyGravity::sun()
+            .acceleration(&pos, Some(&epoch))
+            .norm();
+
+        assert!(
+            (wired - body_relative).abs() < body_relative * 1e-9,
+            "setup wires the Mars-relative Sun: {wired:.6e} vs {body_relative:.6e}"
+        );
+        assert!(
+            (wired - geocentric).abs() > body_relative * 0.4,
+            "the geocentric wiring gives {geocentric:.6e}, which this has to \
+             separate from {wired:.6e}"
+        );
+    }
+
     /// SRP built through the setup path carries the central body's own radius
     /// and its own Sun direction.
     ///
