@@ -111,20 +111,29 @@ impl ControlledSatellite {
 /// check does not rule it out. What it does rule out is a period that cannot
 /// separate the first two ticks from each other at the start.
 fn validate_tick_advances(start_t: f64, sample_period: f64) -> Result<(), String> {
-    // The first two tick times the schedule will generate, formed the way
-    // `next_tick_t` forms them. Both have to be distinct: requiring only
-    // `start_t + period > start_t` accepts a period that separates the first
-    // tick from the start but not the ticks from each other — measured, at
-    // `start_t = 5.0` and `period = 5e-16` both of these round to
-    // 5.000000000000001, so the controller would tick twice at one instant.
-    let first = start_t + sample_period;
-    let second = start_t + 2.0 * sample_period;
-    if first > start_t && second > first {
+    // At least one ULP of the start time, so consecutive `start_t + n · period`
+    // always land on different f64 values.
+    //
+    // Sampling the first few ticks instead is not enough. `start_t + period >
+    // start_t` accepts a period that separates the first tick from the start
+    // but not the ticks from each other (measured: at `start_t = 5.0` and
+    // `period = 5e-16`, ticks 1 and 2 both round to 5.000000000000001).
+    // Checking two ticks is not enough either: `3 · f64::EPSILON` is 0.75 ULP
+    // there, so ticks 1 and 2 do advance while tick 3 rounds back onto tick 2
+    // (5.000000000000002 twice), and the controller would run twice at one
+    // instant.
+    //
+    // The ULP grows with the magnitude of the time, so a period accepted here
+    // can still collide far enough into a run. That is the case the doc above
+    // describes and does not rule out: a 0.1 s period needs t of about 1e15 s.
+    let ulp = start_t.next_up() - start_t;
+    if sample_period >= ulp {
         Ok(())
     } else {
         Err(format!(
             "controller sample period {sample_period} is below the sim clock's \
-             resolution at t={start_t}, so its schedule could never advance"
+             resolution at t={start_t} ({ulp}), so consecutive ticks would \
+             land on the same instant"
         ))
     }
 }
@@ -806,6 +815,25 @@ mod tests {
         );
         validate_tick_advances(5.0, 5e-16)
             .expect_err("a period that cannot separate two ticks must be refused");
+        // 0.75 ULP at 5.0: the first two ticks advance, and the third rounds
+        // back onto the second. Sampling a fixed number of ticks would accept
+        // this; requiring one ULP refuses it.
+        let three_eps = 3.0 * f64::EPSILON;
+        assert_ne!(5.0 + three_eps, 5.0, "precondition: tick 1 moves");
+        assert_ne!(
+            5.0 + 2.0 * three_eps,
+            5.0 + three_eps,
+            "precondition: tick 2 moves"
+        );
+        assert_eq!(
+            5.0 + 3.0 * three_eps,
+            5.0 + 2.0 * three_eps,
+            "precondition: tick 3 lands back on tick 2"
+        );
+        validate_tick_advances(5.0, three_eps).expect_err("a period below one ULP must be refused");
+        // One ULP exactly is the smallest period that keeps the ticks apart.
+        validate_tick_advances(5.0, 5.0f64.next_up() - 5.0)
+            .expect("one ULP separates every consecutive pair");
         // The same period is fine from zero, where it is representable.
         validate_tick_advances(0.0, 1e-16).expect("representable at t=0");
         validate_tick_advances(5.0, 0.1).expect("an ordinary period is fine");
