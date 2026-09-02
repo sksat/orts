@@ -6,7 +6,10 @@ use tobari::gravity::SphericalHarmonicField;
 use crate::orbital::gravity::{self, GravityField};
 use crate::spacecraft::SpacecraftDynamics;
 use arika::body::{BodyProperties, KnownBody};
+use arika::earth::EarthFixedTransform;
+use arika::earth::transform::EphemerisFrameBridge;
 use arika::epoch::Epoch;
+use arika::frame;
 
 use crate::attitude::CoupledGravityGradient;
 use crate::orbital::OrbitalSystem;
@@ -73,7 +76,10 @@ fn build_gravity_field() -> Box<dyn GravityField> {
 /// expressed in a frame whose `+Z` is that body's spin axis (the pre-existing
 /// assumption, unchanged here). The Earth-specific CIP only enters for the
 /// geocentric `Gcrs` frame, which is Earth-only by construction.
-fn build_zonal_gravity(body: &KnownBody, mu: f64) -> Option<ZonalGravity> {
+fn build_zonal_gravity<F: arika::earth::EarthRotationPole>(
+    body: &KnownBody,
+    mu: f64,
+) -> Option<ZonalGravity<F>> {
     let props = body.properties();
     props
         .j2
@@ -84,9 +90,8 @@ fn build_zonal_gravity(body: &KnownBody, mu: f64) -> Option<ZonalGravity> {
 /// joins, so a misuse fails here with a reason instead of inside the first
 /// `eval`.
 ///
-/// - Earth only: the `SimpleEci` Earth-fixed transform rotates by Earth's
-///   rotation angle, so a lunar or Martian field would be spun at the wrong
-///   rate.
+/// - Earth only: the Earth-fixed transform rotates by Earth's rotation angle,
+///   so a lunar or Martian field would be spun at the wrong rate.
 /// - An absolute epoch is required: the longitude-dependent terms have no
 ///   value without Earth's rotation angle (`SphericalHarmonicGravity::eval`
 ///   panics without one).
@@ -101,8 +106,8 @@ fn check_gravity_field_preconditions(
 ) {
     assert!(
         *body == KnownBody::Earth,
-        "a spherical-harmonic gravity field is Earth-only (the SimpleEci Earth-fixed \
-         transform rotates at Earth's rate), got {body:?}"
+        "a spherical-harmonic gravity field is Earth-only (the Earth-fixed transform \
+         rotates at Earth's rate), got {body:?}"
     );
     assert!(
         epoch.is_some(),
@@ -168,6 +173,49 @@ pub fn build_orbital_system(
     atmosphere: Option<Box<dyn tobari::AtmosphereModel>>,
     gravity_field: Option<Arc<SphericalHarmonicField>>,
 ) -> OrbitalSystem {
+    build_orbital_system_in_frame::<frame::SimpleEci>(
+        body,
+        mu,
+        epoch,
+        sat,
+        third_bodies,
+        atmosphere,
+        gravity_field,
+        || (),
+    )
+}
+
+/// [`build_orbital_system`] in an explicit inertial frame.
+///
+/// `F` decides how the Earth-fixed models (drag's geodetic lookup and wind,
+/// the spherical-harmonic field's longitude) are oriented, and `eop` supplies
+/// that frame's transform data: `()` for `SimpleEci` (ERA only, no EOP), a
+/// `GcrsEopStorage` for `Gcrs` (the full IAU 2006 CIO chain with polar
+/// motion).
+///
+/// It is a *factory*, not a value, because the storage is a boxed provider
+/// (not `Clone`) and up to two models here need one each. Hand out providers
+/// over one shared table — `|| GcrsEopStorage::new(ClampedEop::new(Arc::clone(&table)))` —
+/// so a 60-year series is not copied per satellite.
+///
+/// The models installed are exactly the ones [`build_orbital_system`]
+/// installs; only their frame differs.
+// Nine independent knobs of one builder; bundling them into a struct would
+// only move the same nine names one level down.
+#[allow(clippy::too_many_arguments)]
+pub fn build_orbital_system_in_frame<F>(
+    body: &KnownBody,
+    mu: f64,
+    epoch: Option<Epoch>,
+    sat: &SatelliteParams,
+    third_bodies: &[ThirdBodyGravity],
+    atmosphere: Option<Box<dyn tobari::AtmosphereModel>>,
+    gravity_field: Option<Arc<SphericalHarmonicField>>,
+    mut eop: impl FnMut() -> F::EopStorage,
+) -> OrbitalSystem<F>
+where
+    F: EarthFixedTransform + EphemerisFrameBridge,
+{
     let props = body.properties();
     let mut system = OrbitalSystem::new(mu, build_gravity_field()).with_body_radius(props.radius);
 
@@ -175,10 +223,10 @@ pub fn build_orbital_system(
     match gravity_field {
         Some(field) => {
             check_gravity_field_preconditions(body, mu, epoch, &field);
-            system = system.with_model(SphericalHarmonicGravity::for_simple_eci(field));
+            system = system.with_model(SphericalHarmonicGravity::<F>::new(field, eop()));
         }
         None => {
-            if let Some(zonal) = build_zonal_gravity(body, mu) {
+            if let Some(zonal) = build_zonal_gravity::<F>(body, mu) {
                 system = system.with_model(zonal);
             }
         }
@@ -195,9 +243,10 @@ pub fn build_orbital_system(
 
     // Atmospheric drag (Earth only)
     if *body == KnownBody::Earth && sat.has_drag {
+        let drag = AtmosphericDrag::<F>::for_earth_in_frame(sat.ballistic_coeff, eop());
         let drag = match atmosphere {
-            Some(model) => AtmosphericDrag::for_earth(sat.ballistic_coeff).with_atmosphere(model),
-            None => AtmosphericDrag::for_earth(sat.ballistic_coeff),
+            Some(model) => drag.with_atmosphere(model),
+            None => drag,
         };
         system = system.with_model(drag);
     }
@@ -262,7 +311,7 @@ pub fn build_spacecraft_dynamics(
             system = system.with_model(SphericalHarmonicGravity::for_simple_eci(field));
         }
         None => {
-            if let Some(zonal) = build_zonal_gravity(body, mu) {
+            if let Some(zonal) = build_zonal_gravity::<frame::SimpleEci>(body, mu) {
                 system = system.with_model(zonal);
             }
         }

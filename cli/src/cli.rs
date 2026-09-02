@@ -1,5 +1,9 @@
 use clap::{Parser, Subcommand, ValueEnum};
 
+// The propagation frame is a runtime choice here and a type parameter in
+// orts, so the enum lives with the frame abstraction it selects.
+pub use crate::sim::frame::FrameChoice;
+
 /// orts CLI — orbital mechanics simulation tool
 #[derive(Parser, Debug)]
 #[command(name = "orts")]
@@ -248,6 +252,22 @@ pub struct SimArgs {
     /// Only used with --gravity-field.
     #[arg(long, value_name = "M")]
     pub gravity_order: Option<usize>,
+
+    /// Inertial frame to propagate in.
+    /// "simple-eci": ERA-only Earth rotation, no EOP (default).
+    /// "gcrs": IAU 2006/2000A CIO chain with observed EOP (needs --eop).
+    /// `gcrs` covers orbit-only `run`; attitude, controllers and `serve` are
+    /// SimpleEci-only.
+    #[arg(long, default_value = "simple-eci")]
+    pub frame: FrameChoice,
+
+    /// Earth Orientation Parameters for --frame gcrs.
+    /// "auto": download finals2000A.all from IERS (cached for 24h).
+    /// File path: load an IERS finals2000A file.
+    /// "zero": no observed EOP, IAU 2006 model CIP only (reproducible, not
+    /// accurate — ERA is off by up to ~0.4 arcsecond).
+    #[arg(long, value_name = "SOURCE")]
+    pub eop: Option<String>,
 
     /// Total simulation duration in seconds. Omit to cover one orbit
     /// (`orts run`); `orts serve` streams without end either way.

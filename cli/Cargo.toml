@@ -31,7 +31,7 @@ plugin-wasm-async = ["plugin-wasm", "orts/plugin-wasm-async"]
 nalgebra.workspace = true
 utsuroi.workspace = true
 tobari = { workspace = true, features = ["fetch-cssi"] }
-arika = { workspace = true, features = ["sgp4"] }
+arika = { workspace = true, features = ["sgp4", "fetch-eop"] }
 orts.workspace = true
 log = "0.4.29"
 # The log backend (see cli/src/logging.rs). rerun's `re_log` already pulls this

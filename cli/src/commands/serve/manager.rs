@@ -324,7 +324,7 @@ pub(super) async fn simulation_manager(
     while let Some(config) = next_config {
         let mut params_inner = match (&config.gravity_field, initial_gravity_field.take()) {
             (Some(_), Some(field)) => {
-                SimParams::from_config_with_gravity_field(&config, Some(field))
+                SimParams::from_config_with_gravity_field(&config, Some(field), None)
             }
             _ => SimParams::from_config(&config),
         };

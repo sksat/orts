@@ -41,6 +41,14 @@ section is subdivided by package.
   / `stream_take` / `stream_close` for raw byte streams. ([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 - WIT v0 plugin interface extended with the msg-io and stream-io channels. ([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
+#### Added
+- `setup::build_orbital_system_in_frame::<F>` — `build_orbital_system` in an
+  explicit inertial frame, taking an EOP-storage factory so the frame-aware
+  models (drag, the spherical-harmonic field) can each own a provider over one
+  shared table. `HasPosition` is implemented for `OrbitalState<F>` in any
+  frame, and `record::SimMetadata` carries the frame name.
+  ([#411](https://github.com/sksat/orts/issues/411))
+
 #### Changed
 - **BREAKING**: `setup::build_orbital_system` / `build_spacecraft_dynamics`
   take a trailing `gravity_field: Option<Arc<SphericalHarmonicField>>`:
@@ -212,6 +220,15 @@ section is subdivided by package.
 ### `orts-cli` (Rust, crates.io, binary)
 
 #### Added
+- `frame` / `--frame {simple-eci|gcrs}` and `eop` / `--eop {auto|PATH|zero}`:
+  propagate `orts run`'s orbit-only path in `Gcrs` — the IAU 2006/2000A CIO
+  chain with observed IERS EOP (polar motion included) — instead of the
+  ERA-only `SimpleEci`. `auto` downloads `finals2000A.all` from IERS with a
+  24 h cache, a path loads a local series, `zero` asks for the model CIP only.
+  `gcrs` is Earth-only, requires an EOP source, and is refused for attitude
+  fleets, controllers and `orts serve` (all `SimpleEci`-locked) rather than
+  silently falling back. The recording metadata names the frame
+  (`# frame = gcrs`). ([#411](https://github.com/sksat/orts/issues/411))
 - `[gravity_field]` config table (`path`, `degree`, `order`) and
   `--gravity-field <PATH> [--gravity-degree N] [--gravity-order M]` on `run` /
   `serve`: install a full spherical-harmonic geopotential from an ICGEM `.gfc`
@@ -502,6 +519,13 @@ section is subdivided by package.
   ([#367](https://github.com/sksat/orts/pull/367))
 
 ### `arika` (Rust, crates.io)
+
+#### Added
+- `fetch-eop` feature: `EopTable::fetch` / `fetch_default` download the IERS
+  `finals2000A.all` series and cache it at `~/.cache/orts/finals2000A.all`
+  (24 h), mirroring `CssiSpaceWeather::fetch`. `ClampedEop::new` wraps any
+  `Borrow<EopTable>`, so one shared table can back several force models.
+  ([#411](https://github.com/sksat/orts/issues/411))
 
 #### Added
 - `arika_wasm::orbit_derived_batch` returns Keplerian elements and the scalar

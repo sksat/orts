@@ -36,6 +36,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `stream_deliver` / `stream_take` / `stream_close`。([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 - WIT v0 plugin interface に msg-io / stream-io チャネルを追加。([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
+#### Added
+- `setup::build_orbital_system_in_frame::<F>` — 慣性系を明示する
+  `build_orbital_system`。frame-aware なモデル (drag、球面調和場) がそれぞれ
+  provider を持てるよう EOP storage を factory で受ける。`HasPosition` を任意の
+  frame の `OrbitalState<F>` に実装し、`record::SimMetadata` に frame 名を追加。
+  ([#411](https://github.com/sksat/orts/issues/411))
+
 #### Changed
 - **BREAKING**: `setup::build_orbital_system` / `build_spacecraft_dynamics` に
   末尾引数 `gravity_field: Option<Arc<SphericalHarmonicField>>` を追加。`Some` で
@@ -183,6 +190,14 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `orts-cli` (Rust, crates.io, binary)
 
 #### Added
+- `frame` / `--frame {simple-eci|gcrs}` と `eop` / `--eop {auto|PATH|zero}`:
+  `orts run` の軌道のみの経路を `Gcrs` (IAU 2006/2000A CIO chain + 観測 IERS
+  EOP、極運動込み) で伝播できるようにした。従来の ERA のみの `SimpleEci` が既定。
+  `auto` は IERS から `finals2000A.all` を取得 (24h キャッシュ)、パス指定はローカル
+  ファイル、`zero` は model CIP のみ。`gcrs` は Earth 専用・EOP 必須で、姿勢付き
+  fleet・コントローラ・`orts serve` (いずれも `SimpleEci` 固定) では黙って fallback
+  せず reject する。recording の metadata に frame を残す (`# frame = gcrs`)。
+  ([#411](https://github.com/sksat/orts/issues/411))
 - `[gravity_field]` config table (`path`, `degree`, `order`) と `run` / `serve` の
   `--gravity-field <PATH> [--gravity-degree N] [--gravity-order M]`: ICGEM `.gfc`
   の完全球面調和重力場を J2/J3/J4 の zonal model の代わりに登録し、ファイルの GM を
@@ -449,6 +464,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   追加した。([#367](https://github.com/sksat/orts/pull/367))
 
 ### `arika` (Rust, crates.io)
+
+#### Added
+- `fetch-eop` feature: `EopTable::fetch` / `fetch_default` が IERS の
+  `finals2000A.all` を取得し `~/.cache/orts/finals2000A.all` に 24h キャッシュする
+  (`CssiSpaceWeather::fetch` と同じ作り)。`ClampedEop::new` が `Borrow<EopTable>`
+  を受けるので、1 つの table を複数の力学モデルで共有できる。
+  ([#411](https://github.com/sksat/orts/issues/411))
 
 #### Added
 - `arika_wasm::orbit_derived_batch` が、状態ベクトルの配列から Kepler 要素と

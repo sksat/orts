@@ -19,7 +19,18 @@ export type SimConfig = { body?: string, dt?: number, output_interval?: number, 
  * に置き換える。table 不在が「従来どおり zonal」なので `Option` (空 table と
  * 区別する)。Earth 専用。
  */
-gravity_field?: GravityFieldConfig, duration?: number, satellites?: Array<SatelliteConfig>, 
+gravity_field?: GravityFieldConfig, 
+/**
+ * 伝播する慣性系。`"simple-eci"` (既定, ERA のみ) か `"gcrs"`
+ * (IAU 2006/2000A CIO chain + 観測 EOP)。`gcrs` は軌道のみの `orts run`
+ * で使える。姿勢・コントローラ・`serve` は SimpleEci 固定。
+ */
+frame?: string, 
+/**
+ * `frame = "gcrs"` の EOP: `"auto"` (IERS から取得, 24h キャッシュ)、
+ * ファイルパス (IERS finals2000A)、`"zero"` (観測 EOP なし)。
+ */
+eop?: string, duration?: number, satellites?: Array<SatelliteConfig>, 
 /**
  * 時刻指定コマンドシーケンス（FSW への C&T アップリンク）。
  * 各エントリは指定 sim 時刻に対象衛星のコントローラへ配送される。

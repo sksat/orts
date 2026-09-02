@@ -184,6 +184,7 @@ fn unhonored_sim_args(sim: &SimArgs) -> Vec<&'static str> {
         ("--gravity-field", sim.gravity_field.is_some()),
         ("--gravity-degree", sim.gravity_degree.is_some()),
         ("--gravity-order", sim.gravity_order.is_some()),
+        ("--eop", sim.eop.is_some()),
     ]
     .into_iter()
     .filter_map(|(flag, differs)| differs.then_some(flag))
@@ -323,8 +324,9 @@ async fn async_server(
             sim.gravity_order,
         )
         .map_err(CmdError::failure)?;
+        let eop = SimParams::load_eop(sim.eop.as_deref()).map_err(CmdError::failure)?;
         let params = Arc::new(SimParams::from_sim_args_with_gravity_field(
-            sim, true, field,
+            sim, true, field, eop,
         ));
         crate::satellite::ensure_unique_ids(&params.satellites)?;
         tokio::spawn(manager::simulation_manager_with_params(

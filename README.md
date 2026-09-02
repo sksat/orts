@@ -14,6 +14,7 @@
 ## Features
 
 - N-body orbital simulation with adaptive (DOP853, Dormand-Prince) and symplectic (Störmer-Verlet, Yoshida) integrators
+- Propagation frames: `SimpleEci` (ERA-only Earth rotation) and `Gcrs` (IAU 2006/2000A CIO chain with observed IERS EOP, `orts run --frame gcrs --eop auto`)
 - Gravity models: point-mass, zonal harmonics (J2, J3, J4), full spherical-harmonic geopotential from ICGEM `.gfc` files (EGM96 / EGM2008 / EIGEN-class, Holmes–Featherstone, validated against Orekit to 1e-13 pointwise and ~1 m over 24 h at 70×70)
 - Perturbations: atmospheric drag, solar radiation pressure, third-body gravity, constant
   thrust. Drag and SRP can be attitude-dependent, from a flat-panel surface that also

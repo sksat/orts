@@ -122,6 +122,40 @@ fn build_system(fixtures: &FixtureFile, sc: &Scenario) -> OrbitalSystem<frame::G
         .with_model(SphericalHarmonicGravity::<frame::Gcrs>::new(field, eop()))
 }
 
+/// The same system built the way `orts run --frame gcrs` builds it: through
+/// `orts::setup`, which is where the CLI's models come from.
+///
+/// `build_system` above wires the two models by hand. This one goes through
+/// the builder, so the oracle also covers what the registration adds — that
+/// the field (and not `ZonalGravity`) is installed, in `Gcrs`, with the EOP
+/// storage the frame needs.
+fn build_system_through_setup(fixtures: &FixtureFile, sc: &Scenario) -> OrbitalSystem<frame::Gcrs> {
+    let g = &sc.force_model.gravity;
+    let field = Arc::new(load_field().truncated(g.degree, g.order));
+    assert_eq!(field.gm(), fixtures.mu_km3_s2);
+    let sat = orts::setup::SatelliteParams {
+        has_drag: false,
+        ballistic_coeff: None,
+        srp_area_to_mass: None,
+        srp_cr: None,
+        disturbances: orts::setup::DisturbanceTorques {
+            gravity_gradient: false,
+        },
+        shape: None,
+    };
+    orts::setup::build_orbital_system_in_frame::<frame::Gcrs>(
+        &arika::body::KnownBody::Earth,
+        field.gm(),
+        Some(parse_epoch(&sc.epoch_utc)),
+        &sat,
+        // No third bodies: the fixture is point mass + the harmonic field only.
+        &[],
+        None,
+        Some(field),
+        eop,
+    )
+}
+
 /// Propagate and return the largest position error [km] over the fixture's
 /// output points, plus the final one.
 fn position_errors(fixtures: &FixtureFile, sc: &Scenario) -> (f64, f64) {
@@ -210,4 +244,39 @@ fn fixture_separates_70x70_from_20x20() {
         (0.01..1.0).contains(&sep),
         "70x70 vs 20x20 after 24 h: {sep:.4} km"
     );
+}
+
+/// `orts::setup` — the registration `orts run --frame gcrs` goes through —
+/// produces the system the oracle above validated: the same 24 h trajectory,
+/// with the spherical-harmonic model installed and the zonal one absent.
+#[test]
+fn setup_built_gcrs_system_matches_orekit_too() {
+    let fixtures = load_fixtures();
+    let sc = scenario(&fixtures, "leo_570km_70x70");
+    let system = build_system_through_setup(&fixtures, sc);
+
+    let names = system.model_names();
+    assert_eq!(
+        names,
+        vec!["spherical_harmonic_gravity"],
+        "setup should install the field and nothing else here"
+    );
+
+    let ic = &sc.initial_cartesian;
+    let mut state = OrbitalState::<frame::Gcrs>::new_in_frame(
+        Vector3::from(ic.position_km),
+        Vector3::from(ic.velocity_km_s),
+    );
+    let dp = DormandPrince;
+    let mut t = 0.0;
+    let mut max_err = 0.0f64;
+    for point in &sc.trajectory {
+        if point.t_seconds > t {
+            state = dp.integrate(&system, state, t, point.t_seconds, 30.0, |_, _| {});
+            t = point.t_seconds;
+        }
+        max_err = max_err.max((state.position() - Vector3::from(point.position_km)).norm());
+    }
+    println!("setup path 70x70: max {:.3} m", max_err * 1e3);
+    assert!(max_err < 2e-3, "max position error {:.3} m", max_err * 1e3);
 }

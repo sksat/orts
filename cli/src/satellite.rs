@@ -1,7 +1,6 @@
 use arika::body::KnownBody;
 use arika::elements::Sgp4Elements;
 use arika::epoch::{Epoch, Utc};
-use arika::frame::{FrameTransform, SimpleEci, Teme};
 use arika::sgp4::Sgp4Propagator;
 use orts::OrbitalState;
 use orts::orbital::kepler::KeplerianElements;
@@ -109,6 +108,20 @@ impl SatelliteSpec {
         mu: f64,
         epoch: Option<Epoch<Utc>>,
     ) -> Result<OrbitalState, String> {
+        self.initial_state_in_frame::<arika::frame::SimpleEci>(mu, epoch)
+    }
+
+    /// [`initial_state`](Self::initial_state) in an explicit inertial frame.
+    ///
+    /// A Keplerian element set is frame-agnostic (it is interpreted in
+    /// whichever frame the propagation runs in), while an SGP4 state is born
+    /// in TEME and has to be rotated: `F::teme_transform` is what says how,
+    /// so a new frame cannot silently inherit another's rotation.
+    pub fn initial_state_in_frame<F: crate::sim::frame::RunFrame>(
+        &self,
+        mu: f64,
+        epoch: Option<Epoch<Utc>>,
+    ) -> Result<OrbitalState<F>, String> {
         match &self.orbit {
             OrbitSpec::Circular {
                 r0,
@@ -125,7 +138,7 @@ impl SatelliteSpec {
                     true_anomaly: 0.0,
                 };
                 let (pos, vel) = elements.to_state_vector(mu);
-                Ok(OrbitalState::new(pos, vel))
+                Ok(OrbitalState::new_in_frame(pos, vel))
             }
             OrbitSpec::ElementSet { elements, .. } => {
                 let epoch = epoch.ok_or("a TLE/OMM orbit requires a simulation epoch")?;
@@ -134,11 +147,12 @@ impl SatelliteSpec {
                 let (r_teme, v_teme) = propagator
                     .propagate(epoch)
                     .map_err(|e| format!("SGP4 propagation to {epoch:?} failed: {e}"))?;
-                // TEME → SimpleEci (the integration frame); ω = 0 (both inertial).
-                let (pos, vel) =
-                    FrameTransform::<Teme, SimpleEci>::teme_to_simple_eci(&epoch.to_ut1_naive())
-                        .transform_state(&r_teme, &v_teme);
-                Ok(OrbitalState::new(pos.into_inner(), vel.into_inner()))
+                // TEME → the integration frame; ω = 0 (both inertial).
+                let (pos, vel) = F::teme_transform(&epoch).transform_state(&r_teme, &v_teme);
+                Ok(OrbitalState::new_in_frame(
+                    pos.into_inner(),
+                    vel.into_inner(),
+                ))
             }
         }
     }

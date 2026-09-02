@@ -15,9 +15,11 @@ use orts::record::recording::Recording;
 use orts::record::timeline::TimePoint;
 use orts::visibility::{StationContact, VisibilityMonitor};
 
+use crate::cli::FrameChoice;
 use crate::cli::{IntegratorChoice, OutputFormat, SimArgs};
 use crate::commands::CmdError;
 use crate::satellite::OrbitSpec;
+use crate::sim::frame::RunFrame;
 use crate::sim::mode::{
     SimMode, ensure_commands_deliverable, ensure_streams_unused, select_sim_mode,
     unhonored_config_warnings,
@@ -39,6 +41,10 @@ pub(crate) fn validate_sim_args(sim: &SimArgs) -> Result<(), String> {
         sim.duration,
     )?;
     crate::config::validate_tolerances(sim.integrator, sim.atol, sim.rtol)?;
+    // The frame rules need the fleet's attitude configs, which the direct-CLI
+    // path cannot express at all (`--sat` has no attitude), so an empty slice
+    // states exactly that.
+    crate::config::validate_frame(sim.frame, sim.eop.as_deref(), &sim.body, &[])?;
     validate_gravity_args(sim)
 }
 
@@ -49,6 +55,8 @@ fn gravity_flags_given(sim: &SimArgs) -> Vec<&'static str> {
         ("--gravity-field", sim.gravity_field.is_some()),
         ("--gravity-degree", sim.gravity_degree.is_some()),
         ("--gravity-order", sim.gravity_order.is_some()),
+        ("--frame", sim.frame != crate::cli::FrameChoice::SimpleEci),
+        ("--eop", sim.eop.is_some()),
     ]
     .into_iter()
     .filter_map(|(flag, given)| given.then_some(flag))
@@ -62,14 +70,18 @@ fn gravity_flags_given(sim: &SimArgs) -> Vec<&'static str> {
 // TODO: the other tuning flags (`--dt`, `--atmosphere`, …) are still dropped
 // silently on this path; extending `serve`'s `unhonored_sim_args` to `run` is
 // a behaviour change for existing command lines and is left to its own change.
-fn reject_gravity_flags_with_config(sim: &SimArgs, config_path: &str) -> Result<(), CmdError> {
+fn reject_frame_and_gravity_flags_with_config(
+    sim: &SimArgs,
+    config_path: &str,
+) -> Result<(), CmdError> {
     let flags = gravity_flags_given(sim);
     if flags.is_empty() {
         return Ok(());
     }
     Err(CmdError::usage(format!(
         "{} cannot be honored: `run --config {config_path}` builds its simulation from the \
-         config alone. Put a `[gravity_field]` table in the config instead, or drop the flag.",
+         config alone. Set the value in the config instead (`[gravity_field]`, `frame`, \
+         `eop`), or drop the flag.",
         flags.join(", ")
     )))
 }
@@ -113,11 +125,12 @@ pub fn run_simulation_cmd(
     // a missing or malformed file is a normal error, not a panic inside
     // `SimParams`, and the file is not opened a second time.
     let mut params = if let Some(config_path) = &sim.config {
-        reject_gravity_flags_with_config(sim, config_path)?;
+        reject_frame_and_gravity_flags_with_config(sim, config_path)?;
         let config =
             crate::config::load_config_reporting_unread_keys(std::path::Path::new(config_path))?;
         let field = SimParams::load_config_gravity_field(&config).map_err(CmdError::failure)?;
-        SimParams::from_config_with_gravity_field(&config, field)
+        let eop = SimParams::load_eop(config.eop.as_deref()).map_err(CmdError::failure)?;
+        SimParams::from_config_with_gravity_field(&config, field, eop)
     } else if sim.has_orbit_args() {
         // The direct-CLI path bypasses `SimConfig::validate`, so apply the
         // same time/tolerance checks here rather than letting a bad `--dt`
@@ -129,15 +142,17 @@ pub fn run_simulation_cmd(
             sim.gravity_order,
         )
         .map_err(CmdError::failure)?;
-        SimParams::from_sim_args_with_gravity_field(sim, false, field)
+        let eop = SimParams::load_eop(sim.eop.as_deref()).map_err(CmdError::failure)?;
+        SimParams::from_sim_args_with_gravity_field(sim, false, field, eop)
     } else {
         // Auto-detect orts.toml in the current directory
         let config_path = std::path::Path::new("orts.toml");
         if config_path.exists() {
-            reject_gravity_flags_with_config(sim, "orts.toml")?;
+            reject_frame_and_gravity_flags_with_config(sim, "orts.toml")?;
             let config = crate::config::load_config_reporting_unread_keys(config_path)?;
             let field = SimParams::load_config_gravity_field(&config).map_err(CmdError::failure)?;
-            SimParams::from_config_with_gravity_field(&config, field)
+            let eop = SimParams::load_eop(config.eop.as_deref()).map_err(CmdError::failure)?;
+            SimParams::from_config_with_gravity_field(&config, field, eop)
         } else {
             return Err(CmdError::usage(
                 "no simulation configuration found.\n\
@@ -618,16 +633,28 @@ fn body_event_checker<S: HasPosition>(
 }
 
 /// Run the orbit-only simulation and return a Recording.
+///
+/// The propagation frame is a type parameter of every model and state, and a
+/// value on the command line, so it is resolved into
+/// [`run_simulation_in_frame`] here — the one place the two meet.
 pub fn run_simulation(params: &SimParams) -> Result<Recording, CmdError> {
+    match params.frame {
+        FrameChoice::SimpleEci => run_simulation_in_frame::<arika::frame::SimpleEci>(params),
+        FrameChoice::Gcrs => run_simulation_in_frame::<arika::frame::Gcrs>(params),
+    }
+}
+
+/// [`run_simulation`] with the frame already chosen.
+fn run_simulation_in_frame<F: RunFrame>(params: &SimParams) -> Result<Recording, CmdError> {
     use crate::sim::core::sat_params;
-    use orts::setup::{build_orbital_system, default_third_bodies};
+    use orts::setup::{build_orbital_system_in_frame, default_third_bodies};
 
     let mut group = IndependentGroup::new(integrator_config(params))
-        .with_event_checker(body_event_checker::<OrbitalState>(params));
+        .with_event_checker(body_event_checker::<OrbitalState<F>>(params));
 
     let third_bodies = default_third_bodies(&params.body);
     for sat in &params.satellites {
-        let system = build_orbital_system(
+        let system = build_orbital_system_in_frame::<F>(
             &params.body,
             params.mu,
             params.epoch,
@@ -635,9 +662,10 @@ pub fn run_simulation(params: &SimParams) -> Result<Recording, CmdError> {
             &third_bodies,
             params.build_atmosphere_model(),
             params.gravity_field(),
+            || params.eop_storage::<F>(),
         );
         let initial = sat
-            .initial_state(params.mu, params.epoch)
+            .initial_state_in_frame::<F>(params.mu, params.epoch)
             .map_err(|e| CmdError::failure(format!("satellite '{}': {e}", sat.id)))?;
 
         group =
@@ -865,6 +893,7 @@ fn sim_metadata(params: &SimParams) -> orts::record::recording::SimMetadata {
     orts::record::recording::SimMetadata {
         epoch_jd: params.epoch.map(|e| e.jd()),
         epoch_iso: params.epoch.map(|e| e.to_datetime().to_string()),
+        frame: Some(params.frame.as_str().to_string()),
         mu: Some(params.mu),
         body_radius: Some(params.body.properties().radius),
         body_name: Some(params.body.properties().name.to_string()),
@@ -1786,8 +1815,8 @@ mod tests {
     /// running the zonal model behind them.
     #[test]
     fn config_backed_run_refuses_gravity_flags() {
-        assert!(reject_gravity_flags_with_config(&args(&[]), "m.toml").is_ok());
-        let err = reject_gravity_flags_with_config(
+        assert!(reject_frame_and_gravity_flags_with_config(&args(&[]), "m.toml").is_ok());
+        let err = reject_frame_and_gravity_flags_with_config(
             &args(&["--gravity-field", "x.gfc", "--gravity-order", "8"]),
             "m.toml",
         )

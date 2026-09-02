@@ -27,7 +27,7 @@ pub trait HasPosition {
     fn position(&self) -> Vector3<f64>;
 }
 
-impl HasPosition for OrbitalState {
+impl<F: arika::frame::Eci> HasPosition for OrbitalState<F> {
     fn position(&self) -> Vector3<f64> {
         *self.position()
     }

@@ -777,3 +777,177 @@ fn test_run_config_refuses_gravity_flags() {
         "{stderr}"
     );
 }
+
+/// The EOP series shipped for the `Gcrs` oracle tests, reused here so the
+/// `--frame gcrs` path runs against real Earth orientation.
+const EOP_FIXTURE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../orts/tests/fixtures/finals2000A.sample"
+);
+
+/// The final position of a run, from the last CSV data row.
+fn final_position(stdout: &str) -> [f64; 3] {
+    let last = data_lines(stdout)
+        .last()
+        .unwrap_or_else(|| panic!("no data rows:\n{stdout}"))
+        .to_string();
+    let cols: Vec<f64> = last
+        .split(',')
+        .skip(1)
+        .take(3)
+        .map(|c| c.trim().parse().expect("numeric position column"))
+        .collect();
+    [cols[0], cols[1], cols[2]]
+}
+
+fn one_orbit_config(frame_and_eop: &str) -> String {
+    format!(
+        r#"
+epoch = "2024-03-20T12:00:00Z"
+dt = 10.0
+duration = 5400.0
+output_interval = 600.0
+{frame_and_eop}
+
+[[satellites]]
+id = "a"
+orbit = {{ type = "circular", altitude = 570, inclination = 97.6, raan = 40 }}
+"#
+    )
+}
+
+/// `frame = "gcrs"` propagates through the IAU 2006 chain and says so in the
+/// recording, and it is not the same dynamics as the ERA-only default: the
+/// ~0.1° pole offset moves the state by hundreds of metres to kilometres over
+/// one orbit. (The metre-level agreement with Orekit is pinned at the library
+/// level by `orts/tests/oracle_geopotential.rs`; this is the CLI wiring.)
+#[test]
+fn test_frame_gcrs_runs_and_differs_from_simple_eci() {
+    let gcrs = run_config(
+        "frame-gcrs",
+        &one_orbit_config(&format!("frame = \"gcrs\"\neop = \"{EOP_FIXTURE}\"")),
+    );
+    let stderr = String::from_utf8_lossy(&gcrs.stderr);
+    assert!(gcrs.status.success(), "gcrs run failed: {stderr}");
+    let gcrs_out = String::from_utf8_lossy(&gcrs.stdout);
+    assert!(
+        gcrs_out.lines().any(|l| l.trim() == "# frame = gcrs"),
+        "the recording should name the frame:\n{gcrs_out}"
+    );
+
+    let simple = run_config("frame-simple", &one_orbit_config(""));
+    assert!(simple.status.success());
+    let simple_out = String::from_utf8_lossy(&simple.stdout);
+    assert!(
+        simple_out
+            .lines()
+            .any(|l| l.trim() == "# frame = simple-eci"),
+        "the default frame should be recorded too:\n{simple_out}"
+    );
+
+    let a = final_position(&gcrs_out);
+    let b = final_position(&simple_out);
+    let sep = ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt();
+    assert!(
+        (0.05..50.0).contains(&sep),
+        "gcrs and simple-eci should differ by 0.05..50 km after one orbit, got {sep} km"
+    );
+}
+
+/// `gcrs` without EOP, on a non-Earth body, or with `eop` but no `gcrs` is
+/// refused with a reason instead of quietly falling back.
+#[test]
+fn test_frame_gcrs_preconditions_are_reported() {
+    let cases = [
+        ("frame = \"gcrs\"", "needs Earth Orientation Parameters"),
+        (
+            "body = \"moon\"\nframe = \"gcrs\"\neop = \"zero\"",
+            "Earth-only",
+        ),
+        ("eop = \"zero\"", "only used by frame"),
+    ];
+    for (i, (extra, needle)) in cases.iter().enumerate() {
+        let out = run_config(&format!("frame-bad-{i}"), &one_orbit_config(extra));
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{extra} should be refused: {stderr}");
+        assert!(stderr.contains(needle), "{extra}: {stderr}");
+    }
+}
+
+/// The same rules apply to the flags, and a missing EOP file is a clean error.
+#[test]
+fn test_frame_flags_are_validated_and_eop_file_errors_are_clean() {
+    let out = orts()
+        .args([
+            "run",
+            "--sat",
+            "altitude=570,id=a",
+            "--epoch",
+            "2024-03-20T12:00:00Z",
+            "--duration",
+            "600",
+            "--frame",
+            "gcrs",
+            "--output",
+            "-",
+        ])
+        .output()
+        .expect("failed to execute orts");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("needs Earth Orientation Parameters"),
+        "{stderr}"
+    );
+
+    let out = orts()
+        .args([
+            "run",
+            "--sat",
+            "altitude=570,id=a",
+            "--epoch",
+            "2024-03-20T12:00:00Z",
+            "--duration",
+            "600",
+            "--frame",
+            "gcrs",
+            "--eop",
+            "/nonexistent/finals2000A.all",
+            "--output",
+            "-",
+        ])
+        .output()
+        .expect("failed to execute orts");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(stderr.contains("/nonexistent/finals2000A.all"), "{stderr}");
+    assert!(
+        !stderr.contains("panicked"),
+        "should be an error, not a panic: {stderr}"
+    );
+}
+
+/// A `--frame` next to a config is refused, like the gravity flags: the config
+/// is the whole simulation there.
+#[test]
+fn test_run_config_refuses_frame_flags() {
+    let dir = unique_dir("frame-flag-with-config");
+    let path = dir.join("orts.toml");
+    std::fs::write(&path, one_orbit_config("")).unwrap();
+    let out = orts()
+        .args([
+            "run",
+            "--config",
+            path.to_str().unwrap(),
+            "--frame",
+            "gcrs",
+            "--output",
+            "-",
+        ])
+        .output()
+        .expect("failed to execute orts");
+    std::fs::remove_dir_all(&dir).ok();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(stderr.contains("--frame cannot be honored"), "{stderr}");
+}

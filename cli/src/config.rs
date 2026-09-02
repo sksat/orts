@@ -109,6 +109,16 @@ pub struct SimConfig {
     /// 区別する)。Earth 専用。
     #[ts(optional)]
     pub gravity_field: Option<GravityFieldConfig>,
+    /// 伝播する慣性系。`"simple-eci"` (既定, ERA のみ) か `"gcrs"`
+    /// (IAU 2006/2000A CIO chain + 観測 EOP)。`gcrs` は軌道のみの `orts run`
+    /// で使える。姿勢・コントローラ・`serve` は SimpleEci 固定。
+    #[serde(default = "default_frame", deserialize_with = "de_frame")]
+    #[ts(as = "Option<_>", optional)]
+    pub frame: String,
+    /// `frame = "gcrs"` の EOP: `"auto"` (IERS から取得, 24h キャッシュ)、
+    /// ファイルパス (IERS finals2000A)、`"zero"` (観測 EOP なし)。
+    #[ts(optional)]
+    pub eop: Option<String>,
     #[ts(optional)]
     pub duration: Option<f64>,
     #[serde(default)]
@@ -257,6 +267,17 @@ fn default_dt() -> f64 {
 fn default_atmosphere() -> String {
     "exponential".to_string()
 }
+fn default_frame() -> String {
+    "simple-eci".to_string()
+}
+
+/// Validate `frame` at deserialize time, so a config spelling and a
+/// `--frame` spelling are accepted identically (as with `atmosphere`).
+fn de_frame<'de, D: Deserializer<'de>>(de: D) -> Result<String, D::Error> {
+    let s = String::deserialize(de)?;
+    parse_choice::<crate::cli::FrameChoice>("frame", &s).map_err(serde::de::Error::custom)?;
+    Ok(s)
+}
 fn default_f107() -> f64 {
     150.0
 }
@@ -291,6 +312,57 @@ fn default_atol() -> f64 {
 }
 fn default_rtol() -> f64 {
     1e-8
+}
+
+/// The rules `frame` / `eop` have to satisfy, shared by the config and the
+/// `--frame` / `--eop` flags.
+///
+/// `Gcrs` is the metre-class path and needs Earth plus an EOP source; it
+/// covers orbit-only propagation, so an attitude fleet is refused rather than
+/// silently propagated in `SimpleEci` (attitude, the controller ABI and
+/// `orts serve` are `SimpleEci`-locked — see `orts::plugin::tick_input`).
+pub fn validate_frame(
+    frame: crate::cli::FrameChoice,
+    eop: Option<&str>,
+    body: &str,
+    satellites: &[SatelliteConfig],
+) -> Result<(), String> {
+    use crate::cli::FrameChoice;
+    match frame {
+        FrameChoice::SimpleEci => {
+            if eop.is_some() {
+                return Err(
+                    "eop is only used by frame = \"gcrs\"; drop it or set frame = \"gcrs\""
+                        .to_string(),
+                );
+            }
+            Ok(())
+        }
+        FrameChoice::Gcrs => {
+            if crate::satellite::try_parse_body(body) != Some(KnownBody::Earth) {
+                return Err(format!(
+                    "frame = \"gcrs\" is Earth-only (it is the geocentric IAU 2006 frame), \
+                     but body is '{body}'"
+                ));
+            }
+            if eop.is_none() {
+                return Err(
+                    "frame = \"gcrs\" needs Earth Orientation Parameters: set eop to \"auto\", \
+                     a finals2000A file path, or \"zero\" (model CIP only, not accurate)"
+                        .to_string(),
+                );
+            }
+            if satellites.iter().any(|s| s.attitude.is_some()) {
+                return Err(
+                    "frame = \"gcrs\" covers orbit-only propagation; a satellite with \
+                     [satellites.attitude] must use frame = \"simple-eci\" (attitude dynamics \
+                     and the plugin controller ABI are SimpleEci-only)"
+                        .to_string(),
+                );
+            }
+            Ok(())
+        }
+    }
 }
 
 /// Spherical-harmonic gravity field within a config file (`[gravity_field]`).
@@ -1275,6 +1347,25 @@ impl SimConfig {
 
     /// The atmosphere model selected by `atmosphere`.
     ///
+    /// Resolve the propagation frame, panicking on an unknown spelling.
+    ///
+    /// Deserialization rejects an unknown value, so this is only reachable
+    /// with a hand-built config; [`try_frame_choice`](Self::try_frame_choice)
+    /// is the fallible form `validate` uses.
+    pub fn frame_choice(&self) -> crate::cli::FrameChoice {
+        self.try_frame_choice().unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    /// [`frame_choice`](Self::frame_choice) as a `Result`.
+    pub fn try_frame_choice(&self) -> Result<crate::cli::FrameChoice, String> {
+        <crate::cli::FrameChoice as clap::ValueEnum>::from_str(&self.frame, true).map_err(|_| {
+            format!(
+                "unknown frame '{}' (expected simple-eci or gcrs)",
+                self.frame
+            )
+        })
+    }
+
     /// # Panics
     /// As [`integrator_choice`](Self::integrator_choice), for the same reason:
     /// falling back to the exponential model would silently substitute the
@@ -1664,6 +1755,8 @@ impl SimConfig {
                 self.body
             ));
         }
+        let frame = self.try_frame_choice()?;
+        validate_frame(frame, self.eop.as_deref(), &self.body, &self.satellites)?;
         if let Some(gf) = &self.gravity_field {
             gf.validate(&self.body)?;
         }
@@ -1944,6 +2037,8 @@ mod tests {
             ap: 15.0,
             space_weather: None,
             gravity_field: None,
+            frame: default_frame(),
+            eop: None,
             duration: None,
             satellites: vec![],
             commands: vec![],
@@ -1966,6 +2061,8 @@ mod tests {
             ap: 15.0,
             space_weather: None,
             gravity_field: None,
+            frame: default_frame(),
+            eop: None,
             duration: None,
             satellites: vec![],
             commands: vec![],
@@ -2169,6 +2266,8 @@ satellites:
             ap: 30.0,
             space_weather: Some("auto".into()),
             gravity_field: None,
+            frame: default_frame(),
+            eop: None,
             duration: Some(86400.0),
             satellites: vec![SatelliteConfig {
                 id: Some("test".into()),
@@ -4853,5 +4952,54 @@ degree = 70
             vec!["gravity_field.?.degre".to_string()]
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // --- frame / eop -----------------------------------------------------
+
+    #[test]
+    fn frame_defaults_to_simple_eci_and_parses_gcrs() {
+        let cfg = config_with("");
+        assert_eq!(cfg.frame, "simple-eci");
+        assert_eq!(cfg.frame_choice(), crate::cli::FrameChoice::SimpleEci);
+        cfg.validate().expect("the default frame needs no eop");
+
+        let cfg = config_with("frame = \"gcrs\"\neop = \"zero\"\n");
+        assert_eq!(cfg.frame_choice(), crate::cli::FrameChoice::Gcrs);
+        cfg.validate().expect("gcrs + eop is valid");
+    }
+
+    /// The rules that keep a `gcrs` run from silently degrading: it needs
+    /// Earth and an EOP source, it does not cover attitude, and `eop` without
+    /// `gcrs` would be read by nothing.
+    #[test]
+    fn frame_rules() {
+        let cases = [
+            ("frame = \"gcrs\"\n", "needs Earth Orientation Parameters"),
+            (
+                "body = \"moon\"\nframe = \"gcrs\"\neop = \"zero\"\n",
+                "Earth-only",
+            ),
+            ("eop = \"zero\"\n", "only used by frame"),
+        ];
+        for (extra, needle) in cases {
+            let err = config_with(extra).validate().unwrap_err();
+            assert!(err.contains(needle), "{extra}: {err}");
+        }
+
+        // An attitude satellite cannot go through the Gcrs path.
+        let cfg: SimConfig = toml::from_str(
+            "frame = \"gcrs\"\neop = \"zero\"\n\n[[satellites]]\nid = \"a\"\n\
+             orbit = { type = \"circular\", altitude = 500 }\n\
+             attitude = { inertia_diag = [10, 10, 10], mass = 50 }\n",
+        )
+        .expect("valid toml");
+        let err = cfg.validate().unwrap_err();
+        assert!(err.contains("orbit-only propagation"), "{err}");
+    }
+
+    #[test]
+    fn unknown_frame_is_rejected_at_deserialize_time() {
+        let err = toml::from_str::<SimConfig>("frame = \"eme2000\"\n").unwrap_err();
+        assert!(err.to_string().contains("frame"), "{err}");
     }
 }
