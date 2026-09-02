@@ -255,7 +255,13 @@ impl PanelSrp {
                 let mut total_force_body = Vector3::zeros(); // [N]
                 let mut total_torque_body = Vector3::zeros(); // [N·m]
 
-                for panel in panels {
+                for (i, panel) in panels.iter().enumerate() {
+                    // A panel standing in the Sun's way keeps this one dark.
+                    // Panels without an outline never do, so an area-only fleet
+                    // is unaffected.
+                    if crate::spacecraft::surface::is_fully_occluded(panel, panels, i, &s_body) {
+                        continue;
+                    }
                     let force = panel_force(panel, &s_body, base_pressure); // [N]
 
                     total_force_body += force;
@@ -723,6 +729,194 @@ mod tests {
             panel_force(&back, &edge_on, TEST_PRESSURE),
             Vector3::zeros()
         );
+    }
+
+    /// A panel standing in the Sun's way leaves the one behind it dark.
+    ///
+    /// Both plates face +x with the Sun on +x; the near one is bigger and sits
+    /// closer to the Sun, so it covers the far one completely. Without occlusion
+    /// both would produce force, which is the whole of #392.
+    fn shaded_pair(near_half: f64) -> SpacecraftShape {
+        let far = SurfacePanel::rectangle(
+            [1.0, 1.0],
+            Vector3::new(0.0, 1.0, 0.0),
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::new(0.1, 0.2),
+        );
+        let near = SurfacePanel::rectangle(
+            [near_half, near_half],
+            Vector3::new(0.0, 1.0, 0.0),
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::new(0.1, 0.2),
+        )
+        .with_cp_offset(Vector3::new(2.0, 0.0, 0.0));
+        SpacecraftShape::panels(vec![far, near])
+    }
+
+    fn panel_srp_force(shape: SpacecraftShape, s_body: &Vector3<f64>) -> Vector3<f64> {
+        let SpacecraftShape::Panels(panels) = shape else {
+            panic!("expected panels");
+        };
+        let mut total = Vector3::zeros();
+        for (i, panel) in panels.iter().enumerate() {
+            if crate::spacecraft::surface::is_fully_occluded(panel, &panels, i, s_body) {
+                continue;
+            }
+            total += panel_force(panel, s_body, TEST_PRESSURE);
+        }
+        total
+    }
+
+    #[test]
+    fn a_panel_behind_a_larger_one_feels_nothing() {
+        let sun = Vector3::new(1.0, 0.0, 0.0);
+        // The near plate is 2 m on a side against the far one's 2 m, and sits
+        // between it and the Sun, so it covers it exactly.
+        let covered = panel_srp_force(shaded_pair(1.0), &sun);
+        let one_panel = panel_force(
+            &SurfacePanel::rectangle(
+                [1.0, 1.0],
+                Vector3::new(0.0, 1.0, 0.0),
+                Vector3::new(1.0, 0.0, 0.0),
+                2.2,
+                PanelOptics::new(0.1, 0.2),
+            )
+            .with_cp_offset(Vector3::new(2.0, 0.0, 0.0)),
+            &sun,
+            TEST_PRESSURE,
+        );
+        assert!(
+            (covered - one_panel).magnitude() < 1e-18,
+            "only the near plate should contribute: {covered:?} vs {one_panel:?}"
+        );
+    }
+
+    #[test]
+    fn a_panel_only_partly_covered_still_feels_the_sun() {
+        let sun = Vector3::new(1.0, 0.0, 0.0);
+        // Half the width, so it cannot cover the far plate's corners.
+        let force = panel_srp_force(shaded_pair(0.5), &sun);
+        let both = {
+            let SpacecraftShape::Panels(panels) = shaded_pair(0.5) else {
+                panic!("expected panels");
+            };
+            panels
+                .iter()
+                .map(|p| panel_force(p, &sun, TEST_PRESSURE))
+                .sum::<Vector3<f64>>()
+        };
+        assert!(
+            (force - both).magnitude() < 1e-18,
+            "partial cover is not occlusion here: {force:?} vs {both:?}"
+        );
+    }
+
+    /// Which plate shields which follows the incoming direction, not the order
+    /// they were written in.
+    #[test]
+    fn the_shielding_role_follows_the_incoming_direction() {
+        let SpacecraftShape::Panels(panels) = shaded_pair(1.0) else {
+            panic!("expected panels");
+        };
+        let occluded = |sun: Vector3<f64>| {
+            (
+                crate::spacecraft::surface::is_fully_occluded(&panels[0], &panels, 0, &sun),
+                crate::spacecraft::surface::is_fully_occluded(&panels[1], &panels, 1, &sun),
+            )
+        };
+
+        // Sun on +x: the plate at x = 2 stands in front of the one at the origin.
+        assert_eq!(occluded(Vector3::new(1.0, 0.0, 0.0)), (true, false));
+        // Sun on -x: the roles swap, because the origin plate is now the near one.
+        assert_eq!(occluded(Vector3::new(-1.0, 0.0, 0.0)), (false, true));
+        // Along the plates: neither stands in the other's way.
+        assert_eq!(occluded(Vector3::new(0.0, 1.0, 0.0)), (false, false));
+    }
+
+    /// A panel with no outline is invisible to the shadow test, both ways.
+    #[test]
+    fn an_outlineless_panel_neither_shades_nor_is_shaded() {
+        let sun = Vector3::new(1.0, 0.0, 0.0);
+        let bare = SurfacePanel::at_com(
+            4.0,
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::new(0.1, 0.2),
+        );
+        let big = SurfacePanel::rectangle(
+            [4.0, 4.0],
+            Vector3::new(0.0, 1.0, 0.0),
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::new(0.1, 0.2),
+        )
+        .with_cp_offset(Vector3::new(2.0, 0.0, 0.0));
+
+        let panels = vec![bare.clone(), big.clone()];
+        assert!(
+            !crate::spacecraft::surface::is_fully_occluded(&panels[0], &panels, 0, &sun),
+            "a panel with no outline cannot be shaded"
+        );
+
+        // And the other way round: an outlineless panel in front shades nothing.
+        let far = SurfacePanel::rectangle(
+            [1.0, 1.0],
+            Vector3::new(0.0, 1.0, 0.0),
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::new(0.1, 0.2),
+        );
+        let bare_near = SurfacePanel::at_com(
+            64.0,
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::new(0.1, 0.2),
+        )
+        .with_cp_offset(Vector3::new(2.0, 0.0, 0.0));
+        let panels = vec![far, bare_near];
+        assert!(
+            !crate::spacecraft::surface::is_fully_occluded(&panels[0], &panels, 0, &sun),
+            "a panel with no outline cannot shade"
+        );
+    }
+
+    /// The two faces of one plate share a plane, so neither shades the other.
+    #[test]
+    fn the_two_faces_of_a_plate_do_not_shade_each_other() {
+        let front = SurfacePanel::rectangle(
+            [1.0, 1.0],
+            Vector3::new(0.0, 1.0, 0.0),
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::new(0.1, 0.2),
+        );
+        let back = front.back_face(PanelOptics::new(0.05, 0.4));
+        let panels = vec![front, back];
+        for sun in [Vector3::new(1.0, 0.0, 0.0), Vector3::new(-1.0, 0.0, 0.0)] {
+            for (i, panel) in panels.iter().enumerate() {
+                assert!(
+                    !crate::spacecraft::surface::is_fully_occluded(panel, &panels, i, &sun),
+                    "coincident faces must not shade each other (sun {sun:?}, panel {i})"
+                );
+            }
+        }
+    }
+
+    /// The back face inherits the outline, since it is the same plate.
+    #[test]
+    fn back_face_carries_the_outline() {
+        let front = SurfacePanel::rectangle(
+            [1.0, 2.0],
+            Vector3::new(0.0, 1.0, 0.0),
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::new(0.1, 0.2),
+        );
+        let back = front.back_face(PanelOptics::absorber());
+        assert_eq!(back.outline, front.outline);
+        assert_eq!(back.area, front.area);
     }
 
     /// The back face is what covers the attitudes the front cannot.

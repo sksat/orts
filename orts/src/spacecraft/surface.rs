@@ -262,6 +262,29 @@ impl SurfacePanel {
         }
     }
 
+    /// Whether `point` lies within the outline, projected onto the panel plane.
+    ///
+    /// `false` without an outline: a panel with no boundary contains nothing,
+    /// which is what keeps it from casting shadows.
+    ///
+    /// Each shape answers for itself. A triangle's three corners span a
+    /// parallelogram larger than the triangle, so a shared corner-based rule
+    /// would quietly over-report once meshes land.
+    pub(crate) fn outline_contains(&self, point: &Vector3<f64>) -> bool {
+        match self.outline {
+            None => false,
+            Some(PanelOutline::Rectangle {
+                half_extent: [hx, hy],
+                in_plane_x,
+            }) => {
+                let d = point - self.cp_offset;
+                let y = self.normal.cross(&in_plane_x);
+                d.dot(&in_plane_x).abs() <= hx + OCCLUSION_EPS
+                    && d.dot(&y).abs() <= hy + OCCLUSION_EPS
+            }
+        }
+    }
+
     /// The other side of the same thin plate: the normal is negated, and the
     /// area, drag coefficient and centre of pressure carry over.
     ///
@@ -404,6 +427,75 @@ impl SpacecraftShape {
         ];
         Self::Panels(panels)
     }
+}
+
+/// Corners on an outline's edge count as inside, and a shadow caster has to
+/// stand this far in front to count [m].
+///
+/// The two together stop a shadow from flickering as a corner grazes an edge,
+/// and stop the two faces of a thin plate — which share a plane — from
+/// shadowing each other.
+const OCCLUSION_EPS: f64 = 1e-9;
+
+/// Whether every corner of `panel` lies behind one other panel, seen from
+/// `upstream`.
+///
+/// `upstream` points from the spacecraft toward where the light or the flow
+/// comes from: `s_body` for SRP, `-v̂_body` for drag. It must be unit length.
+/// `skip` is `panel`'s own index in `others`.
+///
+/// A panel without an outline neither casts a shadow nor receives one, so a
+/// fleet of area-only panels behaves exactly as it did before outlines existed.
+///
+/// Only single-panel occlusion is detected. A panel covered by two others
+/// between them still counts as lit — the case that needs it is a segmented
+/// structure standing in front of one face, which the panel list can describe
+/// but this test cannot see.
+pub(crate) fn is_fully_occluded(
+    panel: &SurfacePanel,
+    others: &[SurfacePanel],
+    skip: usize,
+    upstream: &Vector3<f64>,
+) -> bool {
+    let mut buf = [Vector3::zeros(); MAX_PANEL_CORNERS];
+    let Some(corners) = panel.corners_into(&mut buf) else {
+        return false;
+    };
+    let n = corners.len();
+    let mut own = [Vector3::zeros(); MAX_PANEL_CORNERS];
+    own[..n].copy_from_slice(corners);
+
+    others
+        .iter()
+        .enumerate()
+        .any(|(i, other)| i != skip && blocks_all(&own[..n], other, upstream))
+}
+
+/// Whether `caster` stands in front of every one of `corners`.
+///
+/// Each corner sends a ray toward `upstream`; the corner is covered when the ray
+/// crosses `caster`'s plane in front of it and lands within `caster`'s outline.
+/// Comparing silhouettes on a plane instead would call a caster that tilts
+/// through the panel a full shadow: its centre can sit in front while one edge
+/// is behind, and a projection cannot tell.
+fn blocks_all(corners: &[Vector3<f64>], caster: &SurfacePanel, upstream: &Vector3<f64>) -> bool {
+    if caster.outline.is_none() {
+        return false;
+    }
+    let denom = caster.normal.dot(upstream);
+    if denom.abs() < OCCLUSION_EPS {
+        // Edge-on to the incoming direction: it covers nothing.
+        return false;
+    }
+
+    corners.iter().all(|corner| {
+        // Where the ray from `corner` toward `upstream` meets the caster plane.
+        let t = caster.normal.dot(&(caster.cp_offset - corner)) / denom;
+        if t <= OCCLUSION_EPS {
+            return false; // level with the corner, or behind it
+        }
+        caster.outline_contains(&(corner + upstream * t))
+    })
 }
 
 /// Attitude-dependent drag model using flat surface panels.
@@ -563,10 +655,18 @@ impl<F: EarthFixedTransform> PanelDrag<F> {
                 let mut total_force_body = Vector3::zeros(); // N
                 let mut total_torque_body = Vector3::zeros(); // N·m
 
-                for panel in panels {
+                // The flow arrives from `-v̂`, which is the direction an
+                // occluding panel has to stand in.
+                let upstream = -v_hat_body;
+                for (i, panel) in panels.iter().enumerate() {
                     // cos(θ) = n̂ · (-v̂): panel must face the flow
-                    let cos_theta = panel.normal.dot(&(-v_hat_body)).max(0.0);
+                    let cos_theta = panel.normal.dot(&upstream).max(0.0);
                     if cos_theta <= 0.0 {
+                        continue;
+                    }
+                    // A panel upwind of this one shields it. Panels without an
+                    // outline never do, so an area-only fleet is unaffected.
+                    if is_fully_occluded(panel, panels, i, &upstream) {
                         continue;
                     }
 
