@@ -36,7 +36,9 @@ export const DEFAULT_CAMERA_POSITION: [number, number, number] = [5, 0, 2];
  *
  * When centered on a satellite, the up vector is the radial outward direction
  * (from central body through satellite), so the central body always appears
- * "below" in the viewport. Returns SCENE_UP for non-satellite-centered views.
+ * "below" in the viewport. Returns SCENE_UP for non-satellite-centered views, and
+ * for a zero or non-finite position — a NaN `camera.up` blanks the whole canvas,
+ * so a fallback that is merely wrong beats one that is not a number.
  */
 export function computeCameraUp(
   originPosition: [number, number, number] | null,
@@ -44,7 +46,7 @@ export function computeCameraUp(
   if (originPosition == null) return SCENE_UP;
   const [x, y, z] = originPosition;
   const len = Math.sqrt(x * x + y * y + z * z);
-  if (len < 1e-10) return SCENE_UP;
+  if (!(Number.isFinite(len) && len > 1e-10)) return SCENE_UP;
   return [x / len, y / len, z / len];
 }
 

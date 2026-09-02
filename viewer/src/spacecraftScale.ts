@@ -116,19 +116,29 @@ export function drawnExtentForSpan(span: number): number {
 /**
  * Camera distance that fits everything drawn inside the viewport.
  *
+ * Fits the *sphere* of radius {@link drawnExtentForSpan}, not a flat disc at the
+ * origin: the arrows point in arbitrary directions, and a point on the near side
+ * of that sphere projects further out than the same radius at the origin's
+ * depth. A sphere of radius `R` is inside a frustum of half-angle `θ` exactly
+ * when `d·sin(θ) ≥ R`, which is where the `sin` comes from — using `tan` fits
+ * only the origin plane and clips at wide fields of view (at 75° it puts a point
+ * at the drawn extent past the edge).
+ *
  * A perspective camera's `fov` is the *vertical* angle, so the horizontal half
- * angle shrinks with the aspect ratio: a portrait viewport clips sideways at a
+ * angle shrinks with the aspect ratio and a portrait viewport clips sideways at a
  * distance that frames the same scene fine in landscape. `aspect` is
- * width / height; below 1 the horizontal direction is the binding one.
+ * width / height; the narrower of the two directions is the binding one. Pass the
+ * camera's *effective* field of view if it carries a `zoom`.
  *
  * Deriving the distance from what is actually drawn keeps the framing correct
  * when the proportions above change.
  */
 export function cameraDistanceForSpan(span: number, fovDegrees: number, aspect = 1): number {
-  const halfFov = (fovDegrees / 2) * (Math.PI / 180);
-  const vertical = (drawnExtentForSpan(span) * VIEW_MARGIN) / Math.tan(halfFov);
+  const halfVertical = (fovDegrees / 2) * (Math.PI / 180);
   // A viewport with no width or height has no aspect to fit; treat it as square
   // rather than returning an infinite distance a caller would place a camera at.
-  const usable = Number.isFinite(aspect) && aspect > 0 ? Math.min(1, aspect) : 1;
-  return vertical / usable;
+  const usable = Number.isFinite(aspect) && aspect > 0 ? aspect : 1;
+  const halfHorizontal = Math.atan(Math.tan(halfVertical) * usable);
+  const half = Math.min(halfVertical, halfHorizontal);
+  return (drawnExtentForSpan(span) * VIEW_MARGIN) / Math.sin(half);
 }

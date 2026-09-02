@@ -94,17 +94,24 @@ describe("sizes derived from the span", () => {
     }
   });
 
-  it("frames everything drawn, in both viewport directions and at any aspect", () => {
-    // `fov` is the vertical angle, so the horizontal half angle shrinks with the
-    // aspect ratio: a portrait viewport clips sideways at a distance that frames
-    // the same scene fine in landscape.
+  it("frames the drawn sphere, not just the plane through the origin", () => {
+    // Independent check: project the worst-case point *on* the sphere of drawn
+    // radius R, whose normalised device coordinate is
+    // `R / sqrt(d² - R²) / tan(halfAngle)` — the silhouette of a sphere seen
+    // under perspective, which sits further out than R at the origin's depth.
+    // Fitting with `tan` alone passes the plane check and clips this one (at
+    // fov 75 it reaches 1.167).
     for (const span of [0.016, 1, 42]) {
       for (const fov of [30, 50, 75]) {
         for (const aspect of [0.4, 1, 16 / 9]) {
-          const distance = cameraDistanceForSpan(span, fov, aspect);
-          const halfHeight = distance * Math.tan((fov / 2) * (Math.PI / 180));
-          const halfWidth = halfHeight * aspect;
-          expect(Math.min(halfHeight, halfWidth)).toBeGreaterThan(drawnExtentForSpan(span));
+          const R = drawnExtentForSpan(span);
+          const d = cameraDistanceForSpan(span, fov, aspect);
+          expect(d).toBeGreaterThan(R);
+          const halfVertical = (fov / 2) * (Math.PI / 180);
+          const halfHorizontal = Math.atan(Math.tan(halfVertical) * aspect);
+          const silhouette = R / Math.sqrt(d * d - R * R);
+          expect(silhouette / Math.tan(halfVertical)).toBeLessThan(1);
+          expect(silhouette / Math.tan(halfHorizontal)).toBeLessThan(1);
         }
       }
     }
@@ -124,7 +131,12 @@ describe("sizes derived from the span", () => {
     // not shrink the spacecraft by pushing the camera in.
     const square = cameraDistanceForSpan(1, 50, 1);
     expect(cameraDistanceForSpan(1, 50, 16 / 9)).toBeCloseTo(square, 12);
-    expect(cameraDistanceForSpan(1, 50, 0.5)).toBeCloseTo(square * 2, 12);
+    expect(cameraDistanceForSpan(1, 50, 0.5)).toBeGreaterThan(square);
+  });
+
+  it("pulls further back for a narrower field of view", () => {
+    expect(cameraDistanceForSpan(1, 30, 1)).toBeGreaterThan(cameraDistanceForSpan(1, 50, 1));
+    expect(cameraDistanceForSpan(1, 50, 1)).toBeGreaterThan(cameraDistanceForSpan(1, 75, 1));
   });
 
   it("measures the drawn extent from the outermost thing in the scene", () => {

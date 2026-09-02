@@ -1,5 +1,6 @@
 import { Canvas, useThree } from "@react-three/fiber";
 import { useEffect, useRef } from "react";
+import { PerspectiveCamera } from "three";
 import { SCENE_UP } from "../sceneFrame.js";
 import { cameraDistanceForSpan, NOMINAL_SPACECRAFT_SPAN } from "../spacecraftScale.js";
 import { AttitudeScene } from "./AttitudeScene.js";
@@ -37,7 +38,14 @@ function InitialCameraFit({ fov }: { fov: number }) {
   useEffect(() => {
     if (applied.current || size.width === 0 || size.height === 0) return;
     applied.current = true;
-    const needed = cameraDistanceForSpan(NOMINAL_SPACECRAFT_SPAN, fov, size.width / size.height);
+    // A `zoom` narrows the field of view, so fit the *effective* one — a camera
+    // framed for 50° and zoomed 2× sees half as much and would clip.
+    const effectiveFov = camera instanceof PerspectiveCamera ? camera.getEffectiveFOV() : fov;
+    const needed = cameraDistanceForSpan(
+      NOMINAL_SPACECRAFT_SPAN,
+      effectiveFov,
+      size.width / size.height,
+    );
     const current = camera.position.length();
     if (current > 0 && needed > current) camera.position.multiplyScalar(needed / current);
   }, [camera, size, fov]);

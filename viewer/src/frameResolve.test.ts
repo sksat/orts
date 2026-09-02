@@ -66,6 +66,29 @@ describe("resolveSceneFrame — satellite centred, local_orbital", () => {
     expect(ctx.cameraTracking).toBe(true);
   });
 
+  it("non-finite position: inert like a state that has not arrived", () => {
+    // A non-finite position cannot centre the scene. Passing it on would put the
+    // origin offset and the camera up vector at NaN, which blanks the canvas — so
+    // it is treated as no state at all, and the camera stays where it is until a
+    // usable sample lands.
+    const f: ReferenceFrame = { center: { type: "satellite", id: "s" }, orientation: "inertial" };
+    for (const n of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      const ctx = resolveSceneFrame(
+        f,
+        entity({ s: { position: [n, 0, 0], velocity: [0, 7.5, 0] } }),
+        noBody,
+      );
+      expect(ctx).toEqual({
+        centeredSatId: "s",
+        originPosition: null,
+        originVelocity: null,
+        lvlhAxes: null,
+        lvlhActive: false,
+        cameraTracking: false,
+      });
+    }
+  });
+
   it("unknown entity: inert (no origin, nothing active)", () => {
     const ctx = resolveSceneFrame(f, entity({}), noBody);
     expect(ctx.originPosition).toBeNull();
