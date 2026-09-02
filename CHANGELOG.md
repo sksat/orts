@@ -600,16 +600,17 @@ section is subdivided by package.
   `Box<dyn Error>`. ([#147](https://github.com/sksat/orts/pull/147))
 - Tests: contract tests for all eight integrate loops — a plain and an
   event-checking one each for the `Integrator` default, Verlet and Yoshida,
-  plus the two adaptive steppers. Each checks that the loop reports states,
-  reports them at increasing times, reports the state it just computed rather
-  than the one before it, lands the last one on `t_end`, shortens its final
-  step to get there, and matches the analytic solution of a system whose
-  derivative depends on `t`. Measured: replacing five of the loops with
-  "return the initial state and report nothing" left 147 of 167 tests
-  passing, and reporting each state one step late was caught by nothing at
-  all. A one-period harmonic-oscillator test cannot see either, because after
-  one period the answer is the initial state, and no test system in the crate
-  used `t`. ([#408](https://github.com/sksat/orts/pull/408))
+  plus the two adaptive steppers. Each checks that the loop reports states, at
+  increasing times, reports the state it just computed rather than the one
+  before it, returns that same state, lands the last one on `t_end`, and
+  matches the analytic solution of a system whose derivative depends on `t`;
+  the six fixed-step loops also have to walk in steps of `dt` and shorten only
+  the last one. Measured: replacing five of the loops with "return the initial
+  state and report nothing" left 147 of 167 tests passing, and reporting each
+  state one step late was caught by nothing at all. A one-period
+  harmonic-oscillator test cannot see either, because after one period the
+  answer is the initial state, and the shared systems in `test_systems` all
+  ignore their time argument. ([#408](https://github.com/sksat/orts/pull/408))
 
 #### Fixed
 - `Integrator::try_integrate` stops with `IntegrationError::NonFiniteState` at

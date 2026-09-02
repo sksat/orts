@@ -14,10 +14,13 @@
 //! and check the states the loop reported along the way, not only the one it
 //! returned.
 //!
-//! Both systems below depend on `t`. Every other test system in the crate
-//! ignores it (`derivatives(&self, _t, ...)`), so nothing else in the suite
-//! can see a loop that evaluates a stage at the wrong time, or that starts
-//! from the wrong `t0`.
+//! Both systems below have a solution that depends on `t`. The shared
+//! systems in [`crate::test_systems`] all ignore it (`derivatives(&self,
+//! _t, ...)`), and the ones that do read it are the per-test `Exploding`
+//! systems, which return `INFINITY` past a threshold to reach the
+//! non-finite-state error path. None of them has a finite solution to
+//! compare against, so nothing else in the suite can see a loop that
+//! evaluates a stage at the wrong time, or that starts from the wrong `t0`.
 
 use core::ops::ControlFlow;
 
@@ -218,8 +221,8 @@ fn the_integrator_default_loops_honor_the_contract() {
     plain.assert_stepped_by("Integrator try_integrate", DT);
     assert_ramp_samples(&plain, y0, "Integrator try_integrate");
     assert_eq!(
-        final_state.components[0][0], plain.samples[WHOLE_STEPS].1.components[0][0],
-        "the returned state is the last one reported"
+        final_state, plain.samples[WHOLE_STEPS].1,
+        "try_integrate returns the last state it reported"
     );
 
     // `integrate_with_events` is a second loop, not a wrapper around the
@@ -246,7 +249,11 @@ fn the_integrator_default_loops_honor_the_contract() {
         "both loops walk the same span"
     );
     assert_eq!(
-        events_state.components[0][0], final_state.components[0][0],
+        events_state, with_events.samples[WHOLE_STEPS].1,
+        "integrate_with_events returns the last state it reported"
+    );
+    assert_eq!(
+        events_state, final_state,
         "both loops end at the same state"
     );
 
@@ -263,7 +270,7 @@ fn the_integrator_default_loops_honor_the_contract() {
         "integrate must report what try_integrate reports"
     );
     assert_eq!(
-        wrapper_state.components[0][0], final_state.components[0][0],
+        wrapper_state, final_state,
         "integrate must return what try_integrate returns"
     );
 }
@@ -287,6 +294,11 @@ fn the_verlet_loops_honor_the_contract() {
     // 8.9e-16. Shift either end of a step and the average stops matching the
     // integral, so the velocity is a tight oracle on the stage times.
     assert_ramp_acceleration_samples(&plain, x0, v0, VERLET_POSITION_CAP, "Verlet");
+
+    assert_eq!(
+        final_state, plain.samples[WHOLE_STEPS].1,
+        "try_integrate returns the last state it reported"
+    );
 
     let (expected_x, _) = ramp_acceleration_solution(x0, v0, T0, T_END);
     let coarse_error = (final_state.y()[0] - expected_x).abs();
@@ -334,8 +346,11 @@ fn the_verlet_loops_honor_the_contract() {
         "Verlet integrate_with_events",
     );
     assert_eq!(
-        events_state.y()[0],
-        final_state.y()[0],
+        events_state, with_events.samples[WHOLE_STEPS].1,
+        "integrate_with_events returns the last state it reported"
+    );
+    assert_eq!(
+        events_state, final_state,
         "both loops end at the same state"
     );
 }
@@ -358,6 +373,10 @@ fn the_yoshida_loops_honor_the_contract() {
     // Verlet substep's `h³` position error scales with that substep's weight
     // cubed, and the triple-jump weights cube to zero, so they cancel.
     assert_ramp_acceleration_samples(&plain, x0, v0, EXACT_ORACLE_TOL, "Yoshida4");
+    assert_eq!(
+        final_state, plain.samples[WHOLE_STEPS].1,
+        "try_integrate returns the last state it reported"
+    );
 
     let mut with_events = Reported::default();
     let outcome = Yoshida4.integrate_with_events(
@@ -382,8 +401,11 @@ fn the_yoshida_loops_honor_the_contract() {
         "Yoshida4 integrate_with_events",
     );
     assert_eq!(
-        events_state.y()[0],
-        final_state.y()[0],
+        events_state, with_events.samples[WHOLE_STEPS].1,
+        "integrate_with_events returns the last state it reported"
+    );
+    assert_eq!(
+        events_state, final_state,
         "both loops end at the same state"
     );
 }
@@ -420,7 +442,7 @@ fn the_dp45_adaptive_loop_honors_the_contract() {
     assert_ramp_samples(&reported, y0, "DP45");
     let last = &reported.samples.last().expect("reported states").1;
     assert_eq!(
-        final_state.components[0][0], last.components[0][0],
+        &final_state, last,
         "the returned state is the last one reported"
     );
 }
@@ -455,7 +477,7 @@ fn the_dop853_adaptive_loop_honors_the_contract() {
     assert_ramp_samples(&reported, y0, "DOP853");
     let last = &reported.samples.last().expect("reported states").1;
     assert_eq!(
-        final_state.components[0][0], last.components[0][0],
+        &final_state, last,
         "the returned state is the last one reported"
     );
 }
@@ -522,4 +544,74 @@ fn an_empty_span_returns_the_initial_state_untouched() {
     assert_eq!(*yoshida.y(), *initial.y(), "Yoshida4: position");
     assert_eq!(*yoshida.dy(), *initial.dy(), "Yoshida4: velocity");
     assert!(reported.samples.is_empty(), "Yoshida4: reports nothing");
+
+    // The event-checking loops answer with an outcome rather than a `Result`,
+    // and each is a separate loop, so each promises this separately.
+    let mut reported = Reported::default();
+    let outcome = Rk4.integrate_with_events(
+        &HarmonicOscillator1D,
+        initial.clone(),
+        T0,
+        T0,
+        DT,
+        |t, s: &State<1, 2>| reported.samples.push((t, s.clone())),
+        |_, _| ControlFlow::<()>::Continue(()),
+    );
+    let IntegrationOutcome::Completed(state) = outcome else {
+        panic!("Integrator integrate_with_events: an empty span completes, got {outcome:?}");
+    };
+    assert_eq!(
+        state,
+        initial.clone(),
+        "Integrator integrate_with_events: an empty span returns the state it was given"
+    );
+    assert!(
+        reported.samples.is_empty(),
+        "Integrator integrate_with_events: reports nothing"
+    );
+
+    let mut reported = Reported::default();
+    let outcome = StormerVerlet.integrate_with_events(
+        &HarmonicOscillator1D,
+        initial.clone(),
+        T0,
+        T0,
+        DT,
+        |t, s: &State<1, 2>| reported.samples.push((t, s.clone())),
+        |_, _| ControlFlow::<()>::Continue(()),
+    );
+    let IntegrationOutcome::Completed(state) = outcome else {
+        panic!("Verlet integrate_with_events: an empty span completes, got {outcome:?}");
+    };
+    assert_eq!(
+        state,
+        initial.clone(),
+        "Verlet integrate_with_events: an empty span returns the state it was given"
+    );
+    assert!(
+        reported.samples.is_empty(),
+        "Verlet integrate_with_events: reports nothing"
+    );
+
+    let mut reported = Reported::default();
+    let outcome = Yoshida4.integrate_with_events(
+        &HarmonicOscillator1D,
+        initial.clone(),
+        T0,
+        T0,
+        DT,
+        |t, s: &State<1, 2>| reported.samples.push((t, s.clone())),
+        |_, _| ControlFlow::<()>::Continue(()),
+    );
+    let IntegrationOutcome::Completed(state) = outcome else {
+        panic!("Yoshida4 integrate_with_events: an empty span completes, got {outcome:?}");
+    };
+    assert_eq!(
+        state, initial,
+        "Yoshida4 integrate_with_events: an empty span returns the state it was given"
+    );
+    assert!(
+        reported.samples.is_empty(),
+        "Yoshida4 integrate_with_events: reports nothing"
+    );
 }
