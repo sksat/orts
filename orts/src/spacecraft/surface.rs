@@ -91,8 +91,8 @@ impl PanelOptics {
 /// the flow, which needs the boundary and nothing else.
 ///
 /// An enum because the shapes will not stay one: a mesh read from CAD gives
-/// triangles. Two operations know the shapes — [`SurfacePanel::corners_into`],
-/// which lists the corners, and [`SurfacePanel::outline_contains`], which
+/// triangles. Two operations know the shapes — `SurfacePanel::corners_into`,
+/// which lists the corners, and `SurfacePanel::outline_contains`, which
 /// answers whether a point is inside — so a new shape means a new arm in each
 /// of those and nothing else. Containment cannot be derived from the corners:
 /// a triangle's three corners span a parallelogram larger than the triangle.
@@ -413,8 +413,11 @@ impl SpacecraftShape {
     ///
     /// # Panics
     /// Panics unless every panel normal is unit length and every outline is
-    /// consistent with its panel — see [`Self::assert_normals_are_unit`] and
-    /// [`Self::assert_outlines_are_consistent`].
+    /// consistent with its panel — positive finite extents whose product is a
+    /// finite non-zero area matching `area`, and a unit in-plane axis
+    /// perpendicular to the normal. `SurfacePanel`'s constructors establish
+    /// both, but its fields are public, so a struct literal can reach here
+    /// without them.
     pub fn panels(panels: Vec<SurfacePanel>) -> Self {
         let shape = Self::Panels(panels);
         shape.assert_normals_are_unit();
