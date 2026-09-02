@@ -582,6 +582,10 @@ jobs:
       - name: Run CLI plugin-backend E2E
         env:
           ORTS_BIN: ${{ github.workspace }}/bin/orts
+          # TEMPORARY (diagnostic branch): make cargo report which fingerprint
+          # went stale, to explain the ~110 s rebuild of orts-cli that follows
+          # a build step which already produced every test executable.
+          CARGO_LOG: cargo::core::compiler::fingerprint=info
         run: |
           # The suites the build step above already compiled, in one
           # invocation. Nine separate ones each re-resolved the workspace
