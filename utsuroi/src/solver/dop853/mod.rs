@@ -22,7 +22,10 @@ pub struct Dop853;
 ///
 /// Returns `(y8, error)` where:
 /// - `y8`: 8th-order solution
-/// - `error`: composite error estimate (combined 5th + 3rd order)
+/// - `error`: the 5th-order difference `y8 - y5`, which is what the stepper
+///   controls on. Hairer combines it with a 3rd-order difference; this does
+///   not, so the estimate behaves as `h⁶` while the controller's exponent
+///   assumes `h⁸` — see <https://github.com/sksat/orts/issues/410>.
 ///
 /// The 13th stage `k13 = f(t + dt, y8)` is *not* computed here. It plays no
 /// part in the error estimate, so a rejected candidate never needs it, and an
@@ -162,17 +165,20 @@ fn dop853_candidate<S: DynamicalSystem>(
         .axpy(B12 - BHH3, &k12)
         .scale(dt);
 
-    // Combined error: sqrt((err5^2 + 0.01 * err3^2) / (1 + 0.01))
-    // We use a weighted combination following Hairer's approach.
-    // For the OdeState interface, we combine err5 and err3 into a single error vector.
-    // The actual norm computation happens in error_norm_dop853.
-    // Store err5 as the primary error; we'll compute the combined norm separately.
-    // Actually, to keep the interface clean, we precompute a combined error.
-    // Hairer uses: err = sqrt( (err5/sc)^2 + 0.01*(err3/sc)^2 ) / sqrt(1.01)
-    // We approximate by returning err5 scaled up slightly when err3 dominates.
-    // For simplicity in the OdeState interface, use err5 as error estimate.
-    // The 5th-order error is the tighter one and drives step control.
-    let _ = err3; // Will be used for combined norm later if needed
+    // Hairer's step control divides by a denominator built from both
+    // differences, `err = |h| E / sqrt(n (E + 0.01 F))` with `E` and `F` the
+    // sums of the squared scaled err5 and err3 components. The norm this
+    // returns to is `sqrt(E / n)`, which is that expression with `F = 0`, so
+    // it is never smaller: the ratio is `sqrt(E / (E + 0.01 F)) <= 1`. The
+    // stepper therefore takes smaller steps than DOP853 is designed to, and
+    // returns more accuracy than the caller asked for — measured on one
+    // period of a harmonic oscillator, 30x at `tol = 1e-6` and 700x at
+    // `1e-10`.
+    //
+    // TODO(#410): implement the composite norm, or drop `err3` and document
+    // the estimate as the 5th-order difference. `OdeState::error_norm` takes
+    // one error vector, so the first needs an API for two.
+    let _ = err3;
     let error = err5;
 
     (y8, error)
