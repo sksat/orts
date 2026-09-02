@@ -166,6 +166,12 @@ impl HistoryBuffer {
         if self.states.len() >= self.flush_at {
             self.flush();
         }
+        // The cap is a promise about memory, so it holds on every push. The
+        // retry cadence above only decides when the next write is attempted:
+        // measured before this call was here, a failing spill at capacity 4
+        // reached 35 states against a cap of 32, because the backoff moved the
+        // next attempt three pushes past it.
+        self.enforce_memory_cap();
     }
 
     /// Return a snapshot of the overview: the union of every entity's
@@ -238,6 +244,10 @@ impl HistoryBuffer {
     /// permanently unwritable spill directory would otherwise grow the
     /// buffer without bound. Past the cap bounded memory wins — loudly, and
     /// the per-entity overview still covers the discarded span.
+    ///
+    /// Called from `push`, so the cap holds between write attempts too. A
+    /// failed write moves the next attempt `capacity` pushes out, and those
+    /// pushes would otherwise sit above the cap.
     fn enforce_memory_cap(&mut self) {
         let cap = self.capacity.saturating_mul(MAX_RETAINED_BUFFERS);
         if self.states.len() <= cap {
@@ -1914,5 +1924,39 @@ mod tests {
         assert_eq!(buf.segment_count, 1, "the fourth state fills it");
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The memory cap holds on every push, not only when a write is attempted.
+    ///
+    /// A failed write moves the next attempt `capacity` pushes out. Measured
+    /// with the cap enforced only there: capacity 4 reached 35 states against a
+    /// cap of 32, and 63 of 200 pushes sat above it.
+    #[test]
+    fn a_failing_spill_never_leaves_the_buffer_over_the_cap() {
+        let dir = temp_data_dir("cap-every-push");
+        cleanup_dir(&dir);
+        // A regular file where the directory should be: every write fails.
+        std::fs::write(&dir, b"not a directory").expect("place the blocker");
+
+        let capacity = 4usize;
+        let cap = capacity * MAX_RETAINED_BUFFERS;
+        let mut buf = HistoryBuffer::new(capacity, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+        let mut high = 0usize;
+        for i in 0..200 {
+            buf.push(make_state(i as f64));
+            high = high.max(buf.states.len());
+            assert!(
+                buf.states.len() <= cap,
+                "push {i} left {} states, over the cap of {cap}",
+                buf.states.len()
+            );
+        }
+        assert!(
+            high > cap - capacity,
+            "the run has to reach the cap for this to test anything: high water {high}"
+        );
+        assert_eq!(buf.segment_count, 0, "every write failed");
+
+        std::fs::remove_file(&dir).ok();
     }
 }
