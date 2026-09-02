@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import * as THREE from "three";
-import type { LvlhAxes } from "../sceneFrame.js";
-import { inverseSquareIntensity, sunDirectionInDisplayFrame } from "../sunLighting.js";
+import { type DisplayFrame, type DisplayRotationFrame, displayDirection } from "../displayFrame.js";
+import { inverseSquareIntensity } from "../sunLighting.js";
 import { sun_direction_from_body, sun_distance_from_body } from "../wasm/arikaInit.js";
 
 // Default sun direction when no epoch is provided: ECI +X (vernal equinox).
@@ -21,13 +21,12 @@ export interface SunLightingParams {
   epochJd?: number | null;
   /** Sim time, quantised (e.g. to 60s) to limit WASM recomputation. */
   quantizedSimTime: number;
-  /** True when the display frame is Earth-fixed (ECEF). */
-  isEcef: boolean;
-  /** Earth rotation angle (radians); undefined when no epoch. */
-  era: number | undefined;
-  /** True when LVLH (local-orbital) rotation lives in the data. */
-  lvlhActive: boolean;
-  lvlhAxes: LvlhAxes | null;
+  /**
+   * The scene's resolved display frame. The same value the positions and
+   * attitudes are drawn through, so the lit hemisphere cannot disagree with the
+   * geometry it lights.
+   */
+  displayFrame: DisplayFrame;
   /** Environment scale-up factor for satellite-centred views. */
   sceneAmplification: number;
 }
@@ -53,10 +52,7 @@ export function useSunLighting({
   centralBody,
   epochJd,
   quantizedSimTime,
-  isEcef,
-  era,
-  lvlhActive,
-  lvlhAxes,
+  displayFrame,
   sceneAmplification,
 }: SunLightingParams): SunLightingState {
   // Sun direction in the body-centred inertial frame (ECI), via WASM.
@@ -72,14 +68,22 @@ export function useSunLighting({
     return inverseSquareIntensity(sun_distance_from_body(centralBody, epochJd, quantizedSimTime));
   }, [centralBody, epochJd, quantizedSimTime]);
 
-  // Sun direction rotated into the active display frame.
-  const sunDirection = useMemo(
-    () =>
-      new THREE.Vector3(
-        ...sunDirectionInDisplayFrame(sunDirectionEci, { isEcef, era, lvlhActive, lvlhAxes }),
-      ),
-    [sunDirectionEci, isEcef, era, lvlhActive, lvlhAxes],
-  );
+  // Sun direction rotated into the active display frame. Keyed on the frame's
+  // rotation, not the frame itself: a satellite-centred view's origin moves with
+  // every sample, and keying on that would rebuild the vector (and the light
+  // position, and every lit body's uniform) each time without the direction
+  // having changed.
+  const era = displayFrame.kind === "bodyFixed" ? displayFrame.era : null;
+  const lvlhAxes = displayFrame.kind === "localOrbital" ? displayFrame.axes : null;
+  const sunDirection = useMemo(() => {
+    const rotation: DisplayRotationFrame =
+      era != null
+        ? { kind: "bodyFixed", era }
+        : lvlhAxes != null
+          ? { kind: "localOrbital", axes: lvlhAxes }
+          : { kind: "inertial" };
+    return new THREE.Vector3(...displayDirection(rotation, sunDirectionEci));
+  }, [sunDirectionEci, era, lvlhAxes]);
 
   const lightDistance = sceneAmplification * LIGHT_DISTANCE_FACTOR;
   const lightPosition = useMemo<[number, number, number]>(

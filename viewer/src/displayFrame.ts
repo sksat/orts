@@ -42,6 +42,20 @@ export type DisplayFrame =
   | { kind: "bodyFixed"; era: number }
   | { kind: "localOrbital"; origin: Vec3; axes: LvlhAxes };
 
+/**
+ * The rotation half of a display frame — all a *direction* depends on.
+ *
+ * A {@link DisplayFrame} is assignable to this, so callers holding a full frame
+ * pass it straight through. Naming the rotation separately lets a consumer that
+ * only rotates directions key its memoisation on the rotation alone: an origin
+ * that moves with the centred satellite changes the frame on every sample
+ * without changing a single direction.
+ */
+export type DisplayRotationFrame =
+  | { kind: "inertial" }
+  | { kind: "bodyFixed"; era: number }
+  | { kind: "localOrbital"; axes: LvlhAxes };
+
 /** Frame geometry a caller has already resolved for the current sample. */
 export interface DisplayFrameInputs {
   /**
@@ -61,21 +75,57 @@ export interface DisplayFrameInputs {
 }
 
 /**
- * Resolve the display frame for one sample. The branch order matches the
- * frame semantics: a body-fixed central-body view rotates, a satellite-centred
- * local-orbital view re-bases, anything else only shifts the origin.
+ * Which display frame a view is asking for, named after the frame it produces.
+ *
+ * A request is only granted when the geometry it needs is present — `bodyFixed`
+ * needs an ERA, `localOrbital` needs the centred entity's basis — so the
+ * requested orientation and the resolved {@link DisplayFrame} can differ, and
+ * `inertial` is what a view falls back to.
  */
-export function resolveDisplayFrame(
-  referenceFrame: ReferenceFrame,
+export type DisplayOrientation = DisplayFrame["kind"];
+
+/**
+ * Resolve the display frame from a requested orientation plus the geometry
+ * available for this sample.
+ *
+ * This is the kernel both views resolve through. A view that centres its
+ * spacecraft by construction (the attitude view) has no frame centre to resolve
+ * and calls this directly; {@link resolveDisplayFrame} derives the orientation
+ * from a {@link ReferenceFrame} first.
+ */
+export function resolveDisplayOrientation(
+  orientation: DisplayOrientation,
   { era = null, originPosition = null, lvlhAxes = null }: DisplayFrameInputs,
 ): DisplayFrame {
-  if (isLegacyEcef(referenceFrame) && era != null) {
+  if (orientation === "bodyFixed" && era != null) {
     return { kind: "bodyFixed", era };
   }
-  if (originPosition != null && lvlhAxes != null) {
+  if (orientation === "localOrbital" && originPosition != null && lvlhAxes != null) {
     return { kind: "localOrbital", origin: originPosition, axes: lvlhAxes };
   }
   return { kind: "inertial", origin: originPosition };
+}
+
+/**
+ * Resolve the display frame for one sample of a centre-and-orientation frame.
+ *
+ * The orientation follows the frame semantics: a body-fixed central-body view
+ * rotates, a satellite-centred local-orbital view re-bases, anything else only
+ * shifts the origin. Non-null `lvlhAxes` is what says the local-orbital
+ * transform is active — that decision belongs to the frame-resolution kernel and
+ * is not re-derived here.
+ */
+export function resolveDisplayFrame(
+  referenceFrame: ReferenceFrame,
+  inputs: DisplayFrameInputs,
+): DisplayFrame {
+  const orientation: DisplayOrientation =
+    isLegacyEcef(referenceFrame) && inputs.era != null
+      ? "bodyFixed"
+      : inputs.lvlhAxes != null
+        ? "localOrbital"
+        : "inertial";
+  return resolveDisplayOrientation(orientation, inputs);
 }
 
 /**
@@ -144,6 +194,44 @@ export function displayRotation(frame: DisplayFrame, out?: THREE.Quaternion): TH
     }
     case "inertial":
       return q.identity();
+  }
+}
+
+/**
+ * Express an inertial direction in the display frame.
+ *
+ * The same rotation the position and the attitude go through, so a direction
+ * drawn at a spacecraft (Sun, nadir, …) can never follow a different convention
+ * from the spacecraft it is drawn at. The input need not be a unit vector; the
+ * rotation preserves its length either way.
+ *
+ * Only the frame's rotation is read, so a full {@link DisplayFrame} and its
+ * {@link DisplayRotationFrame} projection give the same answer.
+ *
+ * The inertial frame returns the input array itself — the scene axes are the
+ * inertial axes. Never mutates the input.
+ */
+export function displayDirection(frame: DisplayRotationFrame | DisplayFrame, inertial: Vec3): Vec3 {
+  const [x, y, z] = inertial;
+  switch (frame.kind) {
+    case "bodyFixed": {
+      // R_z(−ERA), the same rotation displayPosition applies to the coordinates.
+      const c = Math.cos(frame.era);
+      const s = Math.sin(frame.era);
+      return [c * x + s * y, -s * x + c * y, z];
+    }
+    case "localOrbital": {
+      // Project onto the [in-track, cross-track, radial] basis, exactly as the
+      // dot products in transformToLvlh do for positions (minus the origin).
+      const { inTrack, crossTrack, radial } = frame.axes;
+      return [
+        inTrack[0] * x + inTrack[1] * y + inTrack[2] * z,
+        crossTrack[0] * x + crossTrack[1] * y + crossTrack[2] * z,
+        radial[0] * x + radial[1] * y + radial[2] * z,
+      ];
+    }
+    case "inertial":
+      return inertial;
   }
 }
 
