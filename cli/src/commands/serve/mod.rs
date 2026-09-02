@@ -163,8 +163,14 @@ fn unhonored_sim_args(sim: &SimArgs) -> Vec<&'static str> {
         ),
         (
             "--stream-interval",
-            sim.stream_interval
-                .is_some_and(|v| clamp_stream(v) != output_interval),
+            sim.stream_interval.is_some_and(|v| {
+                // A value `validate_time_params` refuses is honored nowhere, so
+                // it is named whatever the clamp would make of it. Measured
+                // before this: `serve --stream-interval inf` clamped to the
+                // default, read as inert, and started the idle server without a
+                // word, while `--dt inf` was named.
+                !v.is_finite() || v <= 0.0 || clamp_stream(v) != output_interval
+            }),
         ),
         ("--epoch", sim.epoch.is_some()),
         ("--duration", sim.duration.is_some()),
@@ -594,6 +600,10 @@ mod tests {
             vec!["--dt", "NaN", "--stream-interval", "1"],
             vec!["--output-interval", "inf", "--stream-interval", "1"],
             vec!["--stream-interval", "NaN"],
+            // The clamp would fold these into the default and read them as
+            // inert; `validate_time_params` refuses them, so they are named.
+            vec!["--stream-interval", "inf"],
+            vec!["--stream-interval", "0"],
         ] {
             let named = unhonored_sim_args(&args(&extra));
             assert!(
