@@ -103,6 +103,17 @@ impl SunSensor {
     }
 
     /// Set the shadow body radius for eclipse computation.
+    /// Drop the shadow, keeping the Sun direction this sensor was built with
+    /// (builder pattern).
+    ///
+    /// The same builder the two SRP models have: `for_body(body)?` carries that
+    /// body's conical shadow, and this asks for an unshadowed reading without
+    /// going back to the geocentric Sun that `new()` reads.
+    pub fn without_shadow(mut self) -> Self {
+        self.shadow_body_radius = None;
+        self
+    }
+
     pub fn with_shadow_body(mut self, radius: f64) -> Self {
         self.shadow_body_radius = Some(radius);
         self
@@ -565,6 +576,74 @@ mod tests {
             );
         }
     }
+    fn angle_deg(a: &Vector3<f64>, b: &Vector3<f64>) -> f64 {
+        a.normalize()
+            .dot(&b.normalize())
+            .clamp(-1.0, 1.0)
+            .acos()
+            .to_degrees()
+    }
+
+    /// `without_shadow` drops the eclipse and keeps the body's Sun.
+    ///
+    /// Behind Mars at 20 000 km the sensor reports no direction; with the
+    /// shadow dropped it reports Mars' Sun direction, not Earth's (the two are
+    /// 152.8° apart on this date).
+    #[test]
+    fn without_shadow_keeps_the_body_sun_direction() {
+        let epoch = Epoch::from_gregorian(2026, 3, 20, 12, 0, 0.0);
+        let mars = KnownBody::Mars;
+        let mars_sun = sun::sun_position_from_body(mars, &epoch.to_tdb())
+            .expect("Mars has a Sun ephemeris")
+            .into_inner();
+        let earth_sun = sun::sun_position_eci(&epoch.to_tdb()).into_inner();
+
+        // Directly behind Mars, inside its shadow.
+        let position = -mars_sun.normalize() * 20_000.0;
+        let state = SpacecraftState {
+            orbit: OrbitalState::new(position, Vector3::new(0.0, 3.0, 0.0)),
+            attitude: AttitudeState {
+                quaternion: Vector4::new(1.0, 0.0, 0.0, 0.0),
+                angular_velocity: Vector3::zeros(),
+            },
+            mass: 100.0,
+        };
+
+        let mut shadowed = SunSensor::for_body(mars).expect("Mars has a Sun ephemeris");
+        assert!(
+            matches!(
+                shadowed.measure(&state, &epoch),
+                SunSensorOutput::Fine {
+                    direction: None,
+                    ..
+                }
+            ),
+            "Mars eclipses the satellite"
+        );
+
+        let mut ideal = SunSensor::for_body(mars)
+            .expect("Mars has a Sun ephemeris")
+            .without_shadow();
+        let direction = match ideal.measure(&state, &epoch) {
+            SunSensorOutput::Fine { direction, .. } => direction
+                .expect("no shadow, so the reading is lit")
+                .into_inner()
+                .into_inner(),
+            other => panic!("expected a fine reading, got {other:?}"),
+        };
+
+        let to_mars_sun = angle_deg(&direction, &mars_sun);
+        let to_earth_sun = angle_deg(&direction, &earth_sun);
+        assert!(
+            to_mars_sun < 1.0e-4,
+            "the direction is Mars' Sun: {to_mars_sun:.6}° away"
+        );
+        assert!(
+            to_earth_sun > 150.0,
+            "and not Earth's: {to_earth_sun:.3}° away"
+        );
+    }
+
     /// The shadow radius is the central body's, not Earth's.
     ///
     /// Behind Mars at 20 000 km, a point 5000 km off the anti-Sun axis sits

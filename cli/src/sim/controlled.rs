@@ -61,6 +61,13 @@ pub struct ControlledSatellite {
     pub has_mtq: bool,
     /// MTQ per-axis max moment [A·m²] (for rebuilding the model).
     pub mtq_max_moment: f64,
+    /// Whether the central body's magnetic field is modelled.
+    ///
+    /// A commanded MTQ is rebuilt on every tick that carries a command, and the
+    /// assembly holds its field model as a type parameter, so the rebuild has
+    /// to repeat the choice the first build made. Without this a commanded MTQ
+    /// would go back to Earth's field on a body that has none.
+    pub mtq_field_is_modelled: bool,
     /// Thruster specs (空なら thruster なし)。ZOH 境界で ThrusterAssembly を
     /// 作り直すために保持する。
     pub thruster_specs: Vec<ThrusterSpec>,
@@ -211,11 +218,13 @@ pub fn build_controlled_satellite(
 
     // MTQ を追加。
     let has_mtq = spec.mtq_config.is_some();
+    let mut mtq_field_is_modelled = false;
     let mtq_max_moment = match &spec.mtq_config {
         Some(MtqConfig::ThreeAxis { max_moment }) => {
             // The assembly carries its field model as a type parameter, so the
             // two bodies take two branches rather than one boxed model.
-            if body_field_is_modelled(params.body, "magnetorquer") {
+            mtq_field_is_modelled = body_field_is_modelled(params.body, "magnetorquer");
+            if mtq_field_is_modelled {
                 dynamics = dynamics.with_model(MtqAssembly::three_axis(*max_moment, Igrf::earth()));
             } else {
                 dynamics = dynamics.with_model(MtqAssembly::three_axis(
@@ -285,6 +294,7 @@ pub fn build_controlled_satellite(
         has_rw,
         has_mtq,
         mtq_max_moment,
+        mtq_field_is_modelled,
         thruster_specs,
         thruster_dry_mass,
         tick_base_t: start_t,
@@ -330,16 +340,24 @@ fn apply_held_commands(sat: &mut ControlledSatellite) -> Result<(), String> {
         let cmd_len = match mtq_cmd {
             MtqCommand::Moments(v) | MtqCommand::NormalizedMoments(v) => v.len(),
         };
-        let mut mtq = MtqAssembly::three_axis(sat.mtq_max_moment, Igrf::earth());
-        if cmd_len != mtq.core().num_mtqs() {
+        // Same two branches as the first build, for the same reason. A
+        // mismatched command length is reported before either model is
+        // installed.
+        let num_mtqs = orts::spacecraft::MtqAssemblyCore::three_axis(sat.mtq_max_moment).num_mtqs();
+        if cmd_len != num_mtqs {
             return Err(format!(
-                "mtq command length ({}) != MTQ count ({})",
-                cmd_len,
-                mtq.core().num_mtqs()
+                "mtq command length ({cmd_len}) != MTQ count ({num_mtqs})"
             ));
         }
-        mtq.command = mtq_cmd.clone();
-        sat.dynamics.replace_model("mtq_assembly", Box::new(mtq));
+        if sat.mtq_field_is_modelled {
+            let mut mtq = MtqAssembly::three_axis(sat.mtq_max_moment, Igrf::earth());
+            mtq.command = mtq_cmd.clone();
+            sat.dynamics.replace_model("mtq_assembly", Box::new(mtq));
+        } else {
+            let mut mtq = MtqAssembly::three_axis(sat.mtq_max_moment, tobari::magnetic::NoField);
+            mtq.command = mtq_cmd.clone();
+            sat.dynamics.replace_model("mtq_assembly", Box::new(mtq));
+        }
     }
 
     // 前 tick のコマンドで Thruster を設定（モデルを差し替え）。
@@ -739,6 +757,7 @@ mod tests {
             has_rw: false,
             has_mtq: false,
             mtq_max_moment: 0.0,
+            mtq_field_is_modelled: false,
             thruster_specs: Vec::new(),
             thruster_dry_mass: 0.0,
             tick_base_t: start_t,
@@ -1088,6 +1107,63 @@ mod tests {
         assert!(
             build_sensor_bundle(Some(&[SensorChoice::Gyroscope]), KnownBody::Mars).is_ok(),
             "a gyroscope needs no field"
+        );
+    }
+
+    /// A commanded magnetorquer keeps the field its body had.
+    ///
+    /// `apply_held_commands` rebuilds the assembly on every tick that carries a
+    /// command, and the assembly holds its field model as a type parameter, so
+    /// the rebuild has to repeat the first build's choice. Measured through the
+    /// torque the model reports under the same command: zero where no field is
+    /// modelled, non-zero on Earth.
+    #[test]
+    fn a_commanded_magnetorquer_keeps_the_field_of_its_body() {
+        let torque_after_command = |field_is_modelled: bool| -> f64 {
+            let (mut sat, _ticks) = satellite_with(1.0, 0.0);
+            // The field model reads the epoch, and `satellite_with` builds
+            // dynamics without one.
+            sat.dynamics = sat
+                .dynamics
+                .with_epoch(Epoch::from_gregorian(2026, 3, 20, 12, 0, 0.0));
+            let mtq_max = 10.0;
+            sat.has_mtq = true;
+            sat.mtq_max_moment = mtq_max;
+            sat.mtq_field_is_modelled = field_is_modelled;
+            if field_is_modelled {
+                sat.dynamics = sat
+                    .dynamics
+                    .with_model(MtqAssembly::three_axis(mtq_max, Igrf::earth()));
+            } else {
+                sat.dynamics = sat
+                    .dynamics
+                    .with_model(MtqAssembly::three_axis(mtq_max, tobari::magnetic::NoField));
+            }
+
+            sat.actuators
+                .apply(&Command::mtq_normalized(vec![1.0, 0.0, 0.0]))
+                .expect("three moments for three MTQs");
+            apply_held_commands(&mut sat).expect("the command length matches the MTQ count");
+
+            sat.dynamics
+                .model_breakdown(0.0, &sat.state.plant)
+                .into_iter()
+                .find(|(name, _)| *name == "mtq_assembly")
+                .expect("the assembly is installed")
+                .1
+                .torque_body
+                .inner()
+                .norm()
+        };
+
+        assert_eq!(
+            torque_after_command(false),
+            0.0,
+            "no field model, so a commanded MTQ makes no torque"
+        );
+        assert!(
+            torque_after_command(true) > 0.0,
+            "Earth's field is modelled, so the same command makes torque"
         );
     }
 
