@@ -140,7 +140,10 @@ fn dop853_candidate<S: DynamicalSystem>(
         .axpy(dt * B11, &k11)
         .axpy(dt * B12, &k12);
 
-    // Error estimation: combine 5th-order and 3rd-order errors
+    // Error estimation. Both differences are formed here; the one this
+    // returns is `err5`, and `err3` waits on #410 (see the note below the
+    // two).
+    //
     // 5th-order error: dt * (er1*k1 + er6*k6 + ... + er12*k12)
     let err5 = k1
         .scale(ER1)
