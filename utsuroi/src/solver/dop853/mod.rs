@@ -171,38 +171,15 @@ fn dop853_candidate<S: DynamicalSystem>(
         .scale(dt);
 
     // Hairer's step control divides by a denominator built from both
-    // differences. Write `E` and `F` for the sums over all `n` state
-    // components of the squared tolerance-scaled components of `err5` and
-    // `err3` — scaled by `sc_i = atol + rtol * max(|y_i|, |y8_i|)`, and both
-    // vectors already multiplied by `dt`. His estimate is
-    //
-    //     err = E / sqrt(n (E + 0.01 F))
-    //
-    // (the published form carries an explicit `|h|` because there the
-    // difference vectors exclude it, and it substitutes 1 for a denominator
-    // that comes out non-positive). `OdeState::error_norm` computes
-    // `sqrt(E / n)`, which is the same expression with `F = 0`, so for the
-    // same candidate and tolerances it never returns less: at `E > 0` the
-    // ratio `err_hairer / err_current` is `sqrt(E / (E + 0.01 F)) <= 1`, and
-    // at `E = 0` both are zero, which the controller accepts either way (that
-    // says the 5th-order difference vanished, not that the step was exact).
-    //
-    // A larger estimate makes the controller accept fewer steps. Measured on
-    // one period of a harmonic oscillator, with the terminal error against
-    // the analytic solution: 3.17e-8 over 11 accepted steps at `tol = 1e-6`,
-    // and 1.45e-13 over 41 steps at `1e-10`. That is this problem, not a
-    // property of the norm.
+    // differences; this returns `err5` alone, so the controller sees the
+    // 5th-order difference. For a state whose `error_norm` is a flat RMS over
+    // every component, that estimate is never below Hairer's, so the
+    // controller accepts a given candidate no more easily and tends to pick
+    // smaller steps. The derivation, what the other `error_norm`
+    // implementations do instead, and the measured effect are in #410.
     //
     // TODO(#410): implement the composite norm, or drop `err3` and document
-    // the estimate as the 5th-order difference. Implementing it needs a norm
-    // that takes both error vectors at once. Two separate `error_norm` calls
-    // only reconstruct Hairer's expression where the implementation is a flat
-    // RMS over every component — `State<DIM, ORDER>` and `AttitudeState` are,
-    // and there `a = error_norm(err5)`, `b = error_norm(err3)` give
-    // `a * a / (a * a + 0.01 * b * b).sqrt()` because the `n` cancels. But
-    // `SpacecraftState` maxes over orbit, attitude and mass, and `GroupState`
-    // maxes over satellites, so `a` and `b` can come from different
-    // sub-states and their combination is not Hairer's `E` and `F`.
+    // the estimate as the 5th-order difference.
     let _ = err3;
     let error = err5;
 
