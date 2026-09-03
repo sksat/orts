@@ -63,7 +63,16 @@
     --sl-color-text-accent: oklch(0.58 0.12 240); /* #2382ba   4.57:1 */
 
     /* Brand amber, unmodified: it already clears AA on ink. Retunes the
-       `caution` aside and badge, which is the one place amber belongs. */
+       `caution` aside and badge, which is the one place amber belongs.
+
+       Amber and the blue below are what tell a `caution` aside from a `note`
+       one, and for a protanope they do not: simulated, the two borders sit at
+       1.38:1 in dark and 1.01:1 in light. That is not tunable — reaching 3:1
+       would need amber near L 0.85, which is 1.5:1 on paper and so invisible as
+       a border. The distinction survives because Starlight renders an icon and
+       the word "Note" or "Caution" in each aside, which is the redundant channel
+       colour universal design asks for. Amber therefore stays at the brand
+       value rather than being pushed around for a separation it cannot reach. */
     --sl-color-orange-low: oklch(0.3 0.06 70);
     --sl-color-orange: oklch(0.72 0.12 70); /* #d49648   7.61:1 */
     --sl-color-orange-high: oklch(0.86 0.09 70);
@@ -118,6 +127,39 @@
     --sl-color-blue-high: var(--sl-color-accent-high);
 
     --sl-nextjs-header-bg-color: rgb(245 241 232 / 50%);
+  }
+}
+
+@layer orts {
+  /*
+   * Mark the current sidebar item with something other than its colour.
+   *
+   * Starlight fills the current item and bolds it. The theme replaces that with
+   * `background-color: transparent` plus an accent text colour, and Starlight
+   * already renders top-level sidebar items white and 600 — so on a page whose
+   * sidebar entry is top level, the current item ends up distinguished by hue
+   * alone. Measured against its siblings in dark mode: 1.84:1, and 1.72:1 when
+   * simulated for protanopia. Colour universal design's first rule is that
+   * information must not be carried by colour alone, and a ratio that low would
+   * be weak even for a reader who sees the hue.
+   *
+   * A leading bar puts the cue back in geometry instead of chroma: it survives
+   * greyscale, and it holds against the sidebar ground in the worst of the
+   * protanopia, deuteranopia and tritanopia simulations — 4.31:1 in dark
+   * (#2382ba on ink) and 4.21:1 in light (#0573aa on paper).
+   *
+   * A tinted background was the other candidate and is deliberately not here:
+   * `--sl-color-accent-low` reaches only 1.19-1.33:1 against the ground, so it
+   * would not read as an area, and in light mode it drops the item's own text to
+   * 3.88:1.
+   */
+  .sidebar-content a[aria-current="page"] {
+    border-inline-start: 3px solid var(--sl-color-text-accent);
+    /* Absorb the bar into the existing inline padding so the label does not
+       shift when it becomes current. */
+    padding-inline-start: calc(0.75rem - 3px);
+    border-start-start-radius: 0;
+    border-end-start-radius: 0;
   }
 }
 
