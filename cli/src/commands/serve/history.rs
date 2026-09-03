@@ -112,6 +112,18 @@ pub struct HistoryBuffer {
     // on the manager task. Per-entity bookkeeping ensures every satellite
     // gets fair coverage regardless of push order or count.
     overview_per_entity: HashMap<EntityPath, EntityOverview>,
+
+    /// How many times [`Self::load_all`] has been called.
+    ///
+    /// Lets a test observe that a read stayed in memory instead of timing it.
+    /// The elapsed-time version of that assertion was a proxy that reported how
+    /// busy the machine was: it failed on a macOS runner at 31ms against a 10ms
+    /// budget with the fast path working correctly.
+    ///
+    /// `load_all` is the one path here that opens a segment file, so counting
+    /// the calls counts the reads. A second such path would need its own count.
+    #[cfg(test)]
+    load_all_calls: std::cell::Cell<u32>,
 }
 
 impl HistoryBuffer {
@@ -127,6 +139,8 @@ impl HistoryBuffer {
             mu,
             body_radius,
             overview_per_entity: HashMap::new(),
+            #[cfg(test)]
+            load_all_calls: std::cell::Cell::new(0),
         }
     }
 
@@ -337,6 +351,9 @@ impl HistoryBuffer {
 
     /// Load all data: flushed segments + in-memory buffer, sorted by time.
     pub fn load_all(&self) -> Vec<HistoryState> {
+        #[cfg(test)]
+        self.load_all_calls.set(self.load_all_calls.get() + 1);
+
         let mut all = Vec::new();
 
         for i in 0..self.segment_count {
@@ -897,9 +914,8 @@ mod tests {
     #[test]
     fn query_range_recent_window_skips_disk() {
         // Push enough to trigger many flushes, then query a window small
-        // enough to be fully covered by the in-memory tail. The query must
-        // complete in ~memory-speed time regardless of how many segments
-        // sit on disk.
+        // enough to be fully covered by the in-memory tail. The query must not
+        // read a segment, however many are on disk.
         let dir = temp_data_dir("query-range-recent");
         let mut buf = HistoryBuffer::new(1_000, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
         for i in 0..20_000 {
@@ -915,20 +931,18 @@ mod tests {
         // Ask for a window fully inside the in-memory tail.
         let t_min = oldest_in_memory + 10.0;
 
-        let start = std::time::Instant::now();
         let result = buf.query_range(t_min, latest, Some(500), None);
-        let elapsed = start.elapsed();
 
         assert!(!result.is_empty(), "result should contain in-window points");
         assert!(
             result.iter().all(|s| s.t >= t_min && s.t <= latest),
             "all returned states must lie in the requested window"
         );
-        assert!(
-            elapsed.as_millis() < 10,
-            "query_range on a recent window fully covered by the in-memory \
-             tail should not touch disk; took {}ms with {} segments on disk",
-            elapsed.as_millis(),
+        assert_eq!(
+            buf.load_all_calls.get(),
+            0,
+            "query_range on a recent window fully covered by the in-memory tail \
+             must not call load_all, whatever the {} segments on disk hold",
             buf.segment_count
         );
         cleanup_dir(&dir);
@@ -965,6 +979,13 @@ mod tests {
         let max_t = result.iter().map(|s| s.t).fold(f64::NEG_INFINITY, f64::max);
         assert!(min_t < 150.0, "should include early part of window");
         assert!(max_t > 150.0, "should include late part of window");
+        // The other half of the pair: this window does read the segments, which
+        // is what makes the sibling test's count of zero worth asserting.
+        assert_eq!(
+            buf.load_all_calls.get(),
+            1,
+            "a window reaching past the tail reads the segments once"
+        );
         cleanup_dir(&dir);
     }
 
@@ -1309,11 +1330,40 @@ mod tests {
     ///
     /// Each attempt is reported as it happens, so a genuine regression leaves
     /// the full trail in the log rather than only its last measurement.
+    ///
+    /// The bar is enforced on Linux, where every call site's margins were
+    /// measured, and reported elsewhere. What the retries cannot separate is a
+    /// machine whose own cost curve for the same code is steeper: `overview()`
+    /// over a 4x entity range grew 1.46x per entity on the Linux runner and
+    /// 3.25-4.28x on the macOS one, across all three attempts. Its cost is
+    /// dominated by cloning every state — an `EntityPath` (`Vec<String>`) and a
+    /// `HashMap` each — so
+    /// what the ratio measures on that runner is the allocator, and quadratic
+    /// work over the same range would show 4x. No bar separates them there.
+    /// Whatever `attempt` asserts about behaviour still runs on every platform.
     fn assert_scaling_stable(
         label: &str,
         attempts: u32,
-        mut attempt: impl FnMut() -> Result<(), String>,
+        attempt: impl FnMut() -> Result<(), String>,
     ) {
+        judge_scaling(label, attempts, attempt, SCALING_BAR_ENFORCED);
+    }
+
+    /// Whether a bar that stays tripped fails the test on this platform.
+    const SCALING_BAR_ENFORCED: bool = cfg!(target_os = "linux");
+
+    /// The retry loop of [`assert_scaling_stable`], with the enforcement
+    /// decision passed in rather than read from the platform, so the tests below
+    /// exercise both sides of it wherever they run.
+    fn judge_scaling(
+        label: &str,
+        attempts: u32,
+        mut attempt: impl FnMut() -> Result<(), String>,
+        enforced: bool,
+    ) {
+        // One measurement is enough to report; the repetition exists to tell a
+        // busy machine from a regression, which only matters where it fails.
+        let attempts = if enforced { attempts } else { 1 };
         let mut last = String::new();
         for i in 1..=attempts {
             match attempt() {
@@ -1323,6 +1373,13 @@ mod tests {
                     last = msg;
                 }
             }
+        }
+        if !enforced {
+            eprintln!(
+                "{label}: tripped the bar, reported rather than enforced — the margins \
+                 are measured on Linux. Last — {last}"
+            );
+            return;
         }
         panic!(
             "{label}: all {attempts} attempts tripped the bar, so this is the shape of \
@@ -1438,29 +1495,58 @@ mod tests {
     fn scaling_retry_needs_every_attempt_to_trip() {
         // Trips once, then passes: the machine was busy, not the code.
         let mut calls = 0;
-        assert_scaling_stable("transient", 3, || {
-            calls += 1;
-            if calls == 1 {
-                Err("first attempt".to_string())
-            } else {
-                Ok(())
-            }
-        });
+        judge_scaling(
+            "transient",
+            3,
+            || {
+                calls += 1;
+                if calls == 1 {
+                    Err("first attempt".to_string())
+                } else {
+                    Ok(())
+                }
+            },
+            true,
+        );
         assert_eq!(calls, 2, "must stop as soon as an attempt passes");
 
         // Passes first time: no repetition at all.
         let mut calls = 0;
-        assert_scaling_stable("clean", 3, || {
-            calls += 1;
-            Ok(())
-        });
+        judge_scaling(
+            "clean",
+            3,
+            || {
+                calls += 1;
+                Ok(())
+            },
+            true,
+        );
         assert_eq!(calls, 1);
     }
 
     #[test]
     #[should_panic(expected = "all 3 attempts tripped the bar")]
     fn scaling_retry_fails_when_every_attempt_trips() {
-        assert_scaling_stable("persistent", 3, || Err("every time".to_string()));
+        judge_scaling("persistent", 3, || Err("every time".to_string()), true);
+    }
+
+    /// Where the bar is not enforced, a tripped bar is reported once.
+    ///
+    /// Measuring three times to report the same thing three times is waste, and
+    /// the repetition exists only to justify failing.
+    #[test]
+    fn an_unenforced_bar_measures_once_and_does_not_fail() {
+        let mut calls = 0;
+        judge_scaling(
+            "reported",
+            3,
+            || {
+                calls += 1;
+                Err("every time".to_string())
+            },
+            false,
+        );
+        assert_eq!(calls, 1, "one measurement is enough to report");
     }
 
     #[test]
