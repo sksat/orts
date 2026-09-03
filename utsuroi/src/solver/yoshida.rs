@@ -386,13 +386,17 @@ mod tests {
 
     // Symplecticity: bounded energy drift
 
+    /// The energy `energy_drift` starts from: `0.5 (v² + x²)` at `x = 1`,
+    /// `v = 0`.
+    const INITIAL_ENERGY: f64 = 0.5;
+
     fn energy_drift<F>(integrator: F, dt: f64, t_end: f64) -> (f64, f64)
     where
         F: Fn(&HarmonicOscillator1D, f64, &State<1, 2>, f64) -> State<1, 2>,
     {
         let system = HarmonicOscillator1D;
         let mut state = State::<1, 2>::new(SVector::from([1.0]), SVector::from([0.0]));
-        let initial_energy = 0.5;
+        let initial_energy = INITIAL_ENERGY;
         let t_mid = t_end / 2.0;
 
         let mut first_half: f64 = 0.0;
@@ -422,6 +426,17 @@ mod tests {
         let (first, second) = energy_drift(|s, t, st, dt| Yoshida4.step(s, t, st, dt), dt, t_end);
 
         assert!(first > 0.0, "Should have some energy oscillation");
+        // Small first, and only then does the ratio mean anything: a solver
+        // that zeroed the state would drift by the whole initial energy in
+        // both halves, which reads as a ratio of 1.0. The cap is an order of
+        // magnitude above the 4.8e-7 measured at dt = 0.05 over 1000
+        // periods.
+        let relative = first.max(second) / INITIAL_ENERGY;
+        assert!(
+            relative < 5e-6,
+            "Yoshida4 drifts by {relative:e} of the initial energy, over \
+             the cap 5e-6 (first={first:.2e}, second={second:.2e})"
+        );
         let ratio = second / first;
         assert!(
             ratio < 1.5,
@@ -436,6 +451,17 @@ mod tests {
         let (first, second) = energy_drift(|s, t, st, dt| Yoshida6.step(s, t, st, dt), dt, t_end);
 
         assert!(first > 0.0);
+        // Small first, and only then does the ratio mean anything: a solver
+        // that zeroed the state would drift by the whole initial energy in
+        // both halves, which reads as a ratio of 1.0. The cap is an order of
+        // magnitude above the 4.0e-9 measured at dt = 0.1 over 1000
+        // periods.
+        let relative = first.max(second) / INITIAL_ENERGY;
+        assert!(
+            relative < 4e-8,
+            "Yoshida6 drifts by {relative:e} of the initial energy, over \
+             the cap 4e-8 (first={first:.2e}, second={second:.2e})"
+        );
         let ratio = second / first;
         assert!(
             ratio < 1.5,
@@ -450,6 +476,17 @@ mod tests {
         let (first, second) = energy_drift(|s, t, st, dt| Yoshida8.step(s, t, st, dt), dt, t_end);
 
         assert!(first > 0.0);
+        // Small first, and only then does the ratio mean anything: a solver
+        // that zeroed the state would drift by the whole initial energy in
+        // both halves, which reads as a ratio of 1.0. The cap is an order of
+        // magnitude above the 3.4e-10 measured at dt = 0.1 over 1000
+        // periods.
+        let relative = first.max(second) / INITIAL_ENERGY;
+        assert!(
+            relative < 4e-9,
+            "Yoshida8 drifts by {relative:e} of the initial energy, over \
+             the cap 4e-9 (first={first:.2e}, second={second:.2e})"
+        );
         let ratio = second / first;
         assert!(
             ratio < 1.5,

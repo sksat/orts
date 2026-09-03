@@ -611,6 +611,18 @@ section is subdivided by package.
   harmonic-oscillator test cannot see either, because after one period the
   answer is the initial state, and the shared systems in `test_systems` all
   ignore their time argument. ([#408](https://github.com/sksat/orts/pull/408))
+- Tests: the conserved-quantity tests now require a trajectory that moved.
+  Energy drift and the Lotka-Volterra invariant are both perfectly conserved
+  by a state that never changes, and the symplectic tests compared the drift
+  of the second half of a long integration against the first, which reads as
+  bounded when all the energy is lost at once. Measured: zeroing every
+  accepted state passed six tests, and freezing `Rk4::step` passed the two
+  RK4 conservation tests. The symplectic tests now cap the drift relative to
+  the initial energy, the two RK4 tests require the state to travel, and the
+  Lotka-Volterra one keeps both populations positive, since its invariant
+  reads `ln x` and `ln y`. `tight_tolerance_dop853_fewer_evaluations` also
+  requires both integrations to complete at `t_end` with the right answer
+  before comparing what they cost. ([#409](https://github.com/sksat/orts/pull/409))
 
 #### Fixed
 - `Integrator::try_integrate` stops with `IntegrationError::NonFiniteState` at
