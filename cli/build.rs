@@ -57,17 +57,19 @@ fn main() {
     // until someone builds the viewer. A `rerun-if-changed` path that cargo
     // cannot stat counts as changed, which re-runs this script — and so
     // recompiles orts-cli, its bin and every integration test — on every
-    // single cargo invocation. Watch them only when they are there, and
-    // create `../viewer/dist/` inside the workspace so that watching it
-    // survives the viewer being built later.
+    // single cargo invocation. So watch them only when they are there.
     if textures_src.is_dir() {
         println!("cargo:rerun-if-changed=../viewer/public/textures/");
     }
-    let viewer_dir = manifest_dir.join("../viewer");
-    if viewer_dir.is_dir() {
-        std::fs::create_dir_all(&source_dist).ok();
-    }
-    if source_dist.is_dir() {
+    // Watched once the viewer has been built, and never created here. Creating
+    // it left the directory's mtime newer than the output file cargo writes for
+    // this script, so the next invocation read the watch as stale and re-ran
+    // the script, recompiling orts-cli, its bin and all nine integration tests.
+    // On a fresh checkout that cost the second invocation 34 s locally and
+    // ~110 s in CI, rebuilding exactly what the first had just built. What this
+    // gives up: a viewer built after a cargo build goes unnoticed until
+    // something else watched here changes.
+    if source_dist.join("index.html").is_file() {
         println!("cargo:rerun-if-changed=../viewer/dist/");
     }
 
