@@ -131,12 +131,18 @@ impl PanelSrp {
     /// Fails only for a central body with no Sun ephemeris (Uranus, Neptune).
     ///
     /// # Panics
-    /// Panics unless every panel normal is unit length.
+    /// Panics unless every panel normal is unit length and every outline is
+    /// consistent with its panel — positive finite extents whose product is a
+    /// finite non-zero area matching `area`, and a unit in-plane axis
+    /// perpendicular to the normal. Both are re-checked here because
+    /// `SurfacePanel`'s fields are public, so a struct literal can bypass the
+    /// constructors that establish them.
     pub fn for_body(
         body: arika::body::KnownBody,
         shape: SpacecraftShape,
     ) -> Result<Self, arika::sun::SunPositionError> {
         shape.assert_normals_are_unit();
+        shape.assert_outlines_are_consistent();
         if body == arika::body::KnownBody::Sun {
             return Ok(Self {
                 shape,
@@ -857,6 +863,10 @@ mod tests {
 
     /// An outline written through a struct literal is checked where the panels
     /// enter a model, since `rectangle`'s asserts can be bypassed.
+    ///
+    /// `SpacecraftShape::Panels` is written as the variant rather than through
+    /// `SpacecraftShape::panels`, which validates on its own: going through the
+    /// constructor would panic there and leave the model's own check untested.
     #[test]
     #[should_panic(expected = "perpendicular to the normal")]
     fn a_struct_literal_outline_with_a_parallel_axis_is_rejected() {
@@ -872,7 +882,48 @@ mod tests {
                 in_plane_x: normal, // parallel, so both in-plane axes degenerate
             }),
         };
-        let _ = PanelSrp::for_earth(SpacecraftShape::panels(vec![panel]));
+        let _ = PanelSrp::for_earth(SpacecraftShape::Panels(vec![panel]));
+    }
+
+    /// `for_body` carries the same invariant, and it is the constructor
+    /// `orts::setup` reaches for, so config input arrives through it.
+    #[test]
+    #[should_panic(expected = "does not match the outline")]
+    fn for_body_rejects_an_outline_inconsistent_with_the_area() {
+        let panel = SurfacePanel {
+            area: 99.0, // the outline says 4.0
+            normal: Vector3::new(1.0, 0.0, 0.0),
+            cd: 2.2,
+            optics: PanelOptics::absorber(),
+            cp_offset: Vector3::zeros(),
+            outline: Some(crate::spacecraft::PanelOutline::Rectangle {
+                half_extent: [1.0, 1.0],
+                in_plane_x: Vector3::new(0.0, 1.0, 0.0),
+            }),
+        };
+        let _ = PanelSrp::for_body(
+            arika::body::KnownBody::Earth,
+            SpacecraftShape::Panels(vec![panel]),
+        );
+    }
+
+    /// And `SpacecraftShape::panels` still establishes it, which is what lets
+    /// the tests above write the variant directly.
+    #[test]
+    #[should_panic(expected = "does not match the outline")]
+    fn the_panels_constructor_rejects_an_inconsistent_outline() {
+        let panel = SurfacePanel {
+            area: 99.0,
+            normal: Vector3::new(1.0, 0.0, 0.0),
+            cd: 2.2,
+            optics: PanelOptics::absorber(),
+            cp_offset: Vector3::zeros(),
+            outline: Some(crate::spacecraft::PanelOutline::Rectangle {
+                half_extent: [1.0, 1.0],
+                in_plane_x: Vector3::new(0.0, 1.0, 0.0),
+            }),
+        };
+        let _ = SpacecraftShape::panels(vec![panel]);
     }
 
     /// An infinite stored area passes a relative comparison against itself.
@@ -890,7 +941,7 @@ mod tests {
                 in_plane_x: Vector3::new(0.0, 1.0, 0.0),
             }),
         };
-        let _ = PanelSrp::for_earth(SpacecraftShape::panels(vec![panel]));
+        let _ = PanelSrp::for_earth(SpacecraftShape::Panels(vec![panel]));
     }
 
     /// And an area that disagrees with the outline it claims.
@@ -908,7 +959,7 @@ mod tests {
                 in_plane_x: Vector3::new(0.0, 1.0, 0.0),
             }),
         };
-        let _ = PanelSrp::for_earth(SpacecraftShape::panels(vec![panel]));
+        let _ = PanelSrp::for_earth(SpacecraftShape::Panels(vec![panel]));
     }
 
     #[test]
