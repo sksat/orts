@@ -161,9 +161,14 @@ fn system_body_names(params: &SimParams) -> Vec<String> {
 }
 
 /// Return the central body name plus all third-body names for the given central body.
+///
+/// The names are what the texture downloader fetches, so a central body with no
+/// Sun ephemeris contributes its own name and no third bodies. That body is
+/// rejected where the force models are built; a texture list has nothing to
+/// report.
 fn body_names_for(body: &arika::body::KnownBody) -> Vec<String> {
     let mut names = vec![body.properties().name.to_lowercase()];
-    for tb in &default_third_bodies(body) {
+    for tb in default_third_bodies(body).unwrap_or_default().iter() {
         // tb.name is like "third_body_sun" → extract the body name after the prefix
         if let Some(name) = tb.name.strip_prefix("third_body_") {
             names.push(name.to_string());
@@ -696,12 +701,15 @@ attitude = { inertia_diag = [10, 10, 10], mass = 50 }
         assert_eq!(names.len(), 2);
     }
 
+    /// Moon-centred propagation has Earth as a third body, so its texture is
+    /// wanted too.
     #[test]
-    fn body_names_for_moon_includes_sun_only() {
+    fn body_names_for_moon_includes_the_sun_and_earth() {
         let names = body_names_for(&KnownBody::Moon);
         assert_eq!(names[0], "moon");
         assert!(names.contains(&"sun".to_string()));
-        assert_eq!(names.len(), 2);
+        assert!(names.contains(&"earth".to_string()));
+        assert_eq!(names.len(), 3);
     }
 
     #[test]

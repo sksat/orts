@@ -2,8 +2,9 @@ use nalgebra::Matrix3;
 
 use crate::orbital::gravity::{self, GravityField};
 use crate::spacecraft::SpacecraftDynamics;
-use arika::body::{BodyProperties, KnownBody};
+use arika::body::KnownBody;
 use arika::epoch::Epoch;
+use arika::sun::SunPositionError;
 
 use crate::attitude::CoupledGravityGradient;
 use crate::orbital::OrbitalSystem;
@@ -78,24 +79,43 @@ fn build_zonal_gravity(body: &KnownBody, mu: f64) -> Option<ZonalGravity> {
 
 /// Return the default third-body perturbations for a given central body.
 ///
-/// - For Earth: Sun + Moon
-/// - For other bodies: Sun only
-pub fn default_third_bodies(body: &KnownBody) -> Vec<ThirdBodyGravity> {
-    let mut bodies = vec![ThirdBodyGravity::sun()];
-    if *body == KnownBody::Earth {
-        bodies.push(ThirdBodyGravity::moon());
+/// - Earth: Sun + Moon
+/// - Moon: Sun + Earth
+/// - Sun: none — it is not a third body to its own orbiters
+/// - Other bodies with an ephemeris: Sun
+///
+/// The Sun's position is taken relative to the central body. This used to be
+/// the geocentric vector for every body, which from Mars in 2026 points up to
+/// 176° away from the true direction and scales the tidal term by up to 3.8x.
+///
+/// Fails for a central body with no Sun ephemeris (Uranus, Neptune) rather than
+/// returning a set built on a substituted vector.
+pub fn default_third_bodies(body: &KnownBody) -> Result<Vec<ThirdBodyGravity>, SunPositionError> {
+    if *body == KnownBody::Sun {
+        return Ok(Vec::new());
     }
-    bodies
+    let mut bodies = vec![ThirdBodyGravity::sun_from_body(*body)?];
+    match body {
+        KnownBody::Earth => bodies.push(ThirdBodyGravity::moon()),
+        KnownBody::Moon => bodies.push(ThirdBodyGravity::earth_from_moon()),
+        _ => {}
+    }
+    Ok(bodies)
 }
 
-/// SRP with the shadow model sized to the actual central body,
-/// not the Earth default baked into `for_earth`.
-fn build_srp(props: &BodyProperties, sat: &SatelliteParams, am: f64) -> SolarRadiationPressure {
-    let mut srp = SolarRadiationPressure::for_earth(Some(am)).with_shadow_body(props.radius);
+/// SRP whose body-dependent quantities both come from the central body: the
+/// Sun's position relative to it, and its own radius for the shadow. Neither
+/// is the Earth default `for_earth` bakes in.
+fn build_srp(
+    body: KnownBody,
+    sat: &SatelliteParams,
+    am: f64,
+) -> Result<SolarRadiationPressure, SunPositionError> {
+    let mut srp = SolarRadiationPressure::for_body(body, Some(am))?;
     if let Some(cr) = sat.srp_cr {
         srp = srp.with_cr(cr);
     }
-    srp
+    Ok(srp)
 }
 
 /// Build an OrbitalSystem for the given body, automatically configuring gravity,
@@ -116,7 +136,7 @@ pub fn build_orbital_system(
     sat: &SatelliteParams,
     third_bodies: &[ThirdBodyGravity],
     atmosphere: Option<Box<dyn tobari::AtmosphereModel>>,
-) -> OrbitalSystem {
+) -> Result<OrbitalSystem, SunPositionError> {
     let props = body.properties();
     let mut system = OrbitalSystem::new(mu, build_gravity_field()).with_body_radius(props.radius);
 
@@ -147,9 +167,10 @@ pub fn build_orbital_system(
     if epoch.is_some()
         && let Some(am) = sat.srp_area_to_mass
     {
-        system = system.with_model(build_srp(&props, sat, am));
+        system = system.with_model(build_srp(*body, sat, am)?);
     }
-    system
+
+    Ok(system)
 }
 
 /// Build a SpacecraftDynamics for the given body, automatically configuring gravity,
@@ -175,7 +196,7 @@ pub fn build_spacecraft_dynamics(
     third_bodies: &[ThirdBodyGravity],
     inertia: Matrix3<f64>,
     atmosphere: Option<Box<dyn tobari::AtmosphereModel>>,
-) -> SpacecraftDynamics<Box<dyn GravityField>> {
+) -> Result<SpacecraftDynamics<Box<dyn GravityField>>, SunPositionError> {
     let props = body.properties();
     // Panels and the isotropic parameters describe the same two forces, so
     // taking both would mean dropping one without saying so. The CLI rejects
@@ -239,15 +260,10 @@ pub fn build_spacecraft_dynamics(
     if epoch.is_some() {
         match (&sat.shape, sat.srp_area_to_mass) {
             (Some(shape), _) => {
-                // The shadow is cast by whatever the spacecraft orbits, so the
-                // Earth radius `for_earth` bakes in is only right for Earth.
-                // TODO: route this arm through `build_srp` too so both SRP
-                // paths size the shadow in one place.
-                system = system
-                    .with_model(PanelSrp::for_earth(shape.clone()).with_shadow_body(props.radius));
+                system = system.with_model(PanelSrp::for_body(*body, shape.clone())?);
             }
             (None, Some(am)) => {
-                system = system.with_model(build_srp(&props, sat, am));
+                system = system.with_model(build_srp(*body, sat, am)?);
             }
             (None, None) => {}
         }
@@ -259,7 +275,8 @@ pub fn build_spacecraft_dynamics(
     if sat.disturbances.gravity_gradient {
         system = system.with_model(CoupledGravityGradient::new(mu, inertia));
     }
-    system
+
+    Ok(system)
 }
 
 #[cfg(test)]
@@ -277,7 +294,8 @@ mod tests {
             disturbances: DisturbanceTorques::default(),
             shape: None,
         };
-        let system = build_orbital_system(&body, body.properties().mu, None, &sat, &[], None);
+        let system = build_orbital_system(&body, body.properties().mu, None, &sat, &[], None)
+            .expect("no solar models without third bodies");
         assert_eq!(system.body_radius, Some(body.properties().radius));
     }
 
@@ -305,6 +323,16 @@ mod tests {
             Matrix3::identity(),
             None,
         )
+        .expect("Earth has a Sun ephemeris")
+    }
+
+    /// One panel whose normal is `normal`, so a caller can point it at the Sun.
+    fn sunward_panel_shape(normal: nalgebra::Vector3<f64>) -> SpacecraftShape {
+        use crate::spacecraft::{PanelOptics, SurfacePanel};
+        SpacecraftShape::panels(vec![
+            SurfacePanel::at_com(4.0, normal, 2.2, PanelOptics::new(0.2, 0.1))
+                .with_cp_offset(nalgebra::Vector3::new(0.0, 1.0, 0.0)),
+        ])
     }
 
     fn one_panel_shape() -> SpacecraftShape {
@@ -343,6 +371,7 @@ mod tests {
             Matrix3::identity(),
             None,
         )
+        .expect("Earth has a Sun ephemeris")
     }
 
     /// The shadow is cast by whatever the spacecraft orbits, so a Mars
@@ -352,6 +381,11 @@ mod tests {
     /// the body-Sun axis: Mars' disc (3396.2 km) does not reach that far, so
     /// the panel is lit, while Earth's (6378.137 km) does, so the same panel
     /// would be dark. Which radius the model was handed decides the answer.
+    ///
+    /// The position is built from each body's own Sun direction, because the
+    /// model now takes that from the body too — placing the satellite behind
+    /// Mars with the geocentric direction would put it somewhere else entirely
+    /// and the radii would not be what the answer turned on.
     #[test]
     fn panel_srp_shadows_against_the_central_body() {
         use crate::attitude::AttitudeState;
@@ -359,23 +393,28 @@ mod tests {
         use crate::spacecraft::SpacecraftState;
 
         let epoch = Epoch::from_iso8601("2024-03-20T12:00:00Z").unwrap();
-        let sun_dir = arika::sun::sun_position_eci(&epoch.to_tdb())
-            .into_inner()
-            .normalize();
-        // Any direction across the body-Sun axis serves as the offset.
-        let across = sun_dir
-            .cross(&nalgebra::Vector3::new(0.0, 0.0, 1.0))
-            .normalize();
-        let position = -sun_dir * 20_000.0 + across * 5_000.0;
 
         let srp_magnitude = |body: KnownBody| {
+            let sun_dir = arika::sun::sun_position_from_body(body, &epoch.to_tdb())
+                .expect("this body has a Sun ephemeris")
+                .into_inner()
+                .normalize();
+            // Any direction across the body-Sun axis serves as the offset.
+            let across = sun_dir
+                .cross(&nalgebra::Vector3::new(0.0, 0.0, 1.0))
+                .normalize();
+            let position = -sun_dir * 20_000.0 + across * 5_000.0;
+            // The panel faces the Sun, so only the shadow decides whether there
+            // is a force. A fixed normal would answer for the angle instead: the
+            // two Sun directions are far apart, and a panel edge-on or facing
+            // away from one of them reads as dark without any eclipse.
             let sat = SatelliteParams {
                 has_drag: false,
                 ballistic_coeff: None,
                 srp_area_to_mass: None,
                 srp_cr: None,
                 disturbances: DisturbanceTorques::default(),
-                shape: Some(one_panel_shape()),
+                shape: Some(sunward_panel_shape(sun_dir)),
             };
             let system = build_spacecraft_dynamics(
                 &body,
@@ -385,7 +424,8 @@ mod tests {
                 &[],
                 Matrix3::identity(),
                 None,
-            );
+            )
+            .expect("this body has a Sun ephemeris");
             let state = SpacecraftState {
                 orbit: OrbitalState::new(position, nalgebra::Vector3::new(0.0, 3.0, 0.0)),
                 attitude: AttitudeState::identity(),
@@ -449,7 +489,8 @@ mod tests {
             &[],
             Matrix3::identity(),
             None,
-        );
+        )
+        .expect("this body has a Sun ephemeris");
         let names = system.model_names();
         assert!(names.contains(&"panel_drag"), "models: {names:?}");
         assert!(!names.contains(&"drag"), "models: {names:?}");
@@ -497,7 +538,8 @@ mod tests {
             &sat,
             &[],
             None,
-        );
+        )
+        .expect("this body has a Sun ephemeris");
         let names = system.model_names();
         assert!(!names.contains(&"panel_drag"), "models: {names:?}");
         assert!(!names.contains(&"panel_srp"), "models: {names:?}");
@@ -542,7 +584,8 @@ mod tests {
             &earth_sat(DisturbanceTorques::default()),
             &[],
             None,
-        );
+        )
+        .expect("this body has a Sun ephemeris");
         assert!(!system.model_names().contains(&"gravity_gradient"));
     }
 
@@ -557,7 +600,8 @@ mod tests {
             disturbances: DisturbanceTorques::default(),
             shape: None,
         };
-        let system = build_orbital_system(&body, body.properties().mu, None, &sat, &[], None);
+        let system = build_orbital_system(&body, body.properties().mu, None, &sat, &[], None)
+            .expect("no solar models without third bodies");
         assert!(system.model_names().contains(&"drag"));
     }
 
@@ -572,7 +616,8 @@ mod tests {
             disturbances: DisturbanceTorques::default(),
             shape: None,
         };
-        let system = build_orbital_system(&body, body.properties().mu, None, &sat, &[], None);
+        let system = build_orbital_system(&body, body.properties().mu, None, &sat, &[], None)
+            .expect("no solar models without third bodies");
         assert!(!system.model_names().contains(&"drag"));
     }
 
@@ -588,7 +633,7 @@ mod tests {
             disturbances: DisturbanceTorques::default(),
             shape: None,
         };
-        let third_bodies = default_third_bodies(&body);
+        let third_bodies = default_third_bodies(&body).expect("Earth is supported");
         let system = build_orbital_system(
             &body,
             body.properties().mu,
@@ -596,7 +641,8 @@ mod tests {
             &sat,
             &third_bodies,
             None,
-        );
+        )
+        .expect("a supported central body");
         let names = system.model_names();
         assert!(names.contains(&"third_body_sun"));
         assert!(names.contains(&"third_body_moon"));
@@ -614,7 +660,7 @@ mod tests {
             disturbances: DisturbanceTorques::default(),
             shape: None,
         };
-        let third_bodies = default_third_bodies(&body);
+        let third_bodies = default_third_bodies(&body).expect("Earth is supported");
         let system = build_orbital_system(
             &body,
             body.properties().mu,
@@ -622,7 +668,8 @@ mod tests {
             &sat,
             &third_bodies,
             None,
-        );
+        )
+        .expect("a supported central body");
         assert!(system.model_names().contains(&"srp"));
     }
 
@@ -640,11 +687,238 @@ mod tests {
         };
         // Explicitly pass empty third bodies
         let system =
-            build_orbital_system(&body, body.properties().mu, Some(epoch), &sat, &[], None);
+            build_orbital_system(&body, body.properties().mu, Some(epoch), &sat, &[], None)
+                .expect("a supported central body");
         let names = system.model_names();
         assert!(!names.contains(&"third_body_sun"));
         assert!(!names.contains(&"third_body_moon"));
     }
+
+    // default_third_bodies per central body
+
+    /// Earth keeps Sun + Moon.
+    #[test]
+    fn default_third_bodies_for_earth_is_sun_and_moon() {
+        let names: Vec<&str> = default_third_bodies(&KnownBody::Earth)
+            .expect("Earth")
+            .iter()
+            .map(|tb| tb.name)
+            .collect();
+        assert_eq!(names, ["third_body_sun", "third_body_moon"]);
+    }
+
+    /// The Moon gains Earth, which dominates its own third-body environment and
+    /// was missing entirely.
+    #[test]
+    fn default_third_bodies_for_the_moon_includes_earth() {
+        let names: Vec<&str> = default_third_bodies(&KnownBody::Moon)
+            .expect("the Moon")
+            .iter()
+            .map(|tb| tb.name)
+            .collect();
+        assert_eq!(names, ["third_body_sun", "third_body_earth"]);
+    }
+
+    /// A planet gets the Sun only — and it is the planet-relative Sun.
+    #[test]
+    fn default_third_bodies_for_a_planet_is_the_sun_alone() {
+        for body in [KnownBody::Mercury, KnownBody::Venus, KnownBody::Mars] {
+            let names: Vec<&str> = default_third_bodies(&body)
+                .expect("supported planet")
+                .iter()
+                .map(|tb| tb.name)
+                .collect();
+            assert_eq!(names, ["third_body_sun"], "{}", body.properties().name);
+        }
+    }
+
+    /// The Sun is not a third body to something orbiting it.
+    #[test]
+    fn default_third_bodies_for_the_sun_is_empty() {
+        assert!(
+            default_third_bodies(&KnownBody::Sun)
+                .expect("the Sun is not an error, it just has no third bodies")
+                .is_empty()
+        );
+    }
+
+    /// A central body with no Sun ephemeris is reported, not given a set built
+    /// on a substituted vector.
+    #[test]
+    fn default_third_bodies_rejects_a_body_with_no_sun_ephemeris() {
+        for body in [KnownBody::Uranus, KnownBody::Neptune] {
+            assert!(
+                default_third_bodies(&body).is_err(),
+                "{} should be refused",
+                body.properties().name
+            );
+        }
+    }
+
+    /// The third-body Sun built through the setup path is the body-relative one.
+    ///
+    /// `default_third_bodies` is checked by name elsewhere, and both wirings
+    /// are named `third_body_sun`, so the name says nothing about which Sun
+    /// vector is inside. Measured at J2000, 6000 km sunward of Mars: the
+    /// body-relative term is 1.767e-10 km/s² and the geocentric one
+    /// 2.633e-10, 148° away — so the magnitude alone separates them.
+    #[test]
+    fn build_orbital_system_gives_the_third_body_sun_the_body_relative_vector() {
+        use crate::orbital::OrbitalState;
+        let epoch = Epoch::j2000();
+        let sat = SatelliteParams {
+            has_drag: false,
+            ballistic_coeff: None,
+            // No SRP, so the breakdown carries the third-body term alone.
+            srp_area_to_mass: None,
+            srp_cr: None,
+            disturbances: DisturbanceTorques::default(),
+            shape: None,
+        };
+        let body = KnownBody::Mars;
+        let third_bodies = default_third_bodies(&body).expect("Mars is supported");
+        let system = build_orbital_system(
+            &body,
+            body.properties().mu,
+            Some(epoch),
+            &sat,
+            &third_bodies,
+            None,
+        )
+        .expect("Mars is supported");
+
+        let sun_mars = arika::sun::sun_position_from_body(body, &epoch.to_tdb())
+            .expect("Mars has a Sun ephemeris")
+            .into_inner();
+        let pos = sun_mars.normalize() * 6000.0;
+        let state = OrbitalState::new(pos, nalgebra::Vector3::new(0.0, 3.0, 0.0));
+
+        let wired = system
+            .acceleration_breakdown(0.0, &state)
+            .into_iter()
+            .find(|(name, _)| *name == "third_body_sun")
+            .expect("the third-body Sun is in the breakdown")
+            .1;
+
+        let body_relative = ThirdBodyGravity::sun_from_body(body)
+            .expect("Mars has a Sun ephemeris")
+            .acceleration(&pos, Some(&epoch))
+            .norm();
+        let geocentric = ThirdBodyGravity::sun()
+            .acceleration(&pos, Some(&epoch))
+            .norm();
+
+        assert!(
+            (wired - body_relative).abs() < body_relative * 1e-9,
+            "setup wires the Mars-relative Sun: {wired:.6e} vs {body_relative:.6e}"
+        );
+        assert!(
+            (wired - geocentric).abs() > body_relative * 0.4,
+            "the geocentric wiring gives {geocentric:.6e}, which this has to \
+             separate from {wired:.6e}"
+        );
+    }
+
+    /// SRP built through the setup path carries the central body's own radius
+    /// and its own Sun direction.
+    ///
+    /// Checked through the acceleration rather than the model list, so wiring
+    /// `for_earth` back in would fail: the two differ both in direction (Mars
+    /// sees the Sun elsewhere) and in where the shadow starts (Mars is 3396 km,
+    /// Earth 6378).
+    #[test]
+    fn build_orbital_system_gives_srp_the_central_body_s_geometry() {
+        use crate::orbital::OrbitalState;
+        let epoch = Epoch::j2000();
+        let sat = SatelliteParams {
+            has_drag: false,
+            ballistic_coeff: None,
+            srp_area_to_mass: Some(0.02),
+            srp_cr: None,
+            disturbances: DisturbanceTorques::default(),
+            shape: None,
+        };
+        let body = KnownBody::Mars;
+        let third_bodies = default_third_bodies(&body).expect("Mars is supported");
+        let system = build_orbital_system(
+            &body,
+            body.properties().mu,
+            Some(epoch),
+            &sat,
+            &third_bodies,
+            None,
+        )
+        .expect("Mars is supported");
+        assert!(
+            system.model_names().contains(&"srp"),
+            "srp should be present"
+        );
+
+        // Somewhere Mars cannot eclipse: on the sunward side, well outside it.
+        let sun_mars = arika::sun::sun_position_from_body(body, &epoch.to_tdb())
+            .expect("Mars")
+            .into_inner();
+        let pos = sun_mars.normalize() * 6000.0;
+        let state = OrbitalState::new(pos, nalgebra::Vector3::new(0.0, 3.0, 0.0));
+
+        let srp = SolarRadiationPressure::for_body(body, Some(0.02)).expect("Mars");
+        let expected = srp.acceleration(&pos, Some(&epoch));
+        let earth_wired =
+            SolarRadiationPressure::for_earth(Some(0.02)).acceleration(&pos, Some(&epoch));
+
+        // The breakdown reports each model's magnitude by name.
+        let srp_mag = system
+            .acceleration_breakdown(0.0, &state)
+            .into_iter()
+            .find(|(name, _)| *name == "srp")
+            .expect("srp is in the breakdown")
+            .1;
+
+        assert!(
+            (srp_mag - expected.norm()).abs() < expected.norm() * 1e-9,
+            "setup should wire the Mars-relative SRP: {srp_mag} vs {}",
+            expected.norm()
+        );
+        // The Earth-wired magnitude differs because Mars is at a different
+        // heliocentric distance, so the magnitude alone separates them.
+        assert!(
+            (srp_mag - earth_wired.norm()).abs() > expected.norm() * 0.1,
+            "the Earth-wired magnitude {} should be plainly different from {srp_mag}",
+            earth_wired.norm()
+        );
+    }
+
+    /// An unsupported central body fails the whole build instead of quietly
+    /// propagating with the Sun in the wrong place.
+    #[test]
+    fn build_orbital_system_rejects_a_body_with_no_sun_ephemeris() {
+        let sat = SatelliteParams {
+            has_drag: false,
+            ballistic_coeff: None,
+            srp_area_to_mass: Some(0.02),
+            srp_cr: None,
+            disturbances: DisturbanceTorques::default(),
+            shape: None,
+        };
+        let body = KnownBody::Uranus;
+        assert!(default_third_bodies(&body).is_err());
+        assert!(
+            build_orbital_system(
+                &body,
+                body.properties().mu,
+                Some(Epoch::j2000()),
+                &sat,
+                &[],
+                None,
+            )
+            .is_err(),
+            "SRP for Uranus should be refused"
+        );
+    }
+    /// The shadow radius is the central body's, whichever body that is.
+    ///
+    /// From #385, kept as its own case: `build_srp` now takes the geometry
+    /// from the body, so this pins the radius half of that.
     #[test]
     fn srp_shadow_radius_matches_central_body() {
         let sat = SatelliteParams {
@@ -656,10 +930,10 @@ mod tests {
             shape: None,
         };
         let moon = KnownBody::Moon.properties();
-        let srp = build_srp(&moon, &sat, 0.02);
+        let srp = build_srp(KnownBody::Moon, &sat, 0.02).expect("the Moon has a Sun vector");
         assert_eq!(srp.shadow_body_radius, Some(moon.radius));
         let earth = KnownBody::Earth.properties();
-        let srp = build_srp(&earth, &sat, 0.02);
+        let srp = build_srp(KnownBody::Earth, &sat, 0.02).expect("Earth has a Sun vector");
         assert_eq!(srp.shadow_body_radius, Some(earth.radius));
     }
 }

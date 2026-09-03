@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
+use arika::body::KnownBody;
 use arika::earth::transform::EphemerisFrameBridge;
 use arika::epoch::{Epoch, Tdb};
 use arika::frame::{self, Vec3};
+use arika::sun::SunPositionError;
 use nalgebra::Vector3;
 
 use crate::model::ExternalLoads;
@@ -41,12 +43,51 @@ pub struct ThirdBodyGravity {
 }
 
 impl ThirdBodyGravity {
-    /// Create a Sun third-body perturbation (uses Meeus analytical ephemeris).
+    /// Create a Sun third-body perturbation seen from Earth (uses the Meeus
+    /// analytical ephemeris).
+    ///
+    /// The position is geocentric, so this is Earth-centred propagation only.
+    /// Use [`sun_from_body`](Self::sun_from_body) for any other central body:
+    /// the formula wants the Sun's position *relative to the central body*, and
+    /// substituting Earth's points up to 176° wrong from Mars.
     pub fn sun() -> Self {
         Self {
             name: "third_body_sun",
             mu_body: arika::sun::MU,
             body_position_fn: Arc::new(arika::sun::sun_position_eci),
+        }
+    }
+
+    /// Create a Sun third-body perturbation seen from `body`.
+    ///
+    /// Fails for a central body with no ephemeris (Uranus, Neptune) and for the
+    /// Sun itself, rather than falling back to a vector that would silently
+    /// misplace the Sun.
+    pub fn sun_from_body(body: KnownBody) -> Result<Self, SunPositionError> {
+        // Probe the epoch-independent part now, so an unsupported body is an
+        // error at construction rather than a surprise inside the integrator.
+        arika::sun::sun_position_from_body(body, &Epoch::j2000().to_tdb())?;
+        Ok(Self {
+            name: "third_body_sun",
+            mu_body: arika::sun::MU,
+            body_position_fn: Arc::new(move |epoch: &Epoch<Tdb>| {
+                arika::sun::sun_position_from_body(body, epoch)
+                    .expect("the same body was accepted at construction")
+            }),
+        })
+    }
+
+    /// Create an Earth third-body perturbation seen from the Moon.
+    ///
+    /// The Moon ephemeris gives Earth-to-Moon, and this term wants
+    /// Moon-to-Earth, so the vector is negated.
+    pub fn earth_from_moon() -> Self {
+        Self {
+            name: "third_body_earth",
+            mu_body: arika::earth::MU,
+            body_position_fn: Arc::new(|epoch: &Epoch<Tdb>| {
+                Vec3::from_raw(-arika::moon::moon_position_eci(epoch).into_inner())
+            }),
         }
     }
 
@@ -523,5 +564,99 @@ mod tests {
             ratio_geo > ratio_leo,
             "Moon perturbation ratio at GEO ({ratio_geo:.6e}) should be > LEO ({ratio_leo:.6e})"
         );
+    }
+
+    // sun_from_body / earth_from_moon
+
+    /// From Earth, the body-aware constructor is the geocentric one.
+    #[test]
+    fn sun_from_earth_matches_the_geocentric_constructor() {
+        let epoch = Epoch::from_gregorian(2026, 1, 1, 0, 0, 0.0);
+        let state = OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::new(0.0, 7.5, 0.0));
+
+        let geo = ThirdBodyGravity::sun();
+        let from_body = ThirdBodyGravity::sun_from_body(KnownBody::Earth).expect("Earth");
+
+        let a_geo = *geo
+            .eval(0.0, &state, Some(&epoch))
+            .acceleration_inertial
+            .inner();
+        let a_body = *from_body
+            .eval(0.0, &state, Some(&epoch))
+            .acceleration_inertial
+            .inner();
+        assert!(
+            (a_geo - a_body).norm() < 1e-18,
+            "Earth must be unchanged: {a_geo:?} vs {a_body:?}"
+        );
+    }
+
+    /// From Mars, the Sun is where Mars sees it — which is not where Earth does.
+    ///
+    /// The expected value is built independently from
+    /// `arika::sun::sun_position_from_body` and the third-body formula, and the
+    /// geocentric result is checked to be clearly different, so the test fails
+    /// if the constructor quietly keeps using Earth's vector.
+    #[test]
+    fn sun_from_mars_uses_the_mars_relative_sun() {
+        let epoch = Epoch::from_gregorian(2026, 1, 1, 0, 0, 0.0);
+        let sat = Vector3::new(4000.0, 0.0, 0.0);
+        let state = OrbitalState::new(sat, Vector3::new(0.0, 3.4, 0.0));
+
+        let tb = ThirdBodyGravity::sun_from_body(KnownBody::Mars).expect("Mars");
+        let a = *tb
+            .eval(0.0, &state, Some(&epoch))
+            .acceleration_inertial
+            .inner();
+
+        let sun_mars = arika::sun::sun_position_from_body(KnownBody::Mars, &epoch.to_tdb())
+            .expect("Mars")
+            .into_inner();
+        let expected = third_body_accel(arika::sun::MU, &sat, &sun_mars);
+        assert!(
+            (a - expected).norm() < 1e-18,
+            "Mars third-body term should use the Mars-relative Sun"
+        );
+
+        let sun_geo = arika::sun::sun_position_eci(&epoch.to_tdb()).into_inner();
+        let geocentric = third_body_accel(arika::sun::MU, &sat, &sun_geo);
+        let rel = (a - geocentric).norm() / a.norm();
+        assert!(
+            rel > 0.5,
+            "the geocentric result should be plainly different, relative gap {rel}"
+        );
+    }
+
+    /// A central body with no ephemeris is refused, not answered with `+X`.
+    #[test]
+    fn sun_from_an_unsupported_body_is_an_error() {
+        for body in [KnownBody::Uranus, KnownBody::Neptune, KnownBody::Sun] {
+            assert!(
+                ThirdBodyGravity::sun_from_body(body).is_err(),
+                "{} should be refused",
+                body.properties().name
+            );
+        }
+    }
+
+    /// Moon-centred propagation sees Earth in the opposite direction from the
+    /// Earth-to-Moon ephemeris.
+    #[test]
+    fn earth_from_moon_negates_the_moon_ephemeris() {
+        let epoch = Epoch::from_gregorian(2026, 1, 1, 0, 0, 0.0);
+        let sat = Vector3::new(2000.0, 0.0, 0.0);
+        let state = OrbitalState::new(sat, Vector3::new(0.0, 1.5, 0.0));
+
+        let tb = ThirdBodyGravity::earth_from_moon();
+        assert_eq!(tb.name, "third_body_earth");
+        assert_eq!(tb.mu_body, arika::earth::MU);
+
+        let a = *tb
+            .eval(0.0, &state, Some(&epoch))
+            .acceleration_inertial
+            .inner();
+        let earth_from_moon = -arika::moon::moon_position_eci(&epoch.to_tdb()).into_inner();
+        let expected = third_body_accel(arika::earth::MU, &sat, &earth_from_moon);
+        assert!((a - expected).norm() < 1e-18, "{a:?} vs {expected:?}");
     }
 }

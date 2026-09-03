@@ -61,6 +61,12 @@ pub struct ControlledSatellite {
     pub has_mtq: bool,
     /// MTQ per-axis max moment [A·m²] (for rebuilding the model).
     pub mtq_max_moment: f64,
+    /// Central body this satellite orbits.
+    ///
+    /// A commanded MTQ is rebuilt on every tick that carries a command, and the
+    /// rebuild has to pick the same field model the first build did — so it
+    /// needs the body, not just the moment.
+    pub body: arika::body::KnownBody,
     /// Thruster specs (空なら thruster なし)。ZOH 境界で ThrusterAssembly を
     /// 作り直すために保持する。
     pub thruster_specs: Vec<ThrusterSpec>,
@@ -182,10 +188,11 @@ pub fn build_controlled_satellite(
         .as_ref()
         .ok_or("controlled satellite requires controller config")?;
 
-    let third_bodies = default_third_bodies(&params.body);
+    let third_bodies = default_third_bodies(&params.body)
+        .map_err(|e| format!("central body {}: {e}", params.body.properties().name))?;
 
     // Dynamics を構築。
-    let mut dynamics = spacecraft_dynamics_for(spec, att, params, &third_bodies);
+    let mut dynamics = spacecraft_dynamics_for(spec, att, params, &third_bodies)?;
 
     // RW を追加。
     let has_rw = spec.rw_config.is_some();
@@ -212,8 +219,8 @@ pub fn build_controlled_satellite(
     let has_mtq = spec.mtq_config.is_some();
     let mtq_max_moment = match &spec.mtq_config {
         Some(MtqConfig::ThreeAxis { max_moment }) => {
-            let mtq = MtqAssembly::three_axis(*max_moment, Igrf::earth());
-            dynamics = dynamics.with_model(mtq);
+            warn_no_field_model(params.body, "magnetorquer", "its torque is zero", &spec.id);
+            dynamics = dynamics.with_model(mtq_for_body(params.body, *max_moment, None));
             *max_moment
         }
         None => 0.0,
@@ -260,7 +267,7 @@ pub fn build_controlled_satellite(
     let controller = build_controller(ctrl_config, &spec.id, &spec.streams, ctx)?;
 
     // センサを構築。
-    let sensors = build_sensor_bundle(spec.sensor_choices.as_deref());
+    let sensors = build_sensor_bundle(spec.sensor_choices.as_deref(), params.body, &spec.id)?;
 
     let actuators = ActuatorBundle::new();
     let sample_period = controller.sample_period();
@@ -276,6 +283,7 @@ pub fn build_controlled_satellite(
         has_rw,
         has_mtq,
         mtq_max_moment,
+        body: params.body,
         thruster_specs,
         thruster_dry_mass,
         tick_base_t: start_t,
@@ -321,16 +329,16 @@ fn apply_held_commands(sat: &mut ControlledSatellite) -> Result<(), String> {
         let cmd_len = match mtq_cmd {
             MtqCommand::Moments(v) | MtqCommand::NormalizedMoments(v) => v.len(),
         };
-        let mut mtq = MtqAssembly::three_axis(sat.mtq_max_moment, Igrf::earth());
-        if cmd_len != mtq.core().num_mtqs() {
+        let num_mtqs = orts::spacecraft::MtqAssemblyCore::three_axis(sat.mtq_max_moment).num_mtqs();
+        if cmd_len != num_mtqs {
             return Err(format!(
-                "mtq command length ({}) != MTQ count ({})",
-                cmd_len,
-                mtq.core().num_mtqs()
+                "mtq command length ({cmd_len}) != MTQ count ({num_mtqs})"
             ));
         }
-        mtq.command = mtq_cmd.clone();
-        sat.dynamics.replace_model("mtq_assembly", Box::new(mtq));
+        // Same factory as the initial build, so the field model stays the one
+        // this body has.
+        let rebuilt = mtq_for_body(sat.body, sat.mtq_max_moment, Some(&mtq_cmd.clone()));
+        sat.dynamics.replace_model("mtq_assembly", rebuilt);
     }
 
     // 前 tick のコマンドで Thruster を設定（モデルを差し替え）。
@@ -571,20 +579,102 @@ fn build_controller(
     }
 }
 
-fn build_sensor_bundle(choices: Option<&[SensorChoice]>) -> SensorBundle {
+/// Whether `body`'s magnetic field is modelled.
+///
+/// `Igrf` and `TiltedDipole` are Earth's, and they are the only field models
+/// there are.
+fn body_field_is_modelled(body: arika::body::KnownBody) -> bool {
+    body == arika::body::KnownBody::Earth
+}
+
+/// How many warnings [`warn_no_field_model`] has emitted on this thread.
+///
+/// The MTQ assembly is rebuilt on every tick that carries a command, so the
+/// warning has to sit outside that path. A test drives the rebuild and reads
+/// this back: the count stays where construction left it. Per-thread because
+/// tests run in parallel in one process, and each warning happens on the
+/// thread that built the device.
+#[cfg(test)]
+thread_local! {
+    static FIELD_WARNINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Warn that `device` has no field model on `body`, once where it is built.
+///
+/// Around a body without a model there is nothing to evaluate, and the stand-in
+/// is zero: the device is built either way — the same spacecraft definition can
+/// be pointed at any body — and is inert there rather than driven by a field
+/// measured somewhere else. `effect` says what that means for this device,
+/// since a controller that steers on the field goes quiet without failing.
+fn warn_no_field_model(body: arika::body::KnownBody, device: &str, effect: &str, sat_id: &str) {
+    if body_field_is_modelled(body) {
+        return;
+    }
+    #[cfg(test)]
+    FIELD_WARNINGS.with(|n| n.set(n.get() + 1));
+    log::warn!(
+        "{sat_id}: {device} has no magnetic field model for {} (only Earth's is modelled), \
+         so {effect}. Control that steers on the field, such as B-dot, has nothing to act on.",
+        body.properties().name
+    );
+}
+
+/// The magnetorquer assembly for `body`, with `command` already applied.
+///
+/// The assembly holds its field model as a type parameter, so the two cases are
+/// two types; boxing them here keeps the choice in one place. Both the initial
+/// build and the per-command rebuild go through this, so a magnetorquer cannot
+/// end up on Earth's field after the first command. Silent: the rebuild runs on
+/// every tick that carries a command, and the warning belongs where the device
+/// is built.
+fn mtq_for_body(
+    body: arika::body::KnownBody,
+    max_moment: f64,
+    command: Option<&MtqCommand>,
+) -> Box<dyn orts::model::Model<orts::spacecraft::SpacecraftState>> {
+    if body_field_is_modelled(body) {
+        let mut mtq = MtqAssembly::three_axis(max_moment, Igrf::earth());
+        if let Some(cmd) = command {
+            mtq.command = cmd.clone();
+        }
+        Box::new(mtq)
+    } else {
+        let mut mtq = MtqAssembly::three_axis(max_moment, tobari::magnetic::NoField);
+        if let Some(cmd) = command {
+            mtq.command = cmd.clone();
+        }
+        Box::new(mtq)
+    }
+}
+
+/// Build the declared sensors for a satellite about `body`.
+///
+/// The sun sensor's reading is a direction to the Sun, so it depends on the
+/// central body the same way the solar force models do.
+fn build_sensor_bundle(
+    choices: Option<&[SensorChoice]>,
+    body: arika::body::KnownBody,
+    sat_id: &str,
+) -> Result<SensorBundle, String> {
     let choices = match choices {
         Some(c) => c,
-        None => return SensorBundle::new(),
+        None => return Ok(SensorBundle::new()),
     };
 
-    let field_model: Arc<dyn tobari::magnetic::MagneticFieldModel> = Arc::new(Igrf::earth());
-
-    SensorBundle {
-        magnetometers: if choices.contains(&SensorChoice::Magnetometer) {
-            vec![Magnetometer::new(Arc::clone(&field_model))]
+    let magnetometers = if choices.contains(&SensorChoice::Magnetometer) {
+        warn_no_field_model(body, "magnetometer", "its reading is zero", sat_id);
+        let field: Arc<dyn tobari::magnetic::MagneticFieldModel> = if body_field_is_modelled(body) {
+            Arc::new(Igrf::earth())
         } else {
-            vec![]
-        },
+            Arc::new(tobari::magnetic::NoField)
+        };
+        vec![Magnetometer::new(field)]
+    } else {
+        vec![]
+    };
+
+    Ok(SensorBundle {
+        magnetometers,
         gyroscopes: if choices.contains(&SensorChoice::Gyroscope) {
             vec![Gyroscope::new()]
         } else {
@@ -596,16 +686,17 @@ fn build_sensor_bundle(choices: Option<&[SensorChoice]>) -> SensorBundle {
             vec![]
         },
         sun_sensors: if choices.contains(&SensorChoice::SunSensor) {
-            vec![orts::sensor::SunSensor::new()]
+            vec![orts::sensor::SunSensor::for_body(body).map_err(|e| format!("sun sensor: {e}"))?]
         } else {
             vec![]
         },
-    }
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arika::body::KnownBody;
     use orts::plugin::{Command, PluginError, TickInput};
 
     /// A controller that records the `t` of every tick it is given.
@@ -671,7 +762,8 @@ mod tests {
             &[],
             inertia,
             None,
-        );
+        )
+        .expect("Earth has a Sun ephemeris");
 
         // Circular orbit 400 km up, in the equatorial plane.
         let r = body.properties().radius + 400.0;
@@ -695,6 +787,7 @@ mod tests {
             has_rw: false,
             has_mtq: false,
             mtq_max_moment: 0.0,
+            body: arika::body::KnownBody::Earth,
             thruster_specs: Vec::new(),
             thruster_dry_mass: 0.0,
             tick_base_t: start_t,
@@ -921,5 +1014,317 @@ mod tests {
             "the 1.0 s controller should tick once in 1 s, got {slow_seen:?}"
         );
         assert!((slow_seen[0] - 1.0).abs() < 1e-9, "at {}", slow_seen[0]);
+    }
+
+    /// A satellite at `position`, its body axes aligned with the inertial ones.
+    fn state_at(position: nalgebra::Vector3<f64>) -> orts::spacecraft::SpacecraftState {
+        SpacecraftState {
+            orbit: orts::orbital::OrbitalState::new(
+                position,
+                nalgebra::Vector3::new(0.0, 3.0, 0.0),
+            ),
+            attitude: orts::attitude::AttitudeState {
+                quaternion: nalgebra::Vector4::new(1.0, 0.0, 0.0, 0.0),
+                angular_velocity: nalgebra::Vector3::zeros(),
+            },
+            mass: 100.0,
+        }
+    }
+
+    fn sun_direction_read_by(
+        bundle: &mut SensorBundle,
+        state: &orts::spacecraft::SpacecraftState,
+        epoch: &Epoch,
+    ) -> Option<nalgebra::Vector3<f64>> {
+        match bundle.sun_sensors[0].measure(state, epoch) {
+            orts::plugin::SunSensorOutput::Fine { direction, .. } => {
+                direction.map(|d| d.into_inner().into_inner())
+            }
+            other => panic!("the CLI builds a fine sensor, got {other:?}"),
+        }
+    }
+
+    fn angle_deg(a: &nalgebra::Vector3<f64>, b: &nalgebra::Vector3<f64>) -> f64 {
+        a.normalize()
+            .dot(&b.normalize())
+            .clamp(-1.0, 1.0)
+            .acos()
+            .to_degrees()
+    }
+
+    /// The CLI's sun sensor reads the Sun from the central body.
+    ///
+    /// `SunSensor::for_body`'s own tests pass whichever way this line is
+    /// wired, so a regression to `SunSensor::new()` — Earth's Sun, no shadow —
+    /// would go unnoticed. Both halves are measured on 2026-03-20, when Mars'
+    /// Sun direction is 152.8° from Earth's.
+    #[test]
+    fn the_cli_sun_sensor_reads_the_sun_from_the_central_body() {
+        let epoch = Epoch::from_gregorian(2026, 3, 20, 12, 0, 0.0);
+        let mars_sun = arika::sun::sun_position_from_body(KnownBody::Mars, &epoch.to_tdb())
+            .expect("Mars has a Sun ephemeris")
+            .into_inner();
+        let earth_sun = arika::sun::sun_position_eci(&epoch.to_tdb()).into_inner();
+
+        // 20 000 km sunward of Mars, so nothing eclipses the satellite and the
+        // direction to Mars' Sun is parallel to `mars_sun`.
+        let sunward_of_mars = state_at(mars_sun.normalize() * 20_000.0);
+        let mut on_mars = build_sensor_bundle(
+            Some(&[SensorChoice::SunSensor]),
+            KnownBody::Mars,
+            "sat-test",
+        )
+        .expect("Mars has a Sun ephemeris");
+        let read = sun_direction_read_by(&mut on_mars, &sunward_of_mars, &epoch)
+            .expect("sunward of Mars, so lit");
+        assert!(
+            angle_deg(&read, &mars_sun) < 1.0e-4,
+            "the reading follows Mars' Sun: {:.6}° away",
+            angle_deg(&read, &mars_sun)
+        );
+        // What the geocentric wiring would have read instead.
+        assert!(
+            angle_deg(&read, &earth_sun) > 150.0,
+            "Earth's Sun is nowhere near it: {:.3}°",
+            angle_deg(&read, &earth_sun)
+        );
+
+        // On Earth the same wiring carries Earth's conical shadow, so a
+        // satellite directly behind the Earth reads no direction at all.
+        let behind_earth = state_at(-earth_sun.normalize() * 7000.0);
+        let mut on_earth = build_sensor_bundle(
+            Some(&[SensorChoice::SunSensor]),
+            KnownBody::Earth,
+            "sat-test",
+        )
+        .expect("Earth has a Sun ephemeris");
+        assert!(
+            sun_direction_read_by(&mut on_earth, &behind_earth, &epoch).is_none(),
+            "eclipsed, so the sensor reports no Sun direction"
+        );
+    }
+
+    /// A magnetometer on a body with no field model reads zero.
+    ///
+    /// `Igrf` and `TiltedDipole` are Earth's, and they are the only field
+    /// models there are. The device is still built — the same spacecraft
+    /// definition can be pointed at any body — and reads zero there instead of
+    /// reporting a field the body does not have.
+    #[test]
+    fn a_magnetometer_reads_zero_where_no_field_is_modelled() {
+        let epoch = Epoch::from_gregorian(2026, 3, 20, 12, 0, 0.0);
+        let state = state_at(nalgebra::Vector3::new(7000.0, 0.0, 0.0));
+
+        for body in [KnownBody::Mars, KnownBody::Moon, KnownBody::Sun] {
+            let mut bundle =
+                build_sensor_bundle(Some(&[SensorChoice::Magnetometer]), body, "sat-test")
+                    .unwrap_or_else(|e| panic!("{body:?} builds a magnetometer: {e}"));
+            let reading = bundle.magnetometers[0]
+                .measure(&state, &epoch)
+                .into_inner()
+                .into_inner();
+            assert_eq!(
+                reading,
+                nalgebra::Vector3::zeros(),
+                "{body:?} has no field model, so the reading is zero"
+            );
+        }
+
+        let mut on_earth = build_sensor_bundle(
+            Some(&[SensorChoice::Magnetometer]),
+            KnownBody::Earth,
+            "sat-test",
+        )
+        .expect("Earth's field is modelled");
+        let earth_reading = on_earth.magnetometers[0]
+            .measure(&state, &epoch)
+            .into_inner()
+            .into_inner();
+        assert!(
+            earth_reading.norm() > 0.0,
+            "Earth's field is modelled, so the reading is not zero: {earth_reading:?}"
+        );
+
+        // A sensor that needs no field is unaffected whatever the body is.
+        assert!(
+            build_sensor_bundle(
+                Some(&[SensorChoice::Gyroscope]),
+                KnownBody::Mars,
+                "sat-test"
+            )
+            .is_ok(),
+            "a gyroscope needs no field"
+        );
+    }
+
+    /// The field a magnetorquer gets is decided by its body, on both paths.
+    ///
+    /// `mtq_for_body` is what the initial build and the per-command rebuild
+    /// both call, so this ties the body to the installed model rather than to a
+    /// flag the test set itself. Measured through the torque the assembly
+    /// reports for the same command: zero on Mars, non-zero on Earth.
+    #[test]
+    fn a_magnetorquer_takes_the_field_of_its_body_on_both_paths() {
+        let command = MtqCommand::NormalizedMoments(vec![1.0, 0.0, 0.0]);
+
+        // The state and dynamics are the same for both bodies; only the field
+        // model differs, so the torque is what the choice decides.
+        let torque_with = |model: Box<dyn orts::model::Model<SpacecraftState>>| -> f64 {
+            let (mut sat, _ticks) = satellite_with(1.0, 0.0);
+            sat.dynamics = sat
+                .dynamics
+                .with_epoch(Epoch::from_gregorian(2026, 3, 20, 12, 0, 0.0))
+                .with_model(model);
+            sat.dynamics
+                .model_breakdown(0.0, &sat.state.plant)
+                .into_iter()
+                .find(|(name, _)| *name == "mtq_assembly")
+                .expect("the assembly is installed")
+                .1
+                .torque_body
+                .inner()
+                .norm()
+        };
+
+        assert_eq!(
+            torque_with(mtq_for_body(KnownBody::Mars, 10.0, Some(&command))),
+            0.0,
+            "Mars has no field model, so a commanded magnetorquer makes no torque"
+        );
+        assert!(
+            torque_with(mtq_for_body(KnownBody::Earth, 10.0, Some(&command))) > 0.0,
+            "Earth's field is modelled, so the same command makes torque"
+        );
+    }
+
+    /// The rebuild does not warn again.
+    ///
+    /// `apply_held_commands` rebuilds the assembly on every tick that carries a
+    /// command, and a held command persists, so a warning inside that path
+    /// would repeat for the whole run. Measured through the counter beside
+    /// `warn_no_field_model`: ten rebuilds add nothing to it.
+    #[test]
+    fn rebuilding_a_commanded_magnetorquer_does_not_warn_again() {
+        let (mut sat, _ticks) = satellite_with(1.0, 0.0);
+        sat.body = KnownBody::Mars;
+        sat.has_mtq = true;
+        sat.mtq_max_moment = 10.0;
+        sat.dynamics = sat
+            .dynamics
+            .with_epoch(Epoch::from_gregorian(2026, 3, 20, 12, 0, 0.0))
+            .with_model(mtq_for_body(sat.body, 10.0, None));
+        sat.actuators
+            .apply(&Command::mtq_normalized(vec![1.0, 0.0, 0.0]))
+            .expect("three moments for three MTQs");
+
+        let before = FIELD_WARNINGS.with(|n| n.get());
+        for _ in 0..10 {
+            apply_held_commands(&mut sat).expect("the command length matches the MTQ count");
+        }
+        assert_eq!(
+            FIELD_WARNINGS.with(|n| n.get()),
+            before,
+            "the rebuild is silent; the warning belongs where the device is built"
+        );
+    }
+
+    /// The rebuild after a command goes through the same factory.
+    ///
+    /// Measured: a satellite whose body has no field model keeps zero torque
+    /// after `apply_held_commands` installs the command. Pointing the rebuild
+    /// at Earth's field fails this.
+    #[test]
+    fn a_commanded_magnetorquer_keeps_the_field_of_its_body() {
+        let (mut sat, _ticks) = satellite_with(1.0, 0.0);
+        sat.body = KnownBody::Mars;
+        sat.has_mtq = true;
+        sat.mtq_max_moment = 10.0;
+        sat.dynamics = sat
+            .dynamics
+            .with_epoch(Epoch::from_gregorian(2026, 3, 20, 12, 0, 0.0))
+            .with_model(mtq_for_body(sat.body, 10.0, None));
+
+        sat.actuators
+            .apply(&Command::mtq_normalized(vec![1.0, 0.0, 0.0]))
+            .expect("three moments for three MTQs");
+        apply_held_commands(&mut sat).expect("the command length matches the MTQ count");
+
+        let torque = sat
+            .dynamics
+            .model_breakdown(0.0, &sat.state.plant)
+            .into_iter()
+            .find(|(name, _)| *name == "mtq_assembly")
+            .expect("the assembly is installed")
+            .1
+            .torque_body
+            .inner()
+            .norm();
+        assert_eq!(
+            torque, 0.0,
+            "Mars has no field model, so the rebuilt assembly makes no torque"
+        );
+    }
+
+    /// A magnetorquer on a body with no field model does not block the build.
+    ///
+    /// The assembly is built with `NoField` there, so its torque is `m × 0`.
+    /// Built from a config, the way a user reaches it: the controller points at
+    /// a path that does not exist and actuators are built first, so reaching
+    /// the plugin error is what says the magnetorquer let the build through.
+    #[test]
+    fn a_magnetorquer_is_inert_where_no_field_is_modelled() {
+        let config_for = |body: &str| -> crate::config::SimConfig {
+            toml::from_str(&format!(
+                r#"
+dt = 1.0
+body = "{body}"
+
+[[satellites]]
+[satellites.orbit]
+type = "circular"
+altitude = 400.0
+
+[satellites.attitude]
+inertia_diag = [10.0, 10.0, 10.0]
+mass = 100.0
+
+[satellites.magnetorquers]
+type = "three_axis"
+max_moment = 0.2
+
+[satellites.controller]
+type = "wasm"
+path = "does-not-exist.wasm"
+"#
+            ))
+            .expect("the config parses")
+        };
+
+        let build = |body: &str| {
+            let config = config_for(body);
+            let params = SimParams::from_config(&config);
+            let spec = params.satellites[0].clone();
+            #[cfg(feature = "plugin-wasm")]
+            let mut cache =
+                orts::plugin::wasm::WasmPluginCache::new().expect("a cache needs no plugin file");
+            let mut ctx = ControlledBuildContext {
+                params: &params,
+                #[cfg(feature = "plugin-wasm")]
+                wasm_cache: &mut cache,
+                #[cfg(feature = "plugin-wasm")]
+                plugin_backend: params.resolve_plugin_backend(),
+            };
+            build_controlled_satellite(&spec, None, 0.0, &mut ctx).map(|_| ())
+        };
+
+        // Every body reaches the plugin path, so no body is stopped by its
+        // magnetorquer.
+        for body in ["mars", "moon", "earth"] {
+            let err = build(body).expect_err("the plugin path does not exist");
+            assert!(
+                !err.contains("magnetorquer"),
+                "{body}: the magnetorquer should not stop the build: {err}"
+            );
+        }
     }
 }

@@ -129,6 +129,60 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   [2 成分の合成](docs/src/assets/srp-flat-panel/force-composition.svg)、
   [トルクの向き](docs/src/assets/srp-flat-panel/torque-direction.svg)。
   ([#377](https://github.com/sksat/orts/pull/377))
+- Sun 由来の力モデルが中心天体から幾何を取るようになった。既定の第三体 Sun と
+  cannonball SRP はどちらも、中心天体に関わらず地心 Sun ベクトルを読んでいた。
+  2026 年の Mars では Sun が Mars から見た方向と最大 176° ずれ、SRP は
+  ベクトルとして 242〜311% 誤り（逆向きに働く）、潮汐項は最大 3.8 倍になっていた。
+  SRP はさらに影の半径に Earth 半径を使っており、大きさの違う天体では食の位置が
+  ずれていた。第三体重力に影はなく、誤りはベクトルだけだった。
+  `ThirdBodyGravity::sun_from_body`、`SolarRadiationPressure::for_body`、
+  `PanelSrp::for_body` が `KnownBody` を取り、`default_third_bodies` と 2 つの
+  `build_*` builder が `Result` を返す。Sun ephemeris を持たない中心天体は、Sun を
+  誤った位置に置いたまま伝播せず報告される。panel SRP も対象で、panel と Sun 方向の
+  角度が力とトルクの両方を決めるため、どちらも向きが変わる。
+
+  **BREAKING**: `SolarRadiationPressure` に private な `sun_position_fn` field が
+  増える。他の field は `pub` なので downstream は struct literal で直接構築できて
+  いたが、それがコンパイルできなくなる。`for_earth` / `for_body` と `with_*`
+  builder を使う（crate 自身は元からこの経路で構築している）。`PanelSrp` と
+  `SunSensor` も同じ field を持つが、こちらの field は元から private。([#372](https://github.com/sksat/orts/pull/372))
+- sun sensor の Sun 方向も中心天体から取るようになった (`SunSensor::for_body`)。
+  地心ベクトルを読んでいたため、Mars では力モデルが正しくても姿勢制御の入力だけが
+  最大 176° ずれていた。**CLI のセンサが食を見るようになる**: これまでは
+  `SunSensor::new()` で組んでいて遮蔽天体を持たなかったので、地球の裏側でも
+  日照として読めていた。`for_body` は中心天体の円錐影を入れる。地球の真裏
+  7000 km での実測は `direction: Some(..), illumination: 1.0` から
+  `direction: None, illumination: 0.0` へ変わる。direction を unwrap していた
+  controller plugin は不在を扱う必要がある。
+  ([#372](https://github.com/sksat/orts/pull/372))
+- Sun 中心の伝播でも SRP は残る。Sun が原点なので衛星→Sun ベクトルは `-r_sat` で、
+  遮るものもない。落ちるのは第三体項だけ。([#372](https://github.com/sksat/orts/pull/372))
+- 中心天体から見た Sun ベクトルを Orekit の DE ephemeris と突き合わせるようにした
+  (`arika/tests/oracle_body_sun.rs`、fixture は
+  `tools/generate_body_sun_fixtures.py` が生成)。7 天体 × 2000-2075 年の 6 epoch で、
+  方向と距離の両方を比較する。arika はこのベクトルを Earth では Meeus 級数、Moon では
+  そこから月ベクトルを引いた差、惑星では Standish の要素から作っており、既存のテストは
+  そのうちの一つを別の一つと比べていた。符号・位相・黄道→赤道の誤りは全部を同時に
+  すり抜けうる。一致は Earth・Moon・Mercury・Venus が 0.4' 以内、Mars が 1.2'、
+  Jupiter が 6.5'、Saturn が 16.9'。黄道を回さなければ 23.4° ずれる。
+  ([#372](https://github.com/sksat/orts/pull/372))
+- `PanelSrp::without_shadow()` を追加。`SolarRadiationPressure::without_shadow()`
+  と同じく、影だけを外して構築時の Sun 方向を保つ。影なしの panel SRP は
+  `PanelSrp::new` からしか作れず、そちらは地球の Sun を読むので、他の天体では
+  照らす面を間違えていた。2026-03-20 の Mars の Sun 方向は地球のそれと 152.8° 離れ、
+  Mars の Sun を向けた panel は `new` 経由では力が厳密に 0 になる。
+  ([#372](https://github.com/sksat/orts/pull/372))
+- 磁場がモデル化されていない天体では、磁気デバイスが Earth の磁場ではなくゼロを読むように
+  なった。`Igrf` と `TiltedDipole` は Earth のもので、磁場モデルはこの 2 つしかない。従来は
+  Mars を回る衛星が Earth の磁場を読み、そこからトルクを作っていた。`tobari::magnetic::NoField`
+  を追加し、magnetometer の読みは 0、magnetorquer の `m × B` も 0 になる。デバイス自体は
+  どちらの天体でも構築されるので、同じ衛星定義をどの天体にも向けられる。`orts run` は
+  デバイスごとに 1 回、天体名を含む warning を出す。WASM host の `magnetic-field-eci` は
+  Earth の磁場を返すまま ([#431](https://github.com/sksat/orts/issues/431))。
+  ([#372](https://github.com/sksat/orts/pull/372))
+- Moon 中心の伝播に第三体として Earth が入るようになった (Moon の第三体環境で
+  支配的だが欠けていた)。Sun 中心の伝播は Sun を自分の周回衛星に対する第三体として
+  足さなくなった。([#372](https://github.com/sksat/orts/pull/372))
 - `AttitudeState::q_dot` が、和を計算した後でなく積を作る前に角速度を半分にする
   ようになった。結果が有限な入力で overflow しなくなる: `q = [0, 1/√2, 1/√2, 0]`、
   `ω = [1.4e308, 1.4e308, 0]` の `q̇.w` は約 -9.9e307 だが、途中の和が -1.98e308 に
@@ -438,6 +492,12 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   状態 (`r = 0` や `r × v = 0`、後者は `v = 0` を含む) は 0 ではなく `NaN` を返す。
   0 は円赤道軌道の角度として実在する値なので、値なしの印には使えない。
   ([#376](https://github.com/sksat/orts/pull/376))
+- `arika::sun::sun_position_from_body` が `KnownBody` を取り `Result` を返すように
+  なった。既存の `sun_direction_from_body` は天体を `&str` で取り、認識できない天体に
+  +X 方向の単位ベクトル (春分点方向で、どこから見ても Sun の方向ではない) を返す。
+  この crate は Mercury〜Saturn の Standish 要素しか持たないため Uranus と Neptune が
+  その分岐に入る。新しい関数はこの 2 天体と、中心天体が Sun の場合を拒否する。
+  ([#372](https://github.com/sksat/orts/pull/372))
 - 要素セットのパース ([#87](https://github.com/sksat/orts/pull/87))。共有の
   no-alloc な `elements::Sgp4Elements` (平均要素セット: カタログ番号、UTC epoch、
   6 個の SGP4 平均要素、B\* drag。角度は rad、平均運動は rad/s) を**検証付き型**に。

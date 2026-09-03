@@ -550,7 +550,12 @@ pub fn run_simulation(params: &SimParams) -> Result<Recording, CmdError> {
     let mut group = IndependentGroup::new(integrator_config(params))
         .with_event_checker(body_event_checker::<OrbitalState>(params));
 
-    let third_bodies = default_third_bodies(&params.body);
+    let third_bodies = default_third_bodies(&params.body).map_err(|e| {
+        CmdError::failure(format!(
+            "central body {}: {e}",
+            params.body.properties().name
+        ))
+    })?;
     for sat in &params.satellites {
         let system = build_orbital_system(
             &params.body,
@@ -559,7 +564,8 @@ pub fn run_simulation(params: &SimParams) -> Result<Recording, CmdError> {
             &sat_params(sat),
             &third_bodies,
             params.build_atmosphere_model(),
-        );
+        )
+        .map_err(|e| CmdError::failure(format!("solar force models: {e}")))?;
         let initial = sat
             .initial_state(params.mu, params.epoch)
             .map_err(|e| CmdError::failure(format!("satellite '{}': {e}", sat.id)))?;
@@ -592,7 +598,12 @@ pub fn run_spacecraft_simulation(params: &SimParams) -> Result<Recording, CmdErr
             orts::effector::AugmentedState<SpacecraftState>,
         >(params));
 
-    let third_bodies = default_third_bodies(&params.body);
+    let third_bodies = default_third_bodies(&params.body).map_err(|e| {
+        CmdError::failure(format!(
+            "central body {}: {e}",
+            params.body.properties().name
+        ))
+    })?;
     for sat in &params.satellites {
         // `run_simulation_cmd` validated every satellite before dispatching
         // here, so `build_spacecraft_dynamics` cannot be reached with an
@@ -601,7 +612,8 @@ pub fn run_spacecraft_simulation(params: &SimParams) -> Result<Recording, CmdErr
             .attitude_config
             .as_ref()
             .expect("spacecraft mode requires attitude config on every satellite");
-        let dynamics = spacecraft_dynamics_for(sat, att, params, &third_bodies);
+        let dynamics =
+            spacecraft_dynamics_for(sat, att, params, &third_bodies).map_err(CmdError::failure)?;
 
         let orbit = sat
             .initial_state(params.mu, params.epoch)

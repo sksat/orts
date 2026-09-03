@@ -4,6 +4,7 @@
 //!
 //! - [`TiltedDipole`] — simple tilted dipole approximation (fastest)
 //! - [`Igrf`] — IGRF-13/14 spherical harmonic model up to degree 13
+//! - [`NoField`] — zero everywhere, for a body whose field is not modelled
 //!
 //! All models implement [`MagneticFieldModel`] and can be used generically via
 //! `F: MagneticFieldModel` bounds.
@@ -37,4 +38,49 @@ pub struct MagneticFieldInput<'a> {
 pub trait MagneticFieldModel: Send + Sync {
     /// Compute the magnetic field vector in ECEF Cartesian \[T\].
     fn field_ecef(&self, input: &MagneticFieldInput<'_>) -> [f64; 3];
+}
+
+/// Zero field everywhere: the stand-in for a field this crate does not model.
+///
+/// [`TiltedDipole`] and [`Igrf`] are both Earth's, so around another body there
+/// is no model to evaluate — which is not the same as that body having no
+/// field. Approximating the missing model with zero keeps the value honest at
+/// the call site: a magnetometer reads zero, a magnetorquer's `m × B` is zero,
+/// and a run carrying a magnetic device there propagates with the device doing
+/// nothing. Reading Earth's field instead would report a field measured
+/// somewhere else and make torque from it.
+pub struct NoField;
+
+impl MagneticFieldModel for NoField {
+    fn field_ecef(&self, _input: &MagneticFieldInput<'_>) -> [f64; 3] {
+        [0.0, 0.0, 0.0]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arika::earth::geodetic::Geodetic;
+
+    /// `NoField` reads zero wherever it is asked.
+    ///
+    /// A magnetorquer's torque is `m × B`, so this is what makes the device
+    /// inert on a body whose field is not modelled.
+    #[test]
+    fn no_field_is_zero_everywhere() {
+        let epoch = Epoch::<Utc>::j2000();
+        let cases: [(f64, f64, f64); 3] =
+            [(0.0, 0.0, 0.0), (45.0, -120.0, 400.0), (-80.0, 30.0, 800.0)];
+        for (lat_deg, lon_deg, alt) in cases {
+            let input = MagneticFieldInput {
+                geodetic: Geodetic {
+                    latitude: lat_deg.to_radians(),
+                    longitude: lon_deg.to_radians(),
+                    altitude: alt,
+                },
+                utc: &epoch,
+            };
+            assert_eq!(NoField.field_ecef(&input), [0.0, 0.0, 0.0]);
+        }
+    }
 }

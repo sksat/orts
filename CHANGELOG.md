@@ -149,6 +149,72 @@ section is subdivided by package.
   [force composition](docs/src/assets/srp-flat-panel/force-composition.svg),
   [torque direction](docs/src/assets/srp-flat-panel/torque-direction.svg).
   ([#377](https://github.com/sksat/orts/pull/377))
+- Solar force models take their geometry from the central body. The default
+  third-body Sun and the cannonball SRP both read the geocentric Sun vector
+  whatever the central body, so from Mars in 2026 the Sun sat up to 176° away
+  from where Mars sees it — SRP pushed the wrong way, 242–311% off as a vector
+  — and the tidal term was scaled by up to 3.8x. SRP also took Earth's radius
+  for its shadow, which put the eclipse at the wrong distance from a body of
+  another size; third-body gravity has no shadow and was wrong in the vector
+  alone. `ThirdBodyGravity::sun_from_body`, `SolarRadiationPressure::for_body`
+  and `PanelSrp::for_body` take a `KnownBody`; `default_third_bodies` and the two `build_*` builders
+  return `Result`, so a central body with no Sun ephemeris is reported instead
+  of propagated with the Sun in the wrong place. Panel SRP is included: it turns
+  both the force and the torque, since the panel's angle to the Sun line decides
+  each.
+
+  **BREAKING**: `SolarRadiationPressure` gains a private `sun_position_fn`
+  field. Its other fields are `pub`, so a downstream struct literal built one
+  directly; that no longer compiles. Construct it through `for_earth` or
+  `for_body` and the `with_*` builders, which is how the crate has always built
+  it. `PanelSrp` and `SunSensor` gain the same field, and their fields were
+  already private. ([#372](https://github.com/sksat/orts/pull/372))
+- The sun sensor's Sun direction comes from the central body too
+  (`SunSensor::for_body`). It read the geocentric vector, so on Mars the force
+  models were right while the attitude-control input was up to 176° off.
+  **The CLI's sensor now sees an eclipse.** It was built with
+  `SunSensor::new()`, which carries no shadow body, so the reading was sunlit
+  everywhere including behind the Earth; `for_body` gives it the central
+  body's conical shadow. Measured at 7000 km directly behind the Earth:
+  `direction: Some(..), illumination: 1.0` before, `direction: None,
+  illumination: 0.0` after. A controller plugin that unwrapped the direction
+  now has to handle its absence.
+  ([#372](https://github.com/sksat/orts/pull/372))
+- Sun-centred propagation keeps its SRP: the Sun is the origin there, so the
+  satellite-to-Sun vector is `-r_sat` and nothing eclipses it. Only the
+  third-body term drops out. ([#372](https://github.com/sksat/orts/pull/372))
+- The Sun-from-central-body vector is checked against Orekit's DE ephemeris
+  (`arika/tests/oracle_body_sun.rs`, fixture from
+  `tools/generate_body_sun_fixtures.py`): 7 bodies over 6 epochs from 2000 to
+  2075, comparing direction and distance. arika builds this vector from the
+  Meeus series for Earth, that series minus the lunar one for the Moon, and the
+  Standish elements for the planets, and its other tests compare one of those
+  against another — so the same sign, phase or ecliptic-to-equatorial error
+  could hold across all of them. Agreement is within 0.4' for Earth, the Moon,
+  Mercury and Venus, 1.2' for Mars, 6.5' for Jupiter and 16.9' for Saturn,
+  against the 23.4° an unrotated ecliptic vector would give.
+  ([#372](https://github.com/sksat/orts/pull/372))
+- `PanelSrp::without_shadow()` drops the shadow and keeps the Sun direction the
+  model was built with, the way `SolarRadiationPressure::without_shadow()` does.
+  A shadow-free panel model was reachable only through `PanelSrp::new`, which
+  reads Earth's Sun — so around another body it lit the wrong face. On
+  2026-03-20 Mars' Sun direction is 152.8° from Earth's, and a panel facing
+  Mars' Sun comes out with a force of exactly zero through `new`.
+  ([#372](https://github.com/sksat/orts/pull/372))
+- A magnetic device around a body whose field is not modelled reads zero
+  instead of Earth's field. `Igrf` and `TiltedDipole` are Earth's, and they are
+  the only field models there are, so a spacecraft around Mars read Earth's
+  field and made torque from it. `tobari::magnetic::NoField` is the new zero
+  model: the magnetometer reads zero, a magnetorquer's `m × B` is zero, and the
+  device is built either way so the same spacecraft definition can be pointed
+  at any body. `orts run` warns once per device naming the body. The WASM
+  host's `magnetic-field-eci` still answers with Earth's field
+  ([#431](https://github.com/sksat/orts/issues/431)).
+  ([#372](https://github.com/sksat/orts/pull/372))
+- Moon-centred propagation includes Earth as a third body, which dominates its
+  third-body environment and was absent. Sun-centred propagation no longer adds
+  the Sun as a third body to its own orbiters.
+  ([#372](https://github.com/sksat/orts/pull/372))
 - `AttitudeState::q_dot` halves the angular velocity before forming the
   products rather than the sum afterwards, so it no longer overflows where its
   result is finite: `q = [0, 1/√2, 1/√2, 0]` with `ω = [1.4e308, 1.4e308, 0]`
@@ -487,6 +553,13 @@ section is subdivided by package.
   includes `v = 0`) comes back as `NaN`s rather than zeros, since zero is a real
   reading for a circular equatorial orbit's angles.
   ([#376](https://github.com/sksat/orts/pull/376))
+- `arika::sun::sun_position_from_body` takes a `KnownBody` and returns
+  `Result`. The existing `sun_direction_from_body` takes the body as a `&str`
+  and answers an unrecognised one with a unit vector along +X — the vernal
+  equinox, which is not where the Sun is from anywhere; Uranus and Neptune reach
+  that branch, since this crate carries Standish elements for Mercury through
+  Saturn only. The new function refuses both those bodies and the
+  Sun-as-central-body case. ([#372](https://github.com/sksat/orts/pull/372))
 - Element-set parsing ([#87](https://github.com/sksat/orts/pull/87)). A shared
   no-alloc `elements::Sgp4Elements` — a *validated* mean-element set (catalog
   number, UTC epoch, six SGP4 mean elements, B\* drag; angles in radians, mean

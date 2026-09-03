@@ -429,7 +429,8 @@ impl ServeEngine {
         let has_controller = mode == SimMode::Controlled;
 
         let mut metas: Vec<SatMeta> = Vec::new();
-        let third_bodies = default_third_bodies(&params.body);
+        let third_bodies = default_third_bodies(&params.body)
+            .map_err(|e| format!("central body {}: {e}", params.body.properties().name))?;
 
         // Eagerly build the WASM plugin cache so the same instance
         // can serve both the initial fleet and any dynamic
@@ -504,7 +505,7 @@ impl ServeEngine {
 
             for spec in &params.satellites {
                 let att = spec.attitude_config.as_ref().unwrap();
-                let dynamics = spacecraft_dynamics_for(spec, att, &params, &third_bodies);
+                let dynamics = spacecraft_dynamics_for(spec, att, &params, &third_bodies)?;
 
                 let orbit = spec
                     .initial_state(params.mu, params.epoch)
@@ -557,7 +558,8 @@ impl ServeEngine {
                     &sat_params(spec),
                     &third_bodies,
                     params.build_atmosphere_model(),
-                );
+                )
+                .map_err(|e| format!("solar force models: {e}"))?;
                 let initial = spec
                     .initial_state(params.mu, params.epoch)
                     .map_err(|e| format!("satellite '{}': {e}", spec.id))?;
@@ -575,7 +577,7 @@ impl ServeEngine {
 
         // Build the Info message (broadcast by the serve layer; also retained
         // for status replay to late-connecting clients).
-        let info_msg = build_info_message(&params);
+        let info_msg = build_info_message(&params)?;
         let info_json = serde_json::to_string(&info_msg).expect("failed to serialize info");
         let mut initial_broadcasts = vec![info_json.clone()];
 
@@ -1041,7 +1043,8 @@ impl ServeEngine {
             self.params.body,
             std::slice::from_ref(&spec),
         )?;
-        let third_bodies = default_third_bodies(&self.params.body);
+        let third_bodies = default_third_bodies(&self.params.body)
+            .map_err(|e| format!("central body {}: {e}", self.params.body.properties().name))?;
         let system = build_orbital_system(
             &self.params.body,
             self.params.mu,
@@ -1049,7 +1052,8 @@ impl ServeEngine {
             &sat_params(&spec),
             &third_bodies,
             self.params.build_atmosphere_model(),
-        );
+        )
+        .map_err(|e| format!("solar force models: {e}"))?;
         // Evaluate the initial state at the instant the satellite enters the
         // running sim (epoch + current_t), so a TLE/OMM is propagated to "now"
         // rather than to t = 0. The system above uses epoch (the t = 0 ref).
@@ -1270,17 +1274,22 @@ impl ServeEngine {
 }
 
 /// Build the Info WsMessage from SimParams.
-fn build_info_message(params: &SimParams) -> WsMessage {
+///
+/// Names the force models per satellite, which means building each satellite's
+/// system — so a central body whose solar models cannot be built is reported
+/// here too, rather than announced with an empty perturbation list.
+fn build_info_message(params: &SimParams) -> Result<WsMessage, String> {
+    let third_bodies = default_third_bodies(&params.body)
+        .map_err(|e| format!("central body {}: {e}", params.body.properties().name))?;
     let satellites_info: Vec<SatelliteInfo> = params
         .satellites
         .iter()
         .map(|s| {
-            let third_bodies = default_third_bodies(&params.body);
             // Panel forces need an attitude, so they live only on a
             // `SpacecraftDynamics`. Reading the model names off an
             // `OrbitalSystem` would report the wrong set for such a satellite.
             let perturbations: Vec<String> = match &s.attitude_config {
-                Some(att) => spacecraft_dynamics_for(s, att, params, &third_bodies)
+                Some(att) => spacecraft_dynamics_for(s, att, params, &third_bodies)?
                     .model_names()
                     .into_iter()
                     .map(String::from)
@@ -1293,22 +1302,23 @@ fn build_info_message(params: &SimParams) -> WsMessage {
                     &third_bodies,
                     params.build_atmosphere_model(),
                 )
+                .map_err(|e| format!("solar force models: {e}"))?
                 .model_names()
                 .into_iter()
                 .map(String::from)
                 .collect(),
             };
-            SatelliteInfo {
+            Ok(SatelliteInfo {
                 id: s.entity_path().to_string(),
                 name: s.name.clone(),
                 altitude: s.altitude(&params.body),
                 period: s.period,
                 perturbations,
                 shape: s.shape,
-            }
+            })
         })
-        .collect();
-    WsMessage::Info {
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(WsMessage::Info {
         mu: params.mu,
         dt: params.dt,
         output_interval: params.output_interval,
@@ -1321,7 +1331,7 @@ fn build_info_message(params: &SimParams) -> WsMessage {
         central_body_radius: params.body.properties().radius,
         epoch_jd: params.epoch.map(|e| e.jd()),
         satellites: satellites_info,
-    }
+    })
 }
 
 /// Whether `s` cannot be used as one path segment of a stream endpoint URL

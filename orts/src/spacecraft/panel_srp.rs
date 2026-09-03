@@ -66,10 +66,17 @@ pub struct PanelSrp {
     shadow_body_radius: Option<f64>,
     /// Shadow model to use (default: Cylindrical).
     shadow_model: ShadowModel,
+    /// Where the Sun is, relative to the body this spacecraft orbits.
+    ///
+    /// The panel force points along the satellite-to-Sun line, so this decides
+    /// its direction. Geocentric by default; [`Self::for_body`] replaces it,
+    /// the same way [`crate::perturbations::SolarRadiationPressure`] does.
+    sun_position_fn: crate::perturbations::SunPositionFn,
 }
 
 impl PanelSrp {
-    /// Create a panel-based (attitude-dependent) SRP model from surface panels.
+    /// Create a panel-based (attitude-dependent) SRP model from surface panels,
+    /// with the geocentric Sun and no shadow — see [`Self::new`].
     ///
     /// # Panics
     /// Panics unless every panel normal is unit length.
@@ -93,10 +100,63 @@ impl PanelSrp {
             shape,
             shadow_body_radius: Some(R_EARTH),
             shadow_model: ShadowModel::Cylindrical,
+            sun_position_fn: std::sync::Arc::new(sun::sun_position_eci),
         }
     }
 
-    /// Create an SRP model without shadow.
+    /// Create a panel SRP model for orbit about `body`.
+    ///
+    /// Takes both body-dependent quantities from that body: the Sun's position
+    /// relative to it, and its own radius for the shadow. The panel force points
+    /// along the satellite-to-Sun line and its torque follows the panel's angle
+    /// to that line, so a geocentric Sun direction about another body turns both
+    /// — from Mars in 2026 that direction is up to 176° off.
+    ///
+    /// Orbiting the Sun itself works: the Sun sits at the origin, so the
+    /// satellite-to-Sun vector is `-r_sat`, and there is nothing to cast a
+    /// shadow.
+    ///
+    /// Fails only for a central body with no Sun ephemeris (Uranus, Neptune).
+    ///
+    /// # Panics
+    /// Panics unless every panel normal is unit length.
+    pub fn for_body(
+        body: arika::body::KnownBody,
+        shape: SpacecraftShape,
+    ) -> Result<Self, arika::sun::SunPositionError> {
+        shape.assert_normals_are_unit();
+        if body == arika::body::KnownBody::Sun {
+            return Ok(Self {
+                shape,
+                shadow_body_radius: None,
+                shadow_model: ShadowModel::Cylindrical,
+                sun_position_fn: std::sync::Arc::new(|_| {
+                    arika::frame::Vec3::from_raw(Vector3::zeros())
+                }),
+            });
+        }
+        // Probe now so an unsupported body fails here rather than inside the
+        // integrator, where the closure cannot report it.
+        sun::sun_position_from_body(body, &Epoch::j2000().to_tdb())?;
+        Ok(Self {
+            shape,
+            shadow_body_radius: Some(body.properties().radius),
+            shadow_model: ShadowModel::Cylindrical,
+            sun_position_fn: std::sync::Arc::new(move |epoch: &Epoch<arika::epoch::Tdb>| {
+                sun::sun_position_from_body(body, epoch)
+                    .expect("the same body was accepted at construction")
+            }),
+        })
+    }
+
+    /// Create an SRP model with the geocentric Sun and no shadow.
+    ///
+    /// The Sun direction is Earth's, so about another body the force points
+    /// where the Sun is not — from Mars in 2026 up to 176° off. For a
+    /// shadow-free model about `body`, take
+    /// [`Self::for_body`]`(body, shape)?.`[`without_shadow()`] instead.
+    ///
+    /// [`without_shadow()`]: Self::without_shadow
     ///
     /// # Panics
     /// Panics unless every panel normal is unit length.
@@ -106,7 +166,15 @@ impl PanelSrp {
             shape,
             shadow_body_radius: None,
             shadow_model: ShadowModel::Cylindrical,
+            sun_position_fn: std::sync::Arc::new(sun::sun_position_eci),
         }
+    }
+
+    /// Drop the shadow, keeping the Sun direction this model was built with
+    /// (builder pattern).
+    pub fn without_shadow(mut self) -> Self {
+        self.shadow_body_radius = None;
+        self
     }
 
     /// Set or override the shadow body radius (builder pattern).
@@ -139,7 +207,8 @@ impl PanelSrp {
         // Rotate the GCRS Sun ephemeris into the integration frame `F` (identity
         // for GCRS-aligned frames; see `EphemerisFrameBridge`). Keep the typed
         // `Vec3<F>` in scope and borrow `.inner()` only at raw-API boundaries.
-        let sun_f = F::ephemeris_rotation(epoch).transform(&sun::sun_position_eci(&epoch.to_tdb()));
+        let sun_f =
+            F::ephemeris_rotation(epoch).transform(&(self.sun_position_fn)(&epoch.to_tdb()));
         let sat_to_sun = sun_f.inner() - orbit.position();
         let r_sun = sat_to_sun.magnitude();
         let s_hat = sat_to_sun / r_sun;
@@ -370,12 +439,9 @@ mod tests {
         // Sphere: area=20.0, cr=1.5 → area_to_mass = 20.0/1000.0 = 0.02
         let panel_srp = PanelSrp::new(SpacecraftShape::sphere(20.0, 2.2, 1.5));
 
-        let scalar_srp = SolarRadiationPressure {
-            cr: 1.5,
-            area_to_mass: 0.02,
-            shadow_body_radius: None,
-            shadow_model: ShadowModel::Cylindrical,
-        };
+        let scalar_srp = SolarRadiationPressure::for_earth(Some(0.02))
+            .with_cr(1.5)
+            .without_shadow();
 
         let panel_loads = panel_srp.eval(0.0, &state, Some(&epoch));
         let scalar_a = scalar_srp.acceleration(state.orbit.position(), Some(&epoch));
@@ -1728,5 +1794,181 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// One panel facing `normal`, with the optics the other fixtures here use.
+    fn panel_facing(normal: Vector3<f64>) -> SpacecraftShape {
+        SpacecraftShape::panels(vec![SurfacePanel::at_com(
+            4.0,
+            normal,
+            2.2,
+            PanelOptics::new(0.2, 0.1),
+        )])
+    }
+
+    /// The inertial acceleration a model puts on a satellite at `position`.
+    fn accel_at(model: &PanelSrp, position: Vector3<f64>, epoch: &Epoch) -> Vector3<f64> {
+        let orbit =
+            OrbitalState::<arika::frame::Gcrs>::new_in_frame(position, vector![0.0, 3.0, 0.0]);
+        let att = AttitudeState::identity();
+        *model
+            .loads_from_state(&orbit, att.rotation_tagged_as(), 1000.0, Some(epoch))
+            .acceleration_inertial
+            .inner()
+    }
+
+    /// `for_body` on Earth is what `for_earth` always was.
+    ///
+    /// The two have to agree, or every Earth simulation would change the day a
+    /// caller switched over.
+    #[test]
+    fn for_body_on_earth_is_for_earth() {
+        let epoch = test_epoch();
+        let position = iss_state().orbit.position().to_owned();
+        let normal = sat_to_sun_unit(&epoch);
+
+        let a = accel_at(&PanelSrp::for_earth(panel_facing(normal)), position, &epoch);
+        let b = accel_at(
+            &PanelSrp::for_body(arika::body::KnownBody::Earth, panel_facing(normal))
+                .expect("Earth has a Sun ephemeris"),
+            position,
+            &epoch,
+        );
+        assert_eq!(a, b, "the same geometry, so bit-for-bit the same force");
+        assert!(a.magnitude() > 0.0, "a lit panel is pushed: {a:?}");
+    }
+
+    /// Around Mars the force follows Mars' Sun direction, not Earth's.
+    ///
+    /// This is the error: from Mars the geocentric Sun direction is far off, so
+    /// the force pointed somewhere the Sun was not. The panel faces Mars' Sun
+    /// here, which an Earth-based direction would read as unlit or pushed the
+    /// other way.
+    #[test]
+    fn for_body_on_mars_follows_mars_sun() {
+        let epoch = Epoch::from_gregorian(2026, 3, 20, 12, 0, 0.0);
+        let mars = arika::body::KnownBody::Mars;
+        let mars_sun = sun::sun_position_from_body(mars, &epoch.to_tdb())
+            .expect("Mars has a Sun ephemeris")
+            .into_inner()
+            .normalize();
+        let earth_sun = sun::sun_position_eci(&epoch.to_tdb())
+            .into_inner()
+            .normalize();
+        let separation = mars_sun
+            .dot(&earth_sun)
+            .clamp(-1.0, 1.0)
+            .acos()
+            .to_degrees();
+        assert!(
+            separation > 20.0,
+            "the directions have to differ for this to test anything: {separation}°"
+        );
+
+        // Sunward of Mars, so nothing eclipses, with the panel facing its Sun.
+        let position = mars_sun * 20_000.0;
+        let a = accel_at(
+            &PanelSrp::for_body(mars, panel_facing(mars_sun)).expect("Mars has a Sun ephemeris"),
+            position,
+            &epoch,
+        );
+        assert!(a.magnitude() > 0.0, "a lit panel is pushed: {a:?}");
+        // The satellite sits sunward of Mars, so the Sun is further along
+        // `mars_sun` and the light pushes back along it.
+        let along = a.normalize().dot(&mars_sun);
+        assert!(
+            along < -0.9,
+            "the push is anti-sunward, away from Mars' Sun: {along} (a = {a:?})"
+        );
+    }
+
+    /// `without_shadow` drops the shadow and keeps the body's Sun.
+    ///
+    /// A shadow-free panel model used to be reachable only through `new`,
+    /// which reads Earth's Sun. On 2026-03-20 Mars' Sun direction is 152.8°
+    /// from Earth's, so a panel facing Mars' Sun is unlit through `new` and
+    /// the force comes out exactly zero. The builder route keeps Mars' Sun and
+    /// only the shadow goes away.
+    #[test]
+    fn without_shadow_keeps_the_body_sun() {
+        let epoch = Epoch::from_gregorian(2026, 3, 20, 12, 0, 0.0);
+        let mars = arika::body::KnownBody::Mars;
+        let mars_sun = sun::sun_position_from_body(mars, &epoch.to_tdb())
+            .expect("Mars has a Sun ephemeris")
+            .into_inner()
+            .normalize();
+
+        // Directly behind Mars, inside its shadow cylinder.
+        let position = -mars_sun * 20_000.0;
+        let panel = panel_facing(mars_sun);
+
+        let shaded = accel_at(
+            &PanelSrp::for_body(mars, panel.clone()).expect("Mars has a Sun ephemeris"),
+            position,
+            &epoch,
+        );
+        assert_eq!(
+            shaded,
+            Vector3::zeros(),
+            "Mars eclipses the satellite: {shaded:?}"
+        );
+
+        let lit = accel_at(
+            &PanelSrp::for_body(mars, panel.clone())
+                .expect("Mars has a Sun ephemeris")
+                .without_shadow(),
+            position,
+            &epoch,
+        );
+        assert!(
+            lit.magnitude() > 0.0,
+            "with the shadow gone the panel is lit: {lit:?}"
+        );
+        // On the anti-sun axis with the panel square to the Sun, the push is
+        // straight back along `-mars_sun`; measured -1.000000.
+        let along = lit.normalize().dot(&mars_sun);
+        assert!(
+            along < -0.999,
+            "the push is anti-sunward along Mars' Sun line: {along} (a = {lit:?})"
+        );
+
+        // The geocentric route reads the Sun 152.8° away, which leaves this
+        // panel facing away from it.
+        let geocentric = accel_at(&PanelSrp::new(panel), position, &epoch);
+        assert_eq!(
+            geocentric,
+            Vector3::zeros(),
+            "Earth's Sun direction leaves the panel unlit: {geocentric:?}"
+        );
+    }
+
+    /// A body with no Sun ephemeris is refused at construction.
+    #[test]
+    fn for_body_refuses_a_body_with_no_sun_ephemeris() {
+        assert!(
+            PanelSrp::for_body(
+                arika::body::KnownBody::Uranus,
+                panel_facing(vector![1.0, 0.0, 0.0])
+            )
+            .is_err()
+        );
+    }
+
+    /// About the Sun the force is radially outward, and nothing eclipses.
+    #[test]
+    fn for_body_on_the_sun_pushes_outward() {
+        let epoch = test_epoch();
+        // Heliocentric: the satellite's position is the Sun-to-satellite vector,
+        // so the lit face is the one pointing back at the origin.
+        let position = vector![1.5e8, 0.0, 0.0];
+        let inward = -position.normalize();
+        let a = accel_at(
+            &PanelSrp::for_body(arika::body::KnownBody::Sun, panel_facing(inward))
+                .expect("the Sun sits at the origin of its own frame"),
+            position,
+            &epoch,
+        );
+        let outward = a.normalize().dot(&position.normalize());
+        assert!(outward > 0.9, "radially outward: {outward} (a = {a:?})");
     }
 }

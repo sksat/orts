@@ -6,13 +6,18 @@
 
 use arika::earth::transform::EphemerisFrameBridge;
 use arika::eclipse::{self, SUN_RADIUS_KM, ShadowModel};
-use arika::epoch::Epoch;
+use std::sync::Arc;
+
+use arika::body::KnownBody;
+use arika::epoch::{Epoch, Tdb};
 use arika::frame::{self, Vec3};
-use arika::sun::sun_position_eci;
+use arika::sun::{self, SunPositionError, sun_position_eci};
+use nalgebra::Vector3;
 
 use super::noise::NoiseModel;
 use crate::SpacecraftState;
 use crate::model::HasAttitude;
+use crate::perturbations::SunPositionFn;
 use crate::plugin::tick_input::{SunDirectionBody, SunSensorOutput};
 
 /// Sun sensor that measures the sun direction in the body frame.
@@ -35,30 +40,76 @@ pub struct SunSensor {
     shadow_body_radius: Option<f64>,
     /// Shadow model for eclipse computation.
     shadow_model: ShadowModel,
+    /// Where the Sun is, relative to the central body [km].
+    ///
+    /// The reading is a direction to the Sun, so it depends on the central body
+    /// exactly as the force models do. Defaults to the geocentric vector, which
+    /// is only correct for Earth-centred propagation.
+    sun_position_fn: SunPositionFn,
 }
 
 impl SunSensor {
-    /// Create an ideal sun sensor (no noise, no eclipse).
+    /// Create an ideal sun sensor (no noise, no eclipse) for Earth orbit.
+    ///
+    /// The Sun direction is geocentric. Use [`for_body`](Self::for_body) for any
+    /// other central body: from Mars in 2026 the geocentric direction is up to
+    /// 176° away from where Mars sees the Sun.
     pub fn new() -> Self {
         Self {
             noise: Vec::new(),
             shadow_body_radius: None,
             shadow_model: ShadowModel::Conical,
+            sun_position_fn: Arc::new(sun_position_eci),
         }
     }
 
     /// Create a sun sensor for Earth orbit with conical shadow model.
     pub fn for_earth() -> Self {
-        Self {
-            noise: Vec::new(),
-            shadow_body_radius: Some(arika::earth::R),
-            shadow_model: ShadowModel::Conical,
+        Self::new().with_shadow_body(arika::earth::R)
+    }
+
+    /// Create a sun sensor for orbit about `body`, with that body's shadow.
+    ///
+    /// Orbiting the Sun puts it at the origin, so the direction is `-r_sat` and
+    /// nothing eclipses it. Fails for a central body with no Sun ephemeris
+    /// (Uranus, Neptune).
+    pub fn for_body(body: KnownBody) -> Result<Self, SunPositionError> {
+        if body == KnownBody::Sun {
+            return Ok(Self {
+                noise: Vec::new(),
+                shadow_body_radius: None,
+                shadow_model: ShadowModel::Conical,
+                sun_position_fn: Arc::new(|_| Vec3::from_raw(Vector3::zeros())),
+            });
         }
+        // Probe now so an unsupported body fails here rather than inside the
+        // measurement, where the closure cannot report it.
+        sun::sun_position_from_body(body, &Epoch::j2000().to_tdb())?;
+        Ok(Self {
+            noise: Vec::new(),
+            shadow_body_radius: Some(body.properties().radius),
+            shadow_model: ShadowModel::Conical,
+            sun_position_fn: Arc::new(move |epoch: &Epoch<Tdb>| {
+                sun::sun_position_from_body(body, epoch)
+                    .expect("the same body was accepted at construction")
+            }),
+        })
     }
 
     /// Add a noise model. Multiple calls chain in order.
     pub fn with_noise(mut self, noise: impl NoiseModel + 'static) -> Self {
         self.noise.push(Box::new(noise));
+        self
+    }
+
+    /// Drop the shadow, keeping the Sun direction this sensor was built with
+    /// (builder pattern).
+    ///
+    /// The same builder the two SRP models have: `for_body(body)?` carries that
+    /// body's conical shadow, and this asks for an unshadowed reading without
+    /// going back to the geocentric Sun that `new()` reads.
+    pub fn without_shadow(mut self) -> Self {
+        self.shadow_body_radius = None;
         self
     }
 
@@ -99,7 +150,7 @@ impl SunSensor {
         epoch: &Epoch,
     ) -> SunSensorOutput {
         // Satellite-to-Sun vector in the propagation frame `F`
-        let sun_gcrs = sun_position_eci(&epoch.to_tdb());
+        let sun_gcrs = (self.sun_position_fn)(&epoch.to_tdb());
         let sun_eci = *F::ephemeris_rotation(epoch).transform(&sun_gcrs).inner();
         let sc_pos = *state.orbit.position_vec().inner();
         let sat_to_sun = sun_eci - sc_pos;
@@ -411,5 +462,234 @@ mod tests {
             }
             _ => panic!("expected Fine output"),
         }
+    }
+    /// `for_body` reads the Sun from the central body, not from Earth.
+    ///
+    /// The force models have their own tests for this; the sensor needs its
+    /// own, because the reading is the attitude controller's input and can
+    /// regress on its own. Around Mars in 2026 the geocentric direction is up
+    /// to 176° away from where Mars sees the Sun, so a sensor still reading
+    /// the geocentric vector points the controller at the wrong sky.
+    #[test]
+    fn for_body_reads_the_sun_from_that_body() {
+        let epoch = Epoch::j2000();
+        let mars_sun = sun::sun_position_from_body(KnownBody::Mars, &epoch.to_tdb())
+            .expect("Mars is within the planetary elements");
+
+        let mut sensor = SunSensor::for_body(KnownBody::Mars).expect("Mars has a Sun vector");
+        // A state far enough out that Mars cannot eclipse it, so the reading is
+        // the direction rather than a shadow decision.
+        let state = SpacecraftState {
+            orbit: OrbitalState::new(
+                mars_sun.into_inner().normalize() * 1.0e5,
+                Vector3::new(0.0, 1.0, 0.0),
+            ),
+            attitude: AttitudeState {
+                quaternion: Vector4::new(1.0, 0.0, 0.0, 0.0),
+                angular_velocity: Vector3::zeros(),
+            },
+            mass: 50.0,
+        };
+
+        let SunSensorOutput::Fine { direction, .. } = sensor.measure(&state, &epoch) else {
+            panic!("a sunlit sensor reports Fine");
+        };
+        let measured = direction
+            .expect("sunlit, so there is a direction")
+            .into_inner()
+            .into_inner();
+
+        let to_mars_sun = (mars_sun.into_inner() - *state.orbit.position()).normalize();
+        assert!(
+            measured.dot(&to_mars_sun) > 0.999_999,
+            "the reading follows Mars's Sun: cos = {}",
+            measured.dot(&to_mars_sun)
+        );
+
+        // The geocentric vector is what this used to read. It has to be a
+        // different direction here, or the assertion above proves nothing.
+        let earth_sun = sun::sun_position_eci(&epoch.to_tdb());
+        let to_earth_sun = (earth_sun.into_inner() - *state.orbit.position()).normalize();
+        assert!(
+            to_mars_sun.dot(&to_earth_sun) < 0.999,
+            "the two Sun directions have to differ for this test to mean anything: cos = {}",
+            to_mars_sun.dot(&to_earth_sun)
+        );
+    }
+
+    /// On Earth `for_body` is `for_earth`. At the Sun the origin *is* the Sun,
+    /// so the direction points inward from the spacecraft (`-r_sat`), with no
+    /// body to eclipse it.
+    #[test]
+    fn for_body_on_earth_and_on_the_sun() {
+        let epoch = Epoch::j2000();
+        let state = leo_state();
+
+        let mut for_body = SunSensor::for_body(KnownBody::Earth).expect("Earth has a Sun vector");
+        let mut for_earth = SunSensor::for_earth();
+        let a = for_body.measure(&state, &epoch);
+        let b = for_earth.measure(&state, &epoch);
+        match (a, b) {
+            (
+                SunSensorOutput::Fine {
+                    direction: Some(da),
+                    illumination: ia,
+                },
+                SunSensorOutput::Fine {
+                    direction: Some(db),
+                    illumination: ib,
+                },
+            ) => {
+                assert_eq!(da.into_inner(), db.into_inner(), "same direction on Earth");
+                assert_eq!(ia, ib, "same illumination on Earth");
+            }
+            other => panic!("both report Fine on a sunlit LEO state: {other:?}"),
+        }
+
+        // At the Sun the origin *is* the Sun, so the direction points inward
+        // from the spacecraft and nothing can shadow it.
+        let mut at_sun = SunSensor::for_body(KnownBody::Sun).expect("the Sun needs no ephemeris");
+        let SunSensorOutput::Fine {
+            direction,
+            illumination,
+        } = at_sun.measure(&state, &epoch)
+        else {
+            panic!("nothing eclipses a spacecraft at the Sun");
+        };
+        let measured = direction.expect("sunlit").into_inner().into_inner();
+        let inward = -state.orbit.position().normalize();
+        assert!(
+            measured.dot(&inward) > 0.999_999,
+            "the Sun is at the origin, so its direction is -r: cos = {}",
+            measured.dot(&inward)
+        );
+        assert!((illumination - 1.0).abs() < 1e-15, "no eclipse at the Sun");
+    }
+
+    /// A body outside the planetary elements is refused at construction.
+    #[test]
+    fn for_body_refuses_a_body_with_no_sun_ephemeris() {
+        for body in [KnownBody::Uranus, KnownBody::Neptune] {
+            assert!(
+                SunSensor::for_body(body).is_err(),
+                "{body:?} has no planetary elements, so the sensor cannot read a Sun"
+            );
+        }
+    }
+    fn angle_deg(a: &Vector3<f64>, b: &Vector3<f64>) -> f64 {
+        a.normalize()
+            .dot(&b.normalize())
+            .clamp(-1.0, 1.0)
+            .acos()
+            .to_degrees()
+    }
+
+    /// `without_shadow` drops the eclipse and keeps the body's Sun.
+    ///
+    /// Behind Mars at 20 000 km the sensor reports no direction; with the
+    /// shadow dropped it reports Mars' Sun direction, not Earth's (the two are
+    /// 152.8° apart on this date).
+    #[test]
+    fn without_shadow_keeps_the_body_sun_direction() {
+        let epoch = Epoch::from_gregorian(2026, 3, 20, 12, 0, 0.0);
+        let mars = KnownBody::Mars;
+        let mars_sun = sun::sun_position_from_body(mars, &epoch.to_tdb())
+            .expect("Mars has a Sun ephemeris")
+            .into_inner();
+        let earth_sun = sun::sun_position_eci(&epoch.to_tdb()).into_inner();
+
+        // Directly behind Mars, inside its shadow.
+        let position = -mars_sun.normalize() * 20_000.0;
+        let state = SpacecraftState {
+            orbit: OrbitalState::new(position, Vector3::new(0.0, 3.0, 0.0)),
+            attitude: AttitudeState {
+                quaternion: Vector4::new(1.0, 0.0, 0.0, 0.0),
+                angular_velocity: Vector3::zeros(),
+            },
+            mass: 100.0,
+        };
+
+        let mut shadowed = SunSensor::for_body(mars).expect("Mars has a Sun ephemeris");
+        assert!(
+            matches!(
+                shadowed.measure(&state, &epoch),
+                SunSensorOutput::Fine {
+                    direction: None,
+                    ..
+                }
+            ),
+            "Mars eclipses the satellite"
+        );
+
+        let mut ideal = SunSensor::for_body(mars)
+            .expect("Mars has a Sun ephemeris")
+            .without_shadow();
+        let direction = match ideal.measure(&state, &epoch) {
+            SunSensorOutput::Fine { direction, .. } => direction
+                .expect("no shadow, so the reading is lit")
+                .into_inner()
+                .into_inner(),
+            other => panic!("expected a fine reading, got {other:?}"),
+        };
+
+        let to_mars_sun = angle_deg(&direction, &mars_sun);
+        let to_earth_sun = angle_deg(&direction, &earth_sun);
+        assert!(
+            to_mars_sun < 1.0e-4,
+            "the direction is Mars' Sun: {to_mars_sun:.6}° away"
+        );
+        assert!(
+            to_earth_sun > 150.0,
+            "and not Earth's: {to_earth_sun:.3}° away"
+        );
+    }
+
+    /// The shadow radius is the central body's, not Earth's.
+    ///
+    /// Behind Mars at 20 000 km, a point 5000 km off the anti-Sun axis sits
+    /// outside Mars' umbra and inside the one Earth's radius would cast
+    /// (measured: illumination 1.0 against 0.0). The other tests here cannot
+    /// tell the two apart — the Mars cases are sunward of the body, and the
+    /// eclipse cases are on Earth, where the radius is the same either way.
+    #[test]
+    fn for_body_takes_the_shadow_radius_from_that_body() {
+        let epoch = Epoch::from_gregorian(2026, 3, 20, 12, 0, 0.0);
+        let mars = KnownBody::Mars;
+        let mars_sun = sun::sun_position_from_body(mars, &epoch.to_tdb())
+            .expect("Mars has a Sun ephemeris")
+            .into_inner();
+        let anti_sun = -mars_sun.normalize();
+        let off_axis = anti_sun.cross(&Vector3::new(0.0, 0.0, 1.0)).normalize();
+
+        let position = anti_sun * 20_000.0 + off_axis * 5000.0;
+        let state = SpacecraftState {
+            orbit: OrbitalState::new(position, Vector3::new(0.0, 3.0, 0.0)),
+            attitude: AttitudeState {
+                quaternion: Vector4::new(1.0, 0.0, 0.0, 0.0),
+                angular_velocity: Vector3::zeros(),
+            },
+            mass: 100.0,
+        };
+
+        let illumination_of = |sensor: &mut SunSensor| match sensor.measure(&state, &epoch) {
+            SunSensorOutput::Fine { illumination, .. } => illumination,
+            other => panic!("expected a fine reading, got {other:?}"),
+        };
+
+        let mut from_mars = SunSensor::for_body(mars).expect("Mars has a Sun ephemeris");
+        assert_eq!(
+            illumination_of(&mut from_mars),
+            1.0,
+            "5000 km off the axis clears Mars' umbra (radius 3396.2 km)"
+        );
+
+        let mut with_earth_radius = SunSensor::for_body(mars)
+            .expect("Mars has a Sun ephemeris")
+            .with_shadow_body(arika::earth::R);
+        assert_eq!(
+            illumination_of(&mut with_earth_radius),
+            0.0,
+            "the same point is inside the umbra of a body Earth's size (6378.137 km)"
+        );
     }
 }

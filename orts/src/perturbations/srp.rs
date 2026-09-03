@@ -1,6 +1,10 @@
+use std::sync::Arc;
+
+use arika::body::KnownBody;
 use arika::eclipse::{self, SUN_RADIUS_KM, ShadowModel};
-use arika::epoch::Epoch;
-use arika::sun;
+use arika::epoch::{Epoch, Tdb};
+use arika::frame::{self, Vec3};
+use arika::sun::{self, SunPositionError};
 use nalgebra::Vector3;
 
 use arika::earth::R as R_EARTH;
@@ -46,6 +50,10 @@ pub const DEFAULT_AREA_TO_MASS: f64 = 0.02;
 /// with its centre of pressure taken at the centre of mass. Attitude-dependent
 /// SRP, including the torque an off-centre centre of pressure produces, is
 /// [`crate::spacecraft::PanelSrp`].
+///
+/// Built through [`for_body`](Self::for_body), [`for_earth`](Self::for_earth) or
+/// [`Default`], then the `with_*` builders. The Sun-position field is private,
+/// so a struct literal does not compile outside this crate.
 pub struct SolarRadiationPressure {
     /// Radiation pressure coefficient (1.0 = absorber, 2.0 = reflector)
     pub cr: f64,
@@ -56,6 +64,32 @@ pub struct SolarRadiationPressure {
     pub shadow_body_radius: Option<f64>,
     /// Shadow model to use (default: Cylindrical for backward compatibility).
     pub shadow_model: ShadowModel,
+    /// Where the Sun is, relative to the central body [km].
+    ///
+    /// A closure rather than a body, mirroring
+    /// [`ThirdBodyGravity`](crate::perturbations::ThirdBodyGravity): both terms
+    /// need the same vector, and both admit a substituted ephemeris. Defaults
+    /// to the geocentric Meeus Sun, which is only correct for Earth-centred
+    /// propagation — [`for_body`](Self::for_body) picks the right one.
+    sun_position_fn: SunPositionFn,
+}
+
+/// Where the Sun is at an epoch, relative to the central body [km].
+///
+/// `Arc<dyn Fn>` for the same reasons as the third-body position closure: the
+/// model must be `Send + Sync`, and a captured ephemeris table has to fit.
+pub type SunPositionFn = Arc<dyn Fn(&Epoch<Tdb>) -> Vec3<frame::Gcrs> + Send + Sync>;
+
+impl Default for SolarRadiationPressure {
+    fn default() -> Self {
+        Self {
+            cr: DEFAULT_CR,
+            area_to_mass: DEFAULT_AREA_TO_MASS,
+            shadow_body_radius: Some(R_EARTH),
+            shadow_model: ShadowModel::Cylindrical,
+            sun_position_fn: Arc::new(sun::sun_position_eci),
+        }
+    }
 }
 
 impl SolarRadiationPressure {
@@ -64,16 +98,60 @@ impl SolarRadiationPressure {
     /// Uses [`DEFAULT_CR`] (1.5) and cylindrical Earth shadow by default.
     pub fn for_earth(area_to_mass: Option<f64>) -> Self {
         Self {
+            area_to_mass: area_to_mass.unwrap_or(DEFAULT_AREA_TO_MASS),
+            ..Default::default()
+        }
+    }
+
+    /// Create an SRP model for orbit about `body`.
+    ///
+    /// Takes both body-dependent quantities from that body: the Sun's position
+    /// relative to it, and its own radius for the shadow. Using Earth's is not
+    /// a small error — from Mars in 2026 the geocentric Sun direction is up to
+    /// 176° off, which leaves the acceleration pointing the wrong way.
+    ///
+    /// Orbiting the Sun itself works: the Sun sits at the origin, so the
+    /// satellite-to-Sun vector the geometry needs is just `-r_sat`, and there is
+    /// nothing to cast a shadow.
+    ///
+    /// Fails only for a central body with no Sun ephemeris (Uranus, Neptune).
+    pub fn for_body(body: KnownBody, area_to_mass: Option<f64>) -> Result<Self, SunPositionError> {
+        if body == KnownBody::Sun {
+            return Ok(Self {
+                cr: DEFAULT_CR,
+                area_to_mass: area_to_mass.unwrap_or(DEFAULT_AREA_TO_MASS),
+                shadow_body_radius: None,
+                shadow_model: ShadowModel::Cylindrical,
+                sun_position_fn: Arc::new(|_| Vec3::from_raw(Vector3::zeros())),
+            });
+        }
+        // Probe now so an unsupported body fails here rather than inside the
+        // integrator, where the closure cannot report it.
+        sun::sun_position_from_body(body, &Epoch::j2000().to_tdb())?;
+        Ok(Self {
             cr: DEFAULT_CR,
             area_to_mass: area_to_mass.unwrap_or(DEFAULT_AREA_TO_MASS),
-            shadow_body_radius: Some(R_EARTH),
+            shadow_body_radius: Some(body.properties().radius),
             shadow_model: ShadowModel::Cylindrical,
-        }
+            sun_position_fn: Arc::new(move |epoch: &Epoch<Tdb>| {
+                sun::sun_position_from_body(body, epoch)
+                    .expect("the same body was accepted at construction")
+            }),
+        })
     }
 
     /// Override the radiation pressure coefficient (builder pattern).
     pub fn with_cr(mut self, cr: f64) -> Self {
         self.cr = cr;
+        self
+    }
+
+    /// Model no shadow at all: the spacecraft is always sunlit.
+    ///
+    /// For comparing against a model that has no shadow of its own, and for
+    /// geometry where the central body cannot occult the Sun.
+    pub fn without_shadow(mut self) -> Self {
+        self.shadow_body_radius = None;
         self
     }
 
@@ -154,7 +232,7 @@ impl SolarRadiationPressure {
             Some(e) => e,
             None => return Vector3::zeros(),
         };
-        let sun_pos = sun::sun_position_eci(&epoch.to_tdb()).into_inner();
+        let sun_pos = (self.sun_position_fn)(&epoch.to_tdb()).into_inner();
         self.srp_accel(sat_position, &sun_pos)
     }
 }
@@ -177,7 +255,7 @@ impl<F: EphemerisFrameBridge, S: HasFrame<Frame = F> + HasOrbit> Model<S>
             Some(e) => e,
             None => return ExternalLoads::zeros(),
         };
-        let sun_gcrs = sun::sun_position_eci(&epoch.to_tdb());
+        let sun_gcrs = (self.sun_position_fn)(&epoch.to_tdb());
         let sun_f = F::ephemeris_rotation(epoch).transform(&sun_gcrs);
         ExternalLoads::acceleration(self.srp_accel(state.orbit().position(), sun_f.inner()))
     }
@@ -215,6 +293,7 @@ mod tests {
             area_to_mass: 0.02,
             shadow_body_radius: None,
             shadow_model: ShadowModel::Cylindrical,
+            ..Default::default()
         };
         let epoch = test_epoch();
         let sat = vector![7000.0, 1000.0, 500.0];
@@ -272,6 +351,7 @@ mod tests {
             area_to_mass: 0.02,
             shadow_body_radius: None,
             shadow_model: ShadowModel::Cylindrical,
+            ..Default::default()
         };
         let state = iss_state();
         let epoch = test_epoch();
@@ -292,6 +372,7 @@ mod tests {
             area_to_mass: 1.0,
             shadow_body_radius: None,
             shadow_model: ShadowModel::Cylindrical,
+            ..Default::default()
         };
         let state = iss_state();
         let epoch = test_epoch();
@@ -316,12 +397,14 @@ mod tests {
             area_to_mass: 0.01,
             shadow_body_radius: None,
             shadow_model: ShadowModel::Cylindrical,
+            ..Default::default()
         };
         let srp2 = SolarRadiationPressure {
             cr: 2.0,
             area_to_mass: 0.01,
             shadow_body_radius: None,
             shadow_model: ShadowModel::Cylindrical,
+            ..Default::default()
         };
 
         let a1 = srp1
@@ -348,12 +431,14 @@ mod tests {
             area_to_mass: 0.01,
             shadow_body_radius: None,
             shadow_model: ShadowModel::Cylindrical,
+            ..Default::default()
         };
         let srp2 = SolarRadiationPressure {
             cr: 1.5,
             area_to_mass: 0.02,
             shadow_body_radius: None,
             shadow_model: ShadowModel::Cylindrical,
+            ..Default::default()
         };
 
         let a1 = srp1
@@ -385,6 +470,7 @@ mod tests {
             area_to_mass: 0.02,
             shadow_body_radius: None,
             shadow_model: ShadowModel::Cylindrical,
+            ..Default::default()
         };
         let epoch = test_epoch();
         let state = iss_state();
@@ -403,6 +489,7 @@ mod tests {
             area_to_mass: 0.02,
             shadow_body_radius: Some(R_EARTH),
             shadow_model: ShadowModel::Cylindrical,
+            ..Default::default()
         };
         let epoch = test_epoch();
         let state = OrbitalState::new(
@@ -450,12 +537,14 @@ mod tests {
             area_to_mass: 0.02,
             shadow_body_radius: Some(R_EARTH),
             shadow_model: ShadowModel::Conical,
+            ..Default::default()
         };
         let srp_no_shadow = SolarRadiationPressure {
             cr: 1.5,
             area_to_mass: 0.02,
             shadow_body_radius: None,
             shadow_model: ShadowModel::Cylindrical,
+            ..Default::default()
         };
         let epoch = test_epoch();
 
@@ -483,5 +572,121 @@ mod tests {
         }
         // If not in penumbra at this position, that's okay too — the geometry
         // may place it outside the penumbra region.
+    }
+
+    // for_body
+
+    /// From Earth, the body-aware constructor is what `for_earth` builds.
+    #[test]
+    fn for_body_earth_matches_for_earth() {
+        let epoch = test_epoch();
+        let sat = vector![7000.0, 1000.0, 500.0];
+
+        let a_earth =
+            SolarRadiationPressure::for_earth(Some(0.02)).acceleration(&sat, Some(&epoch));
+        let a_body = SolarRadiationPressure::for_body(KnownBody::Earth, Some(0.02))
+            .expect("Earth")
+            .acceleration(&sat, Some(&epoch));
+        assert!(
+            (a_earth - a_body).norm() < 1e-24,
+            "{a_earth:?} vs {a_body:?}"
+        );
+    }
+
+    /// From Mars, SRP points away from the Sun *as Mars sees it*.
+    ///
+    /// Earth's vector would put the Sun in a different half of the sky at this
+    /// epoch, so the two accelerations are nowhere near each other. Shadow is
+    /// off so the test is about direction and magnitude only.
+    #[test]
+    fn for_body_mars_pushes_away_from_the_mars_relative_sun() {
+        let epoch = test_epoch();
+        // Well outside Mars, so it is certainly sunlit whatever the geometry.
+        let sat = vector![5000.0, 0.0, 0.0];
+
+        let srp = SolarRadiationPressure::for_body(KnownBody::Mars, Some(0.02))
+            .expect("Mars")
+            .without_shadow();
+        let a = srp.acceleration(&sat, Some(&epoch));
+
+        let sun_mars = sun::sun_position_from_body(KnownBody::Mars, &epoch.to_tdb())
+            .expect("Mars")
+            .into_inner();
+        let cos = a.normalize().dot(&sun_mars.normalize());
+        assert!(
+            cos < -0.999_999,
+            "SRP should point directly away from the Mars-relative Sun, cos={cos}"
+        );
+
+        // The magnitude follows Mars's own distance, not Earth's. The 1/d² is
+        // in the *satellite*-to-Sun distance, so the expected ratio uses that
+        // rather than the body-to-Sun distance — the satellite's 5000 km offset
+        // is 6.6e-5 of it, well above the bound below.
+        let a_geo = SolarRadiationPressure::for_earth(Some(0.02))
+            .without_shadow()
+            .acceleration(&sat, Some(&epoch));
+        let ratio = a.norm() / a_geo.norm();
+        let sun_geo = sun::sun_position_eci(&epoch.to_tdb()).into_inner();
+        let expected = ((sun_geo - sat).magnitude() / (sun_mars - sat).magnitude()).powi(2);
+        assert!(
+            (ratio - expected).abs() / expected < 1e-9,
+            "magnitude should scale as 1/d²: {ratio} vs {expected}"
+        );
+    }
+
+    /// The shadow is cast by the central body, not always by Earth.
+    #[test]
+    fn for_body_uses_that_body_s_radius_for_the_shadow() {
+        for body in [
+            KnownBody::Mercury,
+            KnownBody::Venus,
+            KnownBody::Earth,
+            KnownBody::Mars,
+        ] {
+            let srp = SolarRadiationPressure::for_body(body, None).expect("supported body");
+            assert_eq!(
+                srp.shadow_body_radius,
+                Some(body.properties().radius),
+                "{} shadow radius",
+                body.properties().name
+            );
+        }
+    }
+
+    /// A central body with no Sun ephemeris is refused.
+    #[test]
+    fn for_body_rejects_a_body_with_no_sun_ephemeris() {
+        for body in [KnownBody::Uranus, KnownBody::Neptune] {
+            assert!(
+                SolarRadiationPressure::for_body(body, None).is_err(),
+                "{} should be refused",
+                body.properties().name
+            );
+        }
+    }
+
+    /// A Sun orbiter still feels SRP, pushed radially outward.
+    ///
+    /// The Sun is the origin there, so the geometry needs no ephemeris and no
+    /// shadow — unlike the third-body term, which has nothing to add.
+    #[test]
+    fn for_body_sun_pushes_radially_outward() {
+        let srp = SolarRadiationPressure::for_body(KnownBody::Sun, Some(0.02))
+            .expect("orbiting the Sun is supported");
+        assert_eq!(srp.shadow_body_radius, None, "the Sun casts no shadow here");
+
+        let sat = vector![1.0e8, 0.0, 0.0];
+        let a = srp.acceleration(&sat, Some(&test_epoch()));
+        let cos = a.normalize().dot(&sat.normalize());
+        assert!(
+            cos > 0.999_999,
+            "SRP on a Sun orbiter points away from the origin, cos={cos}"
+        );
+
+        // 1/d² in the heliocentric distance.
+        let far = vector![2.0e8, 0.0, 0.0];
+        let a_far = srp.acceleration(&far, Some(&test_epoch()));
+        let ratio = a.norm() / a_far.norm();
+        assert!((ratio - 4.0).abs() < 1e-9, "expected 4x, got {ratio}");
     }
 }
