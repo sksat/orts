@@ -172,9 +172,12 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   照らす面を間違えていた。2026-03-20 の Mars の Sun 方向は地球のそれと 152.8° 離れ、
   Mars の Sun を向けた panel は `new` 経由では力が厳密に 0 になる。
   ([#372](https://github.com/sksat/orts/pull/372))
-- 磁場がモデル化されていない天体では、磁気センサと磁気トルカを拒否するようになった。
-  `Igrf` と `TiltedDipole` は Earth のもので、磁場モデルはこの 2 つしかない。従来は
-  Mars を回る衛星が Earth の磁場を読み、そこからトルクを作っていた。
+- 磁場がモデル化されていない天体では、config に書かれた磁気センサと磁気トルカを拒否する
+  ようになった。`Igrf` と `TiltedDipole` は Earth のもので、磁場モデルはこの 2 つしかない。
+  従来は Mars を回る衛星が Earth の磁場を読み、そこからトルクを作っていた。WASM host の
+  `magnetic-field-eci` は中心天体に関わらず Earth の磁場を返すままで、戻り値が `vec3` の
+  ため拒否には guest API の変更が必要
+  ([#431](https://github.com/sksat/orts/issues/431))。
   ([#372](https://github.com/sksat/orts/pull/372))
 - Moon 中心の伝播に第三体として Earth が入るようになった (Moon の第三体環境で
   支配的だが欠けていた)。Sun 中心の伝播は Sun を自分の周回衛星に対する第三体として

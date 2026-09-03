@@ -202,10 +202,14 @@ section is subdivided by package.
   2026-03-20 Mars' Sun direction is 152.8° from Earth's, and a panel facing
   Mars' Sun comes out with a force of exactly zero through `new`.
   ([#372](https://github.com/sksat/orts/pull/372))
-- A magnetometer or magnetorquer is refused around a body whose magnetic field
-  is not modelled. `Igrf` and `TiltedDipole` are Earth's, and they are the only
-  field models there are, so a spacecraft around Mars read Earth's field and made
-  torque from it. ([#372](https://github.com/sksat/orts/pull/372))
+- A magnetometer or magnetorquer declared in a config is refused around a body
+  whose magnetic field is not modelled. `Igrf` and `TiltedDipole` are Earth's,
+  and they are the only field models there are, so a spacecraft around Mars
+  read Earth's field and made torque from it. The WASM host's
+  `magnetic-field-eci` still answers with Earth's field whatever the central
+  body: its signature returns a bare `vec3`, so refusing there needs a guest
+  API change ([#431](https://github.com/sksat/orts/issues/431)).
+  ([#372](https://github.com/sksat/orts/pull/372))
 - Moon-centred propagation includes Earth as a third body, which dominates its
   third-body environment and was absent. Sun-centred propagation no longer adds
   the Sun as a third body to its own orbiters.
