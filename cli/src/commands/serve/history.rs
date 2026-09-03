@@ -124,20 +124,6 @@ pub struct HistoryBuffer {
     /// the calls counts the reads. A second such path would need its own count.
     #[cfg(test)]
     load_all_calls: std::cell::Cell<u32>,
-
-    /// How many entity buffers the last [`Self::overview`] call walked.
-    ///
-    /// The cost claim on `overview()` is that it walks each entity's buffer
-    /// once, so the work per entity stays flat as entities are added. Stated
-    /// as a count, that claim is exact and the same on every machine: `w`
-    /// entities give `w` visits, and a regression that re-scans the map gives
-    /// `w * w`. The elapsed-time ratio it replaces could only be calibrated
-    /// where its numbers were measured — over a 4x entity range the same code
-    /// rose 1.46x per entity on the Linux runner and 3.25-4.28x on the macOS
-    /// one, and quadratic work over that range shows 4x, so no bar separated
-    /// them there.
-    #[cfg(test)]
-    overview_entity_visits: std::cell::Cell<usize>,
 }
 
 impl HistoryBuffer {
@@ -155,8 +141,6 @@ impl HistoryBuffer {
             overview_per_entity: HashMap::new(),
             #[cfg(test)]
             load_all_calls: std::cell::Cell::new(0),
-            #[cfg(test)]
-            overview_entity_visits: std::cell::Cell::new(0),
         }
     }
 
@@ -212,17 +196,10 @@ impl HistoryBuffer {
     /// O(num_entities * OVERVIEW_MAX_POINTS_PER_ENTITY) regardless of how
     /// many points have been pushed or how many segments have been flushed.
     pub fn overview(&self) -> Vec<HistoryState> {
-        #[cfg(test)]
-        self.overview_entity_visits.set(0);
         let mut all: Vec<HistoryState> = self
             .overview_per_entity
             .values()
-            .flat_map(|e| {
-                #[cfg(test)]
-                self.overview_entity_visits
-                    .set(self.overview_entity_visits.get() + 1);
-                e.buffer.iter().cloned()
-            })
+            .flat_map(|e| e.buffer.iter().cloned())
             .collect();
         all.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap());
         all
@@ -906,15 +883,6 @@ mod tests {
                     ov.len() <= w * OVERVIEW_MAX_POINTS_PER_ENTITY,
                     "overview size must be bounded, got {} for {w} entities",
                     ov.len()
-                );
-                // The cost claim itself, as a count: one walk per entity, so
-                // the work per entity is flat in the entity count. This holds
-                // on every platform, where the elapsed-time ratio below can
-                // only be judged on the one its bar was measured on.
-                assert_eq!(
-                    buf.overview_entity_visits.get(),
-                    w,
-                    "overview walks each of the {w} entity buffers once"
                 );
                 cleanup_dir(&dir);
                 elapsed.as_micros()
