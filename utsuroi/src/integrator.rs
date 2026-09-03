@@ -99,7 +99,15 @@ pub trait Integrator {
 
     /// Integrate a dynamical system with event detection and NaN/Inf checking.
     ///
-    /// After each step:
+    /// For a span that advances, `event_check(t0, &initial)` runs first,
+    /// before any step: a level-triggered event can already hold at `t0`, and
+    /// reporting it after a step would name a state the predicate itself
+    /// rejects. Terminating there returns the initial state at `t0` and calls
+    /// no callback, since the callback reports accepted steps and none was
+    /// taken. A span with `t0 == t_end` takes no step, so it asks nothing and
+    /// returns the initial state as it came in.
+    ///
+    /// Then, after each step:
     /// 1. Checks for NaN/Inf in state → returns `IntegrationOutcome::Error`
     /// 2. Calls `callback(t, &state)`
     /// 3. Calls `event_check(t, &state)` → if `Break(reason)`, returns `Terminated`
@@ -125,6 +133,22 @@ pub trait Integrator {
 
         let mut state = initial;
         let mut t = t0;
+
+        // The predicate is asked about the state it was given, before any
+        // step. A level-triggered event — "below the surface", "past this
+        // altitude" — can already hold at `t0`, and stepping first reports it
+        // one step late with a state the caller's own predicate calls invalid.
+        // Only for a span that advances: an empty span takes no step, so it
+        // reports nothing and asks nothing, and comes back as it went in.
+        if t0 < t_end
+            && let ControlFlow::Break(reason) = event_check(t0, &state)
+        {
+            return IntegrationOutcome::Terminated {
+                state,
+                t: t0,
+                reason,
+            };
+        }
 
         while t < t_end {
             let h = dt.min(t_end - t);

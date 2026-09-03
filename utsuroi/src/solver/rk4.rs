@@ -544,4 +544,69 @@ mod tests {
         assert_eq!(callback_count, 3);
         assert!(matches!(outcome, IntegrationOutcome::Terminated { .. }));
     }
+
+    /// An event that already holds at `t0` stops there, without a step.
+    ///
+    /// A level-triggered predicate — "below the surface", "past this
+    /// altitude" — can be true of the state the caller hands in. This loop
+    /// stepped once before asking, so it reported the event one step late, at
+    /// a state the predicate itself calls invalid. Measured through the CLI
+    /// before the fix: `orts run --sat altitude=50 --duration 100` (Earth's
+    /// atmosphere boundary is the 100 km Karman line) reported "atmospheric
+    /// entry at 50.0 km" at t = 10 s and wrote a sample there, 78 km of arc
+    /// after the entry it was reporting.
+    #[test]
+    fn an_event_true_at_t0_stops_before_stepping() {
+        let system = HarmonicOscillator;
+        let initial = State::<3, 2>::new(vector![7000.0, 0.0, 0.0], vector![0.0, 7.5, 0.0]);
+        let mut callbacks = 0usize;
+        let outcome = Rk4.integrate_with_events(
+            &system,
+            initial.clone(),
+            0.0,
+            100.0,
+            1.0,
+            |_, _| callbacks += 1,
+            // True of anything, so it is true of the initial state.
+            |_, _| ControlFlow::Break("already there"),
+        );
+        let IntegrationOutcome::Terminated { state, t, reason } = outcome else {
+            panic!("an event true at t0 terminates, got {outcome:?}");
+        };
+        assert_eq!(reason, "already there");
+        assert_eq!(t, 0.0, "it stops at t0, not a step later");
+        assert_eq!(*state.y(), *initial.y(), "the state is the one handed in");
+        assert_eq!(*state.dy(), *initial.dy());
+        assert_eq!(callbacks, 0, "no step was taken, so nothing to report");
+    }
+
+    /// An empty span asks the predicate nothing.
+    ///
+    /// The initial check is for a span that advances: reporting an event for a
+    /// call that takes no step would make `propagate_to(t)` at the current
+    /// time terminate a run. No step, no callback, no predicate call — the
+    /// state comes back as it went in.
+    #[test]
+    fn an_empty_span_does_not_consult_the_event_check() {
+        let system = HarmonicOscillator;
+        let initial = State::<3, 2>::new(vector![7000.0, 0.0, 0.0], vector![0.0, 7.5, 0.0]);
+        let asked = std::cell::Cell::new(0usize);
+        let outcome = Rk4.integrate_with_events(
+            &system,
+            initial.clone(),
+            5.0,
+            5.0,
+            1.0,
+            |_, _| {},
+            |_, _| {
+                asked.set(asked.get() + 1);
+                ControlFlow::Break("would fire")
+            },
+        );
+        let IntegrationOutcome::Completed(state) = outcome else {
+            panic!("an empty span completes, got {outcome:?}");
+        };
+        assert_eq!(*state.y(), *initial.y(), "the state is the one handed in");
+        assert_eq!(asked.get(), 0, "no step was taken, so nothing was asked");
+    }
 }

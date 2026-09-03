@@ -132,6 +132,16 @@ pub struct AdaptiveStepper<'a, S: DynamicalSystem> {
 impl<'a, S: DynamicalSystem> AdaptiveStepper<'a, S> {
     /// Advance adaptively to `t_target`.
     ///
+    /// - For a target that advances, `event_check` runs first on the state the
+    ///   stepper currently holds, before any step. A level-triggered event can
+    ///   already hold there, and reporting it after a step would name a state
+    ///   the predicate itself rejects. Terminating there leaves the stepper
+    ///   where it was and calls no callback, since the callback reports
+    ///   accepted steps and none was taken. A later `advance_to` therefore
+    ///   re-evaluates the state it stopped at: for a predicate that only reads
+    ///   the state that is the same answer, but one carrying its own counters
+    ///   sees the endpoint twice. A target the stepper has already reached
+    ///   takes no step, so it asks nothing and reports `Reached`.
     /// - Each accepted step calls `callback(t, &state)`.
     /// - If `event_check` returns `Break(reason)`, returns `Event { reason }`.
     /// - On success returns `Reached` with internal state updated to `t_target`.
@@ -151,6 +161,18 @@ impl<'a, S: DynamicalSystem> AdaptiveStepper<'a, S> {
         // t_target` false on the first test and the stepper reports Reached
         // while sitting at its old time.
         validate_time_span(self.t, t_target)?;
+
+        // The predicate is asked about the state the stepper holds, before
+        // any step. A level-triggered event — "below the surface", "past this
+        // altitude" — can already hold here, and stepping first reports it one
+        // step late with a state the caller's own predicate calls invalid.
+        // Only for a target that advances: `advance_to(self.t, ..)` takes no
+        // step, so it reports nothing and asks nothing.
+        if self.t < t_target
+            && let ControlFlow::Break(reason) = event_check(self.t, &self.state)
+        {
+            return Ok(AdvanceOutcome::Event { reason });
+        }
 
         while self.t < t_target {
             let h = self.dt.min(t_target - self.t);
@@ -1093,5 +1115,73 @@ mod tests {
     #[test]
     fn advance_to_still_succeeds_for_valid_input() {
         assert!(advance(0.1, Tolerances::default(), 1.0).is_ok());
+    }
+
+    /// An event that already holds at `t0` stops there, without a step.
+    ///
+    /// A level-triggered predicate — "below the surface", "past this
+    /// altitude" — can be true of the state the caller hands in. This loop
+    /// stepped once before asking, so it reported the event one step late, at
+    /// a state the predicate itself calls invalid. Measured through the CLI
+    /// before the fix: `orts run --sat altitude=50 --duration 100` (Earth's
+    /// atmosphere boundary is the 100 km Karman line) reported "atmospheric
+    /// entry at 50.0 km" at t = 10 s and wrote a sample there, 78 km of arc
+    /// after the entry it was reporting.
+    #[test]
+    fn an_event_true_at_t0_stops_before_stepping() {
+        let system = HarmonicOscillator;
+        let initial = State::<3, 2>::new(vector![7000.0, 0.0, 0.0], vector![0.0, 7.5, 0.0]);
+        let tol = Tolerances::default();
+        let mut callbacks = 0usize;
+        let outcome = DormandPrince.integrate_adaptive_with_events(
+            &system,
+            initial.clone(),
+            0.0,
+            100.0,
+            1.0,
+            &tol,
+            |_, _| callbacks += 1,
+            // True of anything, so it is true of the initial state.
+            |_, _| ControlFlow::Break("already there"),
+        );
+        let IntegrationOutcome::Terminated { state, t, reason } = outcome else {
+            panic!("an event true at t0 terminates, got {outcome:?}");
+        };
+        assert_eq!(reason, "already there");
+        assert_eq!(t, 0.0, "it stops at t0, not a step later");
+        assert_eq!(*state.y(), *initial.y(), "the state is the one handed in");
+        assert_eq!(*state.dy(), *initial.dy());
+        assert_eq!(callbacks, 0, "no step was taken, so nothing to report");
+    }
+
+    /// A target the stepper already reached asks the predicate nothing.
+    ///
+    /// The initial check is for a target that advances. Driven through the
+    /// stepper rather than the wrapper: the wrapper sizes its first step as
+    /// `dt.min(t_end - t0)`, which is zero for an empty span, so it answers
+    /// with the step-size error before reaching this check.
+    #[test]
+    fn a_target_already_reached_does_not_consult_the_event_check() {
+        let system = HarmonicOscillator;
+        let initial = State::<3, 2>::new(vector![7000.0, 0.0, 0.0], vector![0.0, 7.5, 0.0]);
+        let tol = Tolerances::default();
+        let asked = std::cell::Cell::new(0usize);
+        let mut stepper = DormandPrince.stepper(&system, initial, 5.0, 1.0, tol);
+        let outcome = stepper
+            .advance_to(
+                5.0,
+                |_, _| {},
+                |_, _| {
+                    asked.set(asked.get() + 1);
+                    ControlFlow::Break("would fire")
+                },
+            )
+            .expect("a target already reached is valid");
+        assert!(
+            matches!(outcome, AdvanceOutcome::Reached),
+            "nothing to advance to, so the stepper reports Reached"
+        );
+        assert_eq!(asked.get(), 0, "no step was taken, so nothing was asked");
+        assert_eq!(stepper.t(), 5.0, "the clock did not move");
     }
 }

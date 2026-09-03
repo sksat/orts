@@ -560,6 +560,15 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   ([#409](https://github.com/sksat/orts/pull/409))
 
 #### Fixed
+- 積分ループが、渡された状態そのものについて event の判定を行うようになった
+  (1 歩進める前)。`utsuroi` の 5 経路と、`IndependentGroup` / `CoupledGroup` が
+  自前で持つ固定刻みループが対象。「地表より下」「この高度より下」のような level-triggered な
+  event は `t0` で既に成立しうるが、従来はまず 1 歩進めていたため、判定関数自身が
+  無効と呼ぶ状態で 1 step 遅れて報告していた。`orts run --sat altitude=50
+  --duration 100` (地球の大気境界は 100 km の Kármán line) は
+  「atmospheric entry at 50.0 km」を t = 10 s で報告し、その時刻の sample も
+  記録していた。報告している entry から 78 km 進んだ地点である。現在は t = 0 で
+  開始状態のまま停止する。([#419](https://github.com/sksat/orts/pull/419))
 - `Integrator::try_integrate` が、結果が非有限になった最初のステップで
   `IntegrationError::NonFiniteState` を返して停止するようになった
   (`integrate_with_events` が既に行っていた検査)。従来は `NaN` 状態のまま

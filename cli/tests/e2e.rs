@@ -1221,3 +1221,101 @@ fn test_cli_repeated_sat_id_is_rejected() {
         "error should name the repeated id, got: {stderr}"
     );
 }
+
+/// A satellite that starts inside the atmosphere reports entry at t = 0.
+///
+/// Earth's boundary here is the 100 km Karman line, so `altitude=50` is
+/// already past it when the run starts. The event check ran only after a
+/// step, so the run reported "atmospheric entry at 50.0 km" at t = 10 s and
+/// wrote a sample there — 78 km of arc after the entry it was reporting.
+#[test]
+fn a_run_starting_inside_the_atmosphere_terminates_at_t0() {
+    let binary = env!("CARGO_BIN_EXE_orts");
+    let output = Command::new(binary)
+        .args([
+            "run",
+            "--output",
+            "stdout",
+            "--format",
+            "csv",
+            "--sat",
+            "altitude=50",
+            "--duration",
+            "100",
+        ])
+        .output()
+        .expect("failed to execute orts");
+    assert!(
+        output.status.success(),
+        "orts run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("terminated at t=0.00s"),
+        "the entry holds at t0, so that is when it is reported: {stderr}"
+    );
+    assert!(
+        stderr.contains("atmospheric entry"),
+        "the reason is the atmosphere boundary: {stderr}"
+    );
+
+    // One row, the state handed in. The terminated state is the initial one,
+    // so recording it again would double the sample.
+    let csv = String::from_utf8_lossy(&output.stdout);
+    let rows: Vec<&str> = csv
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.is_empty())
+        .collect();
+    assert_eq!(rows.len(), 1, "one sample at t0: {rows:?}");
+    assert!(
+        rows[0].starts_with("0.000,"),
+        "the sample sits at t0: {}",
+        rows[0]
+    );
+}
+
+/// The same, on the RK4 path.
+///
+/// `IndependentGroup` runs its own fixed-step loop rather than
+/// `Integrator::integrate_with_events`, so `--integrator rk4` needed the
+/// initial check of its own. Measured before that: `t=10.00s` and two rows.
+#[test]
+fn an_rk4_run_starting_inside_the_atmosphere_terminates_at_t0() {
+    let binary = env!("CARGO_BIN_EXE_orts");
+    let output = Command::new(binary)
+        .args([
+            "run",
+            "--output",
+            "stdout",
+            "--format",
+            "csv",
+            "--sat",
+            "altitude=50",
+            "--duration",
+            "100",
+            "--integrator",
+            "rk4",
+        ])
+        .output()
+        .expect("failed to execute orts");
+    assert!(
+        output.status.success(),
+        "orts run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("terminated at t=0.00s") && stderr.contains("atmospheric entry"),
+        "the entry holds at t0, so that is when it is reported: {stderr}"
+    );
+
+    let csv = String::from_utf8_lossy(&output.stdout);
+    let rows: Vec<&str> = csv
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.is_empty())
+        .collect();
+    assert_eq!(rows.len(), 1, "one sample at t0: {rows:?}");
+}

@@ -105,7 +105,16 @@ where
         Self::new(IntegratorConfig::Rk4 { dt })
     }
 
-    /// Set an event checker that is called after each integration step.
+    /// Set an event checker, called on the state each *advancing*
+    /// `propagate_to` starts from and after every accepted step.
+    ///
+    /// The initial call is what catches a level-triggered event that already
+    /// holds — a satellite starting below the surface, say. Terminating there
+    /// leaves the satellite at the time and state it came in with.
+    ///
+    /// A satellite already at or past the target is skipped entirely, so a
+    /// call that asks it to advance nowhere evaluates nothing. That matches
+    /// the callback: no step, nothing reported.
     ///
     /// If the checker returns `ControlFlow::Break(reason)`, the satellite is
     /// terminated with that reason string.
@@ -401,7 +410,21 @@ where
                     let mut current_state = entry.state.clone();
 
                     let mut terminated = false;
-                    while current_t < effective_target - 1e-12 {
+                    // The predicate is asked about the state this call starts from,
+                    // before any step. A level-triggered event can already hold there,
+                    // and stepping first reports it one step late.
+                    if let Some(checker) = event_checker
+                        && let ControlFlow::Break(reason) = checker(current_t, &current_state)
+                    {
+                        entry.terminated = true;
+                        terminated = true;
+                        terminations.push(SatelliteTermination {
+                            satellite_id: entry.id.clone(),
+                            t: current_t,
+                            reason,
+                        });
+                    }
+                    while !terminated && current_t < effective_target - 1e-12 {
                         let h = dt.min(effective_target - current_t);
                         // `h > 0` after the validate() above, but for large
                         // `|current_t|` it can still be below the f64 spacing
