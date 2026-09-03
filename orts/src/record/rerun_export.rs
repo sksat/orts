@@ -340,6 +340,12 @@ pub fn save_as_rrd(
             &re_sdk_types::archetypes::TextDocument::new(desc.as_str()),
         )?;
     }
+    if let Some(ref frame) = meta.frame {
+        rec.log_static(
+            "meta/sim/frame",
+            &re_sdk_types::archetypes::TextDocument::new(frame.as_str()),
+        )?;
+    }
 
     rec.flush_blocking()?;
     Ok(())
@@ -711,6 +717,7 @@ pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> 
         period: meta_scalars.get("meta/sim/period").copied(),
         body_name: meta_texts.get("meta/sim/body_name").cloned(),
         orbit_description: meta_texts.get("meta/sim/orbit_description").cloned(),
+        frame: meta_texts.get("meta/sim/frame").cloned(),
     };
 
     // Find base entity paths that have x/y/z/vx/vy/vz sub-entities.
@@ -996,6 +1003,7 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
         period: meta_scalars.get("meta/sim/period").copied(),
         body_name: meta_texts.get("meta/sim/body_name").cloned(),
         orbit_description: meta_texts.get("meta/sim/orbit_description").cloned(),
+        frame: meta_texts.get("meta/sim/frame").cloned(),
     };
 
     // Find all entity base paths (strip the leaf field name and leading slash)
@@ -1492,6 +1500,7 @@ mod tests {
             orbit_description: Some(
                 "Initial orbit: circular at 400 km altitude (r = 6778.137 km)".to_string(),
             ),
+            frame: Some("simple-eci".to_string()),
         };
 
         // Log 3 rows with all component types

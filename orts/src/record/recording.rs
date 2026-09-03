@@ -290,6 +290,10 @@ pub struct SimMetadata {
     pub period: Option<f64>,
     /// Human-readable initial orbit description (e.g. "circular at 400 km altitude").
     pub orbit_description: Option<String>,
+    /// The inertial frame the states are expressed in (`"simple-eci"`,
+    /// `"gcrs"`), so a recording says which Earth-rotation model produced it
+    /// rather than leaving "ECI" to be guessed.
+    pub frame: Option<String>,
 }
 
 impl SimMetadata {
@@ -299,6 +303,9 @@ impl SimMetadata {
     /// used by both `orts run --format csv` and `orts convert --format csv`.
     pub fn write_csv_header(&self, w: &mut dyn std::io::Write) -> std::io::Result<()> {
         writeln!(w, "# orts simulation")?;
+        if let Some(frame) = &self.frame {
+            writeln!(w, "# frame = {frame}")?;
+        }
         if let Some(mu) = self.mu {
             writeln!(w, "# mu = {} km^3/s^2", mu)?;
         }

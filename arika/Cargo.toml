@@ -38,6 +38,8 @@ default = ["std"]
 std = ["alloc", "nalgebra/std", "serde/std", "serde_json?/std"]
 alloc = ["serde/alloc", "dep:serde_json"]
 fetch-horizons = ["std", "dep:ureq"]
+# IERS finals2000A.all download + cache (arika::earth::eop::EopTable::fetch).
+fetch-eop = ["std", "dep:ureq"]
 # SGP4/SDP4 propagation via the `sgp4` crate (arika::sgp4). Optional and off by
 # default to keep minimal / wasm builds lean.
 sgp4 = ["dep:sgp4_rs"]

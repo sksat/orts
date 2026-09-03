@@ -11,6 +11,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `orts` (Rust, crates.io)
 
 #### Added
+- `perturbations::SphericalHarmonicGravity<F: EarthFixedTransform>` —
+  `tobari::gravity::SphericalHarmonicField` (EGM96 / EGM2008 / EIGEN 系の ICGEM
+  file) による完全球面調和重力。`F` の地球固定 chain で回す: `SimpleEci` は ERA
+  のみ、`Gcrs` は極運動込みの IAU 2006 CIO chain。非中心項のみ (`PointMass` と
+  併用し、`ZonalGravity` とは同時に登録しない)。絶対 epoch が無い場合は J2000 への
+  fallback ではなく panic。70×70 で 24 h の LEO 伝播が Orekit (ITRF body frame,
+  実 EOP) と 0.93 m で一致。([#411](https://github.com/sksat/orts/issues/411))
 - 地上局コンタクトウィンドウ検出 (`visibility` module): `GroundStation`
   (WGS-84 位置 + 仰角マスク)、`ContactWindow` (補間した AOS/LOS、最大仰角、
   span クリップフラグ)、純粋な `PassTracker` ステートマシン、frame-aware な
@@ -29,7 +36,18 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `stream_deliver` / `stream_take` / `stream_close`。([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 - WIT v0 plugin interface に msg-io / stream-io チャネルを追加。([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
+#### Added
+- `setup::build_orbital_system_in_frame::<F>` — 慣性系を明示する
+  `build_orbital_system`。frame-aware なモデル (drag、球面調和場) がそれぞれ
+  provider を持てるよう EOP storage を factory で受ける。`HasPosition` を任意の
+  frame の `OrbitalState<F>` に実装し、`record::SimMetadata` に frame 名を追加。
+  ([#411](https://github.com/sksat/orts/issues/411))
+
 #### Changed
+- **BREAKING**: `setup::build_orbital_system` / `build_spacecraft_dynamics` に
+  末尾引数 `gravity_field: Option<Arc<SphericalHarmonicField>>` を追加。`Some` で
+  `SphericalHarmonicGravity` (Earth 専用、epoch 必須、`mu` は場の GM と一致すること
+  を assert)、`None` で従来の `ZonalGravity`。([#411](https://github.com/sksat/orts/issues/411))
 - `SatelliteParams` が `SpacecraftShape` を optional で持ち、
   `build_spacecraft_dynamics` がそれを見て等方面の `SolarRadiationPressure` /
   `AtmosphericDrag` の代わりに `PanelSrp` / `PanelDrag` を install するように
@@ -172,6 +190,22 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `orts-cli` (Rust, crates.io, binary)
 
 #### Added
+- `frame` / `--frame {simple-eci|gcrs}` と `eop` / `--eop {auto|PATH|zero}`:
+  `orts run` の軌道のみの経路を `Gcrs` (IAU 2006/2000A CIO chain + 観測 IERS
+  EOP、極運動込み) で伝播できるようにした。従来の ERA のみの `SimpleEci` が既定。
+  `auto` は IERS から `finals2000A.all` を取得 (24h キャッシュ)、パス指定はローカル
+  ファイル、`zero` は model CIP のみ。`gcrs` は Earth 専用・EOP 必須で、姿勢付き
+  fleet・コントローラ・`orts serve` (いずれも `SimpleEci` 固定) では黙って fallback
+  せず reject する。recording の metadata に frame を残す (`# frame = gcrs`)。
+  ([#411](https://github.com/sksat/orts/issues/411))
+- `[gravity_field]` config table (`path`, `degree`, `order`) と `run` / `serve` の
+  `--gravity-field <PATH> [--gravity-degree N] [--gravity-order M]`: ICGEM `.gfc`
+  の完全球面調和重力場を J2/J3/J4 の zonal model の代わりに登録し、ファイルの GM を
+  simulation の μ (初期状態、energy 派生値、CSV/RRD metadata、WS `info`) に使う。
+  Earth 専用。`degree >= 2`、`order <= degree` は `config validate` で検査し、
+  ファイルは実行時に開く。WebSocket の `start_simulation` では受け付けない
+  (server 側のファイルを指すため)。伝播 frame は `SimpleEci` のままなので、場の
+  回転は ERA のみ。([#411](https://github.com/sksat/orts/issues/411))
 - `[[satellites.panels]]` で衛星に平板の外形を与えられるようにした
   (`area`, `normal`, `cd`, `specular`, `diffuse`, `cp_offset`, `two_sided`
   ([#399](https://github.com/sksat/orts/pull/399))、`back` ([#395](https://github.com/sksat/orts/pull/395)))。
@@ -432,6 +466,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `arika` (Rust, crates.io)
 
 #### Added
+- `fetch-eop` feature: `EopTable::fetch` / `fetch_default` が IERS の
+  `finals2000A.all` を取得し `~/.cache/orts/finals2000A.all` に 24h キャッシュする
+  (`CssiSpaceWeather::fetch` と同じ作り)。`ClampedEop::new` が `Borrow<EopTable>`
+  を受けるので、1 つの table を複数の力学モデルで共有できる。
+  ([#411](https://github.com/sksat/orts/issues/411))
+
+#### Added
 - `arika_wasm::orbit_derived_batch` が、状態ベクトルの配列から Kepler 要素と
   軌道のスカラー量を返すようになった。ブラウザが `.rrd` を読むときも、CLI が CSV に
   書くのと同じ `KeplerianElements::from_state_vector` で計算される。軌道面を持たない
@@ -547,6 +588,18 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `tobari` (Rust, crates.io)
 
 #### Added
+- `gravity::SphericalHarmonicField`: 静的 ICGEM `.gfc` parser (fully normalized
+  な `gfc` record のみ。時変 record `gfct`/`trnd`/`dot`/`asin`/`acos` と
+  `unnormalized` は明示エラーで拒否。`errors` の列数、`m ≤ n`、重複、非有限値、
+  `C00 = 1`、degree-1 がゼロであること、係数の完備性を検証。`norm` は必須、
+  `max_degree` は `gravity::MAX_DEGREE` = 2190 が上限) と、body frame での
+  非中心 potential / 加速度の Holmes–Featherstone 評価器 (km 単位)。Orekit の
+  `HolmesFeatherstoneAttractionModel` と同じ構造だが極そのものでも正則。
+  `truncated(degree, order)`, `gm()`, `radius()`, `tide_system()` (記録のみ、
+  変換しない), `j2()`。70×70 まで Orekit と点ごとに 1e-13·GM/r² で一致
+  (`tests/oracle_geopotential.rs`、fixture は
+  `tools/generate_orekit_geopotential_fixtures.py`)。
+  ([#411](https://github.com/sksat/orts/issues/411))
 - NRLMSISE-00 の 72.5 km 未満: 中間圏・成層圏・対流圏の温度 spline と完全混合への
   線形遷移を実装し、地表から ~1000 km までをカバーするようになった。従来はそれ未満の
   すべての高度に 72.5 km の profile を黙って返していた (海面で 1.9e4 倍薄い)。

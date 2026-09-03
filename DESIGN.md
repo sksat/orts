@@ -82,7 +82,7 @@ Basilisk や Orekit と同様の 3 層分離を採用する。
 
 | 層 | 状態 | 用途 |
 |---|---|---|
-| ContinuousModel (`Model<S>`) | なし (純関数) | drag, SRP, gravity gradient, memoryless 制御則 |
+| ContinuousModel (`Model<S>`) | なし (純関数) | drag, SRP, 重力場 (zonal / 球面調和), gravity gradient, memoryless 制御則 |
 | StateEffector | ODE 状態の一部 | RW 角運動量、ジンバル角 (力学バックリアクション) |
 | DiscreteController | 内部状態 (`&mut self`) | PID, B-dot (有限差分), フィルタ, モード遷移 |
 
@@ -181,7 +181,7 @@ orts をその harness に組み込むための named byte stream の口が stre
 
 | ミッション | 中心天体 | 必要な天体 | 主な摂動 |
 |---|---|---|---|
-| LEO (ISS 等) | 地球 (固定) | 月・太陽 | J2+, 大気抵抗, SRP |
+| LEO (ISS 等) | 地球 (固定) | 月・太陽 | J2+ (数 m 級 OD では球面調和 ≥70×70), 大気抵抗, SRP |
 | GEO/SSO | 地球 (固定) | 月・太陽 | J2, SRP, 第三体 |
 | 月探査 | 地球↔月 | 地球・月・太陽 | 月 J2, 3 体力学 |
 | 小惑星探査 | 太陽↔小天体 | 太陽・惑星群 | SRP |
@@ -210,6 +210,8 @@ orts をその harness に組み込むための named byte stream の口が stre
 - **モデル登録の責務**: 環境モデルの登録は `orts::setup` に集約する。CLI (`orts run` / `orts serve`) は `SatelliteParams` を組み立てて渡すだけにする。エントリポイントごとに登録すると、二つが食い違ったときにどちらが正しいのか判断できない。actuator (RW, MTQ, thruster) は機体のハードウェア記述で決まるので、登録は呼び出し側に残す
 - **外乱トルクの選択**: どの外乱トルクを解くかは config (`[satellites.disturbances]`) で選ぶ。姿勢を持たない衛星にトルクは install しないので、`[satellites.attitude]` 不在での指定は reject する。姿勢の状態と機体特性を述べる table とは別に置くのは、どの環境モデルを解くかが別の関心事だから
 - **パネル形状は SRP と大気抵抗で共有する**: 機体の外形は一つなので、`[[satellites.panels]]` に書いたパネルは両方のモデルが使う。片方だけをパネルで表して他方を等方面で表す口は作らない。等方面のパラメータ (`srp_area_to_mass`, `ballistic_coeff`) との同時指定は、同じ力を二通りに述べていてどちらを使うか読めないので reject する
+- **重力場モデルは排他**: `ZonalGravity` (J2/J3/J4) と `SphericalHarmonicGravity` (ICGEM gfc の完全球面調和) はどちらも J2 を含むので、同じ system に両方は登録しない。球面調和場を使うときは中心項 `PointMass` の μ に係数ファイルの GM (`SphericalHarmonicField::gm()`) を使う: WGS-84 の μ (398600.4418) と EGM2008 の GM (398600.4415) の差は 7.5e-10 で LEO の along-track に ~0.3 m/日効く程度だが、中心項と調和項は一つのモデルなので二つの GM を混ぜない。場の評価 (tobari) は静的係数のみで、時変項 (`gfct` 等) は読み込みを拒否し、tide system は記録するだけで変換しない。絶対 epoch が無い system では経度依存項の地球回転角が定義できないので、J2000 への silent fallback ではなく panic にする
+- **伝播 frame の選択**: 伝播する慣性系は型 (`OrbitalSystem<F>`) だが CLI の指定は値なので、`orts run` は `--frame` / `frame` を一度だけ解決して generic な本体に dispatch する。対応するのは軌道のみの伝播で、`gcrs` は Earth 専用・EOP 必須 (`--eop auto|PATH|zero`) とし、姿勢付き・コントローラ付き・`orts serve` では reject する (姿勢と plugin controller ABI が `SimpleEci` 固定なので、黙って `SimpleEci` に落とすと利用者の指定と実際の力学が食い違う)。どの frame で伝播したかは recording の metadata (`# frame = ...`) に残す
 - **trait object ポリシー**: モデルや環境 trait (`GravityField`, `AtmosphereModel` 等) は `Box<dyn Trait>` で実行時差し替え可能とする。性能クリティカルなパスでは generic パラメータの monomorphization を使う
 - **feature gate**: 重いモデルや I/O (NRLMSISE-00, Rerun, WebSocket, CSSI HTTP, plugin-wasm) は feature flag で分離する
 

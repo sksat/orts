@@ -14,7 +14,8 @@
 ## Features
 
 - N-body orbital simulation with adaptive (DOP853, Dormand-Prince) and symplectic (Störmer-Verlet, Yoshida) integrators
-- Gravity models: point-mass, zonal harmonics (J2, J3, J4)
+- Propagation frames: `SimpleEci` (ERA-only Earth rotation) and `Gcrs` (IAU 2006/2000A CIO chain with observed IERS EOP, `orts run --frame gcrs --eop auto`)
+- Gravity models: point-mass, zonal harmonics (J2, J3, J4), full spherical-harmonic geopotential from ICGEM `.gfc` files (EGM96 / EGM2008 / EIGEN-class, Holmes–Featherstone, validated against Orekit to 1e-13 pointwise and ~1 m over 24 h at 70×70)
 - Perturbations: atmospheric drag, solar radiation pressure, third-body gravity, constant
   thrust. Drag and SRP can be attitude-dependent, from a flat-panel surface that also
   produces disturbance torques
@@ -136,7 +137,7 @@ Apollo 11, Artemis 1, and orbital lifetime analysis demos.
 | `orts-plugin-sdk` | `plugin-sdk/` | SDK for writing WASM plugin guest controllers |
 | `arika` (在処) | `arika/` | Coordinate frames, epochs, Earth rotation, ephemerides |
 | `utsuroi` (移ろい) | `utsuroi/` | ODE integrators (RK4, DOP853, Störmer-Verlet, Yoshida) |
-| `tobari` (帳) | `tobari/` | Atmosphere density, IGRF geomagnetic field, space weather |
+| `tobari` (帳) | `tobari/` | Atmosphere density, spherical-harmonic geopotential, IGRF geomagnetic field, space weather |
 | `rrd-wasm` | `rrd-wasm/` | Rerun RRD decoder compiled to WebAssembly |
 
 ### TypeScript / npm packages

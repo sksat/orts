@@ -195,6 +195,7 @@ pub(super) async fn simulation_manager_with_params(
                 // Delegate to the standard manager for subsequent runs.
                 simulation_manager(
                     Some(config),
+                    None,
                     cli_plugin_overrides,
                     returned_rx,
                     tx,
@@ -220,6 +221,27 @@ fn validate_sim_config(config: &SimConfig) -> Result<(), String> {
     // `orts serve --config` rejects must not slip in through a WebSocket
     // `start_simulation` and have its uplinks dropped instead.
     config.ensure_serve_supported()?;
+    // `[gravity_field]` names a file on the server's filesystem. A WebSocket
+    // client must not be able to make the server open arbitrary paths (or
+    // panic on a missing one), so the field is CLI / config-file only.
+    // Same reason as `--frame gcrs` in `run_serve`: the serve engine is
+    // `SimpleEci`-only, so a client asking for `gcrs` must be told, not
+    // served the other frame.
+    if config.try_frame_choice()? == crate::cli::FrameChoice::Gcrs {
+        return Err(
+            "frame = \"gcrs\" is not supported by `orts serve`: the serve engine and \
+                    the plugin controller ABI propagate in SimpleEci. Use `orts run --frame \
+                    gcrs` for the IAU 2006 path."
+                .to_string(),
+        );
+    }
+    if config.gravity_field.is_some() {
+        return Err(
+            "gravity_field is not accepted over WebSocket: start `orts serve` with \
+                    `--gravity-field <PATH>` or a `--config` file carrying `[gravity_field]`"
+                .to_string(),
+        );
+    }
 
     let body = crate::satellite::parse_body(&config.body);
     let mu = body.properties().mu;
@@ -287,6 +309,9 @@ async fn idle_loop(cmd_rx: &mut mpsc::Receiver<SimCommand>) -> Option<SimConfig>
 /// Loops between idle and running states; after terminate it returns to idle.
 pub(super) async fn simulation_manager(
     initial_config: Option<SimConfig>,
+    // The `[gravity_field]` of `initial_config`, loaded by the caller (see
+    // `serve::run_serve`); `None` when the config has no table.
+    initial_gravity_field: Option<Arc<tobari::gravity::SphericalHarmonicField>>,
     cli_plugin_overrides: PluginBackendOverrides,
     mut cmd_rx: mpsc::Receiver<SimCommand>,
     tx: broadcast::Sender<String>,
@@ -302,8 +327,18 @@ pub(super) async fn simulation_manager(
     };
 
     // Main manager loop: start simulation, run until terminated, return to idle.
+    // Only the initial config can carry a field (a WebSocket `start_simulation`
+    // is refused if it does, see `validate_sim_config`), so the preloaded one
+    // is used exactly once; later configs go through `from_config`, whose
+    // loader is a no-op for a config without the table.
+    let mut initial_gravity_field = initial_gravity_field;
     while let Some(config) = next_config {
-        let mut params_inner = SimParams::from_config(&config);
+        let mut params_inner = match (&config.gravity_field, initial_gravity_field.take()) {
+            (Some(_), Some(field)) => {
+                SimParams::from_config_with_gravity_field(&config, Some(field), None)
+            }
+            _ => SimParams::from_config(&config),
+        };
         cli_plugin_overrides.apply(&mut params_inner);
         let params = Arc::new(params_inner);
 
@@ -733,5 +768,43 @@ attitude = { inertia_diag = [10, 10, 10], mass = 50 }
                 "Earth config tripped the body guard: {e}"
             );
         }
+    }
+
+    /// `[gravity_field]` names a server-side file, so a WebSocket client must
+    /// not be able to set it.
+    #[test]
+    fn ws_start_rejects_gravity_field() {
+        let config: SimConfig = toml::from_str(
+            r#"
+[gravity_field]
+path = "/etc/passwd"
+
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+"#,
+        )
+        .expect("valid test toml");
+        let err = validate_sim_config(&config).unwrap_err();
+        assert!(err.contains("not accepted over WebSocket"), "got: {err}");
+    }
+
+    /// A WebSocket `start_simulation` asking for `gcrs` is told, not served
+    /// the `SimpleEci` propagation the engine actually does.
+    #[test]
+    fn ws_start_rejects_the_gcrs_frame() {
+        let config: SimConfig = toml::from_str(
+            r#"
+frame = "gcrs"
+eop = "zero"
+
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+"#,
+        )
+        .expect("valid test toml");
+        let err = validate_sim_config(&config).unwrap_err();
+        assert!(err.contains("not supported by `orts serve`"), "got: {err}");
     }
 }

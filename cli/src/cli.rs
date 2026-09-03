@@ -1,5 +1,9 @@
 use clap::{Parser, Subcommand, ValueEnum};
 
+// The propagation frame is a runtime choice here and a type parameter in
+// orts, so the enum lives with the frame abstraction it selects.
+pub use crate::sim::frame::FrameChoice;
+
 /// orts CLI — orbital mechanics simulation tool
 #[derive(Parser, Debug)]
 #[command(name = "orts")]
@@ -233,6 +237,44 @@ pub struct SimArgs {
     #[arg(long)]
     pub space_weather: Option<String>,
 
+    /// Spherical-harmonic gravity field: path to an ICGEM .gfc file
+    /// (EGM96 / EGM2008 / EIGEN-6C4). Replaces the J2/J3/J4 zonal model and
+    /// sets mu to the file's GM. Earth only.
+    #[arg(long, value_name = "PATH")]
+    pub gravity_field: Option<String>,
+
+    /// Truncate the gravity field to this degree (default: the file's maximum).
+    /// Only used with --gravity-field.
+    #[arg(long, value_name = "N")]
+    pub gravity_degree: Option<usize>,
+
+    /// Truncate the gravity field to this order (default: = degree).
+    /// Only used with --gravity-field.
+    #[arg(long, value_name = "M")]
+    pub gravity_order: Option<usize>,
+
+    /// Inertial frame to propagate in.
+    /// "simple-eci": ERA-only Earth rotation, no EOP (default).
+    /// "gcrs": IAU 2006/2000A CIO chain with observed EOP (needs --eop).
+    /// `gcrs` covers orbit-only `run`; attitude, controllers and `serve` are
+    /// SimpleEci-only.
+    ///
+    /// `Option` rather than a defaulted value because presence matters:
+    /// `--frame simple-eci` next to a `frame = "gcrs"` config is an explicit
+    /// disagreement, and a defaulted value could not tell it from no flag at
+    /// all. Absent means [`FrameChoice::SimpleEci`], via
+    /// [`SimArgs::frame`](Self::frame).
+    #[arg(long = "frame")]
+    pub frame_arg: Option<FrameChoice>,
+
+    /// Earth Orientation Parameters for --frame gcrs.
+    /// "auto": download finals2000A.all from IERS (cached for 24h).
+    /// File path: load an IERS finals2000A file.
+    /// "zero": no observed EOP, IAU 2006 model CIP only (reproducible, not
+    /// accurate — ERA is off by up to ~0.4 arcsecond).
+    #[arg(long, value_name = "SOURCE")]
+    pub eop: Option<String>,
+
     /// Total simulation duration in seconds. Omit to cover one orbit
     /// (`orts run`); `orts serve` streams without end either way.
     #[arg(long)]
@@ -291,6 +333,11 @@ pub struct SimArgs {
 }
 
 impl SimArgs {
+    /// The selected frame, defaulting to `SimpleEci` when `--frame` is absent.
+    pub fn frame(&self) -> FrameChoice {
+        self.frame_arg.unwrap_or(FrameChoice::SimpleEci)
+    }
+
     /// Returns true if explicit orbit-specifying arguments were provided.
     pub fn has_orbit_args(&self) -> bool {
         !self.sats.is_empty()

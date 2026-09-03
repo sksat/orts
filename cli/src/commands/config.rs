@@ -21,10 +21,23 @@ duration = 5400.0                 # total sim time [s]; omit for one orbital per
 output_interval = 10.0            # recording cadence [s]; defaults to dt
 atmosphere = "exponential"        # exponential | harris-priester | nrlmsise00
 
+# Inertial frame. "simple-eci" (default) rotates the Earth by ERA only;
+# "gcrs" uses the IAU 2006/2000A CIO chain with observed EOP and needs `eop`
+# ("auto" | a finals2000A path | "zero"). Orbit-only `orts run`.
+# frame = "gcrs"
+# eop = "auto"
+
 [integrator]
 type = "dp45"                     # rk4 | dp45 | dop853
 atol = 1.0e-10                    # adaptive integrators only
 rtol = 1.0e-8
+
+# Full spherical-harmonic gravity (Earth only). Replaces the J2/J3/J4 zonal
+# model and sets mu to the file's GM. Uncomment and point at an ICGEM .gfc.
+# [gravity_field]
+# path = "EGM2008.gfc"            # ICGEM gfc, static coefficients
+# degree = 70                     # truncation; omit for the file's maximum
+# order = 70                      # defaults to degree
 
 [[satellites]]
 id = "sat-0"

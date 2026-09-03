@@ -168,6 +168,16 @@ use super::{LengthOfDay, NutationCorrections, PolarMotion, Ut1Offset};
 pub struct ClampedEop<T>(T);
 
 impl<T: core::borrow::Borrow<EopTable>> ClampedEop<T> {
+    /// Wrap anything that borrows a table.
+    ///
+    /// [`EopTable::clamped`] and [`EopTable::into_clamped`] cover the borrowed
+    /// and owned cases; this also takes a shared handle
+    /// (`ClampedEop::new(Arc::clone(&table))`), which is how one table backs
+    /// several force models, each of which owns its own provider.
+    pub fn new(table: T) -> Self {
+        Self(table)
+    }
+
     /// The wrapped table.
     pub fn table(&self) -> &EopTable {
         self.0.borrow()
@@ -205,6 +215,81 @@ impl EopTable {
     /// See [`ClampedEop`] for what the policy means.
     pub fn into_clamped(self) -> ClampedEop<EopTable> {
         ClampedEop(self)
+    }
+}
+
+#[cfg(feature = "fetch-eop")]
+mod fetch_impl {
+    use super::EopTable;
+    use std::time::{Duration, SystemTime};
+
+    /// IERS Earth Orientation Centre, the combined series: observed values plus
+    /// one year of prediction, back to 1973.
+    const IERS_FINALS_URL: &str = "https://datacenter.iers.org/data/9/finals2000A.all";
+
+    /// Default cache max age. EOP is published weekly (Thursdays), so a day is
+    /// short enough to pick up a new release promptly and long enough that a
+    /// batch of runs downloads once. Matches `CssiSpaceWeather::fetch`.
+    const DEFAULT_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+
+    impl EopTable {
+        /// Fetch the IERS `finals2000A.all` series with local caching.
+        ///
+        /// Cached at `~/.cache/orts/finals2000A.all`; a cache newer than
+        /// `max_age` (default 24 h) is reused. The download is parsed before
+        /// it is written, so a truncated response does not poison the cache.
+        pub fn fetch(max_age: Option<Duration>) -> Result<Self, Box<dyn std::error::Error>> {
+            let max_age = max_age.unwrap_or(DEFAULT_MAX_AGE);
+            let cache_path = cache_file_path()?;
+
+            if let Ok(metadata) = std::fs::metadata(&cache_path)
+                && let Ok(modified) = metadata.modified()
+                && SystemTime::now()
+                    .duration_since(modified)
+                    .unwrap_or(Duration::MAX)
+                    < max_age
+            {
+                eprintln!("Using cached EOP data: {}", cache_path.display());
+                let text = std::fs::read_to_string(&cache_path)?;
+                return Ok(Self::from_finals2000a(&text)?);
+            }
+
+            eprintln!("Downloading EOP data from IERS...");
+            let body = ureq::get(IERS_FINALS_URL)
+                .call()
+                .map_err(|e| format!("HTTP request failed: {e}"))?
+                .body_mut()
+                .read_to_string()
+                .map_err(|e| format!("Failed to read response body: {e}"))?;
+
+            let table = Self::from_finals2000a(&body)?;
+
+            if let Some(parent) = cache_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&cache_path, &body)?;
+            eprintln!(
+                "Cached {} EOP entries to {}",
+                table.len(),
+                cache_path.display()
+            );
+
+            Ok(table)
+        }
+
+        /// [`fetch`](Self::fetch) with the default 24-hour cache.
+        pub fn fetch_default() -> Result<Self, Box<dyn std::error::Error>> {
+            Self::fetch(None)
+        }
+    }
+
+    /// `~/.cache/orts/finals2000A.all`, alongside the space-weather cache.
+    fn cache_file_path() -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+        let home = std::env::var("HOME").map_err(|_| "HOME environment variable not set")?;
+        Ok(std::path::PathBuf::from(home)
+            .join(".cache")
+            .join("orts")
+            .join("finals2000A.all"))
     }
 }
 

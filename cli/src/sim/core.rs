@@ -231,6 +231,7 @@ pub fn spacecraft_dynamics_for(
         third_bodies,
         att.inertia_matrix(),
         params.build_atmosphere_model(),
+        params.gravity_field(),
     )
 }
 

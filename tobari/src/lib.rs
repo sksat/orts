@@ -11,6 +11,13 @@
 //! All models implement [`AtmosphereModel`] and can be swapped at runtime via
 //! `Box<dyn AtmosphereModel>`.
 //!
+//! ## Gravity field
+//!
+//! [`gravity::SphericalHarmonicField`] evaluates a fully normalized
+//! spherical-harmonic geopotential (EGM96 / EGM2008 / EIGEN-class ICGEM
+//! files) in its body-fixed frame — the non-central part only, for use next
+//! to a point-mass term.
+//!
 //! ## Magnetic field
 //!
 //! Provides pluggable geomagnetic field models behind the
@@ -44,6 +51,8 @@ pub mod cssi;
 pub mod exponential;
 #[cfg(feature = "alloc")]
 pub mod gfz;
+#[cfg(feature = "alloc")]
+pub mod gravity;
 pub mod harris_priester;
 pub mod magnetic;
 pub mod nrlmsise00;
@@ -52,6 +61,8 @@ pub mod space_weather;
 #[cfg(feature = "alloc")]
 pub use cssi::{CssiData, CssiSpaceWeather, OutOfRangeBehavior};
 pub use exponential::Exponential;
+#[cfg(feature = "alloc")]
+pub use gravity::{IcgemError, SphericalHarmonicField, TideSystem};
 pub use harris_priester::HarrisPriester;
 pub use nrlmsise00::Nrlmsise00;
 pub use space_weather::{ConstantWeather, SpaceWeather, SpaceWeatherProvider};

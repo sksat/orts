@@ -15,9 +15,11 @@ use orts::record::recording::Recording;
 use orts::record::timeline::TimePoint;
 use orts::visibility::{StationContact, VisibilityMonitor};
 
+use crate::cli::FrameChoice;
 use crate::cli::{IntegratorChoice, OutputFormat, SimArgs};
 use crate::commands::CmdError;
 use crate::satellite::OrbitSpec;
+use crate::sim::frame::RunFrame;
 use crate::sim::mode::{
     SimMode, ensure_commands_deliverable, ensure_streams_unused, select_sim_mode,
     unhonored_config_warnings,
@@ -38,7 +40,82 @@ pub(crate) fn validate_sim_args(sim: &SimArgs) -> Result<(), String> {
         sim.stream_interval,
         sim.duration,
     )?;
-    crate::config::validate_tolerances(sim.integrator, sim.atol, sim.rtol)
+    crate::config::validate_tolerances(sim.integrator, sim.atol, sim.rtol)?;
+    // The frame rules need the fleet's attitude configs, which the direct-CLI
+    // path cannot express at all (`--sat` has no attitude), so an empty slice
+    // states exactly that.
+    crate::config::validate_frame(sim.frame(), sim.eop.as_deref(), &sim.body, &[])?;
+    validate_gravity_args(sim)
+}
+
+/// The gravity flags written on a `run` command line that a config will not
+/// read, named as written.
+fn gravity_flags_given(sim: &SimArgs) -> Vec<&'static str> {
+    [
+        ("--gravity-field", sim.gravity_field.is_some()),
+        ("--gravity-degree", sim.gravity_degree.is_some()),
+        ("--gravity-order", sim.gravity_order.is_some()),
+        // Presence, not value: `--frame simple-eci` next to a `frame = "gcrs"`
+        // config is an explicit disagreement, and reading it as "the default,
+        // so inert" would run the config's frame behind the flag.
+        ("--frame", sim.frame_arg.is_some()),
+        ("--eop", sim.eop.is_some()),
+    ]
+    .into_iter()
+    .filter_map(|(flag, given)| given.then_some(flag))
+    .collect()
+}
+
+/// A config-backed `run` builds its parameters from the config alone, so a
+/// gravity flag next to `--config` (or an auto-detected `orts.toml`) would be
+/// dropped in silence and the run would use the zonal model behind an explicit
+/// request. Refuse it, the way `serve` refuses every unhonored sim arg.
+// TODO: the other tuning flags (`--dt`, `--atmosphere`, …) are still dropped
+// silently on this path; extending `serve`'s `unhonored_sim_args` to `run` is
+// a behaviour change for existing command lines and is left to its own change.
+fn reject_frame_and_gravity_flags_with_config(
+    sim: &SimArgs,
+    config_path: &str,
+) -> Result<(), CmdError> {
+    let flags = gravity_flags_given(sim);
+    if flags.is_empty() {
+        return Ok(());
+    }
+    Err(CmdError::usage(format!(
+        "{} cannot be honored: `run --config {config_path}` builds its simulation from the \
+         config alone. Set the value in the config instead (`[gravity_field]`, `frame`, \
+         `eop`), or drop the flag.",
+        flags.join(", ")
+    )))
+}
+
+/// The `[gravity_field]` rules for the flag spelling: the same structural
+/// checks `GravityFieldConfig::validate` runs for a config (Earth only,
+/// degree ≥ 2, order ≤ degree), plus "truncation without a field" — which the
+/// config cannot express and would otherwise be dropped in silence.
+fn validate_gravity_args(sim: &SimArgs) -> Result<(), String> {
+    match &sim.gravity_field {
+        Some(path) => crate::config::GravityFieldConfig {
+            path: path.clone(),
+            degree: sim.gravity_degree,
+            order: sim.gravity_order,
+        }
+        .validate(&sim.body)
+        .map_err(|e| {
+            // Config key → flag, most specific first so `gravity_field.path`
+            // names `--gravity-field` (there is no `--gravity-path`).
+            e.replace("gravity_field.path", "--gravity-field")
+                .replace("gravity_field.degree", "--gravity-degree")
+                .replace("gravity_field.order", "--gravity-order")
+                .replace("gravity_field", "--gravity-field")
+        }),
+        None if sim.gravity_degree.is_some() || sim.gravity_order.is_some() => Err(
+            "--gravity-degree / --gravity-order truncate a spherical-harmonic field: \
+             pass --gravity-field <PATH> as well, or drop them"
+                .to_string(),
+        ),
+        None => Ok(()),
+    }
 }
 
 pub fn run_simulation_cmd(
@@ -47,22 +124,38 @@ pub fn run_simulation_cmd(
     format: OutputFormat,
     json: bool,
 ) -> Result<(), CmdError> {
+    // The gravity field is loaded here, once, and handed to the constructor:
+    // a missing or malformed file is a normal error, not a panic inside
+    // `SimParams`, and the file is not opened a second time.
     let mut params = if let Some(config_path) = &sim.config {
+        reject_frame_and_gravity_flags_with_config(sim, config_path)?;
         let config =
             crate::config::load_config_reporting_unread_keys(std::path::Path::new(config_path))?;
-        SimParams::from_config(&config)
+        let field = SimParams::load_config_gravity_field(&config).map_err(CmdError::failure)?;
+        let eop = SimParams::load_eop(config.eop.as_deref()).map_err(CmdError::failure)?;
+        SimParams::from_config_with_gravity_field(&config, field, eop)
     } else if sim.has_orbit_args() {
         // The direct-CLI path bypasses `SimConfig::validate`, so apply the
         // same time/tolerance checks here rather than letting a bad `--dt`
         // hang the propagation loop or panic inside step-size control.
         validate_sim_args(sim)?;
-        SimParams::from_sim_args(sim, false)
+        let field = SimParams::load_gravity_field(
+            sim.gravity_field.as_deref(),
+            sim.gravity_degree,
+            sim.gravity_order,
+        )
+        .map_err(CmdError::failure)?;
+        let eop = SimParams::load_eop(sim.eop.as_deref()).map_err(CmdError::failure)?;
+        SimParams::from_sim_args_with_gravity_field(sim, false, field, eop)
     } else {
         // Auto-detect orts.toml in the current directory
         let config_path = std::path::Path::new("orts.toml");
         if config_path.exists() {
+            reject_frame_and_gravity_flags_with_config(sim, "orts.toml")?;
             let config = crate::config::load_config_reporting_unread_keys(config_path)?;
-            SimParams::from_config(&config)
+            let field = SimParams::load_config_gravity_field(&config).map_err(CmdError::failure)?;
+            let eop = SimParams::load_eop(config.eop.as_deref()).map_err(CmdError::failure)?;
+            SimParams::from_config_with_gravity_field(&config, field, eop)
         } else {
             return Err(CmdError::usage(
                 "no simulation configuration found.\n\
@@ -410,7 +503,7 @@ fn satellite_final_state(rec: &Recording, sat_path: &EntityPath) -> (usize, Opti
 
 /// Build one visibility monitor per satellite, or `None` when ground
 /// stations are not configured / not applicable (non-Earth body, no epoch).
-fn build_visibility_monitors(params: &SimParams) -> Option<Vec<VisibilityMonitor<SimpleEci>>> {
+fn build_visibility_monitors<F: RunFrame>(params: &SimParams) -> Option<Vec<VisibilityMonitor<F>>> {
     if params.ground_stations.is_empty() {
         return None;
     }
@@ -430,7 +523,13 @@ fn build_visibility_monitors(params: &SimParams) -> Option<Vec<VisibilityMonitor
         params
             .satellites
             .iter()
-            .map(|_| VisibilityMonitor::new(epoch, (), params.ground_stations.clone()))
+            .map(|_| {
+                VisibilityMonitor::new(
+                    epoch,
+                    params.eop_storage::<F>(),
+                    params.ground_stations.clone(),
+                )
+            })
             .collect(),
     )
 }
@@ -439,8 +538,8 @@ fn build_visibility_monitors(params: &SimParams) -> Option<Vec<VisibilityMonitor
 ///
 /// `last_t` guards against re-feeding a satellite whose time did not advance
 /// (finished or terminated), so call sites can pass every satellite each time.
-fn feed_visibility(
-    monitors: &mut [VisibilityMonitor<SimpleEci>],
+fn feed_visibility<F: RunFrame>(
+    monitors: &mut [VisibilityMonitor<F>],
     last_t: &mut [f64],
     states: impl Iterator<Item = (f64, nalgebra::Vector3<f64>)>,
 ) {
@@ -457,7 +556,7 @@ fn feed_visibility(
 /// AOS/LOS are linear interpolations between visibility samples (accepted
 /// integrator steps on the uncontrolled path, control ticks on the
 /// controlled path); passes shorter than one sample gap can still be missed.
-fn report_contact_windows(params: &SimParams, monitors: Vec<VisibilityMonitor<SimpleEci>>) {
+fn report_contact_windows<F: RunFrame>(params: &SimParams, monitors: Vec<VisibilityMonitor<F>>) {
     let Some(epoch) = params.epoch else { return };
     let mut rows: Vec<(&str, StationContact)> = monitors
         .into_iter()
@@ -543,32 +642,46 @@ fn body_event_checker<S: HasPosition>(
 }
 
 /// Run the orbit-only simulation and return a Recording.
+///
+/// The propagation frame is a type parameter of every model and state, and a
+/// value on the command line, so it is resolved into
+/// [`run_simulation_in_frame`] here — the one place the two meet.
 pub fn run_simulation(params: &SimParams) -> Result<Recording, CmdError> {
+    match params.frame {
+        FrameChoice::SimpleEci => run_simulation_in_frame::<arika::frame::SimpleEci>(params),
+        FrameChoice::Gcrs => run_simulation_in_frame::<arika::frame::Gcrs>(params),
+    }
+}
+
+/// [`run_simulation`] with the frame already chosen.
+fn run_simulation_in_frame<F: RunFrame>(params: &SimParams) -> Result<Recording, CmdError> {
     use crate::sim::core::sat_params;
-    use orts::setup::{build_orbital_system, default_third_bodies};
+    use orts::setup::{build_orbital_system_in_frame, default_third_bodies};
 
     let mut group = IndependentGroup::new(integrator_config(params))
-        .with_event_checker(body_event_checker::<OrbitalState>(params));
+        .with_event_checker(body_event_checker::<OrbitalState<F>>(params));
 
     let third_bodies = default_third_bodies(&params.body);
     for sat in &params.satellites {
-        let system = build_orbital_system(
+        let system = build_orbital_system_in_frame::<F>(
             &params.body,
             params.mu,
             params.epoch,
             &sat_params(sat),
             &third_bodies,
             params.build_atmosphere_model(),
+            params.gravity_field(),
+            || params.eop_storage::<F>(),
         );
         let initial = sat
-            .initial_state(params.mu, params.epoch)
+            .initial_state_in_frame::<F>(params.mu, params.epoch)
             .map_err(|e| CmdError::failure(format!("satellite '{}': {e}", sat.id)))?;
 
         group =
             group.add_satellite_until(sat.id.as_str(), initial, end_time_of(params, sat), system);
     }
 
-    propagate_and_record(params, group, |rec, entity, tp, state| {
+    propagate_and_record::<F, _>(params, group, |rec, entity, tp, state| {
         let os = RecordOrbitalState::new(*state.position(), *state.velocity());
         rec.log_orbital_state(entity, tp, &os);
     })
@@ -619,7 +732,7 @@ pub fn run_spacecraft_simulation(params: &SimParams) -> Result<Recording, CmdErr
             group.add_satellite_until(sat.id.as_str(), initial, end_time_of(params, sat), dynamics);
     }
 
-    propagate_and_record(params, group, |rec, entity, tp, state| {
+    propagate_and_record::<SimpleEci, _>(params, group, |rec, entity, tp, state| {
         let sc = &state.plant;
         let os = RecordOrbitalState::new(*sc.orbit.position(), *sc.orbit.velocity());
         let q = Quaternion4D(sc.attitude.quaternion);
@@ -635,7 +748,10 @@ pub fn run_spacecraft_simulation(params: &SimParams) -> Result<Recording, CmdErr
 /// dynamics and what a sample contains is identical, so termination
 /// reporting, ground-station visibility and the recording metadata have one
 /// implementation instead of one per mode.
-fn propagate_and_record<D>(
+/// `F` is the frame the states are expressed in — the ground-station
+/// monitors rotate them into ECEF, so handing them another frame's vectors
+/// would compute contact windows against the wrong Earth orientation.
+fn propagate_and_record<F: RunFrame, D>(
     params: &SimParams,
     mut group: IndependentGroup<D>,
     log_state: impl Fn(&mut Recording, &EntityPath, &TimePoint, &D::State),
@@ -655,7 +771,7 @@ where
 
     // Ground-station visibility monitors, fed from accepted integrator
     // steps via the propagation observer (independent of output_interval).
-    let mut visibility = build_visibility_monitors(params);
+    let mut visibility = build_visibility_monitors::<F>(params);
     let mut vis_last_t: Vec<f64> = vec![f64::NEG_INFINITY; params.satellites.len()];
     let sat_index: std::collections::HashMap<&str, usize> = params
         .satellites
@@ -789,10 +905,11 @@ fn sim_metadata(params: &SimParams) -> orts::record::recording::SimMetadata {
     orts::record::recording::SimMetadata {
         epoch_jd: params.epoch.map(|e| e.jd()),
         epoch_iso: params.epoch.map(|e| e.to_datetime().to_string()),
+        frame: Some(params.frame.as_str().to_string()),
         mu: Some(params.mu),
         body_radius: Some(params.body.properties().radius),
         body_name: Some(params.body.properties().name.to_string()),
-        altitude: first_sat.map(|s| s.altitude(&params.body)),
+        altitude: first_sat.map(|s| s.altitude(&params.body, params.mu)),
         period: first_sat.map(|s| s.period),
         orbit_description: orbit_desc,
     }
@@ -1152,7 +1269,7 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Result<Record
     }
 
     // 地上局可視性 monitor（制御 tick ごとにサンプリング）。
-    let mut visibility = build_visibility_monitors(params);
+    let mut visibility = build_visibility_monitors::<SimpleEci>(params);
     let mut vis_last_t: Vec<f64> = vec![f64::NEG_INFINITY; params.satellites.len()];
     if let Some(monitors) = visibility.as_mut() {
         feed_visibility(
@@ -1668,5 +1785,98 @@ mod tests {
         assert!(
             validate_output_contract(&DataSink::File("out.rrd"), OutputFormat::Rrd, false).is_ok()
         );
+    }
+
+    /// `--gravity-field` gets the `[gravity_field]` structural rules on the
+    /// direct-CLI path too, phrased as flags, instead of panicking later in
+    /// `load_gravity_field` / `check_gravity_field_preconditions`.
+    #[test]
+    fn validate_sim_args_applies_gravity_field_rules() {
+        assert!(validate_sim_args(&args(&["--gravity-field", "x.gfc"])).is_ok());
+        let moon =
+            validate_sim_args(&args(&["--body", "moon", "--gravity-field", "x.gfc"])).unwrap_err();
+        assert!(moon.contains("Earth-only"), "{moon}");
+        let deg = validate_sim_args(&args(&[
+            "--gravity-field",
+            "x.gfc",
+            "--gravity-degree",
+            "1",
+        ]))
+        .unwrap_err();
+        assert!(deg.contains("--gravity-degree must be >= 2"), "{deg}");
+        let ord = validate_sim_args(&args(&[
+            "--gravity-field",
+            "x.gfc",
+            "--gravity-degree",
+            "8",
+            "--gravity-order",
+            "9",
+        ]))
+        .unwrap_err();
+        assert!(ord.contains("--gravity-order (9) must not exceed"), "{ord}");
+        let alone = validate_sim_args(&args(&["--gravity-degree", "8"])).unwrap_err();
+        assert!(alone.contains("pass --gravity-field"), "{alone}");
+        let empty = validate_sim_args(&args(&["--gravity-field", ""])).unwrap_err();
+        assert!(
+            empty.contains("--gravity-field must not be empty"),
+            "{empty}"
+        );
+    }
+
+    /// A config-backed run names the gravity flags it cannot honor instead of
+    /// running the zonal model behind them.
+    #[test]
+    fn config_backed_run_refuses_gravity_flags() {
+        assert!(reject_frame_and_gravity_flags_with_config(&args(&[]), "m.toml").is_ok());
+        let err = reject_frame_and_gravity_flags_with_config(
+            &args(&["--gravity-field", "x.gfc", "--gravity-order", "8"]),
+            "m.toml",
+        )
+        .expect_err("must refuse");
+        let msg = err.to_string();
+        assert!(msg.contains("--gravity-field, --gravity-order"), "{msg}");
+        assert!(msg.contains("run --config m.toml"), "{msg}");
+    }
+
+    /// `--frame simple-eci` next to a config is a disagreement, not a no-op:
+    /// the flag is named even though its value is the default (a `gcrs`
+    /// config would otherwise win behind an explicit `simple-eci`).
+    #[test]
+    fn an_explicit_frame_flag_is_refused_next_to_a_config_even_at_its_default() {
+        let err =
+            reject_frame_and_gravity_flags_with_config(&args(&["--frame", "simple-eci"]), "m.toml")
+                .expect_err("an explicitly written --frame must be named");
+        assert!(err.to_string().contains("--frame"), "{err}");
+        // No flag at all stays inert.
+        assert!(reject_frame_and_gravity_flags_with_config(&args(&[]), "m.toml").is_ok());
+    }
+
+    /// The ground-station monitors are built in the propagation frame, so a
+    /// `Gcrs` run's contact windows use the IAU 2006 Earth orientation rather
+    /// than reading `Gcrs` vectors as `SimpleEci`.
+    #[test]
+    fn visibility_monitors_are_built_in_the_propagation_frame() {
+        let cfg: crate::config::SimConfig = toml::from_str(&format!(
+            "frame = \"gcrs\"\neop = \"{}\"\nepoch = \"2024-03-20T12:00:00Z\"\n\
+             \n[[ground_station]]\nname = \"tsukuba\"\nlatitude_deg = 36.06\n\
+             longitude_deg = 140.13\naltitude_km = 0.03\n\
+             \n[[satellites]]\nid = \"a\"\n\
+             orbit = {{ type = \"circular\", altitude = 570 }}\n",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../orts/tests/fixtures/finals2000A.sample"
+            )
+        ))
+        .expect("valid toml");
+        let params = SimParams::from_config(&cfg);
+        assert_eq!(params.frame, FrameChoice::Gcrs);
+        // Both instantiations have to exist for the same params; the Gcrs one
+        // is what the dispatch picks, and it carries the loaded table.
+        let gcrs = build_visibility_monitors::<arika::frame::Gcrs>(&params)
+            .expect("a station was configured");
+        assert_eq!(gcrs.len(), 1);
+        let simple = build_visibility_monitors::<arika::frame::SimpleEci>(&params)
+            .expect("a station was configured");
+        assert_eq!(simple.len(), 1);
     }
 }

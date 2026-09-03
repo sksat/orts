@@ -14,6 +14,15 @@ section is subdivided by package.
 ### `orts` (Rust, crates.io)
 
 #### Added
+- `perturbations::SphericalHarmonicGravity<F: EarthFixedTransform>` — full
+  spherical-harmonic gravity from a `tobari::gravity::SphericalHarmonicField`
+  (EGM96 / EGM2008 / EIGEN-class ICGEM files), rotated through `F`'s
+  Earth-fixed chain: ERA-only for `SimpleEci`, the IAU 2006 CIO chain with
+  polar motion for `Gcrs`. Non-central terms only (install next to
+  `PointMass`, never together with `ZonalGravity`); panics without an
+  absolute epoch instead of falling back to J2000. 24 h LEO propagation
+  agrees with Orekit (ITRF body frame, real EOP) to 0.93 m at 70×70.
+  ([#411](https://github.com/sksat/orts/issues/411))
 - Ground-station contact-window detection (`visibility` module): `GroundStation`
   (WGS-84 location + elevation mask), `ContactWindow` (interpolated AOS/LOS, max
   elevation, span-clip flags), the pure `PassTracker` state machine, and a
@@ -32,7 +41,20 @@ section is subdivided by package.
   / `stream_take` / `stream_close` for raw byte streams. ([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 - WIT v0 plugin interface extended with the msg-io and stream-io channels. ([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
+#### Added
+- `setup::build_orbital_system_in_frame::<F>` — `build_orbital_system` in an
+  explicit inertial frame, taking an EOP-storage factory so the frame-aware
+  models (drag, the spherical-harmonic field) can each own a provider over one
+  shared table. `HasPosition` is implemented for `OrbitalState<F>` in any
+  frame, and `record::SimMetadata` carries the frame name.
+  ([#411](https://github.com/sksat/orts/issues/411))
+
 #### Changed
+- **BREAKING**: `setup::build_orbital_system` / `build_spacecraft_dynamics`
+  take a trailing `gravity_field: Option<Arc<SphericalHarmonicField>>`:
+  `Some` installs `SphericalHarmonicGravity` (Earth only, epoch required,
+  `mu` must equal the field's GM — asserted), `None` keeps `ZonalGravity`.
+  ([#411](https://github.com/sksat/orts/issues/411))
 - `SatelliteParams` carries an optional `SpacecraftShape`, and
   `build_spacecraft_dynamics` installs `PanelSrp` and `PanelDrag` from it in
   place of the isotropic `SolarRadiationPressure` and `AtmosphericDrag`. The
@@ -198,6 +220,25 @@ section is subdivided by package.
 ### `orts-cli` (Rust, crates.io, binary)
 
 #### Added
+- `frame` / `--frame {simple-eci|gcrs}` and `eop` / `--eop {auto|PATH|zero}`:
+  propagate `orts run`'s orbit-only path in `Gcrs` — the IAU 2006/2000A CIO
+  chain with observed IERS EOP (polar motion included) — instead of the
+  ERA-only `SimpleEci`. `auto` downloads `finals2000A.all` from IERS with a
+  24 h cache, a path loads a local series, `zero` asks for the model CIP only.
+  `gcrs` is Earth-only, requires an EOP source, and is refused for attitude
+  fleets, controllers and `orts serve` (all `SimpleEci`-locked) rather than
+  silently falling back. The recording metadata names the frame
+  (`# frame = gcrs`). ([#411](https://github.com/sksat/orts/issues/411))
+- `[gravity_field]` config table (`path`, `degree`, `order`) and
+  `--gravity-field <PATH> [--gravity-degree N] [--gravity-order M]` on `run` /
+  `serve`: install a full spherical-harmonic geopotential from an ICGEM `.gfc`
+  file in place of the J2/J3/J4 zonal model, and use the file's GM as the
+  simulation's μ (initial states, derived energy, CSV/RRD metadata, WS
+  `info`). Earth only; `degree >= 2`, `order <= degree` are checked by
+  `config validate`, the file is opened at run time. Not accepted over the
+  WebSocket `start_simulation` (it names a server-side file). The propagation
+  frame stays `SimpleEci`, so the field is rotated by ERA only.
+  ([#411](https://github.com/sksat/orts/issues/411))
 - `[[satellites.panels]]` gives a satellite a flat-panel outer surface, with
   `area`, `normal`, `cd`, `specular`, `diffuse`, `cp_offset`, `two_sided`
   ([#399](https://github.com/sksat/orts/pull/399)) and `back` ([#395](https://github.com/sksat/orts/pull/395)).
@@ -480,6 +521,13 @@ section is subdivided by package.
 ### `arika` (Rust, crates.io)
 
 #### Added
+- `fetch-eop` feature: `EopTable::fetch` / `fetch_default` download the IERS
+  `finals2000A.all` series and cache it at `~/.cache/orts/finals2000A.all`
+  (24 h), mirroring `CssiSpaceWeather::fetch`. `ClampedEop::new` wraps any
+  `Borrow<EopTable>`, so one shared table can back several force models.
+  ([#411](https://github.com/sksat/orts/issues/411))
+
+#### Added
 - `arika_wasm::orbit_derived_batch` returns Keplerian elements and the scalar
   orbit quantities for a batch of state vectors, so a browser reading a `.rrd`
   computes them with the same `KeplerianElements::from_state_vector` the CLI
@@ -610,6 +658,20 @@ section is subdivided by package.
 ### `tobari` (Rust, crates.io)
 
 #### Added
+- `gravity::SphericalHarmonicField`: static ICGEM `.gfc` parser (fully
+  normalized `gfc` records; `gfct`/`trnd`/`dot`/`asin`/`acos` time-variable
+  records and `unnormalized` files are rejected with an explicit error;
+  `errors` column count, `m ≤ n`, duplicates, non-finite values, `C00 = 1`,
+  zero degree-1 and completeness are validated; `norm` is required and
+  `max_degree` is capped at `gravity::MAX_DEGREE` = 2190) plus a Holmes–Featherstone
+  evaluator of the non-central potential and acceleration in the body frame,
+  km units. Same structure as Orekit's `HolmesFeatherstoneAttractionModel`
+  but regular at the exact pole. `truncated(degree, order)`, `gm()`,
+  `radius()`, `tide_system()` (recorded, not converted), `j2()`. Agrees with
+  Orekit pointwise to 1e-13·GM/r² up to 70×70
+  (`tests/oracle_geopotential.rs`, fixtures from
+  `tools/generate_orekit_geopotential_fixtures.py`).
+  ([#411](https://github.com/sksat/orts/issues/411))
 - NRLMSISE-00 below 72.5 km: the mesosphere, stratosphere and troposphere
   temperature splines and the linear transition to full mixing, so the model
   covers the surface to ~1000 km instead of silently reporting the 72.5 km
