@@ -565,4 +565,52 @@ mod tests {
             );
         }
     }
+    /// The shadow radius is the central body's, not Earth's.
+    ///
+    /// Behind Mars at 20 000 km, a point 5000 km off the anti-Sun axis sits
+    /// outside Mars' umbra and inside the one Earth's radius would cast
+    /// (measured: illumination 1.0 against 0.0). The other tests here cannot
+    /// tell the two apart — the Mars cases are sunward of the body, and the
+    /// eclipse cases are on Earth, where the radius is the same either way.
+    #[test]
+    fn for_body_takes_the_shadow_radius_from_that_body() {
+        let epoch = Epoch::from_gregorian(2026, 3, 20, 12, 0, 0.0);
+        let mars = KnownBody::Mars;
+        let mars_sun = sun::sun_position_from_body(mars, &epoch.to_tdb())
+            .expect("Mars has a Sun ephemeris")
+            .into_inner();
+        let anti_sun = -mars_sun.normalize();
+        let off_axis = anti_sun.cross(&Vector3::new(0.0, 0.0, 1.0)).normalize();
+
+        let position = anti_sun * 20_000.0 + off_axis * 5000.0;
+        let state = SpacecraftState {
+            orbit: OrbitalState::new(position, Vector3::new(0.0, 3.0, 0.0)),
+            attitude: AttitudeState {
+                quaternion: Vector4::new(1.0, 0.0, 0.0, 0.0),
+                angular_velocity: Vector3::zeros(),
+            },
+            mass: 100.0,
+        };
+
+        let illumination_of = |sensor: &mut SunSensor| match sensor.measure(&state, &epoch) {
+            SunSensorOutput::Fine { illumination, .. } => illumination,
+            other => panic!("expected a fine reading, got {other:?}"),
+        };
+
+        let mut from_mars = SunSensor::for_body(mars).expect("Mars has a Sun ephemeris");
+        assert_eq!(
+            illumination_of(&mut from_mars),
+            1.0,
+            "5000 km off the axis clears Mars' umbra (radius 3396.2 km)"
+        );
+
+        let mut with_earth_radius = SunSensor::for_body(mars)
+            .expect("Mars has a Sun ephemeris")
+            .with_shadow_body(arika::earth::R);
+        assert_eq!(
+            illumination_of(&mut with_earth_radius),
+            0.0,
+            "the same point is inside the umbra of a body Earth's size (6378.137 km)"
+        );
+    }
 }
