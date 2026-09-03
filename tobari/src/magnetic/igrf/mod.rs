@@ -295,7 +295,7 @@ const ND: usize = IGRF_MAX_DEGREE + 1;
 /// `∫_{-1}^{1} [P^m_n(x)]^2 dx = 2/(2n+1)` for `m = 0` and `4/(2n+1)` for
 /// `m >= 1` — see `schmidt_normalization_holds`, which pins every recursion
 /// branch below without needing external reference values.
-fn schmidt_legendre(
+pub(crate) fn schmidt_legendre(
     cos_theta: f64,
     sin_theta: f64,
     max_degree: usize,

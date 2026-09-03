@@ -103,6 +103,12 @@ pub struct SimConfig {
     pub ap: f64,
     #[ts(optional)]
     pub space_weather: Option<String>,
+    /// 球面調和重力場 (ICGEM `.gfc`)。指定すると J2/J3/J4 の `ZonalGravity` の
+    /// 代わりに `SphericalHarmonicGravity` を登録し、中心項の μ もファイルの GM
+    /// に置き換える。table 不在が「従来どおり zonal」なので `Option` (空 table と
+    /// 区別する)。Earth 専用。
+    #[ts(optional)]
+    pub gravity_field: Option<GravityFieldConfig>,
     #[ts(optional)]
     pub duration: Option<f64>,
     #[serde(default)]
@@ -285,6 +291,53 @@ fn default_atol() -> f64 {
 }
 fn default_rtol() -> f64 {
     1e-8
+}
+
+/// Spherical-harmonic gravity field within a config file (`[gravity_field]`).
+///
+/// `path` is an ICGEM `.gfc` file with static, fully normalized coefficients
+/// (EGM96 / EGM2008 / EIGEN-6C4 …). `degree` / `order` truncate it; omitted
+/// means the file's full degree (order defaults to degree). The file is
+/// opened at run time, not by `validate` (which is filesystem-free).
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, TS)]
+#[ts(export)]
+pub struct GravityFieldConfig {
+    pub path: String,
+    #[ts(optional)]
+    pub degree: Option<usize>,
+    #[ts(optional)]
+    pub order: Option<usize>,
+}
+
+impl GravityFieldConfig {
+    /// Structural checks that need no file: Earth only, degree ≥ 2, order ≤
+    /// degree. (Degree 0/1 leave nothing to evaluate; `SphericalHarmonicGravity`
+    /// is Earth-only because the Earth-fixed transform spins at Earth's rate.)
+    pub fn validate(&self, body: &str) -> Result<(), String> {
+        if crate::satellite::try_parse_body(body) != Some(KnownBody::Earth) {
+            return Err(format!(
+                "gravity_field: a spherical-harmonic gravity field is Earth-only, but body is '{body}'"
+            ));
+        }
+        if self.path.trim().is_empty() {
+            return Err("gravity_field.path must not be empty".to_string());
+        }
+        if let Some(d) = self.degree
+            && d < 2
+        {
+            return Err(format!(
+                "gravity_field.degree must be >= 2 (got {d}); degrees 0 and 1 carry no harmonic terms"
+            ));
+        }
+        if let (Some(d), Some(o)) = (self.degree, self.order)
+            && o > d
+        {
+            return Err(format!(
+                "gravity_field.order ({o}) must not exceed gravity_field.degree ({d})"
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl Default for IntegratorConfig {
@@ -1611,6 +1664,9 @@ impl SimConfig {
                 self.body
             ));
         }
+        if let Some(gf) = &self.gravity_field {
+            gf.validate(&self.body)?;
+        }
         if let Some(epoch) = &self.epoch
             && arika::epoch::Epoch::from_iso8601(epoch).is_none()
         {
@@ -1887,6 +1943,7 @@ mod tests {
             f107: 150.0,
             ap: 15.0,
             space_weather: None,
+            gravity_field: None,
             duration: None,
             satellites: vec![],
             commands: vec![],
@@ -1908,6 +1965,7 @@ mod tests {
             f107: 150.0,
             ap: 15.0,
             space_weather: None,
+            gravity_field: None,
             duration: None,
             satellites: vec![],
             commands: vec![],
@@ -2110,6 +2168,7 @@ satellites:
             f107: 200.0,
             ap: 30.0,
             space_weather: Some("auto".into()),
+            gravity_field: None,
             duration: Some(86400.0),
             satellites: vec![SatelliteConfig {
                 id: Some("test".into()),
@@ -4722,5 +4781,77 @@ orbit = { type = "circular", altitude = 600 }
                 .validate()
                 .unwrap_or_else(|e| panic!("{label}: Earth is where SGP4 belongs: {e}"));
         }
+    }
+
+    // --- [gravity_field] -------------------------------------------------
+
+    #[test]
+    fn gravity_field_table_parses_and_is_absent_by_default() {
+        assert!(config_with("").gravity_field.is_none());
+        let cfg = config_with(
+            r#"
+[gravity_field]
+path = "EGM2008.gfc"
+degree = 70
+"#,
+        );
+        assert_eq!(
+            cfg.gravity_field,
+            Some(GravityFieldConfig {
+                path: "EGM2008.gfc".into(),
+                degree: Some(70),
+                order: None,
+            })
+        );
+        cfg.validate().expect("earth + degree 70 is valid");
+    }
+
+    /// `validate` is filesystem-free, so a path that does not exist passes
+    /// here (it fails at run time); the structural rules do not.
+    #[test]
+    fn gravity_field_structural_rules() {
+        let ok = config_with("[gravity_field]\npath = \"does-not-exist.gfc\"\n");
+        ok.validate().expect("existence is not checked by validate");
+
+        let cases = [
+            (
+                "body = \"moon\"\n[gravity_field]\npath = \"x.gfc\"\n",
+                "Earth-only",
+            ),
+            (
+                "[gravity_field]\npath = \"x.gfc\"\ndegree = 1\n",
+                "degree must be >= 2",
+            ),
+            (
+                "[gravity_field]\npath = \"x.gfc\"\ndegree = 20\norder = 21\n",
+                "must not exceed",
+            ),
+            ("[gravity_field]\npath = \"  \"\n", "must not be empty"),
+        ];
+        for (extra, needle) in cases {
+            let err = config_with(extra).validate().unwrap_err();
+            assert!(err.contains(needle), "{extra}: {err}");
+        }
+    }
+
+    /// A typo inside `[gravity_field]` is reported as an unread key, like one
+    /// inside `[integrator]` (plain struct, so `serde_ignored` sees into it).
+    #[test]
+    fn gravity_field_unknown_key_is_reported() {
+        let dir = std::env::temp_dir().join(format!("orts-gf-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("c.toml");
+        std::fs::write(
+            &path,
+            "[gravity_field]\npath = \"x.gfc\"\ndegre = 70\n\n[[satellites]]\n[satellites.orbit]\ntype = \"circular\"\naltitude = 500\n",
+        )
+        .unwrap();
+        let loaded = SimConfig::load_with_warnings(&path).expect("loads");
+        // `serde_ignored` marks the `Option` layer with `?`.
+        assert_eq!(
+            loaded.unread_keys,
+            vec!["gravity_field.?.degre".to_string()]
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

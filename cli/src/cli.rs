@@ -233,6 +233,22 @@ pub struct SimArgs {
     #[arg(long)]
     pub space_weather: Option<String>,
 
+    /// Spherical-harmonic gravity field: path to an ICGEM .gfc file
+    /// (EGM96 / EGM2008 / EIGEN-6C4). Replaces the J2/J3/J4 zonal model and
+    /// sets mu to the file's GM. Earth only.
+    #[arg(long, value_name = "PATH")]
+    pub gravity_field: Option<String>,
+
+    /// Truncate the gravity field to this degree (default: the file's maximum).
+    /// Only used with --gravity-field.
+    #[arg(long, value_name = "N")]
+    pub gravity_degree: Option<usize>,
+
+    /// Truncate the gravity field to this order (default: = degree).
+    /// Only used with --gravity-field.
+    #[arg(long, value_name = "M")]
+    pub gravity_order: Option<usize>,
+
     /// Total simulation duration in seconds. Omit to cover one orbit
     /// (`orts run`); `orts serve` streams without end either way.
     #[arg(long)]

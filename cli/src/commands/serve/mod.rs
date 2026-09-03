@@ -181,6 +181,9 @@ fn unhonored_sim_args(sim: &SimArgs) -> Vec<&'static str> {
         ("--f107", sim.f107 != default.f107),
         ("--ap", sim.ap != default.ap),
         ("--space-weather", sim.space_weather.is_some()),
+        ("--gravity-field", sim.gravity_field.is_some()),
+        ("--gravity-degree", sim.gravity_degree.is_some()),
+        ("--gravity-order", sim.gravity_order.is_some()),
     ]
     .into_iter()
     .filter_map(|(flag, differs)| differs.then_some(flag))
@@ -293,6 +296,16 @@ async fn async_server(
         textures::spawn_texture_downloader(Arc::clone(&texture_cache), tx.clone());
     let bridge = Arc::new(StreamBridge::new());
 
+    // A configured gravity field is loaded here, on the main task, and handed
+    // to the manager: a missing or malformed file is a fatal configuration
+    // error. Inside the spawned manager it would only kill that task and
+    // leave the HTTP / WebSocket server up with nobody behind the command
+    // channel.
+    let initial_gravity_field = match &initial_config {
+        Some(cfg) => SimParams::load_config_gravity_field(cfg).map_err(CmdError::failure)?,
+        None => None,
+    };
+
     // Spawn simulation manager
     let mgr_tx = tx.clone();
     let plugin_overrides = manager::PluginBackendOverrides::from_sim_args(sim);
@@ -304,7 +317,15 @@ async fn async_server(
         // restart) honors them too.
         // Same reason as in `run`: this path skips `SimConfig::validate`.
         crate::commands::run::validate_sim_args(sim)?;
-        let params = Arc::new(SimParams::from_sim_args(sim, true));
+        let field = SimParams::load_gravity_field(
+            sim.gravity_field.as_deref(),
+            sim.gravity_degree,
+            sim.gravity_order,
+        )
+        .map_err(CmdError::failure)?;
+        let params = Arc::new(SimParams::from_sim_args_with_gravity_field(
+            sim, true, field,
+        ));
         crate::satellite::ensure_unique_ids(&params.satellites)?;
         tokio::spawn(manager::simulation_manager_with_params(
             params,
@@ -317,6 +338,7 @@ async fn async_server(
     } else {
         tokio::spawn(manager::simulation_manager(
             initial_config,
+            initial_gravity_field,
             plugin_overrides,
             cmd_rx,
             mgr_tx,
@@ -616,5 +638,26 @@ mod tests {
             crate::commands::run::validate_sim_args(&args(&["--dt", "NaN"])).is_err(),
             "a non-finite dt is refused"
         );
+    }
+
+    /// The gravity-field flags reach a simulation only through
+    /// `from_sim_args`, so `serve --config` must name them rather than run the
+    /// zonal model behind an explicit `--gravity-field`.
+    #[test]
+    fn gravity_field_flags_are_named_when_unhonored() {
+        assert_eq!(
+            unhonored_sim_args(&args(&[
+                "--gravity-field",
+                "x.gfc",
+                "--gravity-degree",
+                "8",
+                "--gravity-order",
+                "8",
+            ])),
+            vec!["--gravity-field", "--gravity-degree", "--gravity-order"]
+        );
+        let err = refusal(&["--config", "mission.toml", "--gravity-field", "x.gfc"])
+            .expect("serve --config must refuse the flag");
+        assert!(err.contains("--gravity-field"), "{err}");
     }
 }

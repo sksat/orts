@@ -14,6 +14,15 @@ section is subdivided by package.
 ### `orts` (Rust, crates.io)
 
 #### Added
+- `perturbations::SphericalHarmonicGravity<F: EarthFixedTransform>` — full
+  spherical-harmonic gravity from a `tobari::gravity::SphericalHarmonicField`
+  (EGM96 / EGM2008 / EIGEN-class ICGEM files), rotated through `F`'s
+  Earth-fixed chain: ERA-only for `SimpleEci`, the IAU 2006 CIO chain with
+  polar motion for `Gcrs`. Non-central terms only (install next to
+  `PointMass`, never together with `ZonalGravity`); panics without an
+  absolute epoch instead of falling back to J2000. 24 h LEO propagation
+  agrees with Orekit (ITRF body frame, real EOP) to 0.93 m at 70×70.
+  ([#411](https://github.com/sksat/orts/issues/411))
 - Ground-station contact-window detection (`visibility` module): `GroundStation`
   (WGS-84 location + elevation mask), `ContactWindow` (interpolated AOS/LOS, max
   elevation, span-clip flags), the pure `PassTracker` state machine, and a
@@ -33,6 +42,11 @@ section is subdivided by package.
 - WIT v0 plugin interface extended with the msg-io and stream-io channels. ([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
 #### Changed
+- **BREAKING**: `setup::build_orbital_system` / `build_spacecraft_dynamics`
+  take a trailing `gravity_field: Option<Arc<SphericalHarmonicField>>`:
+  `Some` installs `SphericalHarmonicGravity` (Earth only, epoch required,
+  `mu` must equal the field's GM — asserted), `None` keeps `ZonalGravity`.
+  ([#411](https://github.com/sksat/orts/issues/411))
 - `SatelliteParams` carries an optional `SpacecraftShape`, and
   `build_spacecraft_dynamics` installs `PanelSrp` and `PanelDrag` from it in
   place of the isotropic `SolarRadiationPressure` and `AtmosphericDrag`. The
@@ -198,6 +212,16 @@ section is subdivided by package.
 ### `orts-cli` (Rust, crates.io, binary)
 
 #### Added
+- `[gravity_field]` config table (`path`, `degree`, `order`) and
+  `--gravity-field <PATH> [--gravity-degree N] [--gravity-order M]` on `run` /
+  `serve`: install a full spherical-harmonic geopotential from an ICGEM `.gfc`
+  file in place of the J2/J3/J4 zonal model, and use the file's GM as the
+  simulation's μ (initial states, derived energy, CSV/RRD metadata, WS
+  `info`). Earth only; `degree >= 2`, `order <= degree` are checked by
+  `config validate`, the file is opened at run time. Not accepted over the
+  WebSocket `start_simulation` (it names a server-side file). The propagation
+  frame stays `SimpleEci`, so the field is rotated by ERA only.
+  ([#411](https://github.com/sksat/orts/issues/411))
 - `[[satellites.panels]]` gives a satellite a flat-panel outer surface, with
   `area`, `normal`, `cd`, `specular`, `diffuse`, `cp_offset`, `two_sided`
   ([#399](https://github.com/sksat/orts/pull/399)) and `back` ([#395](https://github.com/sksat/orts/pull/395)).
@@ -610,6 +634,20 @@ section is subdivided by package.
 ### `tobari` (Rust, crates.io)
 
 #### Added
+- `gravity::SphericalHarmonicField`: static ICGEM `.gfc` parser (fully
+  normalized `gfc` records; `gfct`/`trnd`/`dot`/`asin`/`acos` time-variable
+  records and `unnormalized` files are rejected with an explicit error;
+  `errors` column count, `m ≤ n`, duplicates, non-finite values, `C00 = 1`,
+  zero degree-1 and completeness are validated; `norm` is required and
+  `max_degree` is capped at `gravity::MAX_DEGREE` = 2190) plus a Holmes–Featherstone
+  evaluator of the non-central potential and acceleration in the body frame,
+  km units. Same structure as Orekit's `HolmesFeatherstoneAttractionModel`
+  but regular at the exact pole. `truncated(degree, order)`, `gm()`,
+  `radius()`, `tide_system()` (recorded, not converted), `j2()`. Agrees with
+  Orekit pointwise to 1e-13·GM/r² up to 70×70
+  (`tests/oracle_geopotential.rs`, fixtures from
+  `tools/generate_orekit_geopotential_fixtures.py`).
+  ([#411](https://github.com/sksat/orts/issues/411))
 - NRLMSISE-00 below 72.5 km: the mesosphere, stratosphere and troposphere
   temperature splines and the linear transition to full mixing, so the model
   covers the surface to ~1000 km instead of silently reporting the 72.5 km

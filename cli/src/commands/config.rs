@@ -26,6 +26,13 @@ type = "dp45"                     # rk4 | dp45 | dop853
 atol = 1.0e-10                    # adaptive integrators only
 rtol = 1.0e-8
 
+# Full spherical-harmonic gravity (Earth only). Replaces the J2/J3/J4 zonal
+# model and sets mu to the file's GM. Uncomment and point at an ICGEM .gfc.
+# [gravity_field]
+# path = "EGM2008.gfc"            # ICGEM gfc, static coefficients
+# degree = 70                     # truncation; omit for the file's maximum
+# order = 70                      # defaults to degree
+
 [[satellites]]
 id = "sat-0"
 
