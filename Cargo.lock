@@ -4747,6 +4747,7 @@ dependencies = [
  "arika",
  "libm",
  "nalgebra",
+ "proptest",
  "serde",
  "serde_json",
  "ureq",

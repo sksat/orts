@@ -46,6 +46,7 @@ fetch-igrf = []
 fetch = ["fetch-cssi", "fetch-igrf"]
 
 [dev-dependencies]
+proptest = "1.10.0"
 serde = { workspace = true }
 serde_json = { workspace = true }
 arika = { workspace = true }

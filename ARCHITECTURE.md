@@ -43,7 +43,7 @@ flowchart TB
 |-------|-------|----------------|
 | Foundation | [`utsuroi`](utsuroi/) | Generic ODE solvers (RK4, DOP853, Dormand-Prince, Störmer-Verlet, Yoshida). Exposes `OdeState`, `DynamicalSystem`. |
 | Foundation | [`arika`](arika/) | Typed coordinate frames (ECI / ECEF / IAU), time scales (UTC / TT / TDB / TAI), Meeus analytic ephemerides, JPL Horizons fetcher, WGS-84, EOP. |
-| Environment | [`tobari`](tobari/) | Atmosphere models (Exponential, Harris-Priester, NRLMSISE-00), geomagnetic field (IGRF-14, tilted-dipole), space-weather providers (CSSI, GFZ). |
+| Environment | [`tobari`](tobari/) | Atmosphere models (Exponential, Harris-Priester, NRLMSISE-00), spherical-harmonic geopotential (`SphericalHarmonicField`: ICGEM `.gfc` loader + Holmes–Featherstone evaluator), geomagnetic field (IGRF-14, tilted-dipole), space-weather providers (CSSI, GFZ). |
 | Simulation | [`orts`](orts/) | `OrbitalState` / `AttitudeState` / `SpacecraftState`, unified `Model<S>` trait, `OrbitalSystem` / `AttitudeSystem` / `SpacecraftDynamics`, sensors, plugin host, Rerun `.rrd` output. |
 | Application | [`orts-cli`](cli/) | `orts run` / `orts serve` / `orts replay` / `orts convert`. Embeds the viewer and exposes a WebSocket stream on port 9001. |
 | Extension | [`orts-plugin-sdk`](plugin-sdk/) | Rust SDK for writing WASM plugin guest controllers (callback-style or main-loop style). |
@@ -126,7 +126,9 @@ Key points:
   frame of its own binds it to the state's with an equality bound, which is
   where such a bound says something: because it needs a capability of the frame
   (`impl<F: EarthFixedTransform, S: HasFrame<Frame = F> + HasOrbit> Model<S> for
-  AtmosphericDrag<F>`), or because it holds frame-typed data
+  AtmosphericDrag<F>`, and likewise `SphericalHarmonicGravity<F>`, whose
+  longitude-dependent terms are rotated through `F`'s Earth-fixed chain), or
+  because it holds frame-typed data
   (`ConstantThrust<F>` stores its Δv as a `Vec3<F>`). A requirement that is a
   property of the frame's *axes* is written per frame instead: `ConstantThrust`
   holds its direction fixed for a whole burn, which the of-date `Cirs` and

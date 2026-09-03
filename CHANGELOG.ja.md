@@ -11,6 +11,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `orts` (Rust, crates.io)
 
 #### Added
+- `perturbations::SphericalHarmonicGravity<F: EarthFixedTransform>` —
+  `tobari::gravity::SphericalHarmonicField` (EGM96 / EGM2008 / EIGEN 系の ICGEM
+  file) による完全球面調和重力。`F` の地球固定 chain で回す: `SimpleEci` は ERA
+  のみ、`Gcrs` は極運動込みの IAU 2006 CIO chain。非中心項のみ (`PointMass` と
+  併用し、`ZonalGravity` とは同時に登録しない)。絶対 epoch が無い場合は J2000 への
+  fallback ではなく panic。70×70 で 24 h の LEO 伝播が Orekit (ITRF body frame,
+  実 EOP) と 0.93 m で一致。([#411](https://github.com/sksat/orts/issues/411))
 - 地上局コンタクトウィンドウ検出 (`visibility` module): `GroundStation`
   (WGS-84 位置 + 仰角マスク)、`ContactWindow` (補間した AOS/LOS、最大仰角、
   span クリップフラグ)、純粋な `PassTracker` ステートマシン、frame-aware な
@@ -547,6 +554,18 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `tobari` (Rust, crates.io)
 
 #### Added
+- `gravity::SphericalHarmonicField`: 静的 ICGEM `.gfc` parser (fully normalized
+  な `gfc` record のみ。時変 record `gfct`/`trnd`/`dot`/`asin`/`acos` と
+  `unnormalized` は明示エラーで拒否。`errors` の列数、`m ≤ n`、重複、非有限値、
+  `C00 = 1`、degree-1 がゼロであること、係数の完備性を検証。`norm` は必須、
+  `max_degree` は `gravity::MAX_DEGREE` = 2190 が上限) と、body frame での
+  非中心 potential / 加速度の Holmes–Featherstone 評価器 (km 単位)。Orekit の
+  `HolmesFeatherstoneAttractionModel` と同じ構造だが極そのものでも正則。
+  `truncated(degree, order)`, `gm()`, `radius()`, `tide_system()` (記録のみ、
+  変換しない), `j2()`。70×70 まで Orekit と点ごとに 1e-13·GM/r² で一致
+  (`tests/oracle_geopotential.rs`、fixture は
+  `tools/generate_orekit_geopotential_fixtures.py`)。
+  ([#411](https://github.com/sksat/orts/issues/411))
 - NRLMSISE-00 の 72.5 km 未満: 中間圏・成層圏・対流圏の温度 spline と完全混合への
   線形遷移を実装し、地表から ~1000 km までをカバーするようになった。従来はそれ未満の
   すべての高度に 72.5 km の profile を黙って返していた (海面で 1.9e4 倍薄い)。

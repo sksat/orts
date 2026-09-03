@@ -43,7 +43,7 @@ flowchart TB
 |-------|-------|------|
 | Foundation | [`utsuroi`](utsuroi/) | 汎用 ODE ソルバ (RK4, DOP853, Dormand-Prince, Störmer-Verlet, Yoshida)。`OdeState`, `DynamicalSystem` trait を提供。 |
 | Foundation | [`arika`](arika/) | 型安全な座標系 (ECI / ECEF / IAU)、時刻系 (UTC / TT / TDB / TAI)、Meeus 解析天体暦、JPL Horizons 取得、WGS-84、EOP。 |
-| Environment | [`tobari`](tobari/) | 大気モデル (Exponential, Harris-Priester, NRLMSISE-00)、地磁気場 (IGRF-14, 傾斜双極子)、宇宙天気プロバイダ (CSSI, GFZ)。 |
+| Environment | [`tobari`](tobari/) | 大気モデル (Exponential, Harris-Priester, NRLMSISE-00)、球面調和重力場 (`SphericalHarmonicField`: ICGEM `.gfc` loader + Holmes–Featherstone 評価)、地磁気場 (IGRF-14, 傾斜双極子)、宇宙天気プロバイダ (CSSI, GFZ)。 |
 | Simulation | [`orts`](orts/) | `OrbitalState` / `AttitudeState` / `SpacecraftState`、統一 `Model<S>` trait、`OrbitalSystem` / `AttitudeSystem` / `SpacecraftDynamics`、センサモデル、プラグインホスト、Rerun `.rrd` 出力。 |
 | Application | [`orts-cli`](cli/) | `orts run` / `orts serve` / `orts replay` / `orts convert`。viewer を埋め込み、port 9001 で WebSocket ストリームを公開。 |
 | Extension | [`orts-plugin-sdk`](plugin-sdk/) | WASM plugin guest 制御則を書くための Rust SDK (callback 形式 / main-loop 形式)。 |
@@ -124,7 +124,8 @@ classDiagram
   それを state のそれに equality bound で束縛する。この bound が意味を持つのは
   2 通り — frame の capability を要する場合
   (`impl<F: EarthFixedTransform, S: HasFrame<Frame = F> + HasOrbit> Model<S>
-  for AtmosphericDrag<F>`) と、frame-typed data を保持する場合
+  for AtmosphericDrag<F>`。経度依存項を `F` の地球固定 chain で回す
+  `SphericalHarmonicGravity<F>` も同じ) と、frame-typed data を保持する場合
   (`ConstantThrust<F>` は Δv を `Vec3<F>` で持つ)。frame の**軸**の性質を要求
   する場合は frame ごとに実装する: `ConstantThrust` は燃焼中ずっと方向を固定
   するが、of-date な `Cirs` / `Teme` はこれを満たせないので、`F: Eci` 全体では
