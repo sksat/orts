@@ -156,9 +156,8 @@ section is subdivided by package.
   — and the tidal term was scaled by up to 3.8x. SRP also took Earth's radius
   for its shadow, which put the eclipse at the wrong distance from a body of
   another size; third-body gravity has no shadow and was wrong in the vector
-  alone. `ThirdBodyGravity::
-  sun_from_body`, `SolarRadiationPressure::for_body` and `PanelSrp::for_body`
-  take a `KnownBody`; `default_third_bodies` and the two `build_*` builders
+  alone. `ThirdBodyGravity::sun_from_body`, `SolarRadiationPressure::for_body`
+  and `PanelSrp::for_body` take a `KnownBody`; `default_third_bodies` and the two `build_*` builders
   return `Result`, so a central body with no Sun ephemeris is reported instead
   of propagated with the Sun in the wrong place. Panel SRP is included: it turns
   both the force and the torque, since the panel's angle to the Sun line decides
