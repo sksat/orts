@@ -19,8 +19,8 @@
 //! _t, ...)`), and the ones that do read it are the per-test `Exploding`
 //! systems, which return `INFINITY` past a threshold to reach the
 //! non-finite-state error path. None of them has a finite solution to
-//! compare against, so nothing else in the suite can see a loop that
-//! evaluates a stage at the wrong time, or that starts from the wrong `t0`.
+//! compare against, so nothing else in the suite can see a loop that steps
+//! over the wrong interval, or that starts from the wrong `t0`.
 
 use core::ops::ControlFlow;
 
@@ -34,9 +34,11 @@ use crate::{
 
 /// A span that starts away from the origin and ends off the step grid.
 ///
-/// `t0 != 0` catches a loop that starts its stages at zero instead of at the
-/// caller's `t0`. `(T_END - T0) / DT = 10.67`, so a loop that walks the span
-/// in steps of `DT` has to shorten the last one to land on `T_END`.
+/// `t0 != 0` catches a loop that evaluates from zero instead of from the
+/// caller's `t0`: measured on RK4, reading the first stage at `0.0` fails
+/// `the_integrator_default_loops_honor_the_contract`. `(T_END - T0) / DT =
+/// 10.67`, so a loop that walks the span in steps of `DT` has to shorten the
+/// last one to land on `T_END`.
 const T0: f64 = 0.7;
 const T_END: f64 = 2.3;
 const DT: f64 = 0.15;
@@ -47,8 +49,17 @@ const WHOLE_STEPS: usize = 10;
 /// First-order and non-autonomous: `dy/dt = t`.
 ///
 /// `f` is a linear function of `t` alone, so RK4 and both adaptive main
-/// formulas integrate it exactly up to rounding. That makes the oracle tight
-/// enough to catch a single stage evaluated at the wrong time.
+/// formulas integrate it exactly up to rounding, and the oracle is an exact
+/// value rather than a tolerance.
+///
+/// What that catches is a step evaluated over the wrong interval: measured on
+/// DP5(4), moving stage 3 from `t + c3*dt` to `t + 0.9*dt` fails
+/// `the_dp45_adaptive_loop_honors_the_contract`. It says nothing about a stage
+/// whose weight is zero in both the main formula and the error estimate —
+/// DP5(4)'s stage 2 has `b2 = e2 = 0`, and since `f` reads no state, its value
+/// reaches nothing else either, so moving its evaluation time fails no test
+/// here. Covering individual stages needs an oracle that depends on the state
+/// as well as the time.
 struct RampDerivative;
 
 impl DynamicalSystem for RampDerivative {
@@ -291,8 +302,10 @@ fn the_verlet_loops_honor_the_contract() {
     plain.assert_stepped_by("Verlet try_integrate", DT);
     // Verlet's velocity update averages the acceleration at both ends of the
     // step, which is exact for an acceleration linear in `t`: measured error
-    // 8.9e-16. Shift either end of a step and the average stops matching the
-    // integral, so the velocity is a tight oracle on the stage times.
+    // 8.9e-16. Shifting either end breaks the average: measured, reading the
+    // second acceleration at `t` instead of `t + dt` — or the first at
+    // `t + dt` instead of `t` — fails this test and the Yoshida one, which
+    // composes the same substep.
     assert_ramp_acceleration_samples(&plain, x0, v0, VERLET_POSITION_CAP, "Verlet");
 
     assert_eq!(
