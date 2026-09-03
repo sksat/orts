@@ -40,14 +40,15 @@ pub trait MagneticFieldModel: Send + Sync {
     fn field_ecef(&self, input: &MagneticFieldInput<'_>) -> [f64; 3];
 }
 
-/// Zero field everywhere.
+/// Zero field everywhere: the stand-in for a field this crate does not model.
 ///
-/// [`TiltedDipole`] and [`Igrf`] are both Earth's, so a spacecraft around
-/// another body has no field to read. This says so in the value rather than in
-/// the caller: a magnetometer reads zero, and a magnetorquer's `m × B` is zero,
-/// so a run with a magnetic device on such a body propagates without that
-/// device doing anything. Reading Earth's field there instead would report a
-/// field the body does not have and make torque from it.
+/// [`TiltedDipole`] and [`Igrf`] are both Earth's, so around another body there
+/// is no model to evaluate — which is not the same as that body having no
+/// field. Approximating the missing model with zero keeps the value honest at
+/// the call site: a magnetometer reads zero, a magnetorquer's `m × B` is zero,
+/// and a run carrying a magnetic device there propagates with the device doing
+/// nothing. Reading Earth's field instead would report a field measured
+/// somewhere else and make torque from it.
 pub struct NoField;
 
 impl MagneticFieldModel for NoField {

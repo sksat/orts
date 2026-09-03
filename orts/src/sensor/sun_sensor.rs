@@ -102,7 +102,6 @@ impl SunSensor {
         self
     }
 
-    /// Set the shadow body radius for eclipse computation.
     /// Drop the shadow, keeping the Sun direction this sensor was built with
     /// (builder pattern).
     ///
@@ -114,6 +113,7 @@ impl SunSensor {
         self
     }
 
+    /// Set the shadow body radius for eclipse computation.
     pub fn with_shadow_body(mut self, radius: f64) -> Self {
         self.shadow_body_radius = Some(radius);
         self
