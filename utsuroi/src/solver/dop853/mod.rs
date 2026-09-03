@@ -194,9 +194,15 @@ fn dop853_candidate<S: DynamicalSystem>(
     // property of the norm.
     //
     // TODO(#410): implement the composite norm, or drop `err3` and document
-    // the estimate as the 5th-order difference. The composite needs no new
-    // API: with `a = error_norm(err5)` and `b = error_norm(err3)`, Hairer's
-    // expression is `a * a / (a * a + 0.01 * b * b).sqrt()`.
+    // the estimate as the 5th-order difference. Implementing it needs a norm
+    // that takes both error vectors at once. Two separate `error_norm` calls
+    // only reconstruct Hairer's expression where the implementation is a flat
+    // RMS over every component — `State<DIM, ORDER>` and `AttitudeState` are,
+    // and there `a = error_norm(err5)`, `b = error_norm(err3)` give
+    // `a * a / (a * a + 0.01 * b * b).sqrt()` because the `n` cancels. But
+    // `SpacecraftState` maxes over orbit, attitude and mass, and `GroupState`
+    // maxes over satellites, so `a` and `b` can come from different
+    // sub-states and their combination is not Hairer's `E` and `F`.
     let _ = err3;
     let error = err5;
 
