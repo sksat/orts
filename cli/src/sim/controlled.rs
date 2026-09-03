@@ -213,9 +213,16 @@ pub fn build_controlled_satellite(
     let has_mtq = spec.mtq_config.is_some();
     let mtq_max_moment = match &spec.mtq_config {
         Some(MtqConfig::ThreeAxis { max_moment }) => {
-            require_earth_field(params.body, "magnetorquer")?;
-            let mtq = MtqAssembly::three_axis(*max_moment, Igrf::earth());
-            dynamics = dynamics.with_model(mtq);
+            // The assembly carries its field model as a type parameter, so the
+            // two bodies take two branches rather than one boxed model.
+            if body_field_is_modelled(params.body, "magnetorquer") {
+                dynamics = dynamics.with_model(MtqAssembly::three_axis(*max_moment, Igrf::earth()));
+            } else {
+                dynamics = dynamics.with_model(MtqAssembly::three_axis(
+                    *max_moment,
+                    tobari::magnetic::NoField,
+                ));
+            }
             *max_moment
         }
         None => 0.0,
@@ -573,23 +580,24 @@ fn build_controller(
     }
 }
 
-/// Reject a magnetic device on a body whose field `tobari` does not model.
+/// Whether `body`'s magnetic field is modelled, warning once per device if not.
 ///
 /// `Igrf` and `TiltedDipole` are Earth's, and they are the only field models
-/// there are. Wiring one to a spacecraft around another body would answer every
-/// reading with Earth's field: a magnetometer would report a field the body does
-/// not have, and a magnetorquer would produce torque from it — the attitude
-/// would be controlled against a planet that is not there.
-fn require_earth_field(body: arika::body::KnownBody, device: &str) -> Result<(), String> {
+/// there are. Around another body the honest field is zero: a magnetometer
+/// reads zero and a magnetorquer's `m × B` is zero, so the device is inert
+/// instead of being driven by a field the body does not have. The device is
+/// still built, so the same spacecraft definition can be pointed at any body,
+/// and this says in the log what it will do there.
+fn body_field_is_modelled(body: arika::body::KnownBody, device: &str) -> bool {
     if body == arika::body::KnownBody::Earth {
-        Ok(())
-    } else {
-        Err(format!(
-            "{device} needs a magnetic field model, and only Earth's is available; \
-             central body is {}",
-            body.properties().name
-        ))
+        return true;
     }
+    log::warn!(
+        "{device}: no magnetic field model for {}, so its reading and torque are zero \
+         (only Earth's field is modelled)",
+        body.properties().name
+    );
+    false
 }
 
 /// Build the declared sensors for a satellite about `body`.
@@ -606,9 +614,13 @@ fn build_sensor_bundle(
     };
 
     let magnetometers = if choices.contains(&SensorChoice::Magnetometer) {
-        require_earth_field(body, "magnetometer")?;
-        let field_model: Arc<dyn tobari::magnetic::MagneticFieldModel> = Arc::new(Igrf::earth());
-        vec![Magnetometer::new(field_model)]
+        let field: Arc<dyn tobari::magnetic::MagneticFieldModel> =
+            if body_field_is_modelled(body, "magnetometer") {
+                Arc::new(Igrf::earth())
+            } else {
+                Arc::new(tobari::magnetic::NoField)
+            };
+        vec![Magnetometer::new(field)]
     } else {
         vec![]
     };
@@ -1035,48 +1047,58 @@ mod tests {
         );
     }
 
-    /// A magnetometer is refused on a body whose field is not modelled.
+    /// A magnetometer on a body with no field model reads zero.
     ///
-    /// `Igrf` and `TiltedDipole` are Earth's, and they are the only field models
-    /// there are, so around another body the sensor reported a field the body
-    /// does not have. `require_earth_field` covers the magnetorquer too, where
-    /// the actuators are built.
+    /// `Igrf` and `TiltedDipole` are Earth's, and they are the only field
+    /// models there are. The device is still built — the same spacecraft
+    /// definition can be pointed at any body — and reads zero there instead of
+    /// reporting a field the body does not have.
     #[test]
-    fn a_magnetometer_needs_a_body_whose_field_is_modelled() {
+    fn a_magnetometer_reads_zero_where_no_field_is_modelled() {
+        let epoch = Epoch::from_gregorian(2026, 3, 20, 12, 0, 0.0);
+        let state = state_at(nalgebra::Vector3::new(7000.0, 0.0, 0.0));
+
         for body in [KnownBody::Mars, KnownBody::Moon, KnownBody::Sun] {
-            let err = match build_sensor_bundle(Some(&[SensorChoice::Magnetometer]), body) {
-                Err(e) => e,
-                Ok(_) => panic!("{body:?} has no field model, so a magnetometer needs refusing"),
-            };
-            assert!(
-                err.contains("magnetometer") && err.contains("Earth's"),
-                "{body:?}: {err}"
+            let mut bundle = build_sensor_bundle(Some(&[SensorChoice::Magnetometer]), body)
+                .unwrap_or_else(|e| panic!("{body:?} builds a magnetometer: {e}"));
+            let reading = bundle.magnetometers[0]
+                .measure(&state, &epoch)
+                .into_inner()
+                .into_inner();
+            assert_eq!(
+                reading,
+                nalgebra::Vector3::zeros(),
+                "{body:?} has no field model, so the reading is zero"
             );
         }
 
-        // Earth has one, and a sensor that needs no field is unaffected whatever
-        // the body is.
+        let mut on_earth =
+            build_sensor_bundle(Some(&[SensorChoice::Magnetometer]), KnownBody::Earth)
+                .expect("Earth's field is modelled");
+        let earth_reading = on_earth.magnetometers[0]
+            .measure(&state, &epoch)
+            .into_inner()
+            .into_inner();
         assert!(
-            build_sensor_bundle(Some(&[SensorChoice::Magnetometer]), KnownBody::Earth).is_ok(),
-            "Earth's field is modelled"
+            earth_reading.norm() > 0.0,
+            "Earth's field is modelled, so the reading is not zero: {earth_reading:?}"
         );
+
+        // A sensor that needs no field is unaffected whatever the body is.
         assert!(
             build_sensor_bundle(Some(&[SensorChoice::Gyroscope]), KnownBody::Mars).is_ok(),
             "a gyroscope needs no field"
         );
     }
-    /// A magnetorquer is refused on a body whose field is not modelled.
+
+    /// A magnetorquer on a body with no field model does not block the build.
     ///
-    /// The guard sits where the actuators are built, which the magnetometer
-    /// test above never reaches: measured, deleting the magnetorquer's
-    /// `require_earth_field` call left every test in `orts-cli` passing.
-    ///
-    /// Built from a config, the way a user reaches it. The controller points
-    /// at a path that does not exist, and actuators are built before the
-    /// controller, so the refusal has to name the magnetorquer rather than
-    /// the missing plugin.
+    /// The assembly is built with `NoField` there, so its torque is `m × 0`.
+    /// Built from a config, the way a user reaches it: the controller points at
+    /// a path that does not exist and actuators are built first, so reaching
+    /// the plugin error is what says the magnetorquer let the build through.
     #[test]
-    fn a_magnetorquer_needs_a_body_whose_field_is_modelled() {
+    fn a_magnetorquer_is_inert_where_no_field_is_modelled() {
         let config_for = |body: &str| -> crate::config::SimConfig {
             toml::from_str(&format!(
                 r#"
@@ -1121,20 +1143,14 @@ path = "does-not-exist.wasm"
             build_controlled_satellite(&spec, None, 0.0, &mut ctx).map(|_| ())
         };
 
-        for body in ["mars", "moon"] {
-            let err = build(body).expect_err("no field model, so an MTQ needs refusing");
+        // Every body reaches the plugin path, so no body is stopped by its
+        // magnetorquer.
+        for body in ["mars", "moon", "earth"] {
+            let err = build(body).expect_err("the plugin path does not exist");
             assert!(
-                err.contains("magnetorquer") && err.contains("Earth's"),
-                "{body}: {err}"
+                !err.contains("magnetorquer"),
+                "{body}: the magnetorquer should not stop the build: {err}"
             );
         }
-
-        // On Earth the magnetorquer is fine, so the build gets as far as the
-        // plugin path and fails there instead.
-        let err = build("earth").expect_err("the plugin path does not exist");
-        assert!(
-            !err.contains("magnetorquer"),
-            "Earth's field is modelled, so the refusal must come from elsewhere: {err}"
-        );
     }
 }

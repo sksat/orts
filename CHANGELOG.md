@@ -201,13 +201,15 @@ section is subdivided by package.
   2026-03-20 Mars' Sun direction is 152.8° from Earth's, and a panel facing
   Mars' Sun comes out with a force of exactly zero through `new`.
   ([#372](https://github.com/sksat/orts/pull/372))
-- A magnetometer or magnetorquer declared in a config is refused around a body
-  whose magnetic field is not modelled. `Igrf` and `TiltedDipole` are Earth's,
-  and they are the only field models there are, so a spacecraft around Mars
-  read Earth's field and made torque from it. The WASM host's
-  `magnetic-field-eci` still answers with Earth's field whatever the central
-  body: its signature returns a bare `vec3`, so refusing there needs a guest
-  API change ([#431](https://github.com/sksat/orts/issues/431)).
+- A magnetic device around a body whose field is not modelled reads zero
+  instead of Earth's field. `Igrf` and `TiltedDipole` are Earth's, and they are
+  the only field models there are, so a spacecraft around Mars read Earth's
+  field and made torque from it. `tobari::magnetic::NoField` is the new zero
+  model: the magnetometer reads zero, a magnetorquer's `m × B` is zero, and the
+  device is built either way so the same spacecraft definition can be pointed
+  at any body. `orts run` warns once per device naming the body. The WASM
+  host's `magnetic-field-eci` still answers with Earth's field
+  ([#431](https://github.com/sksat/orts/issues/431)).
   ([#372](https://github.com/sksat/orts/pull/372))
 - Moon-centred propagation includes Earth as a third body, which dominates its
   third-body environment and was absent. Sun-centred propagation no longer adds
