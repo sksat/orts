@@ -219,7 +219,8 @@ pub fn build_controlled_satellite(
     let has_mtq = spec.mtq_config.is_some();
     let mtq_max_moment = match &spec.mtq_config {
         Some(MtqConfig::ThreeAxis { max_moment }) => {
-            dynamics = dynamics.with_model(mtq_for_body(params.body, *max_moment, None, &spec.id));
+            warn_no_field_model(params.body, "magnetorquer", "its torque is zero", &spec.id);
+            dynamics = dynamics.with_model(mtq_for_body(params.body, *max_moment, None));
             *max_moment
         }
         None => 0.0,
@@ -336,12 +337,7 @@ fn apply_held_commands(sat: &mut ControlledSatellite) -> Result<(), String> {
         }
         // Same factory as the initial build, so the field model stays the one
         // this body has.
-        let rebuilt = mtq_for_body(
-            sat.body,
-            sat.mtq_max_moment,
-            Some(&mtq_cmd.clone()),
-            "mtq rebuild",
-        );
+        let rebuilt = mtq_for_body(sat.body, sat.mtq_max_moment, Some(&mtq_cmd.clone()));
         sat.dynamics.replace_model("mtq_assembly", rebuilt);
     }
 
@@ -583,19 +579,60 @@ fn build_controller(
     }
 }
 
+/// Whether `body`'s magnetic field is modelled.
+///
+/// `Igrf` and `TiltedDipole` are Earth's, and they are the only field models
+/// there are.
+fn body_field_is_modelled(body: arika::body::KnownBody) -> bool {
+    body == arika::body::KnownBody::Earth
+}
+
+/// How many warnings [`warn_no_field_model`] has emitted on this thread.
+///
+/// The MTQ assembly is rebuilt on every tick that carries a command, so the
+/// warning has to sit outside that path. A test drives the rebuild and reads
+/// this back: the count stays where construction left it. Per-thread because
+/// tests run in parallel in one process, and each warning happens on the
+/// thread that built the device.
+#[cfg(test)]
+thread_local! {
+    static FIELD_WARNINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Warn that `device` has no field model on `body`, once where it is built.
+///
+/// Around a body without a model there is nothing to evaluate, and the stand-in
+/// is zero: the device is built either way — the same spacecraft definition can
+/// be pointed at any body — and is inert there rather than driven by a field
+/// measured somewhere else. `effect` says what that means for this device,
+/// since a controller that steers on the field goes quiet without failing.
+fn warn_no_field_model(body: arika::body::KnownBody, device: &str, effect: &str, sat_id: &str) {
+    if body_field_is_modelled(body) {
+        return;
+    }
+    #[cfg(test)]
+    FIELD_WARNINGS.with(|n| n.set(n.get() + 1));
+    log::warn!(
+        "{sat_id}: {device} has no magnetic field model for {} (only Earth's is modelled), \
+         so {effect}. Control that steers on the field, such as B-dot, has nothing to act on.",
+        body.properties().name
+    );
+}
+
 /// The magnetorquer assembly for `body`, with `command` already applied.
 ///
 /// The assembly holds its field model as a type parameter, so the two cases are
 /// two types; boxing them here keeps the choice in one place. Both the initial
 /// build and the per-command rebuild go through this, so a magnetorquer cannot
-/// end up on Earth's field after the first command.
+/// end up on Earth's field after the first command. Silent: the rebuild runs on
+/// every tick that carries a command, and the warning belongs where the device
+/// is built.
 fn mtq_for_body(
     body: arika::body::KnownBody,
     max_moment: f64,
     command: Option<&MtqCommand>,
-    sat_id: &str,
 ) -> Box<dyn orts::model::Model<orts::spacecraft::SpacecraftState>> {
-    if body_field_is_modelled(body, "magnetorquer", "its torque is zero", sat_id) {
+    if body_field_is_modelled(body) {
         let mut mtq = MtqAssembly::three_axis(max_moment, Igrf::earth());
         if let Some(cmd) = command {
             mtq.command = cmd.clone();
@@ -608,32 +645,6 @@ fn mtq_for_body(
         }
         Box::new(mtq)
     }
-}
-
-/// Whether `body`'s magnetic field is modelled, warning once per device if not.
-///
-/// `Igrf` and `TiltedDipole` are Earth's, and they are the only field models
-/// there are. Around another body there is no model to evaluate, and the
-/// stand-in is zero: the device is built either way — the same spacecraft
-/// definition can be pointed at any body — and is inert there rather than
-/// driven by a field measured somewhere else. `effect` says what that means for
-/// this device, since a controller that steers on the field goes quiet without
-/// failing.
-fn body_field_is_modelled(
-    body: arika::body::KnownBody,
-    device: &str,
-    effect: &str,
-    sat_id: &str,
-) -> bool {
-    if body == arika::body::KnownBody::Earth {
-        return true;
-    }
-    log::warn!(
-        "{sat_id}: {device} has no magnetic field model for {} (only Earth's is modelled), \
-         so {effect}. Control that steers on the field, such as B-dot, has nothing to act on.",
-        body.properties().name
-    );
-    false
 }
 
 /// Build the declared sensors for a satellite about `body`.
@@ -651,12 +662,12 @@ fn build_sensor_bundle(
     };
 
     let magnetometers = if choices.contains(&SensorChoice::Magnetometer) {
-        let field: Arc<dyn tobari::magnetic::MagneticFieldModel> =
-            if body_field_is_modelled(body, "magnetometer", "its reading is zero", sat_id) {
-                Arc::new(Igrf::earth())
-            } else {
-                Arc::new(tobari::magnetic::NoField)
-            };
+        warn_no_field_model(body, "magnetometer", "its reading is zero", sat_id);
+        let field: Arc<dyn tobari::magnetic::MagneticFieldModel> = if body_field_is_modelled(body) {
+            Arc::new(Igrf::earth())
+        } else {
+            Arc::new(tobari::magnetic::NoField)
+        };
         vec![Magnetometer::new(field)]
     } else {
         vec![]
@@ -1176,23 +1187,44 @@ mod tests {
         };
 
         assert_eq!(
-            torque_with(mtq_for_body(
-                KnownBody::Mars,
-                10.0,
-                Some(&command),
-                "sat-test"
-            )),
+            torque_with(mtq_for_body(KnownBody::Mars, 10.0, Some(&command))),
             0.0,
             "Mars has no field model, so a commanded magnetorquer makes no torque"
         );
         assert!(
-            torque_with(mtq_for_body(
-                KnownBody::Earth,
-                10.0,
-                Some(&command),
-                "sat-test"
-            )) > 0.0,
+            torque_with(mtq_for_body(KnownBody::Earth, 10.0, Some(&command))) > 0.0,
             "Earth's field is modelled, so the same command makes torque"
+        );
+    }
+
+    /// The rebuild does not warn again.
+    ///
+    /// `apply_held_commands` rebuilds the assembly on every tick that carries a
+    /// command, and a held command persists, so a warning inside that path
+    /// would repeat for the whole run. Measured through the counter beside
+    /// `warn_no_field_model`: ten rebuilds add nothing to it.
+    #[test]
+    fn rebuilding_a_commanded_magnetorquer_does_not_warn_again() {
+        let (mut sat, _ticks) = satellite_with(1.0, 0.0);
+        sat.body = KnownBody::Mars;
+        sat.has_mtq = true;
+        sat.mtq_max_moment = 10.0;
+        sat.dynamics = sat
+            .dynamics
+            .with_epoch(Epoch::from_gregorian(2026, 3, 20, 12, 0, 0.0))
+            .with_model(mtq_for_body(sat.body, 10.0, None));
+        sat.actuators
+            .apply(&Command::mtq_normalized(vec![1.0, 0.0, 0.0]))
+            .expect("three moments for three MTQs");
+
+        let before = FIELD_WARNINGS.with(|n| n.get());
+        for _ in 0..10 {
+            apply_held_commands(&mut sat).expect("the command length matches the MTQ count");
+        }
+        assert_eq!(
+            FIELD_WARNINGS.with(|n| n.get()),
+            before,
+            "the rebuild is silent; the warning belongs where the device is built"
         );
     }
 
@@ -1210,7 +1242,7 @@ mod tests {
         sat.dynamics = sat
             .dynamics
             .with_epoch(Epoch::from_gregorian(2026, 3, 20, 12, 0, 0.0))
-            .with_model(mtq_for_body(sat.body, 10.0, None, "sat-test"));
+            .with_model(mtq_for_body(sat.body, 10.0, None));
 
         sat.actuators
             .apply(&Command::mtq_normalized(vec![1.0, 0.0, 0.0]))
