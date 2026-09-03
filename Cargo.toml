@@ -91,8 +91,8 @@ ts-rs = { version = "12", features = ["serde-json-impl"] }
 # `cargo update` picks up patch fixes (including security) automatically while a
 # new minor needs a deliberate bump. The tilde matters: a bare `46.0` — or even
 # `46.0.0` — is caret, `<47.0.0`, and would take 46.1 on its own.
-wasmtime-wasi = { version = "~46.0", default-features = false }
-wasmtime = { version = "~46.0", default-features = false, features = [
+wasmtime-wasi = { version = "~48.0.0", default-features = false }
+wasmtime = { version = "~48.0.0", default-features = false, features = [
     "runtime",
     "cranelift",
     "pulley",
