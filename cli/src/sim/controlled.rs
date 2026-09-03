@@ -671,6 +671,8 @@ mod tests {
             &[],
             inertia,
             None,
+            // No spherical-harmonic field: this fixture is the zonal path.
+            None,
         );
 
         // Circular orbit 400 km up, in the equatorial plane.

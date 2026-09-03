@@ -696,7 +696,7 @@ mod tests {
         let mut args = sim_args_for_period_tests();
         args.sats = vec!["altitude=400".to_string()];
 
-        let without = SimParams::from_sim_args(&args, false);
+        let without = SimParams::from_sim_args_with_gravity_field(&args, false, None);
         assert!(
             (without.satellites[0].period - PERIOD_400KM).abs() < 1.0,
             "period without --duration: {}",
@@ -704,7 +704,7 @@ mod tests {
         );
 
         args.duration = Some(120.0);
-        let with = SimParams::from_sim_args(&args, false);
+        let with = SimParams::from_sim_args_with_gravity_field(&args, false, None);
         assert!(
             (with.satellites[0].period - PERIOD_400KM).abs() < 1.0,
             "--duration 120 changed the orbital period to {}",
@@ -757,7 +757,7 @@ orbit = { type = "circular", altitude = 400 }
             "altitude=800,id=high".to_string(),
         ];
         args.duration = Some(120.0);
-        let params = SimParams::from_sim_args(&args, false);
+        let params = SimParams::from_sim_args_with_gravity_field(&args, false, None);
 
         let (low, high) = (&params.satellites[0], &params.satellites[1]);
         assert!(
@@ -790,6 +790,9 @@ orbit = { type = "circular", altitude = 400 }
             f107: 150.0,
             ap: 15.0,
             space_weather: None,
+            gravity_field: None,
+            gravity_degree: None,
+            gravity_order: None,
             duration: None,
             config: None,
             plugin_backend: PluginBackendChoice::Auto,
