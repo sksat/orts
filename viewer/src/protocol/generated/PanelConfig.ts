@@ -23,9 +23,31 @@ import type { PanelBackConfig } from "./PanelBackConfig";
  */
 export type PanelConfig = { 
 /**
- * Panel area [m²].
+ * Panel area [m²]. Write this or `half_extent`, not both.
  */
-area: number, 
+area?: number, 
+/**
+ * In-plane half-extents [m]: along `in_plane_x`, then along
+ * `normal × in_plane_x`. The area follows from these.
+ *
+ * Writing them gives the panel a boundary, which is what lets another
+ * panel be found covering it completely. Without them the panel still
+ * produces the same force when lit, but takes no part in shadowing.
+ *
+ * Complete cover by one panel is the whole of what is found: a panel half
+ * in shadow produces its full force, as does one that two others cover
+ * between them.
+ *
+ * The boundary is centred on `cp_offset`, so these are half-widths about
+ * that point rather than about the CoM: a plate 2 m across, on an arm
+ * 1.5 m out along that same axis, spans 0.5 m to 2.5 m from the CoM.
+ * Moving the arm moves the plate.
+ */
+half_extent?: [number, number], 
+/**
+ * In-plane reference axis for `half_extent`, perpendicular to `normal`.
+ */
+in_plane_x?: [number, number, number], 
 /**
  * Outward-pointing normal in the body frame. Normalised internally.
  */
@@ -45,7 +67,9 @@ diffuse?: number,
 /**
  * Centre-of-pressure offset from the CoM [m, body frame] (default: zero).
  *
- * This is what makes a panel force an attitude disturbance.
+ * This is what makes a panel force an attitude disturbance. With
+ * `half_extent` it also places the plate, whose boundary is centred here —
+ * so it is where the panel *is*, not only the arm its force acts on.
  */
 cp_offset?: [number, number, number], 
 /**

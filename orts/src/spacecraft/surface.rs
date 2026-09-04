@@ -83,6 +83,48 @@ impl PanelOptics {
     }
 }
 
+/// A panel's extent within its own plane.
+///
+/// A panel needs none of this to produce a force: the flat-plate law uses the
+/// projected area, the normal and the optics, and never the boundary. It is
+/// here so that one panel can be found to cover another completely, seen from
+/// the Sun or the flow, which needs the boundary and nothing else.
+///
+/// An enum because the shapes will not stay one: a mesh read from CAD gives
+/// triangles. Three operations know the shapes — `SurfacePanel::corners_into`,
+/// which lists the corners, `SurfacePanel::outline_contains`, which answers
+/// whether a point is inside, and
+/// `SpacecraftShape::assert_outlines_are_consistent`, which checks a shape's
+/// own invariants — so a new shape means a new arm in each of those and
+/// nothing else. Each of the three destructures this enum without a fallback
+/// arm, so a new variant that misses one of them does not compile.
+/// Containment cannot be derived from the corners: a triangle's three corners
+/// span a parallelogram larger than the triangle.
+///
+/// `#[non_exhaustive]` so that adding a shape stays a minor change: without it
+/// a downstream `match` could be exhaustive today and stop compiling the day a
+/// triangle arrives, which would defeat the reason this is an enum.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub enum PanelOutline {
+    /// A rectangle centred on the panel's `cp_offset`.
+    ///
+    /// For a plate with uniform properties, fully lit, the centre of pressure
+    /// *is* the area centroid, so centring on it is exact. A shape whose
+    /// centroid moves away from the centre of pressure would have to carry its
+    /// own reference point.
+    Rectangle {
+        /// Half-extents [m]: along `in_plane_x`, then along
+        /// `normal × in_plane_x`.
+        half_extent: [f64; 2],
+        /// In-plane reference axis (unit length, perpendicular to the normal).
+        in_plane_x: Vector3<f64>,
+    },
+}
+
+/// The most corners any [`PanelOutline`] shape has.
+pub(crate) const MAX_PANEL_CORNERS: usize = 4;
+
 /// A flat surface panel on a spacecraft body.
 ///
 /// Represents one face of the spacecraft's outer surface for computing
@@ -95,9 +137,10 @@ impl PanelOptics {
 /// sides may then carry different optical properties. [`Self::back_face`]
 /// builds the second one from the first.
 ///
-/// Both force models assume `normal` is unit length. [`Self::at_com`] and
-/// [`SpacecraftShape::cube`] guarantee that; a struct literal does not, and the
-/// SRP force is cubic in `|normal|` through its specular term.
+/// Both force models assume `normal` is unit length. [`Self::at_com`],
+/// [`Self::rectangle`] and [`SpacecraftShape::cube`] guarantee that; a struct
+/// literal does not, and the SRP force is cubic in `|normal|` through its
+/// specular term.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SurfacePanel {
     /// Panel area [m²].
@@ -110,6 +153,12 @@ pub struct SurfacePanel {
     pub optics: PanelOptics,
     /// Centre-of-pressure offset from the spacecraft CoM [m, body frame].
     pub cp_offset: Vector3<f64>,
+    /// In-plane extent, when the panel has one.
+    ///
+    /// Only panels that carry it take part in occlusion — a panel without an
+    /// outline neither casts a shadow on another panel nor receives one. The
+    /// force a lit panel produces is the same either way.
+    pub outline: Option<PanelOutline>,
 }
 
 impl SurfacePanel {
@@ -126,16 +175,19 @@ impl SurfacePanel {
     /// value to pass when the surface is genuinely unknown.
     ///
     /// # Panics
-    /// Panics if `normal` is zero-length.
+    /// Panics unless `normal` has a finite non-zero magnitude. Finite
+    /// components are not enough on their own: `[1e300, 1e300, 0]` squares to a
+    /// norm that overflows and `[1e-200; 3]` to one that underflows, and
+    /// neither can be normalised.
     pub fn at_com(area: f64, normal: Vector3<f64>, cd: f64, optics: PanelOptics) -> Self {
-        let n = normal.normalize();
-        assert!(n.magnitude() > 0.5, "Panel normal must be non-zero");
+        let n = unit_direction(normal, "normal");
         Self {
             area,
             normal: n,
             cd,
             optics,
             cp_offset: Vector3::zeros(),
+            outline: None,
         }
     }
 
@@ -152,6 +204,114 @@ impl SurfacePanel {
     pub fn with_cp_offset(mut self, cp_offset: Vector3<f64>) -> Self {
         self.cp_offset = cp_offset;
         self
+    }
+
+    /// Create a rectangular panel with a known extent, centred on `cp_offset`.
+    ///
+    /// The area follows from the half-extents, so this is the constructor to
+    /// reach for when the panel's boundary matters — a panel built with
+    /// [`Self::at_com`] has an area and no boundary, and takes no part in
+    /// occlusion.
+    ///
+    /// # Panics
+    /// Panics unless both vectors have a finite non-zero magnitude, which
+    /// finite components alone do not give: `[1e300, 1e300, 0]` squares to a
+    /// norm that overflows and `[1e-200; 3]` to one that underflows, and
+    /// neither can be normalised. Panics too if the half-extents are not
+    /// positive and finite, if their product underflows to zero or overflows to
+    /// infinity, or if `in_plane_x` is not perpendicular to `normal` (to within
+    /// 1e-9 after normalisation). An axis off the plane
+    /// describes a rectangle that is not on the panel; projecting it onto the
+    /// plane would build a panel the caller did not ask for, so it is rejected
+    /// instead.
+    pub fn rectangle(
+        half_extent: [f64; 2],
+        in_plane_x: Vector3<f64>,
+        normal: Vector3<f64>,
+        cd: f64,
+        optics: PanelOptics,
+    ) -> Self {
+        assert!(
+            half_extent.iter().all(|h| h.is_finite() && *h > 0.0),
+            "panel half-extents must be positive and finite, got {half_extent:?}"
+        );
+        // The product needs its own check: `[1e-300, 1e-300]` underflows to a
+        // zero area and `[1e200, 1e200]` overflows to infinity, and each
+        // half-extent is positive and finite in both.
+        //
+        // The two extents multiply first. `4.0 * h[0] * h[1]` would overflow on
+        // `4.0 * 1e308` before ever seeing the second extent, so the same
+        // geometry passed or failed depending on which order it was written in.
+        let area = half_extent[0] * half_extent[1] * 4.0;
+        assert!(
+            area.is_finite() && area > 0.0,
+            "panel half-extents {half_extent:?} give an area of {area}"
+        );
+        let n = unit_direction(normal, "normal");
+        let x = unit_direction(in_plane_x, "in-plane axis");
+        assert!(
+            n.dot(&x).abs() < 1e-9,
+            "panel in-plane axis must be perpendicular to the normal, got n·x = {}",
+            n.dot(&x)
+        );
+        Self {
+            area,
+            normal: n,
+            cd,
+            optics,
+            cp_offset: Vector3::zeros(),
+            outline: Some(PanelOutline::Rectangle {
+                half_extent,
+                in_plane_x: x,
+            }),
+        }
+    }
+
+    /// Write the outline's corners in order into `buf`, or `None` without one.
+    ///
+    /// Corner-count varies by shape, so the filled prefix is returned rather
+    /// than a fixed array. Takes a buffer because occlusion runs per panel pair
+    /// per integrator stage, where an allocation would not pay for itself.
+    pub(crate) fn corners_into<'b>(
+        &self,
+        buf: &'b mut [Vector3<f64>; MAX_PANEL_CORNERS],
+    ) -> Option<&'b [Vector3<f64>]> {
+        match self.outline? {
+            PanelOutline::Rectangle {
+                half_extent: [hx, hy],
+                in_plane_x,
+            } => {
+                let y = self.normal.cross(&in_plane_x);
+                buf[0] = self.cp_offset + in_plane_x * hx + y * hy;
+                buf[1] = self.cp_offset + in_plane_x * hx - y * hy;
+                buf[2] = self.cp_offset - in_plane_x * hx - y * hy;
+                buf[3] = self.cp_offset - in_plane_x * hx + y * hy;
+                Some(&buf[..4])
+            }
+        }
+    }
+
+    /// Whether `point` lies within the outline, projected onto the panel plane.
+    ///
+    /// `false` without an outline: a panel with no boundary contains nothing,
+    /// which is what keeps it from casting shadows.
+    ///
+    /// Each shape answers for itself. A triangle's three corners span a
+    /// parallelogram larger than the triangle, so a shared corner-based rule
+    /// would quietly over-report once meshes land.
+    pub(crate) fn outline_contains(&self, point: &Vector3<f64>) -> bool {
+        match self.outline {
+            None => false,
+            Some(PanelOutline::Rectangle {
+                half_extent: [hx, hy],
+                in_plane_x,
+            }) => {
+                let d = point - self.cp_offset;
+                let y = self.normal.cross(&in_plane_x);
+                d.dot(&in_plane_x).abs() <= hx * (1.0 + OUTLINE_EDGE_TOLERANCE)
+                    && d.dot(&y).abs() <= hy * (1.0 + OUTLINE_EDGE_TOLERANCE)
+            }
+        }
     }
 
     /// The other side of the same thin plate: the normal is negated, and the
@@ -192,8 +352,29 @@ impl SurfacePanel {
             cd: self.cd,
             optics,
             cp_offset: self.cp_offset,
+            outline: self.outline,
         }
     }
+}
+
+/// Normalise a direction the caller supplied, rejecting one whose magnitude
+/// cannot be computed.
+///
+/// Checking the normalised result is not enough. A vector whose squared norm
+/// underflows normalises to `[inf, inf, inf]`, and an infinite magnitude
+/// passes any lower bound: the `|n| > 0.5` this replaced read it as a valid
+/// direction, and every force built from that normal is NaN. One whose squared
+/// norm overflows normalises to `[0, 0, 0]` and is rejected, since dividing by
+/// an infinite norm gives zero. Both start from finite components, so it is the
+/// input that has to be measured, before it is divided.
+fn unit_direction(v: Vector3<f64>, what: &str) -> Vector3<f64> {
+    let mag = v.magnitude();
+    assert!(
+        mag.is_finite() && mag > 0.0,
+        "panel {what} needs a finite non-zero magnitude, got {:?} with |v| = {mag}",
+        v.as_slice()
+    );
+    v / mag
 }
 
 /// Spacecraft shape model for aerodynamic force computation.
@@ -238,11 +419,16 @@ impl SpacecraftShape {
     /// Create a panel model from an arbitrary set of panels.
     ///
     /// # Panics
-    /// Panics unless every panel normal is unit length — see
-    /// [`Self::assert_normals_are_unit`].
+    /// Panics unless every panel normal is unit length and every outline is
+    /// consistent with its panel — positive finite extents whose product is a
+    /// finite non-zero area matching `area`, and a unit in-plane axis
+    /// perpendicular to the normal. `SurfacePanel`'s constructors establish
+    /// both, but its fields are public, so a struct literal can reach here
+    /// without them.
     pub fn panels(panels: Vec<SurfacePanel>) -> Self {
         let shape = Self::Panels(panels);
         shape.assert_normals_are_unit();
+        shape.assert_outlines_are_consistent();
         shape
     }
 
@@ -272,60 +458,187 @@ impl SpacecraftShape {
         }
     }
 
+    /// Check what [`SurfacePanel::rectangle`] asserts, for panels that did not
+    /// come through it.
+    ///
+    /// `outline` is a public field and `PanelOutline::Rectangle`'s fields are
+    /// public with it, so a struct literal can set an axis parallel to the
+    /// normal, a non-positive extent, or an area that does not match the
+    /// outline. A parallel axis makes both in-plane directions degenerate and
+    /// the containment test answers for a line rather than a rectangle, which
+    /// reports occlusion where there is none.
+    ///
+    /// # Panics
+    /// Panics with the offending panel's index.
+    pub(crate) fn assert_outlines_are_consistent(&self) {
+        let Self::Panels(panels) = self else {
+            return;
+        };
+        for (i, panel) in panels.iter().enumerate() {
+            // The two cases are separate on purpose. No outline is nothing to
+            // check — a panel without a boundary takes no part in occlusion.
+            // A shape this does not recognise is a gap, so the enum is
+            // destructured irrefutably: adding a variant stops this compiling
+            // rather than skipping the panel.
+            let Some(outline) = panel.outline else {
+                continue;
+            };
+            let PanelOutline::Rectangle {
+                half_extent,
+                in_plane_x,
+            } = outline;
+            assert!(
+                half_extent.iter().all(|h| h.is_finite() && *h > 0.0),
+                "panel {i}: outline half-extents must be positive and finite, got {half_extent:?}"
+            );
+            let area = half_extent[0] * half_extent[1] * 4.0;
+            assert!(
+                area.is_finite() && area > 0.0,
+                "panel {i}: outline half-extents {half_extent:?} give an area of {area}"
+            );
+            // Finite first: with `panel.area` infinite both sides of the
+            // relative comparison are infinite, and `inf <= inf` holds.
+            assert!(
+                panel.area.is_finite() && panel.area > 0.0,
+                "panel {i}: area must be positive and finite, got {}",
+                panel.area
+            );
+            assert!(
+                (area - panel.area).abs() <= 1e-9 * area.max(panel.area),
+                "panel {i}: area {} does not match the outline's {area}",
+                panel.area
+            );
+            let len = in_plane_x.magnitude();
+            assert!(
+                len.is_finite() && (len - 1.0).abs() < 1e-9,
+                "panel {i}: outline in_plane_x must be unit length, got {len}"
+            );
+            let cos = panel.normal.dot(&in_plane_x);
+            assert!(
+                cos.abs() < 1e-9,
+                "panel {i}: outline in_plane_x must be perpendicular to the normal, got n·x = {cos}"
+            );
+        }
+    }
+
     /// Create a cube with the given half-size, drag coefficient, and optical
     /// properties, shared by all six faces.
     ///
-    /// Generates 6 panels (±x, ±y, ±z), each with area `(2 * half_size)²` m²
-    /// and centre of pressure at the face centre (`half_size` m from CoM along
-    /// the face normal).
+    /// Generates 6 panels (±x, ±y, ±z), each `2 * half_size` on a side, with the
+    /// centre of pressure at the face centre (`half_size` m from CoM along the
+    /// face normal). The faces carry their outline, so a panel added beside the
+    /// cube — a solar array, say — can be found completely covered by one.
+    ///
+    /// # Panics
+    /// Panics unless `half_size` is positive and finite, and unless the area it
+    /// implies is too — it builds the faces through [`SurfacePanel::rectangle`],
+    /// so `half_size` of `1e200` overflows and `1e-300` underflows.
     pub fn cube(half_size: f64, cd: f64, optics: PanelOptics) -> Self {
-        let face_area = (2.0 * half_size) * (2.0 * half_size);
+        let face = |normal: Vector3<f64>, in_plane_x: Vector3<f64>| {
+            SurfacePanel::rectangle([half_size, half_size], in_plane_x, normal, cd, optics)
+                .with_cp_offset(normal * half_size)
+        };
+        let (x, y, z) = (Vector3::x(), Vector3::y(), Vector3::z());
         let panels = vec![
-            SurfacePanel {
-                area: face_area,
-                normal: Vector3::new(1.0, 0.0, 0.0),
-                cd,
-                optics,
-                cp_offset: Vector3::new(half_size, 0.0, 0.0),
-            },
-            SurfacePanel {
-                area: face_area,
-                normal: Vector3::new(-1.0, 0.0, 0.0),
-                cd,
-                optics,
-                cp_offset: Vector3::new(-half_size, 0.0, 0.0),
-            },
-            SurfacePanel {
-                area: face_area,
-                normal: Vector3::new(0.0, 1.0, 0.0),
-                cd,
-                optics,
-                cp_offset: Vector3::new(0.0, half_size, 0.0),
-            },
-            SurfacePanel {
-                area: face_area,
-                normal: Vector3::new(0.0, -1.0, 0.0),
-                cd,
-                optics,
-                cp_offset: Vector3::new(0.0, -half_size, 0.0),
-            },
-            SurfacePanel {
-                area: face_area,
-                normal: Vector3::new(0.0, 0.0, 1.0),
-                cd,
-                optics,
-                cp_offset: Vector3::new(0.0, 0.0, half_size),
-            },
-            SurfacePanel {
-                area: face_area,
-                normal: Vector3::new(0.0, 0.0, -1.0),
-                cd,
-                optics,
-                cp_offset: Vector3::new(0.0, 0.0, -half_size),
-            },
+            face(x, y),
+            face(-x, y),
+            face(y, z),
+            face(-y, z),
+            face(z, x),
+            face(-z, x),
         ];
         Self::Panels(panels)
     }
+}
+
+/// How far in front a shadow caster has to stand to count [m].
+///
+/// Absolute, and compared against a distance along the incoming direction, so
+/// for a caster nearly edge-on to it the same value admits a much smaller gap
+/// between the planes (`gap = t · cos θ`). Coplanar plates built through
+/// [`SurfacePanel::rectangle`] land within 2e-14 m of each other even at 100 m
+/// from the CoM, so this leaves several decades of margin — and the force it
+/// could wrongly drop scales with `cos θ`, which is what makes the asymmetry
+/// harmless. It is what stops the two faces of a thin plate, which share a
+/// plane, from shadowing each other.
+const OCCLUSION_DEPTH_EPS: f64 = 1e-9;
+
+/// How far outside an outline a corner may fall and still count as inside, as
+/// a fraction of the half-extent it is compared against.
+///
+/// One part in a billion, which is a nanometre on a one-metre panel. A corner
+/// grazing an edge needs it: with an in-plane axis whose components are inexact,
+/// a third of the corners of an exactly-covering caster land outside by up to
+/// 4.8e-16 of the half-extent (measured over 3600 axis angles), so an exact
+/// comparison would report a shadow or no shadow depending on the angle.
+///
+/// A fraction rather than a length because `rectangle` accepts half-extents
+/// down to `1e-150`, and an absolute nanometre would describe such a panel as
+/// 141 orders of magnitude wider than it is, letting it swallow targets it
+/// could never cover. Scaling down instead makes a panel that small fail
+/// containment, which reports no shadow — the direction that keeps a real force
+/// rather than removing one.
+const OUTLINE_EDGE_TOLERANCE: f64 = 1e-9;
+
+/// Whether every corner of `panel` lies behind one other panel, seen from
+/// `upstream`.
+///
+/// `upstream` points from the spacecraft toward where the light or the flow
+/// comes from. SRP passes `s_body`; drag passes `-v̂_body`, which is the side
+/// its own facing test treats as upwind — see the note there. It must be unit
+/// length.
+///
+/// `others` may contain `panel` itself, and no index is needed to exclude it: a
+/// corner sitting on its own panel's plane gives `t = 0`, which the depth test
+/// rejects. Taking an index instead would put an obligation on the caller that
+/// nothing can check — a wrong one silently drops a real shadow.
+///
+/// A panel without an outline neither casts a shadow nor receives one, so a
+/// fleet of area-only panels behaves exactly as it did before outlines existed.
+///
+/// Only single-panel occlusion is detected. A panel covered by two others
+/// between them still counts as lit — the case that needs it is a segmented
+/// structure standing in front of one face, which the panel list can describe
+/// but this test cannot see.
+pub(crate) fn is_fully_occluded(
+    panel: &SurfacePanel,
+    others: &[SurfacePanel],
+    upstream: &Vector3<f64>,
+) -> bool {
+    let mut buf = [Vector3::zeros(); MAX_PANEL_CORNERS];
+    let Some(corners) = panel.corners_into(&mut buf) else {
+        return false;
+    };
+    others
+        .iter()
+        .any(|other| blocks_all(corners, other, upstream))
+}
+
+/// Whether `caster` stands in front of every one of `corners`.
+///
+/// Each corner sends a ray toward `upstream`; the corner is covered when the ray
+/// crosses `caster`'s plane in front of it and lands within `caster`'s outline.
+/// Comparing silhouettes on a plane instead would call a caster that tilts
+/// through the panel a full shadow: its centre can sit in front while one edge
+/// is behind, and a projection cannot tell.
+fn blocks_all(corners: &[Vector3<f64>], caster: &SurfacePanel, upstream: &Vector3<f64>) -> bool {
+    // Two cases need no guard of their own, measured by removing them:
+    //
+    // A caster with no outline: `outline_contains` answers `false`.
+    //
+    // A caster edge-on to the incoming direction: `denom` is zero or nearly so,
+    // `t` runs to infinity, and the hit lands outside the outline. Special-casing
+    // it would only avoid the arithmetic, not change the answer.
+    let denom = caster.normal.dot(upstream);
+
+    corners.iter().all(|corner| {
+        // Where the ray from `corner` toward `upstream` meets the caster plane.
+        let t = caster.normal.dot(&(caster.cp_offset - corner)) / denom;
+        if t <= OCCLUSION_DEPTH_EPS {
+            return false; // level with the corner, or behind it
+        }
+        caster.outline_contains(&(corner + upstream * t))
+    })
 }
 
 /// Attitude-dependent drag model using flat surface panels.
@@ -356,7 +669,12 @@ impl PanelDrag<frame::SimpleEci> {
     /// Uses piecewise exponential atmosphere and WGS-84 geodetic altitude by default.
     ///
     /// # Panics
-    /// Panics unless every panel normal is unit length.
+    /// Panics unless every panel normal is unit length and every outline is
+    /// consistent with its panel — positive finite extents whose product is a
+    /// finite non-zero area matching `area`, and a unit in-plane axis
+    /// perpendicular to the normal. Both are re-checked here because
+    /// `SurfacePanel`'s fields are public, so a struct literal can bypass the
+    /// constructors that establish them.
     pub fn for_earth(shape: SpacecraftShape) -> Self {
         Self::for_earth_in_frame(shape, ())
     }
@@ -367,9 +685,15 @@ impl<F: EarthFixedTransform> PanelDrag<F> {
     /// `F`, with that frame's EOP storage (`()` for `SimpleEci`).
     ///
     /// # Panics
-    /// Panics unless every panel normal is unit length.
+    /// Panics unless every panel normal is unit length and every outline is
+    /// consistent with its panel — positive finite extents whose product is a
+    /// finite non-zero area matching `area`, and a unit in-plane axis
+    /// perpendicular to the normal. Both are re-checked here because
+    /// `SurfacePanel`'s fields are public, so a struct literal can bypass the
+    /// constructors that establish them.
     pub fn for_earth_in_frame(shape: SpacecraftShape, eop: F::EopStorage) -> Self {
         shape.assert_normals_are_unit();
+        shape.assert_outlines_are_consistent();
         Self {
             shape,
             atmosphere: Box::new(Exponential),
@@ -485,10 +809,21 @@ impl<F: EarthFixedTransform> PanelDrag<F> {
                 let mut total_force_body = Vector3::zeros(); // N
                 let mut total_torque_body = Vector3::zeros(); // N·m
 
+                // The side this model treats as upwind, which is the side an
+                // occluding panel has to stand on. It is `-v̂` because the
+                // facing test below is `n̂·(-v̂)`; whether that matches the
+                // physics is a separate question from whether the shadow
+                // follows it, and this follows it.
+                let upstream = -v_hat_body;
                 for panel in panels {
                     // cos(θ) = n̂ · (-v̂): panel must face the flow
-                    let cos_theta = panel.normal.dot(&(-v_hat_body)).max(0.0);
+                    let cos_theta = panel.normal.dot(&upstream).max(0.0);
                     if cos_theta <= 0.0 {
+                        continue;
+                    }
+                    // A panel upwind of this one shields it. Panels without an
+                    // outline never do, so an area-only fleet is unaffected.
+                    if is_fully_occluded(panel, panels, &upstream) {
                         continue;
                     }
 
@@ -631,6 +966,7 @@ mod tests {
             cd: 2.2,
             optics: PanelOptics::absorber(),
             cp_offset: Vector3::zeros(),
+            outline: None,
         }]);
     }
 
@@ -647,6 +983,7 @@ mod tests {
             cd: 2.2,
             optics: PanelOptics::absorber(),
             cp_offset: Vector3::zeros(),
+            outline: None,
         }]);
         PanelDrag::for_earth(shape);
     }
@@ -1013,6 +1350,7 @@ mod tests {
                 cd: 2.2,
                 optics: PanelOptics::absorber(),
                 cp_offset: Vector3::new(0.0, 1.5, 0.0),
+                outline: None,
             },
             SurfacePanel {
                 area: 2.0,
@@ -1020,6 +1358,7 @@ mod tests {
                 cd: 2.2,
                 optics: PanelOptics::absorber(),
                 cp_offset: Vector3::new(0.0, 0.4, 0.0),
+                outline: None,
             },
             SurfacePanel {
                 area: 0.5,
@@ -1027,6 +1366,7 @@ mod tests {
                 cd: 2.2,
                 optics: PanelOptics::absorber(),
                 cp_offset: Vector3::new(0.0, 0.0, -0.8),
+                outline: None,
             },
             SurfacePanel {
                 area: 0.5,
@@ -1034,6 +1374,7 @@ mod tests {
                 cd: 2.2,
                 optics: PanelOptics::absorber(),
                 cp_offset: Vector3::new(0.9, 0.0, 0.0),
+                outline: None,
             },
         ])
     }
@@ -1395,6 +1736,7 @@ mod tests {
             cd: 2.2,
             optics: PanelOptics::absorber(),
             cp_offset: Vector3::new(1.0, 0.0, 0.0), // 1 m offset in +x
+            outline: None,
         };
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
         let loads = drag.eval(0.0, &iss_state(), None);
@@ -1419,6 +1761,7 @@ mod tests {
             cd: 2.2,
             optics: PanelOptics::absorber(),
             cp_offset: Vector3::new(offset, 0.0, 0.0),
+            outline: None,
         };
 
         let drag1 = PanelDrag::for_earth(SpacecraftShape::panels(vec![make_panel(1.0)]));
@@ -1718,6 +2061,475 @@ mod tests {
         );
     }
 
+    /// Half-extents that are each positive and finite can still give an area
+    /// that is neither.
+    #[test]
+    fn rectangle_rejects_an_area_that_underflows_or_overflows() {
+        for half_extent in [[1e-300, 1e-300], [1e200, 1e200]] {
+            let caught = std::panic::catch_unwind(|| {
+                SurfacePanel::rectangle(
+                    half_extent,
+                    Vector3::new(0.0, 1.0, 0.0),
+                    Vector3::new(1.0, 0.0, 0.0),
+                    2.2,
+                    PanelOptics::absorber(),
+                )
+            });
+            assert!(
+                caught.is_err(),
+                "{half_extent:?} gives an area of {} and has to be rejected",
+                4.0 * half_extent[0] * half_extent[1]
+            );
+        }
+
+        // And the smallest extent whose area survives is still accepted, so the
+        // check is on the product rather than on the magnitude of a side.
+        let ok = SurfacePanel::rectangle(
+            [1e-150, 1e-150],
+            Vector3::new(0.0, 1.0, 0.0),
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
+        assert!(ok.area > 0.0 && ok.area.is_finite());
+    }
+
+    /// The same geometry is accepted whichever order the extents are written in.
+    ///
+    /// `4.0 * h[0] * h[1]` overflowed on `4.0 * 1e308` before it ever saw the
+    /// second extent, so `[1e308, 1e-308]` was rejected and `[1e-308, 1e308]`
+    /// was not.
+    #[test]
+    fn the_area_check_does_not_depend_on_the_extent_order() {
+        let build = |half_extent: [f64; 2]| {
+            SurfacePanel::rectangle(
+                half_extent,
+                Vector3::new(0.0, 1.0, 0.0),
+                Vector3::new(1.0, 0.0, 0.0),
+                2.2,
+                PanelOptics::absorber(),
+            )
+        };
+        let a = build([1e308, 1e-308]);
+        let b = build([1e-308, 1e308]);
+        assert_eq!(a.area, b.area, "the product is commutative");
+        assert!(a.area.is_finite() && a.area > 0.0, "got {}", a.area);
+    }
+
+    /// A direction vector is rejected unless its own magnitude is finite and
+    /// non-zero.
+    ///
+    /// `normalize()` and then `magnitude() > 0.5` is not that check.
+    /// `[1e-200; 3]` squares to a norm that underflows to zero, so normalising
+    /// divides by zero and gives `[inf, inf, inf]` — an infinite magnitude,
+    /// which passes `> 0.5`. The panel then carries an infinite normal, and
+    /// cos θ and every force built from it are NaN.
+    #[test]
+    fn a_direction_vector_needs_a_magnitude_that_can_be_computed() {
+        let rejected = [
+            ("zero", Vector3::zeros()),
+            ("NaN", Vector3::new(f64::NAN, 0.0, 0.0)),
+            ("infinite", Vector3::new(f64::INFINITY, 0.0, 0.0)),
+            // Every component finite, but the squared norm overflows, and
+            // normalising then divides by infinity and gives zero.
+            ("overflowing", Vector3::new(1e300, 1e300, 0.0)),
+            // The same, underflowing: normalising divides by zero.
+            ("underflowing", Vector3::new(1e-200, 1e-200, 1e-200)),
+        ];
+
+        for (name, v) in rejected {
+            let as_normal = std::panic::catch_unwind(|| {
+                SurfacePanel::at_com(4.0, v, 2.2, PanelOptics::absorber())
+            });
+            if let Ok(panel) = as_normal {
+                panic!(
+                    "at_com took a {name} normal and built one pointing {:?}",
+                    panel.normal.as_slice()
+                );
+            }
+            let as_rectangle_normal = std::panic::catch_unwind(|| {
+                SurfacePanel::rectangle(
+                    [1.0, 1.0],
+                    Vector3::new(0.0, 1.0, 0.0),
+                    v,
+                    2.2,
+                    PanelOptics::absorber(),
+                )
+            });
+            if let Ok(panel) = as_rectangle_normal {
+                panic!(
+                    "rectangle took a {name} normal and built one pointing {:?}",
+                    panel.normal.as_slice()
+                );
+            }
+            let as_axis = std::panic::catch_unwind(|| {
+                SurfacePanel::rectangle(
+                    [1.0, 1.0],
+                    v,
+                    Vector3::new(1.0, 0.0, 0.0),
+                    2.2,
+                    PanelOptics::absorber(),
+                )
+            });
+            if let Ok(panel) = as_axis {
+                panic!(
+                    "rectangle took a {name} in-plane axis and kept {:?}",
+                    panel.outline
+                );
+            }
+        }
+
+        // Being small is not the problem: this one's magnitude is 1.7e-150,
+        // which divides cleanly.
+        let small = Vector3::new(1e-150, 1e-150, 1e-150);
+        let panel = SurfacePanel::at_com(4.0, small, 2.2, PanelOptics::absorber());
+        assert!(
+            (panel.normal.magnitude() - 1.0).abs() < 1e-15,
+            "a computable magnitude has to be accepted, got |n| = {}",
+            panel.normal.magnitude()
+        );
+    }
+
+    /// An offset that overflows is outside the outline, even one vast enough
+    /// that the tolerance overflows too.
+    ///
+    /// `[f64::MAX, 1e-308]` is an accepted rectangle: both extents are finite
+    /// and positive and the area comes to 7.2. Scaling that half-extent by the
+    /// tolerance gives infinity, so the comparison along the long axis reads
+    /// `inf <= inf` and passes — and the answer is still right, because the
+    /// short axis sees `inf * 0`, which is NaN and fails. Nothing rests on the
+    /// overflowed bound either way: no finite offset can exceed a half-extent
+    /// of `f64::MAX`, so wherever a point can actually be, that bound and the
+    /// true one agree.
+    #[test]
+    fn an_offset_that_overflows_is_outside_a_vast_outline() {
+        let normal = Vector3::new(0.0, 0.0, 1.0);
+        let axis = Vector3::new(1.0, 0.0, 0.0);
+        let panel = SurfacePanel::rectangle(
+            [f64::MAX, 1e-308],
+            axis,
+            normal,
+            2.2,
+            PanelOptics::absorber(),
+        )
+        .with_cp_offset(axis * -1e308);
+
+        // 1e308 - (-1e308) overflows.
+        let beyond = axis * 1e308;
+        assert!(
+            !panel.outline_contains(&beyond),
+            "an offset that overflows is within no outline"
+        );
+    }
+
+    /// An exactly-sized caster covers the panel even where the arithmetic
+    /// lands the corners a rounding outside its outline.
+    ///
+    /// This is what the edge tolerance is for, and the other cases here do not
+    /// need it: their in-plane axes are axis-aligned, so the dot products are
+    /// exact and the corners land exactly on the boundary. With the axis turned
+    /// to 108.2° the components are inexact, and a sweep of 3600 angles puts
+    /// 4780 of 14400 corners outside by up to 4.8e-16 of the half-extent —
+    /// which is a third of them, so without the tolerance an exactly-covering
+    /// caster would report a shadow or no shadow depending on its angle.
+    #[test]
+    fn an_exactly_sized_caster_covers_the_panel_at_an_inexact_axis() {
+        let normal = Vector3::new(1.0, 0.0, 0.0);
+        let axis = nalgebra::Rotation3::from_axis_angle(
+            &nalgebra::Unit::new_normalize(normal),
+            108.2_f64.to_radians(),
+        ) * Vector3::new(0.0, 1.0, 0.0);
+        let extent = [0.7, 1.3];
+
+        let target = SurfacePanel::rectangle(extent, axis, normal, 2.2, PanelOptics::absorber());
+        // The same plate, exactly, two metres upstream.
+        let caster = SurfacePanel::rectangle(extent, axis, normal, 2.2, PanelOptics::absorber())
+            .with_cp_offset(normal * 2.0);
+
+        let panels = vec![target, caster];
+        assert!(
+            is_fully_occluded(&panels[0], &panels, &normal),
+            "a caster the same size and directly upstream covers the panel"
+        );
+    }
+
+    /// A caster far smaller than the edge tolerance covers nothing.
+    ///
+    /// The tolerance absorbs floating-point error where a corner grazes an
+    /// edge. As an absolute length it was one nanometre whatever the panel, and
+    /// `rectangle` accepts half-extents down to `1e-150`, so a caster that size
+    /// counted as roughly two nanometres across and swallowed every target
+    /// below that — 141 orders of magnitude larger than the panel it described.
+    #[test]
+    fn a_caster_far_below_the_edge_tolerance_covers_nothing() {
+        let axis = Vector3::new(0.0, 1.0, 0.0);
+        let upstream = Vector3::new(1.0, 0.0, 0.0);
+        let target =
+            SurfacePanel::rectangle([5e-10, 5e-10], axis, upstream, 2.2, PanelOptics::absorber());
+        let caster = SurfacePanel::rectangle(
+            [1e-150, 1e-150],
+            axis,
+            upstream,
+            2.2,
+            PanelOptics::absorber(),
+        )
+        .with_cp_offset(upstream);
+
+        let panels = vec![target, caster];
+        assert!(
+            !is_fully_occluded(&panels[0], &panels, &upstream),
+            "a caster 1e-150 m across cannot cover a target 1e-9 m across"
+        );
+    }
+
+    /// A caster tilted through the shaded panel's plane covers only part of it.
+    ///
+    /// Every other occlusion case here has the two plates parallel or
+    /// coplanar, so all four corners of the target sit on one side of the
+    /// caster's plane and one depth comparison could answer for the whole
+    /// panel. Here the caster's centre is upstream of the target while one of
+    /// its edges is behind it, and the corners on that side reach its plane
+    /// going backwards even though their rays land inside its outline.
+    ///
+    /// The tilt runs through all four in-plane directions because each one
+    /// leaves a different pair of corners behind, and between them every
+    /// corner takes a turn: a depth test that looked at one fixed corner and
+    /// projected the rest would answer this correctly for some tilts and
+    /// wrongly for others.
+    #[test]
+    fn a_caster_tilted_through_the_panel_covers_only_part_of_it() {
+        let upstream = Vector3::new(1.0, 0.0, 0.0);
+        let shaded = SurfacePanel::rectangle(
+            [1.0, 1.0],
+            Vector3::new(0.0, 1.0, 0.0),
+            upstream,
+            2.2,
+            PanelOptics::absorber(),
+        );
+        let mut buf = [Vector3::zeros(); MAX_PANEL_CORNERS];
+        let corners = shaded
+            .corners_into(&mut buf)
+            .expect("a rectangle has corners");
+
+        // Where a ray from `from` toward `upstream` meets a caster's plane.
+        let depth = |from: &Vector3<f64>, c: &SurfacePanel| {
+            c.normal.dot(&(c.cp_offset - from)) / c.normal.dot(&upstream)
+        };
+
+        let mut ever_behind = [false; MAX_PANEL_CORNERS];
+        for tilt in [
+            Vector3::new(0.0, 1.0, 0.0),
+            Vector3::new(0.0, -1.0, 0.0),
+            Vector3::new(0.0, 0.0, 1.0),
+            Vector3::new(0.0, 0.0, -1.0),
+        ] {
+            // Tilted 45° so its plane cuts the target's, and wide enough that
+            // every corner's ray meets that plane inside the outline.
+            let caster = |x: f64| {
+                SurfacePanel::rectangle(
+                    [1.6, 1.2],
+                    (upstream - tilt).normalize(),
+                    (upstream + tilt).normalize(),
+                    2.2,
+                    PanelOptics::absorber(),
+                )
+                .with_cp_offset(Vector3::new(x, 0.0, 0.0))
+            };
+
+            // The geometry the test is about, stated rather than assumed.
+            let cutting = caster(0.5);
+            assert!(
+                depth(&shaded.cp_offset, &cutting) > 0.0,
+                "tilt {tilt:?}: the caster's centre has to be upstream of the target's"
+            );
+            let mut behind = 0;
+            for (i, corner) in corners.iter().enumerate() {
+                let t = depth(corner, &cutting);
+                if t <= 0.0 {
+                    behind += 1;
+                    ever_behind[i] = true;
+                }
+                let hit = corner + upstream * t;
+                assert!(
+                    cutting.outline_contains(&hit),
+                    "tilt {tilt:?}: corner {corner:?} reaches the caster's outline at \
+                     {hit:?}, so the depth is the only thing that can keep it lit"
+                );
+            }
+            assert_eq!(
+                behind, 2,
+                "tilt {tilt:?}: the caster's plane has to split the target's corners"
+            );
+
+            let panels = vec![shaded.clone(), cutting];
+            assert!(
+                !is_fully_occluded(&panels[0], &panels, &upstream),
+                "tilt {tilt:?}: a caster cutting through the panel leaves part of it lit"
+            );
+
+            // Slid upstream until it clears the target, the same plate does
+            // cover it — so the answer above comes from the tilt, not a miss.
+            let panels = vec![shaded.clone(), caster(2.0)];
+            assert!(
+                is_fully_occluded(&panels[0], &panels, &upstream),
+                "tilt {tilt:?}: clear of the panel, the same tilted plate covers it"
+            );
+        }
+
+        assert!(
+            ever_behind.iter().all(|behind| *behind),
+            "every corner has to be the one behind for some tilt, or a fixed \
+             corner would do: {ever_behind:?}"
+        );
+    }
+
+    /// The cube's faces carry outlines, so a panel added behind one is found.
+    ///
+    /// The doc says so and nothing tested it: the existing cube tests look at
+    /// areas, normals and pressure centres, and the SRP smoke test only asks
+    /// for a nonzero result.
+    #[test]
+    fn a_panel_behind_a_cube_face_is_shaded_by_it() {
+        let optics = PanelOptics::absorber();
+        let SpacecraftShape::Panels(faces) = SpacecraftShape::cube(0.5, 2.2, optics) else {
+            panic!("cube is panelled");
+        };
+
+        // Smaller than a face and tucked just behind it, for each of the six.
+        for face in &faces {
+            let hidden = SurfacePanel::rectangle(
+                [0.2, 0.2],
+                // Any in-plane axis of this face works; take one from the face.
+                match face.outline.expect("cube faces carry outlines") {
+                    PanelOutline::Rectangle { in_plane_x, .. } => in_plane_x,
+                },
+                face.normal,
+                2.2,
+                optics,
+            )
+            .with_cp_offset(face.cp_offset - face.normal * 0.1);
+
+            let mut panels = faces.clone();
+            panels.push(hidden);
+
+            // Face-on to that face, and obliquely across it.
+            let oblique = (face.normal
+                + match face.outline.expect("outline") {
+                    PanelOutline::Rectangle { in_plane_x, .. } => in_plane_x * 0.6,
+                })
+            .normalize();
+            for upstream in [face.normal, oblique] {
+                assert!(
+                    is_fully_occluded(&panels[6], &panels, &upstream),
+                    "the panel behind face {:?} has to be shaded from {upstream:?}",
+                    face.normal
+                );
+                // The faces turned toward the incoming direction stay lit:
+                // the panel tucked behind one of them must not shade it back.
+                // The far faces of a box are genuinely behind the near ones, so
+                // they are occluded as well as back-facing — either way they
+                // contribute nothing.
+                for (i, f) in faces.iter().enumerate() {
+                    if f.normal.dot(&upstream) <= 0.0 {
+                        continue;
+                    }
+                    assert!(
+                        !is_fully_occluded(f, &panels, &upstream),
+                        "cube face {i} faces the source and must stay lit"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A caster edge-on to the incoming direction covers nothing.
+    ///
+    /// It has no projected area to cover anything with. This falls out of the
+    /// ray arithmetic rather than needing a case of its own — `t` runs to
+    /// infinity and the hit lands outside the outline — so the test pins the
+    /// property, not the way it is reached.
+    #[test]
+    fn an_edge_on_caster_covers_nothing() {
+        let shaded = SurfacePanel::rectangle(
+            [1.0, 1.0],
+            Vector3::new(0.0, 1.0, 0.0),
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
+        // Big enough to cover it if it were facing the right way, and turned
+        // edge-on to the incoming direction.
+        let caster = SurfacePanel::rectangle(
+            [4.0, 4.0],
+            Vector3::new(1.0, 0.0, 0.0),
+            Vector3::new(0.0, 1.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        )
+        .with_cp_offset(Vector3::new(2.0, 0.0, 0.0));
+
+        let upstream = Vector3::new(1.0, 0.0, 0.0);
+        assert_eq!(
+            caster.normal.dot(&upstream),
+            0.0,
+            "the caster has to be exactly edge-on for this to be the guard's case"
+        );
+        let panels = vec![shaded, caster];
+        assert!(
+            !is_fully_occluded(&panels[0], &panels, &upstream),
+            "an edge-on caster has no projected area to cover anything with"
+        );
+    }
+
+    /// Drag skips a shaded panel too, and on the side its own facing test uses.
+    ///
+    /// The occlusion tests otherwise all sit in `panel_srp`, which leaves the
+    /// sign of this model's `upstream` resting on a cube test that cannot see
+    /// it: a cube's faces shade nothing either way round.
+    #[test]
+    fn drag_skips_a_panel_another_stands_in_front_of() {
+        // `iss_state` at identity has velocity along +y, and this model treats
+        // `-v̂` as upwind, so a panel facing -y is the one it considers lit.
+        let lit_normal = Vector3::new(0.0, -1.0, 0.0);
+        let shaded = SurfacePanel::rectangle(
+            [1.0, 1.0],
+            Vector3::new(1.0, 0.0, 0.0),
+            lit_normal,
+            2.2,
+            PanelOptics::absorber(),
+        );
+        let caster = SurfacePanel::rectangle(
+            [2.0, 2.0],
+            Vector3::new(1.0, 0.0, 0.0),
+            lit_normal,
+            2.2,
+            PanelOptics::absorber(),
+        )
+        .with_cp_offset(lit_normal * 2.0);
+
+        let alone = PanelDrag::for_earth(SpacecraftShape::panels(vec![shaded.clone()]));
+        let behind = PanelDrag::for_earth(SpacecraftShape::panels(vec![shaded, caster.clone()]));
+        let just_caster = PanelDrag::for_earth(SpacecraftShape::panels(vec![caster]));
+
+        let alone = alone
+            .eval(0.0, &iss_state(), None)
+            .acceleration_inertial
+            .magnitude();
+        assert!(alone > 0.0, "the small panel is lit on its own");
+        let behind = behind
+            .eval(0.0, &iss_state(), None)
+            .acceleration_inertial
+            .magnitude();
+        let just_caster = just_caster
+            .eval(0.0, &iss_state(), None)
+            .acceleration_inertial
+            .magnitude();
+        assert!(
+            (behind - just_caster).abs() / just_caster < 1e-12,
+            "the shaded panel must contribute nothing: {behind:e} vs {just_caster:e}"
+        );
+    }
+
     #[test]
     fn two_sided_panel_no_dead_zone() {
         // Two panels with opposite normals (±y): at least one faces the flow at any attitude
@@ -1825,6 +2637,7 @@ mod tests {
             cd: 2.2,
             optics: PanelOptics::absorber(),
             cp_offset: Vector3::new(1.0, 0.0, 0.0),
+            outline: None,
         };
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
         let loads = drag.eval(0.0, &iss_state(), None);
@@ -1913,6 +2726,7 @@ mod tests {
                 cd: 2.2,
                 optics: PanelOptics::absorber(),
                 cp_offset: Vector3::new(1.0, 0.0, 0.0),
+                outline: None,
             },
             SurfacePanel::at_com(
                 5.0,
@@ -1967,6 +2781,7 @@ mod tests {
                 cd: 2.2,
                 optics: PanelOptics::absorber(),
                 cp_offset: Vector3::new(1.0, 0.0, 0.0),
+                outline: None,
             },
             SurfacePanel {
                 area: 8.0,
@@ -1974,6 +2789,7 @@ mod tests {
                 cd: 2.0,
                 optics: PanelOptics::absorber(),
                 cp_offset: Vector3::new(0.0, 0.0, 0.5),
+                outline: None,
             },
         ];
         let drag = mock_drag(SpacecraftShape::panels(panels), 1e-12);
@@ -2108,6 +2924,7 @@ mod tests {
                 cd: 2.2,
                 optics: PanelOptics::absorber(),
                 cp_offset: Vector3::new(1.0, 0.0, 0.0),
+                outline: None,
             },
             SurfacePanel::at_com(
                 5.0,
@@ -2146,6 +2963,7 @@ mod tests {
             cd: 2.2,
             optics: PanelOptics::absorber(),
             cp_offset: Vector3::new(1.0, 0.0, 0.0),
+            outline: None,
         }];
 
         let drag1 = mock_drag(SpacecraftShape::panels(panels.clone()), 1e-12);

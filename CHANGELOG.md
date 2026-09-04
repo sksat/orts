@@ -33,6 +33,17 @@ section is subdivided by package.
 - WIT v0 plugin interface extended with the msg-io and stream-io channels. ([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
 #### Changed
+- **BREAKING**: `SurfacePanel` gains a public `outline: Option<PanelOutline>`
+  field, so a struct literal has to name it. `PanelSrp` and `PanelDrag` now skip
+  a panel that another one completely covers, which they previously computed as
+  fully lit. Only panels carrying an outline take part: a panel built with
+  `at_com` produces the same force it always did and neither casts a shadow nor
+  receives one. `SurfacePanel::rectangle` builds one with a boundary, deriving
+  the area from the half-extents, and `SpacecraftShape::cube`'s six faces now
+  carry theirs — their own forces are unchanged, but a panel added beside the
+  cube can be found behind a face. Complete cover by one panel is the whole of
+  what is found: a panel half in shadow produces its full force, as does one
+  that two others cover between them. ([#424](https://github.com/sksat/orts/pull/424))
 - `SatelliteParams` carries an optional `SpacecraftShape`, and
   `build_spacecraft_dynamics` installs `PanelSrp` and `PanelDrag` from it in
   place of the isotropic `SolarRadiationPressure` and `AtmosphericDrag`. The
@@ -93,6 +104,14 @@ section is subdivided by package.
   0.33 m, and the three shorter Harris-Priester oracles by 20-40%. ([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- `SurfacePanel::at_com` and `SurfacePanel::rectangle` reject a direction vector
+  whose magnitude cannot be computed, instead of building a panel whose normal
+  is infinite. They normalised first and then checked the result was long
+  enough, which `[1e-200, 1e-200, 1e-200]` passes: its squared norm underflows
+  to zero, so normalising divides by zero and gives an infinite normal, and
+  every force computed from it is NaN. The magnitude of the vector the caller
+  passed is now what is checked, which also covers `[1e300, 1e300, 0]`, whose
+  squared norm overflows. ([#424](https://github.com/sksat/orts/pull/424))
 - `load_as_recording` restores a component the .rrd carries on only some of an
   entity's rows, rather than dropping it. It had to drop it while a column could
   not say which rows it covered: filling the absent rows with zeros would have
@@ -265,8 +284,13 @@ section is subdivided by package.
 
 #### Added
 - `[[satellites.panels]]` gives a satellite a flat-panel outer surface, with
-  `area`, `normal`, `cd`, `specular`, `diffuse`, `cp_offset`, `two_sided`
+  `area` or `half_extent` + `in_plane_x` ([#424](https://github.com/sksat/orts/pull/424)), `normal`, `cd`,
+  `specular`, `diffuse`, `cp_offset`, `two_sided`
   ([#399](https://github.com/sksat/orts/pull/399)) and `back` ([#395](https://github.com/sksat/orts/pull/395)).
+  `half_extent` gives the panel a boundary, which is what lets another panel be
+  found covering it completely, seen from the Sun or the flow; a panel given
+  only an `area` produces the same force when lit but takes no part in
+  shadowing.
   A panel is one face, so a thin plate — a solar array — has to ask for its far
   side: `two_sided = true` where the two sides look the same, or `back` where
   they differ optically, which also carries the reflectivities that differ (an

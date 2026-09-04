@@ -61,8 +61,9 @@ fn panel_force(panel: &SurfacePanel, s_body: &Vector3<f64>, pressure: f64) -> Ve
 /// [`PanelOptics`]: super::PanelOptics
 pub struct PanelSrp {
     shape: SpacecraftShape,
-    /// Central body radius for shadow model [km].
-    /// `None` disables shadow computation (always sunlit).
+    /// Central body radius for the eclipse model [km].
+    /// `None` disables the eclipse test, so the spacecraft is never in a
+    /// body's shadow. Panel-to-panel occlusion is separate and always applies.
     shadow_body_radius: Option<f64>,
     /// Shadow model to use (default: Cylindrical).
     shadow_model: ShadowModel,
@@ -79,7 +80,12 @@ impl PanelSrp {
     /// with the geocentric Sun and no shadow — see [`Self::new`].
     ///
     /// # Panics
-    /// Panics unless every panel normal is unit length.
+    /// Panics unless every panel normal is unit length and every outline is
+    /// consistent with its panel — positive finite extents whose product is a
+    /// finite non-zero area matching `area`, and a unit in-plane axis
+    /// perpendicular to the normal. Both are re-checked here because
+    /// `SurfacePanel`'s fields are public, so a struct literal can bypass the
+    /// constructors that establish them.
     pub fn panels(panels: Vec<super::SurfacePanel>) -> Self {
         Self::new(SpacecraftShape::panels(panels))
     }
@@ -93,9 +99,15 @@ impl PanelSrp {
     /// [`PanelOptics`]: super::PanelOptics
     ///
     /// # Panics
-    /// Panics unless every panel normal is unit length.
+    /// Panics unless every panel normal is unit length and every outline is
+    /// consistent with its panel — positive finite extents whose product is a
+    /// finite non-zero area matching `area`, and a unit in-plane axis
+    /// perpendicular to the normal. Both are re-checked here because
+    /// `SurfacePanel`'s fields are public, so a struct literal can bypass the
+    /// constructors that establish them.
     pub fn for_earth(shape: SpacecraftShape) -> Self {
         shape.assert_normals_are_unit();
+        shape.assert_outlines_are_consistent();
         Self {
             shape,
             shadow_body_radius: Some(R_EARTH),
@@ -119,12 +131,18 @@ impl PanelSrp {
     /// Fails only for a central body with no Sun ephemeris (Uranus, Neptune).
     ///
     /// # Panics
-    /// Panics unless every panel normal is unit length.
+    /// Panics unless every panel normal is unit length and every outline is
+    /// consistent with its panel — positive finite extents whose product is a
+    /// finite non-zero area matching `area`, and a unit in-plane axis
+    /// perpendicular to the normal. Both are re-checked here because
+    /// `SurfacePanel`'s fields are public, so a struct literal can bypass the
+    /// constructors that establish them.
     pub fn for_body(
         body: arika::body::KnownBody,
         shape: SpacecraftShape,
     ) -> Result<Self, arika::sun::SunPositionError> {
         shape.assert_normals_are_unit();
+        shape.assert_outlines_are_consistent();
         if body == arika::body::KnownBody::Sun {
             return Ok(Self {
                 shape,
@@ -149,7 +167,7 @@ impl PanelSrp {
         })
     }
 
-    /// Create an SRP model with the geocentric Sun and no shadow.
+    /// Create an SRP model with the geocentric Sun and no central-body eclipse.
     ///
     /// The Sun direction is Earth's, so about another body the force points
     /// where the Sun is not — from Mars in 2026 up to 176° off. For a
@@ -158,10 +176,23 @@ impl PanelSrp {
     ///
     /// [`without_shadow()`]: Self::without_shadow
     ///
+    /// Panels still shade each other. That is a property of the shape rather
+    /// than of an orbit, so it is not something either constructor turns off:
+    /// an outlined panel that another one completely covers contributes nothing
+    /// here either. Complete cover by one panel is the whole of what is found —
+    /// a panel half in shadow produces its full force, as does one that two
+    /// others cover between them.
+    ///
     /// # Panics
-    /// Panics unless every panel normal is unit length.
+    /// Panics unless every panel normal is unit length and every outline is
+    /// consistent with its panel — positive finite extents whose product is a
+    /// finite non-zero area matching `area`, and a unit in-plane axis
+    /// perpendicular to the normal. Both are re-checked here because
+    /// `SurfacePanel`'s fields are public, so a struct literal can bypass the
+    /// constructors that establish them.
     pub fn new(shape: SpacecraftShape) -> Self {
         shape.assert_normals_are_unit();
+        shape.assert_outlines_are_consistent();
         Self {
             shape,
             shadow_body_radius: None,
@@ -256,6 +287,17 @@ impl PanelSrp {
                 let mut total_torque_body = Vector3::zeros(); // [N·m]
 
                 for panel in panels {
+                    // Facing first: a back-facing panel produces nothing either
+                    // way, and the occlusion scan is O(N) per panel.
+                    if panel.normal.dot(&s_body) <= 0.0 {
+                        continue;
+                    }
+                    // A panel standing in the Sun's way keeps this one dark.
+                    // Panels without an outline never do, so an area-only fleet
+                    // is unaffected.
+                    if crate::spacecraft::surface::is_fully_occluded(panel, panels, &s_body) {
+                        continue;
+                    }
                     let force = panel_force(panel, &s_body, base_pressure); // [N]
 
                     total_force_body += force;
@@ -367,6 +409,7 @@ mod tests {
             cd: 2.2,
             optics: PanelOptics::absorber(),
             cp_offset: Vector3::zeros(),
+            outline: None,
         }]);
         PanelSrp::for_earth(shape);
     }
@@ -722,6 +765,353 @@ mod tests {
             panel_force(&back, &edge_on, TEST_PRESSURE),
             Vector3::zeros()
         );
+    }
+
+    /// A panel standing in the Sun's way leaves the one behind it dark.
+    ///
+    /// Both plates face +x with the Sun on +x; the near one is bigger and sits
+    /// closer to the Sun, so it covers the far one completely. Without occlusion
+    /// both would produce force, which is the whole of #392.
+    fn shaded_pair(near_half: f64) -> SpacecraftShape {
+        let far = SurfacePanel::rectangle(
+            [1.0, 1.0],
+            Vector3::new(0.0, 1.0, 0.0),
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::new(0.1, 0.2),
+        );
+        let near = SurfacePanel::rectangle(
+            [near_half, near_half],
+            Vector3::new(0.0, 1.0, 0.0),
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::new(0.1, 0.2),
+        )
+        .with_cp_offset(Vector3::new(2.0, 0.0, 0.0));
+        SpacecraftShape::panels(vec![far, near])
+    }
+
+    fn panel_srp_force(shape: SpacecraftShape, s_body: &Vector3<f64>) -> Vector3<f64> {
+        let SpacecraftShape::Panels(panels) = shape else {
+            panic!("expected panels");
+        };
+        let mut total = Vector3::zeros();
+        for panel in &panels {
+            if crate::spacecraft::surface::is_fully_occluded(panel, &panels, s_body) {
+                continue;
+            }
+            total += panel_force(panel, s_body, TEST_PRESSURE);
+        }
+        total
+    }
+
+    /// The shaded panel is excluded by `PanelSrp::eval`, not just by the
+    /// occlusion test called on its own.
+    ///
+    /// The tests below reach `is_fully_occluded` through a helper, so deleting
+    /// the call inside `eval` would leave them green. This one goes through the
+    /// model and checks the torque as well as the acceleration: the hidden
+    /// panel has its own `cp_offset`, so a force wrongly attributed to it shows
+    /// up there even when the magnitudes happen to be close.
+    #[test]
+    fn eval_excludes_a_shaded_panel_from_both_the_force_and_the_torque() {
+        let epoch = test_epoch();
+        let state = iss_state();
+        // Sun direction in the body frame, so the plates can be aimed at it.
+        let s_body = sat_to_sun_unit(&epoch);
+
+        let optics = PanelOptics::new(0.1, 0.2);
+        let in_plane = s_body.cross(&Vector3::new(0.0, 0.0, 1.0)).normalize();
+        // Behind the near plate, and off-centre so it would torque if it were lit.
+        let hidden = SurfacePanel::rectangle([0.4, 0.4], in_plane, s_body, 2.2, optics)
+            .with_cp_offset(in_plane * 1.5);
+        let near = SurfacePanel::rectangle([1.2, 1.2], in_plane, s_body, 2.2, optics)
+            .with_cp_offset(in_plane * 1.5 + s_body * 2.0);
+
+        let pair = PanelSrp::for_earth(SpacecraftShape::panels(vec![hidden.clone(), near.clone()]));
+        let alone = PanelSrp::for_earth(SpacecraftShape::panels(vec![near]));
+        let hidden_only = PanelSrp::for_earth(SpacecraftShape::panels(vec![hidden]));
+
+        let pair = pair.eval(0.0, &state, Some(&epoch));
+        let alone = alone.eval(0.0, &state, Some(&epoch));
+        let hidden_only = hidden_only.eval(0.0, &state, Some(&epoch));
+
+        assert!(
+            hidden_only.acceleration_inertial.magnitude() > 0.0,
+            "the hidden plate is lit when nothing is in front of it"
+        );
+        assert!(
+            hidden_only.torque_body.into_inner().magnitude() > 0.0,
+            "and it torques, so its exclusion is visible in the torque"
+        );
+
+        let (a_pair, a_alone) = (
+            pair.acceleration_inertial.into_inner(),
+            alone.acceleration_inertial.into_inner(),
+        );
+        assert!(
+            (a_pair - a_alone).magnitude() / a_alone.magnitude() < 1e-12,
+            "the pair's acceleration must be the near plate's alone: {a_pair:?} vs {a_alone:?}"
+        );
+        let (t_pair, t_alone) = (
+            pair.torque_body.into_inner(),
+            alone.torque_body.into_inner(),
+        );
+        assert!(
+            (t_pair - t_alone).magnitude() / t_alone.magnitude() < 1e-12,
+            "and its torque likewise: {t_pair:?} vs {t_alone:?}"
+        );
+    }
+
+    /// An outline written through a struct literal is checked where the panels
+    /// enter a model, since `rectangle`'s asserts can be bypassed.
+    ///
+    /// `SpacecraftShape::Panels` is written as the variant rather than through
+    /// `SpacecraftShape::panels`, which validates on its own: going through the
+    /// constructor would panic there and leave the model's own check untested.
+    #[test]
+    #[should_panic(expected = "perpendicular to the normal")]
+    fn a_struct_literal_outline_with_a_parallel_axis_is_rejected() {
+        let normal = Vector3::new(1.0, 0.0, 0.0);
+        let panel = SurfacePanel {
+            area: 4.0,
+            normal,
+            cd: 2.2,
+            optics: PanelOptics::absorber(),
+            cp_offset: Vector3::zeros(),
+            outline: Some(crate::spacecraft::PanelOutline::Rectangle {
+                half_extent: [1.0, 1.0],
+                in_plane_x: normal, // parallel, so both in-plane axes degenerate
+            }),
+        };
+        let _ = PanelSrp::for_earth(SpacecraftShape::Panels(vec![panel]));
+    }
+
+    /// `for_body` carries the same invariant, and it is the constructor
+    /// `orts::setup` reaches for, so config input arrives through it.
+    #[test]
+    #[should_panic(expected = "does not match the outline")]
+    fn for_body_rejects_an_outline_inconsistent_with_the_area() {
+        let panel = SurfacePanel {
+            area: 99.0, // the outline says 4.0
+            normal: Vector3::new(1.0, 0.0, 0.0),
+            cd: 2.2,
+            optics: PanelOptics::absorber(),
+            cp_offset: Vector3::zeros(),
+            outline: Some(crate::spacecraft::PanelOutline::Rectangle {
+                half_extent: [1.0, 1.0],
+                in_plane_x: Vector3::new(0.0, 1.0, 0.0),
+            }),
+        };
+        let _ = PanelSrp::for_body(
+            arika::body::KnownBody::Earth,
+            SpacecraftShape::Panels(vec![panel]),
+        );
+    }
+
+    /// And `SpacecraftShape::panels` still establishes it, which is what lets
+    /// the tests above write the variant directly.
+    #[test]
+    #[should_panic(expected = "does not match the outline")]
+    fn the_panels_constructor_rejects_an_inconsistent_outline() {
+        let panel = SurfacePanel {
+            area: 99.0,
+            normal: Vector3::new(1.0, 0.0, 0.0),
+            cd: 2.2,
+            optics: PanelOptics::absorber(),
+            cp_offset: Vector3::zeros(),
+            outline: Some(crate::spacecraft::PanelOutline::Rectangle {
+                half_extent: [1.0, 1.0],
+                in_plane_x: Vector3::new(0.0, 1.0, 0.0),
+            }),
+        };
+        let _ = SpacecraftShape::panels(vec![panel]);
+    }
+
+    /// An infinite stored area passes a relative comparison against itself.
+    #[test]
+    #[should_panic(expected = "area must be positive and finite")]
+    fn a_struct_literal_with_an_infinite_area_is_rejected() {
+        let panel = SurfacePanel {
+            area: f64::INFINITY,
+            normal: Vector3::new(1.0, 0.0, 0.0),
+            cd: 2.2,
+            optics: PanelOptics::absorber(),
+            cp_offset: Vector3::zeros(),
+            outline: Some(crate::spacecraft::PanelOutline::Rectangle {
+                half_extent: [1.0, 1.0],
+                in_plane_x: Vector3::new(0.0, 1.0, 0.0),
+            }),
+        };
+        let _ = PanelSrp::for_earth(SpacecraftShape::Panels(vec![panel]));
+    }
+
+    /// And an area that disagrees with the outline it claims.
+    #[test]
+    #[should_panic(expected = "does not match the outline")]
+    fn a_struct_literal_outline_inconsistent_with_the_area_is_rejected() {
+        let panel = SurfacePanel {
+            area: 99.0, // the outline says 4.0
+            normal: Vector3::new(1.0, 0.0, 0.0),
+            cd: 2.2,
+            optics: PanelOptics::absorber(),
+            cp_offset: Vector3::zeros(),
+            outline: Some(crate::spacecraft::PanelOutline::Rectangle {
+                half_extent: [1.0, 1.0],
+                in_plane_x: Vector3::new(0.0, 1.0, 0.0),
+            }),
+        };
+        let _ = PanelSrp::for_earth(SpacecraftShape::Panels(vec![panel]));
+    }
+
+    #[test]
+    fn a_panel_behind_a_larger_one_feels_nothing() {
+        let sun = Vector3::new(1.0, 0.0, 0.0);
+        // The near plate is 2 m on a side against the far one's 2 m, and sits
+        // between it and the Sun, so it covers it exactly.
+        let covered = panel_srp_force(shaded_pair(1.0), &sun);
+        let one_panel = panel_force(
+            &SurfacePanel::rectangle(
+                [1.0, 1.0],
+                Vector3::new(0.0, 1.0, 0.0),
+                Vector3::new(1.0, 0.0, 0.0),
+                2.2,
+                PanelOptics::new(0.1, 0.2),
+            )
+            .with_cp_offset(Vector3::new(2.0, 0.0, 0.0)),
+            &sun,
+            TEST_PRESSURE,
+        );
+        assert!(
+            (covered - one_panel).magnitude() < 1e-18,
+            "only the near plate should contribute: {covered:?} vs {one_panel:?}"
+        );
+    }
+
+    #[test]
+    fn a_panel_only_partly_covered_still_feels_the_sun() {
+        let sun = Vector3::new(1.0, 0.0, 0.0);
+        // Half the width, so it cannot cover the far plate's corners.
+        let force = panel_srp_force(shaded_pair(0.5), &sun);
+        let both = {
+            let SpacecraftShape::Panels(panels) = shaded_pair(0.5) else {
+                panic!("expected panels");
+            };
+            panels
+                .iter()
+                .map(|p| panel_force(p, &sun, TEST_PRESSURE))
+                .sum::<Vector3<f64>>()
+        };
+        assert!(
+            (force - both).magnitude() < 1e-18,
+            "partial cover is not occlusion here: {force:?} vs {both:?}"
+        );
+    }
+
+    /// Which plate shields which follows the incoming direction, not the order
+    /// they were written in.
+    #[test]
+    fn the_shielding_role_follows_the_incoming_direction() {
+        let SpacecraftShape::Panels(panels) = shaded_pair(1.0) else {
+            panic!("expected panels");
+        };
+        let occluded = |sun: Vector3<f64>| {
+            (
+                crate::spacecraft::surface::is_fully_occluded(&panels[0], &panels, &sun),
+                crate::spacecraft::surface::is_fully_occluded(&panels[1], &panels, &sun),
+            )
+        };
+
+        // Sun on +x: the plate at x = 2 stands in front of the one at the origin.
+        assert_eq!(occluded(Vector3::new(1.0, 0.0, 0.0)), (true, false));
+        // Sun on -x: the roles swap, because the origin plate is now the near one.
+        assert_eq!(occluded(Vector3::new(-1.0, 0.0, 0.0)), (false, true));
+        // Along the plates: neither stands in the other's way.
+        assert_eq!(occluded(Vector3::new(0.0, 1.0, 0.0)), (false, false));
+    }
+
+    /// A panel with no outline is invisible to the shadow test, both ways.
+    #[test]
+    fn an_outlineless_panel_neither_shades_nor_is_shaded() {
+        let sun = Vector3::new(1.0, 0.0, 0.0);
+        let bare = SurfacePanel::at_com(
+            4.0,
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::new(0.1, 0.2),
+        );
+        let big = SurfacePanel::rectangle(
+            [4.0, 4.0],
+            Vector3::new(0.0, 1.0, 0.0),
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::new(0.1, 0.2),
+        )
+        .with_cp_offset(Vector3::new(2.0, 0.0, 0.0));
+
+        let panels = vec![bare.clone(), big.clone()];
+        assert!(
+            !crate::spacecraft::surface::is_fully_occluded(&panels[0], &panels, &sun),
+            "a panel with no outline cannot be shaded"
+        );
+
+        // And the other way round: an outlineless panel in front shades nothing.
+        let far = SurfacePanel::rectangle(
+            [1.0, 1.0],
+            Vector3::new(0.0, 1.0, 0.0),
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::new(0.1, 0.2),
+        );
+        let bare_near = SurfacePanel::at_com(
+            64.0,
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::new(0.1, 0.2),
+        )
+        .with_cp_offset(Vector3::new(2.0, 0.0, 0.0));
+        let panels = vec![far, bare_near];
+        assert!(
+            !crate::spacecraft::surface::is_fully_occluded(&panels[0], &panels, &sun),
+            "a panel with no outline cannot shade"
+        );
+    }
+
+    /// The two faces of one plate share a plane, so neither shades the other.
+    #[test]
+    fn the_two_faces_of_a_plate_do_not_shade_each_other() {
+        let front = SurfacePanel::rectangle(
+            [1.0, 1.0],
+            Vector3::new(0.0, 1.0, 0.0),
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::new(0.1, 0.2),
+        );
+        let back = front.back_face(PanelOptics::new(0.05, 0.4));
+        let panels = vec![front, back];
+        for sun in [Vector3::new(1.0, 0.0, 0.0), Vector3::new(-1.0, 0.0, 0.0)] {
+            for (i, panel) in panels.iter().enumerate() {
+                assert!(
+                    !crate::spacecraft::surface::is_fully_occluded(panel, &panels, &sun),
+                    "coincident faces must not shade each other (sun {sun:?}, panel {i})"
+                );
+            }
+        }
+    }
+
+    /// The back face inherits the outline, since it is the same plate.
+    #[test]
+    fn back_face_carries_the_outline() {
+        let front = SurfacePanel::rectangle(
+            [1.0, 2.0],
+            Vector3::new(0.0, 1.0, 0.0),
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::new(0.1, 0.2),
+        );
+        let back = front.back_face(PanelOptics::absorber());
+        assert_eq!(back.outline, front.outline);
+        assert_eq!(back.area, front.area);
     }
 
     /// The back face is what covers the attitudes the front cannot.
@@ -1224,6 +1614,7 @@ mod tests {
             cd: 2.2,
             optics: PanelOptics::absorber(),
             cp_offset: Vector3::new(0.0, 1.0, 0.0), // 1 m offset in +y
+            outline: None,
         };
         let srp = PanelSrp::new(SpacecraftShape::panels(vec![panel]));
         let epoch = test_epoch();
@@ -1265,6 +1656,7 @@ mod tests {
             cd: 2.2,
             optics: PanelOptics::absorber(),
             cp_offset: Vector3::new(0.0, 1.0, 0.0),
+            outline: None,
         };
         let srp = PanelSrp::new(SpacecraftShape::panels(vec![panel]));
         let epoch = test_epoch();
@@ -1321,6 +1713,7 @@ mod tests {
             cd: 2.2,
             optics,
             cp_offset,
+            outline: None,
         };
 
         let loads = PanelSrp::new(SpacecraftShape::panels(vec![panel])).eval(
@@ -1377,6 +1770,7 @@ mod tests {
             cd: 2.2,
             optics,
             cp_offset,
+            outline: None,
         };
 
         let loads =

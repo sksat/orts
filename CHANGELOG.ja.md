@@ -30,6 +30,16 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - WIT v0 plugin interface に msg-io / stream-io チャネルを追加。([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
 #### Changed
+- **BREAKING**: `SurfacePanel` に public な `outline: Option<PanelOutline>` が
+  増えたので、struct literal はこの field を書く必要がある。`PanelSrp` と
+  `PanelDrag` は、別のパネルに完全に覆われたパネルを飛ばすようになった (以前は
+  全面照射として計算していた)。判定に参加するのは輪郭を持つパネルだけで、`at_com`
+  で作ったパネルは従来と同じ力を出し、遮蔽もしないし遮蔽もされない。輪郭を持つ
+  パネルは `SurfacePanel::rectangle` で作り、面積は半寸法から導出する。
+  `SpacecraftShape::cube` の 6 面も輪郭を持つようになった (面自身の力は変わらないが、
+  cube の隣に足したパネルが面の陰にいることを判定できる)。見つかるのは 1 枚に完全に
+  覆われる場合だけで、一部だけ隠れるパネルは全面照射として力を出し、2 枚の和で
+  覆われる配置も照射扱いのままである。([#424](https://github.com/sksat/orts/pull/424))
 - `SatelliteParams` が `SpacecraftShape` を optional で持ち、
   `build_spacecraft_dynamics` がそれを見て等方面の `SolarRadiationPressure` /
   `AtmosphericDrag` の代わりに `PanelSrp` / `PanelDrag` を install するように
@@ -80,6 +90,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   20-40% 改善する。([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- `SurfacePanel::at_com` と `SurfacePanel::rectangle` が、magnitude を計算できない
+  方向ベクトルを、無限大の normal を持つ panel にせず reject するようになった。
+  正規化した後で結果の長さを検査していたので、`[1e-200, 1e-200, 1e-200]` が通って
+  いた: squared norm が 0 に underflow するため正規化が 0 除算になり normal が無限大
+  になって、そこから計算する力はすべて NaN になる。呼び出し側が渡したベクトルの
+  magnitude を検査する形にした。squared norm が overflow する `[1e300, 1e300, 0]`
+  も同じ検査で落ちる。([#424](https://github.com/sksat/orts/pull/424))
 - `load_as_recording` が、.rrd が entity の一部の行にしか持たない component を
   落とさず復元するようになった。列が「自分の覆う行」を持てなかった間は落とすしか
   なかった: 欠けた行をゼロで埋めると `orts convert` の CSV にファイルが持っていない
@@ -227,8 +244,12 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 
 #### Added
 - `[[satellites.panels]]` で衛星に平板の外形を与えられるようにした
-  (`area`, `normal`, `cd`, `specular`, `diffuse`, `cp_offset`, `two_sided`
+  (`area` または `half_extent` + `in_plane_x` ([#424](https://github.com/sksat/orts/pull/424))、`normal`, `cd`,
+  `specular`, `diffuse`, `cp_offset`, `two_sided`
   ([#399](https://github.com/sksat/orts/pull/399))、`back` ([#395](https://github.com/sksat/orts/pull/395)))。
+  `half_extent` を書くとパネルに輪郭ができ、別のパネルに完全に覆われていることを
+  判定できるようになる。`area` だけのパネルは、照らされたときの力は同じだが遮蔽の
+  判定には関与しない。
   パネルは片面なので、薄板 (太陽電池パドル) には裏面を書く。表裏が同じなら
   `two_sided = true`、光学的に違うなら `back` に違う分の反射率を書く (空の
   `back = {}` は `two_sided = true` と同じ)。面積 / `cd` / 圧力中心はどちらでも

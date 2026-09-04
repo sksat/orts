@@ -374,8 +374,29 @@ fn default_true() -> bool {
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
 #[ts(export)]
 pub struct PanelConfig {
-    /// Panel area [m²].
-    pub area: f64,
+    /// Panel area [m²]. Write this or `half_extent`, not both.
+    #[ts(optional)]
+    pub area: Option<f64>,
+    /// In-plane half-extents [m]: along `in_plane_x`, then along
+    /// `normal × in_plane_x`. The area follows from these.
+    ///
+    /// Writing them gives the panel a boundary, which is what lets another
+    /// panel be found covering it completely. Without them the panel still
+    /// produces the same force when lit, but takes no part in shadowing.
+    ///
+    /// Complete cover by one panel is the whole of what is found: a panel half
+    /// in shadow produces its full force, as does one that two others cover
+    /// between them.
+    ///
+    /// The boundary is centred on `cp_offset`, so these are half-widths about
+    /// that point rather than about the CoM: a plate 2 m across, on an arm
+    /// 1.5 m out along that same axis, spans 0.5 m to 2.5 m from the CoM.
+    /// Moving the arm moves the plate.
+    #[ts(optional)]
+    pub half_extent: Option<[f64; 2]>,
+    /// In-plane reference axis for `half_extent`, perpendicular to `normal`.
+    #[ts(optional)]
+    pub in_plane_x: Option<[f64; 3]>,
     /// Outward-pointing normal in the body frame. Normalised internally.
     pub normal: [f64; 3],
     /// Drag coefficient (typically 2.0–2.2 for LEO free-molecular flow).
@@ -390,7 +411,9 @@ pub struct PanelConfig {
     pub diffuse: f64,
     /// Centre-of-pressure offset from the CoM [m, body frame] (default: zero).
     ///
-    /// This is what makes a panel force an attitude disturbance.
+    /// This is what makes a panel force an attitude disturbance. With
+    /// `half_extent` it also places the plate, whose boundary is centred here —
+    /// so it is where the panel *is*, not only the arm its force acts on.
     #[serde(default)]
     #[ts(as = "Option<_>", optional)]
     pub cp_offset: [f64; 3],
@@ -479,19 +502,95 @@ impl PanelConfig {
     /// otherwise assert on, so malformed config reports an error instead of
     /// panicking.
     fn validate(&self, index: usize) -> Result<(), String> {
-        if !self.area.is_finite() || self.area <= 0.0 {
-            return Err(format!("panels[{index}].area must be positive and finite"));
-        }
-        if !self.cd.is_finite() || self.cd < 0.0 {
-            return Err(format!(
-                "panels[{index}].cd must be non-negative and finite"
-            ));
-        }
+        // First, because the in-plane axis is checked against it below.
         let n = self.normal;
         let norm_sq = n[0] * n[0] + n[1] * n[1] + n[2] * n[2];
         if !norm_sq.is_finite() || norm_sq <= 0.0 {
             return Err(format!(
                 "panels[{index}].normal must be a non-zero finite vector"
+            ));
+        }
+        match (self.half_extent, self.in_plane_x) {
+            (Some(_), None) => {
+                return Err(format!(
+                    "panels[{index}].half_extent needs in_plane_x to say which way it runs"
+                ));
+            }
+            (None, Some(_)) => {
+                return Err(format!(
+                    "panels[{index}].in_plane_x describes no extent without half_extent"
+                ));
+            }
+            (Some(half_extent), Some(in_plane_x)) => {
+                if self.area.is_some() {
+                    return Err(format!(
+                        "panels[{index}]: area and half_extent both give the size; keep one"
+                    ));
+                }
+                if !half_extent.iter().all(|h| h.is_finite() && *h > 0.0) {
+                    return Err(format!(
+                        "panels[{index}].half_extent components must be positive and finite"
+                    ));
+                }
+                // The area is derived, so it needs the same finiteness the
+                // `area` arm gets: half-extents of 1e200 each are finite and
+                // positive on their own and multiply to infinity, which reaches
+                // the integrator as a non-finite state rather than an error.
+                // Positive and finite on their own is not enough: the
+                // product underflows for `[1e-300, 1e-300]` and overflows for
+                // `[1e200, 1e200]`. A zero area is the worse of the two — it
+                // validates, runs, and produces no force.
+                // Extents first, so the two orders agree — see `rectangle`.
+                let area = half_extent[0] * half_extent[1] * 4.0;
+                if !area.is_finite() || area <= 0.0 {
+                    return Err(format!(
+                        "panels[{index}].half_extent gives an area of {area} ({} × {})",
+                        half_extent[0], half_extent[1]
+                    ));
+                }
+                // `SurfacePanel::rectangle` asserts all of this. Without the
+                // check here a config reaches it and panics — inside the server
+                // for a satellite added over the websocket.
+                let x = nalgebra::Vector3::from_row_slice(&in_plane_x);
+                if !x.iter().all(|c| c.is_finite()) {
+                    return Err(format!(
+                        "panels[{index}].in_plane_x components must be finite"
+                    ));
+                }
+                // Finite as well as non-zero: `[1e300, 1e300, 0]` has finite
+                // components but its magnitude overflows, and `normalize` then
+                // returns the zero vector — which reads as perpendicular to
+                // everything.
+                let mag = x.magnitude();
+                if !mag.is_finite() || mag == 0.0 {
+                    return Err(format!(
+                        "panels[{index}].in_plane_x must be a non-zero vector with a finite length"
+                    ));
+                }
+                let cos = nalgebra::Vector3::from_row_slice(&self.normal)
+                    .normalize()
+                    .dot(&x.normalize());
+                if cos.abs() >= 1e-9 {
+                    return Err(format!(
+                        "panels[{index}].in_plane_x must be perpendicular to normal, \
+                         got n·x = {cos}"
+                    ));
+                }
+            }
+            (None, None) => {
+                let Some(area) = self.area else {
+                    return Err(format!(
+                        "panels[{index}] needs area, or half_extent with in_plane_x"
+                    ));
+                };
+                if !area.is_finite() || area <= 0.0 {
+                    return Err(format!("panels[{index}].area must be positive and finite"));
+                }
+            }
+        }
+        if !self.cd.is_finite() || self.cd < 0.0 {
+            return Err(format!(
+                "panels[{index}].cd must be non-negative and finite"
             ));
         }
         validate_optics(
@@ -557,15 +656,30 @@ impl PanelConfig {
     /// sides produces no force at all for the attitudes where the flow comes
     /// from behind, so the far face has to be there to be seen.
     ///
-    /// `at_com` normalises the normal, which is what keeps the unit-length
-    /// assert in the model constructors from firing.
+    /// Both constructors normalise the normal, which is what keeps the
+    /// unit-length assert in the model constructors from firing.
+    ///
+    /// `validate` has already established that exactly one of `area` and
+    /// `half_extent` is there, so the `expect` below cannot fire from config.
     fn to_surface_panels(&self) -> Vec<SurfacePanel> {
-        let front = SurfacePanel::at_com(
-            self.area,
-            nalgebra::Vector3::from_row_slice(&self.normal),
-            self.cd,
-            PanelOptics::new(self.specular, self.diffuse),
-        )
+        let normal = nalgebra::Vector3::from_row_slice(&self.normal);
+        let optics = PanelOptics::new(self.specular, self.diffuse);
+        let front = match (self.half_extent, self.in_plane_x) {
+            (Some(half_extent), Some(in_plane_x)) => SurfacePanel::rectangle(
+                half_extent,
+                nalgebra::Vector3::from_row_slice(&in_plane_x),
+                normal,
+                self.cd,
+                optics,
+            ),
+            _ => SurfacePanel::at_com(
+                self.area
+                    .expect("validate requires area without half_extent"),
+                normal,
+                self.cd,
+                optics,
+            ),
+        }
         .with_cp_offset(nalgebra::Vector3::from_row_slice(&self.cp_offset));
 
         if !self.has_back_face() {
@@ -3065,6 +3179,139 @@ attitude = {{ inertia_diag = [10, 10, 10], mass = 50 }}
         assert!((front.optics.specular() - 0.1).abs() < 1e-15);
         assert!((back.optics.specular() - 0.05).abs() < 1e-15);
         assert!((back.optics.diffuse() - 0.4).abs() < 1e-15);
+    }
+
+    /// `half_extent` gives the panel a boundary, and the area follows from it.
+    #[test]
+    fn half_extent_gives_the_panel_an_outline() {
+        let panels = panels_of(&panel_sat_toml(
+            "normal = [1, 0, 0]\ncd = 2.2\nhalf_extent = [1.0, 2.0]\n\
+             in_plane_x = [0, 1, 0]\ncp_offset = [0.0, 0.0, 1.5]",
+        ));
+        assert_eq!(panels.len(), 1);
+        assert!(
+            panels[0].outline.is_some(),
+            "the outline has to reach the model"
+        );
+        assert!(
+            (panels[0].area - 8.0).abs() < 1e-15,
+            "area follows from the half-extents: got {}",
+            panels[0].area
+        );
+        assert_eq!(
+            panels[0].cp_offset,
+            nalgebra::Vector3::new(0.0, 0.0, 1.5),
+            "the outline is centred on the centre of pressure"
+        );
+    }
+
+    /// Without it the panel is as before: an area, and no part in shadowing.
+    #[test]
+    fn area_alone_leaves_the_panel_without_an_outline() {
+        let panels = panels_of(&panel_sat_toml("area = 4.0\nnormal = [1, 0, 0]\ncd = 2.2"));
+        assert!(panels[0].outline.is_none());
+    }
+
+    /// The two ways to give the size are exclusive: which one drives the force
+    /// would otherwise be unreadable.
+    #[test]
+    fn area_beside_half_extent_is_rejected() {
+        let toml_src = panel_sat_toml(
+            "area = 4.0\nnormal = [1, 0, 0]\ncd = 2.2\nhalf_extent = [1.0, 2.0]\n\
+             in_plane_x = [0, 1, 0]",
+        );
+        let config: SimConfig = toml::from_str(&toml_src).expect("parses");
+        let err = config.satellites[0].validate().unwrap_err();
+        assert!(err.contains("both give the size"), "got: {err}");
+    }
+
+    /// The outline keys come as a pair, and neither works alone.
+    #[test]
+    fn a_lone_outline_key_is_rejected() {
+        for (body, expected) in [
+            (
+                "normal = [1, 0, 0]\ncd = 2.2\nhalf_extent = [1.0, 2.0]",
+                "needs in_plane_x",
+            ),
+            (
+                "normal = [1, 0, 0]\ncd = 2.2\nin_plane_x = [0, 1, 0]",
+                "describes no extent",
+            ),
+        ] {
+            let config: SimConfig = toml::from_str(&panel_sat_toml(body)).expect("parses");
+            let err = config.satellites[0].validate().unwrap_err();
+            assert!(err.contains(expected), "{body}: got {err}");
+        }
+    }
+
+    /// Neither way to give the size is an error too, rather than a zero-area
+    /// panel that produces no force and says nothing.
+    #[test]
+    fn a_panel_with_no_size_at_all_is_rejected() {
+        let config: SimConfig =
+            toml::from_str(&panel_sat_toml("normal = [1, 0, 0]\ncd = 2.2")).expect("parses");
+        let err = config.satellites[0].validate().unwrap_err();
+        assert!(err.contains("needs area, or half_extent"), "got: {err}");
+    }
+
+    /// A non-positive half-extent is caught before `rectangle` asserts on it.
+    #[test]
+    fn a_non_positive_half_extent_is_rejected() {
+        let config: SimConfig = toml::from_str(&panel_sat_toml(
+            "normal = [1, 0, 0]\ncd = 2.2\nhalf_extent = [0.0, 2.0]\nin_plane_x = [0, 1, 0]",
+        ))
+        .expect("parses");
+        let err = config.satellites[0].validate().unwrap_err();
+        assert!(err.contains("half_extent components"), "got: {err}");
+    }
+
+    /// Every `in_plane_x` that `SurfacePanel::rectangle` asserts on has to be
+    /// rejected here first.
+    ///
+    /// `orts config validate` said OK for all of these and `orts run` then
+    /// panicked; over the websocket the panic landed inside the running server,
+    /// which is what the `satellite.validate()` calls on that path exist to
+    /// prevent.
+    #[test]
+    fn a_bad_in_plane_axis_is_rejected_before_it_can_panic() {
+        let cases = [
+            ("[1, 0, 0]", "perpendicular to normal"),     // parallel
+            ("[0.001, 1, 0]", "perpendicular to normal"), // 0.06 deg off
+            ("[0, 0, 0]", "non-zero vector with a finite length"),
+            ("[1e300, 1e300, 0]", "non-zero vector with a finite length"),
+            ("[nan, 1, 0]", "components must be finite"),
+            ("[inf, 1, 0]", "components must be finite"),
+        ];
+        for (axis, expected) in cases {
+            let toml_src = panel_sat_toml(&format!(
+                "normal = [1, 0, 0]\ncd = 2.2\nhalf_extent = [1.0, 1.0]\nin_plane_x = {axis}"
+            ));
+            let config: SimConfig =
+                toml::from_str(&toml_src).unwrap_or_else(|e| panic!("{axis}: {e}"));
+            let err = config.satellites[0]
+                .validate()
+                .expect_err(&format!("{axis} has to be rejected"));
+            assert!(err.contains(expected), "{axis}: got {err}");
+        }
+    }
+
+    /// Half-extents that are each finite and positive can still give an area
+    /// that is neither, at both ends.
+    ///
+    /// Overflow reached the integrator as a non-finite state and exit code 0.
+    /// Underflow is worse: a zero area validates, runs, and produces no force,
+    /// so the panel is silently not there.
+    #[test]
+    fn half_extents_giving_a_zero_or_infinite_area_are_rejected() {
+        for extent in ["[1e200, 1e200]", "[1e-300, 1e-300]"] {
+            let config: SimConfig = toml::from_str(&panel_sat_toml(&format!(
+                "normal = [1, 0, 0]\ncd = 2.2\nhalf_extent = {extent}\n\
+                 in_plane_x = [0, 1, 0]"
+            )))
+            .expect("parses");
+            let err = config.satellites[0].validate().unwrap_err();
+            assert!(err.contains("gives an area of"), "{extent}: got {err}");
+        }
     }
 
     /// `two_sided = true` is the short way to say what an empty `back` says.
