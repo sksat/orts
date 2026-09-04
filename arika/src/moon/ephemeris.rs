@@ -539,11 +539,13 @@ mod tests {
     /// a second of that boundary has its two samples 3 SI seconds apart while
     /// the difference is still divided by 2.
     ///
-    /// The oracle is the Moon's own orbital speed, which stays between 0.96 and
-    /// 1.07 km/s (measured over June 2024, near both apogee and perigee) — a
-    /// bound that does not depend on how the velocity is computed. Measured
-    /// with the UTC-JD step: 1.511 km/s against 1.008 km/s a second either
-    /// side, exactly the 3/2 the mismatched interval predicts.
+    /// The oracle is the Moon's own orbital speed, which does not depend on how
+    /// the velocity is computed. At the four epochs below it is 1.0075 km/s, and
+    /// over June 2024 — spanning apogee and perigee — it ran 0.9675 to 1.0626
+    /// km/s. The bound asserted below, 0.96 to 1.08 km/s, contains that measured
+    /// range with margin and sits far under what the UTC-JD step produced here:
+    /// 1.511 km/s, against 1.008 km/s a second either side, which is exactly the
+    /// 3/2 the mismatched interval predicts.
     #[test]
     fn moon_velocity_is_physical_across_a_leap_second() {
         // 2016-12-31T23:59:60Z was a leap second. Both epochs below sit within
@@ -560,7 +562,7 @@ mod tests {
             assert!(
                 (0.96..1.08).contains(&speed),
                 "{y}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:04.1}Z: the Moon's speed is \
-                 0.96-1.07 km/s, got {speed:.6} km/s"
+                 0.96-1.08 km/s, got {speed:.6} km/s"
             );
         }
     }
