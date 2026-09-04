@@ -584,9 +584,9 @@ const OUTLINE_EDGE_TOLERANCE: f64 = 1e-9;
 /// `upstream`.
 ///
 /// `upstream` points from the spacecraft toward where the light or the flow
-/// comes from. SRP passes `s_body`; drag passes `-v̂_body`, which is the side
-/// its own facing test treats as upwind — see the note there. It must be unit
-/// length.
+/// comes from: SRP passes `s_body`, the direction of the Sun, and drag passes
+/// `v̂_body`, the direction the spacecraft is heading through the atmosphere,
+/// which is where the gas arrives from. It must be unit length.
 ///
 /// `others` may contain `panel` itself, and no index is needed to exclude it: a
 /// corner sitting on its own panel's plane gives `t = 0`, which the depth test
@@ -809,14 +809,16 @@ impl<F: EarthFixedTransform> PanelDrag<F> {
                 let mut total_force_body = Vector3::zeros(); // N
                 let mut total_torque_body = Vector3::zeros(); // N·m
 
-                // The side this model treats as upwind, which is the side an
-                // occluding panel has to stand on. It is `-v̂` because the
-                // facing test below is `n̂·(-v̂)`; whether that matches the
-                // physics is a separate question from whether the shadow
-                // follows it, and this follows it.
-                let upstream = -v_hat_body;
+                // The upwind side, which is both the side a lit panel faces
+                // and the side an occluding panel has to stand on. `v_rel` is
+                // the spacecraft's velocity *through* the atmosphere, so in the
+                // body frame the gas arrives from `+v̂` and leaves along `-v̂`:
+                // the face turned into it is the one whose normal has a
+                // positive component along `v̂`. Orekit's paneled model selects
+                // the same face (#416).
+                let upstream = v_hat_body;
                 for panel in panels {
-                    // cos(θ) = n̂ · (-v̂): panel must face the flow
+                    // cos(θ) = n̂ · v̂: the panel has to face into the flow
                     let cos_theta = panel.normal.dot(&upstream).max(0.0);
                     if cos_theta <= 0.0 {
                         continue;
@@ -1436,7 +1438,7 @@ mod tests {
             SpacecraftShape::Panels(panels) => panels.clone(),
             _ => unreachable!("asymmetric_panels is a Panels shape"),
         } {
-            let cos_theta = panel.normal.dot(&(-v_hat)).max(0.0);
+            let cos_theta = panel.normal.dot(&v_hat).max(0.0);
             if cos_theta <= 0.0 {
                 continue;
             }
@@ -1582,10 +1584,11 @@ mod tests {
 
     #[test]
     fn panels_facing_flow_nonzero_drag() {
-        // Single panel facing -y (into the +y flow)
+        // Single panel facing +y: the side the spacecraft is heading toward,
+        // which is where the gas comes from
         let panel = SurfacePanel::at_com(
             10.0,
-            Vector3::new(0.0, -1.0, 0.0),
+            Vector3::new(0.0, 1.0, 0.0),
             2.2,
             PanelOptics::absorber(),
         );
@@ -1599,10 +1602,10 @@ mod tests {
 
     #[test]
     fn panels_backface_zero_drag() {
-        // Single panel facing +y (away from the +y flow) — backface
+        // Single panel facing -y: sheltered behind the body from the +y flow
         let panel = SurfacePanel::at_com(
             10.0,
-            Vector3::new(0.0, 1.0, 0.0),
+            Vector3::new(0.0, -1.0, 0.0),
             2.2,
             PanelOptics::absorber(),
         );
@@ -1615,11 +1618,128 @@ mod tests {
         );
     }
 
+    /// **#416 reproduction**: the gas hits the face whose normal points along
+    /// `+v_rel`, and that is the face the drag has to load.
+    ///
+    /// `relative_velocity_from_orbit` returns the spacecraft's velocity through
+    /// the atmosphere, so in the body frame the gas arrives from the `+v_rel`
+    /// side and leaves along `-v_rel`. The face turned into it is the one whose
+    /// normal has a positive component along `v_rel`; the opposite face sits
+    /// behind the body and is swept by nothing.
+    ///
+    /// The two single-sided panels are asked separately because a
+    /// front-back-symmetric body cannot show this: whichever face of an
+    /// opposite pair is picked, the projected areas sum to the same value and
+    /// the total force is identical. `cube_projected_area_analytic` and
+    /// `two_sided_panel_no_dead_zone` are both blind to it for that reason.
+    #[test]
+    fn drag_loads_the_windward_face_not_the_sheltered_one() {
+        let state = iss_state();
+        let drag_magnitude = |normal: Vector3<f64>| {
+            let panel = SurfacePanel::at_com(10.0, normal, 2.2, PanelOptics::absorber());
+            PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]))
+                .eval(0.0, &state, None)
+                .acceleration_inertial
+                .magnitude()
+        };
+
+        // Which side the gas comes from, taken from the model's own relative
+        // velocity rather than assumed. `eval` with no epoch falls back to
+        // J2000, and `SimpleEci` co-rotates about `+Z` at every epoch anyway.
+        let probe = PanelDrag::for_earth(SpacecraftShape::panels(vec![SurfacePanel::at_com(
+            1.0,
+            Vector3::x(),
+            2.2,
+            PanelOptics::absorber(),
+        )]));
+        let v_rel = probe.relative_velocity_from_orbit(&state.orbit, &Epoch::from_jd(2451545.0));
+        assert!(
+            v_rel.dot(state.orbit.velocity()) > 0.0,
+            "the spacecraft moves along its own velocity through the atmosphere, \
+             so the gas arrives from that side: v_rel = {v_rel:?}"
+        );
+        let windward = v_rel.normalize();
+
+        let hit = drag_magnitude(windward);
+        let sheltered = drag_magnitude(-windward);
+        assert!(
+            hit > 0.0,
+            "the face turned into the flow has to drag, got |a| = {hit:.4e} \
+             while the sheltered face got {sheltered:.4e}"
+        );
+        assert_eq!(
+            sheltered, 0.0,
+            "the face behind the body is swept by nothing, got |a| = {sheltered:.4e} \
+             while the windward face got {hit:.4e}"
+        );
+    }
+
+    /// **#416 reproduction**: the shadow falls on the side the gas comes from.
+    ///
+    /// Occlusion follows this model's own idea of which side is upwind (#424),
+    /// so it moves with the facing test above. A caster standing between the
+    /// flow and a windward panel takes that panel's force away; the same caster
+    /// on the sheltered side is downstream of the panel and takes nothing.
+    ///
+    /// Both directions are asserted: a shadow that falls on the wrong side
+    /// passes a one-sided test by removing the force of whichever panel it
+    /// happens to be behind.
+    #[test]
+    fn only_a_caster_between_the_flow_and_the_panel_shades_it() {
+        let state = iss_state();
+        // `iss_state` at identity attitude travels along `+y` through the
+        // atmosphere (see `drag_loads_the_windward_face_not_the_sheltered_one`),
+        // so `+y` is the windward normal and the gas comes from `+y`.
+        let windward = Vector3::y();
+        let plate = |half: f64, cp: Vector3<f64>| {
+            SurfacePanel::rectangle(
+                [half, half],
+                Vector3::x(),
+                windward,
+                2.2,
+                PanelOptics::absorber(),
+            )
+            .with_cp_offset(cp)
+        };
+        let target = plate(1.0, Vector3::zeros());
+        let upwind_caster = plate(2.0, windward * 2.0);
+        let downwind_caster = plate(2.0, -windward * 2.0);
+
+        let magnitude = |panels: Vec<SurfacePanel>| {
+            PanelDrag::for_earth(SpacecraftShape::panels(panels))
+                .eval(0.0, &state, None)
+                .acceleration_inertial
+                .magnitude()
+        };
+
+        let target_alone = magnitude(vec![target.clone()]);
+        let caster_alone = magnitude(vec![upwind_caster.clone()]);
+        assert!(
+            target_alone > 0.0 && caster_alone > 0.0,
+            "both plates face the flow on their own: {target_alone:.4e}, {caster_alone:.4e}"
+        );
+
+        let shaded = magnitude(vec![target.clone(), upwind_caster]);
+        assert!(
+            (shaded - caster_alone).abs() / caster_alone < 1e-12,
+            "a caster upwind of the target must leave only its own force: \
+             {shaded:.4e} vs {caster_alone:.4e}"
+        );
+
+        let unshaded = magnitude(vec![target, downwind_caster]);
+        let sum = target_alone + caster_alone;
+        assert!(
+            (unshaded - sum).abs() / sum < 1e-12,
+            "a caster downwind of the target shades nothing, so both forces stand: \
+             {unshaded:.4e} vs {sum:.4e}"
+        );
+    }
+
     #[test]
     fn panels_drag_opposes_velocity() {
         let panel = SurfacePanel::at_com(
             10.0,
-            Vector3::new(0.0, -1.0, 0.0),
+            Vector3::new(0.0, 1.0, 0.0),
             2.2,
             PanelOptics::absorber(),
         );
@@ -1637,18 +1757,18 @@ mod tests {
         // This is the core coupling test: rotating the spacecraft changes the drag
         let panel = SurfacePanel::at_com(
             10.0,
-            Vector3::new(0.0, -1.0, 0.0),
+            Vector3::new(0.0, 1.0, 0.0),
             2.2,
             PanelOptics::absorber(),
         );
 
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
 
-        // Identity attitude: panel normal -y faces the +y flow → full drag
+        // Identity attitude: panel normal +y faces into the +y flow → full drag
         let s1 = iss_state();
         let l1 = drag.eval(0.0, &s1, None);
 
-        // Rotate 90° about z: panel normal rotates from -y to +x in inertial
+        // Rotate 90° about z: panel normal rotates from +y to -x in inertial
         // → panel no longer faces the +y flow → different drag
         let mut s2 = iss_state();
         let c = std::f64::consts::FRAC_PI_4.cos();
@@ -1666,10 +1786,11 @@ mod tests {
 
     #[test]
     fn panels_rotated_to_backface_zero() {
-        // Panel faces -y in body frame. Rotate 180° about z → panel faces +y → backface
+        // Panel faces +y in body frame, into the flow. Rotate 180° about z →
+        // panel faces -y → backface
         let panel = SurfacePanel::at_com(
             10.0,
-            Vector3::new(0.0, -1.0, 0.0),
+            Vector3::new(0.0, 1.0, 0.0),
             2.2,
             PanelOptics::absorber(),
         );
@@ -1691,7 +1812,7 @@ mod tests {
     fn panels_above_atmosphere_zero() {
         let panel = SurfacePanel::at_com(
             10.0,
-            Vector3::new(0.0, -1.0, 0.0),
+            Vector3::new(0.0, 1.0, 0.0),
             2.2,
             PanelOptics::absorber(),
         );
@@ -1715,7 +1836,7 @@ mod tests {
     fn panels_at_com_zero_torque() {
         let panel = SurfacePanel::at_com(
             10.0,
-            Vector3::new(0.0, -1.0, 0.0),
+            Vector3::new(0.0, 1.0, 0.0),
             2.2,
             PanelOptics::absorber(),
         );
@@ -1732,7 +1853,7 @@ mod tests {
     fn panels_cp_offset_produces_torque() {
         let panel = SurfacePanel {
             area: 10.0,
-            normal: Vector3::new(0.0, -1.0, 0.0),
+            normal: Vector3::new(0.0, 1.0, 0.0),
             cd: 2.2,
             optics: PanelOptics::absorber(),
             cp_offset: Vector3::new(1.0, 0.0, 0.0), // 1 m offset in +x
@@ -1757,7 +1878,7 @@ mod tests {
     fn panels_double_offset_double_torque() {
         let make_panel = |offset: f64| SurfacePanel {
             area: 10.0,
-            normal: Vector3::new(0.0, -1.0, 0.0),
+            normal: Vector3::new(0.0, 1.0, 0.0),
             cd: 2.2,
             optics: PanelOptics::absorber(),
             cp_offset: Vector3::new(offset, 0.0, 0.0),
@@ -1813,10 +1934,10 @@ mod tests {
         let area = 10.0;
         let cd = 2.2;
 
-        // Panel facing -y (into the +y flow at identity attitude)
+        // Panel facing +y, into the +y flow at identity attitude
         let panel = SurfacePanel::at_com(
             area,
-            Vector3::new(0.0, -1.0, 0.0),
+            Vector3::new(0.0, 1.0, 0.0),
             cd,
             PanelOptics::absorber(),
         );
@@ -1845,10 +1966,11 @@ mod tests {
     #[test]
     fn cube_symmetric_zero_net_torque() {
         // Symmetric cube at CoM has CP offsets, but opposite faces cancel
-        // For flow in +y (identity attitude), +y face is backface, -y face is front
+        // For flow in +y (identity attitude), the +y face is the one turned into
+        // it and the -y face is sheltered
         // But the other 4 faces (±x, ±z) have cos(θ)=0 for exact +y flow
-        // So only -y face contributes, with CP at (0, -half, 0)
-        // Force is in -ŷ body: τ = (0,-h,0) × (0,F,0) = 0 (parallel!)
+        // So only the +y face contributes, with CP at (0, half, 0)
+        // Force is in -ŷ body: τ = (0,h,0) × (0,F,0) = 0 (parallel!)
         let drag = PanelDrag::for_earth(SpacecraftShape::cube(0.5, 2.2, PanelOptics::absorber()));
         let loads = drag.eval(0.0, &iss_state(), None);
         assert!(
@@ -1872,7 +1994,7 @@ mod tests {
         // Rotate 45° about x: cos θ = cos(45°) = √2/2
         let panel = SurfacePanel::at_com(
             10.0,
-            Vector3::new(0.0, -1.0, 0.0),
+            Vector3::new(0.0, 1.0, 0.0),
             2.2,
             PanelOptics::absorber(),
         );
@@ -1899,7 +2021,7 @@ mod tests {
         // Rotate 60° about x: cos θ = cos(60°) = 0.5
         let panel = SurfacePanel::at_com(
             10.0,
-            Vector3::new(0.0, -1.0, 0.0),
+            Vector3::new(0.0, 1.0, 0.0),
             2.2,
             PanelOptics::absorber(),
         );
@@ -1925,7 +2047,7 @@ mod tests {
         // Rotate 90° about x: cos θ = 0 → zero drag
         let panel = SurfacePanel::at_com(
             10.0,
-            Vector3::new(0.0, -1.0, 0.0),
+            Vector3::new(0.0, 1.0, 0.0),
             2.2,
             PanelOptics::absorber(),
         );
@@ -1945,7 +2067,7 @@ mod tests {
         // Proof: F_body ∝ -v̂_body → a_inertial = R_ib*(-K·v̂_body) = -K·v̂_inertial
         let panel = SurfacePanel::at_com(
             10.0,
-            Vector3::new(0.0, -1.0, 0.0),
+            Vector3::new(0.0, 1.0, 0.0),
             2.2,
             PanelOptics::absorber(),
         );
@@ -1996,7 +2118,7 @@ mod tests {
         // F · v_rel ≤ 0 for drag at any attitude (energy is always removed)
         let panel = SurfacePanel::at_com(
             10.0,
-            Vector3::new(0.0, -1.0, 0.0),
+            Vector3::new(0.0, 1.0, 0.0),
             2.2,
             PanelOptics::absorber(),
         );
@@ -2031,7 +2153,7 @@ mod tests {
     fn back_face_reverses_the_drag_torque() {
         let front = SurfacePanel::at_com(
             10.0,
-            Vector3::new(0.0, -1.0, 0.0),
+            Vector3::new(0.0, 1.0, 0.0),
             2.2,
             PanelOptics::absorber(),
         )
@@ -2486,11 +2608,18 @@ mod tests {
     /// The occlusion tests otherwise all sit in `panel_srp`, which leaves the
     /// sign of this model's `upstream` resting on a cube test that cannot see
     /// it: a cube's faces shade nothing either way round.
+    ///
+    /// `only_a_caster_between_the_flow_and_the_panel_shades_it` asserts the same
+    /// removal and additionally that a caster on the sheltered side removes
+    /// nothing. Both catch an occlusion test run from `-upstream`; only that one
+    /// catches a shadow that falls on *both* sides, measured by making
+    /// `is_fully_occluded` accept either direction — this test still passes
+    /// there, since its one caster is upwind either way.
     #[test]
     fn drag_skips_a_panel_another_stands_in_front_of() {
-        // `iss_state` at identity has velocity along +y, and this model treats
-        // `-v̂` as upwind, so a panel facing -y is the one it considers lit.
-        let lit_normal = Vector3::new(0.0, -1.0, 0.0);
+        // `iss_state` at identity has velocity along +y, so the gas arrives from
+        // +y and a panel facing +y is the one this model considers lit.
+        let lit_normal = Vector3::new(0.0, 1.0, 0.0);
         let shaded = SurfacePanel::rectangle(
             [1.0, 1.0],
             Vector3::new(1.0, 0.0, 0.0),
@@ -2549,14 +2678,14 @@ mod tests {
         ];
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(panels));
 
-        // At identity: -y panel faces +y flow → drag
+        // At identity: +y panel faces into the +y flow → drag
         let a0 = drag
             .eval(0.0, &iss_state(), None)
             .acceleration_inertial
             .magnitude();
         assert!(a0 > 0.0);
 
-        // At 180° about z: +y panel faces +y flow → same drag magnitude
+        // At 180° about z: -y panel is turned into the +y flow → same magnitude
         let mut s180 = iss_state();
         s180.attitude.quaternion = Vector4::new(0.0, 0.0, 0.0, 1.0);
         let a180 = drag
@@ -2568,8 +2697,8 @@ mod tests {
             "Two-sided panel should have same drag at 0° and 180°: a0={a0:.3e}, a180={a180:.3e}"
         );
 
-        // At 45° about x: only -y panel contributes (cos θ = cos45),
-        // +y panel has cos θ = -cos45 → clamped to 0.
+        // At 45° about x: only the +y panel contributes (cos θ = cos45),
+        // the -y panel has cos θ = -cos45 → clamped to 0.
         // Opposite normals never both face the flow simultaneously:
         //   max(cosθ, 0) + max(-cosθ, 0) = |cosθ|
         let mut s45 = iss_state();
@@ -2633,7 +2762,7 @@ mod tests {
         // τ = (1,0,0) × (0,F_y,0) = (0*0-0*F_y, 0*0-1*0, 1*F_y-0*0) = (0,0,F_y)
         let panel = SurfacePanel {
             area: 10.0,
-            normal: Vector3::new(0.0, -1.0, 0.0),
+            normal: Vector3::new(0.0, 1.0, 0.0),
             cd: 2.2,
             optics: PanelOptics::absorber(),
             cp_offset: Vector3::new(1.0, 0.0, 0.0),
@@ -2722,7 +2851,7 @@ mod tests {
         let panels = vec![
             SurfacePanel {
                 area: 10.0,
-                normal: Vector3::new(0.0, -1.0, 0.0),
+                normal: Vector3::new(0.0, 1.0, 0.0),
                 cd: 2.2,
                 optics: PanelOptics::absorber(),
                 cp_offset: Vector3::new(1.0, 0.0, 0.0),
@@ -2777,7 +2906,7 @@ mod tests {
         let panels = vec![
             SurfacePanel {
                 area: 10.0,
-                normal: Vector3::new(0.0, -1.0, 0.0),
+                normal: Vector3::new(0.0, 1.0, 0.0),
                 cd: 2.2,
                 optics: PanelOptics::absorber(),
                 cp_offset: Vector3::new(1.0, 0.0, 0.0),
@@ -2838,15 +2967,15 @@ mod tests {
     }
 
     #[test]
-    fn convention_anchor_yaw_positive_backface() {
+    fn convention_anchor_yaw_positive_full_drag() {
         // Convention anchor: distinguishes R_bi from R_ib (would fail under transpose).
         //
         // Panel normal n_b = (1,0,0). Flow +y inertial.
         // +90° yaw about z: R_ib maps body_x → inertial_y.
         //   → Correct R_bi: v_body = R_bi * (0,v,0) = (v,0,0)
-        //     cos θ = n_b · (-v̂_body) = (1,0,0)·(-1,0,0) = -1 → backface → ZERO
+        //     cos θ = n_b · v̂_body = (1,0,0)·(1,0,0) = +1 → FULL drag
         //   → Wrong (R_ib): v_body = R_ib * (0,v,0) = (-v,0,0)
-        //     cos θ = (1,0,0)·(1,0,0) = +1 → FULL drag
+        //     cos θ = (1,0,0)·(-1,0,0) = -1 → backface → ZERO
         let panel = SurfacePanel::at_com(
             10.0,
             Vector3::new(1.0, 0.0, 0.0),
@@ -2861,42 +2990,17 @@ mod tests {
 
         let loads = drag.eval(0.0, &state, None);
         assert!(
-            loads.acceleration_inertial.magnitude() < 1e-20,
-            "Convention anchor: +90° yaw with n_b=(1,0,0) should be backface (zero drag), \
-             got {:.3e}. This indicates R_ib/R_bi swap.",
-            loads.acceleration_inertial.magnitude()
-        );
-    }
-
-    #[test]
-    fn convention_anchor_yaw_negative_full_drag() {
-        // Complement of the above: -90° yaw → front face → full drag.
-        //   R_ib maps body_x → inertial -y.
-        //   Correct R_bi: v_body = R_bi * (0,v,0) = (-v,0,0)
-        //     cos θ = (1,0,0)·(1,0,0) = +1 → full drag
-        let panel = SurfacePanel::at_com(
-            10.0,
-            Vector3::new(1.0, 0.0, 0.0),
-            2.2,
-            PanelOptics::absorber(),
-        );
-        let drag = mock_drag(SpacecraftShape::panels(vec![panel]), 1e-12);
-
-        let mut state = iss_state();
-        state.attitude.quaternion =
-            quat_from_axis_angle(Vector3::new(0.0, 0.0, 1.0), -std::f64::consts::FRAC_PI_2);
-
-        let loads = drag.eval(0.0, &state, None);
-        assert!(
             loads.acceleration_inertial.magnitude() > 1e-20,
-            "Convention anchor: -90° yaw with n_b=(1,0,0) should be full drag"
+            "Convention anchor: +90° yaw with n_b=(1,0,0) should be full drag. \
+             Zero here indicates an R_ib/R_bi swap."
         );
 
-        // Verify magnitude matches the identity case for a -y normal panel
-        // (which faces the +y flow at identity). Both should give same exposure.
+        // The magnitude has to match the identity case for a +y normal panel,
+        // which is the face turned into the +y flow there. Both are face-on, so
+        // both see the full area.
         let panel_y = SurfacePanel::at_com(
             10.0,
-            Vector3::new(0.0, -1.0, 0.0),
+            Vector3::new(0.0, 1.0, 0.0),
             2.2,
             PanelOptics::absorber(),
         );
@@ -2914,13 +3018,41 @@ mod tests {
     }
 
     #[test]
+    fn convention_anchor_yaw_negative_backface() {
+        // Complement of the above: -90° yaw turns the panel away from the flow.
+        //   R_ib maps body_x → inertial -y.
+        //   Correct R_bi: v_body = R_bi * (0,v,0) = (-v,0,0)
+        //     cos θ = n_b · v̂_body = (1,0,0)·(-1,0,0) = -1 → backface → ZERO
+        //   Wrong (R_ib): v_body = (v,0,0) → cos θ = +1 → full drag
+        let panel = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
+        let drag = mock_drag(SpacecraftShape::panels(vec![panel]), 1e-12);
+
+        let mut state = iss_state();
+        state.attitude.quaternion =
+            quat_from_axis_angle(Vector3::new(0.0, 0.0, 1.0), -std::f64::consts::FRAC_PI_2);
+
+        let loads = drag.eval(0.0, &state, None);
+        assert!(
+            loads.acceleration_inertial.magnitude() < 1e-20,
+            "Convention anchor: -90° yaw with n_b=(1,0,0) should be backface (zero drag), \
+             got {:.3e}. This indicates R_ib/R_bi swap.",
+            loads.acceleration_inertial.magnitude()
+        );
+    }
+
+    #[test]
     fn quaternion_sign_invariance() {
         // q and -q represent the same rotation.
         // PanelDrag should produce identical forces and torques.
         let panels = vec![
             SurfacePanel {
                 area: 10.0,
-                normal: Vector3::new(0.0, -1.0, 0.0),
+                normal: Vector3::new(0.0, 1.0, 0.0),
                 cd: 2.2,
                 optics: PanelOptics::absorber(),
                 cp_offset: Vector3::new(1.0, 0.0, 0.0),
@@ -2959,7 +3091,7 @@ mod tests {
         // a ∝ ρ: doubling density doubles acceleration and torque
         let panels = vec![SurfacePanel {
             area: 10.0,
-            normal: Vector3::new(0.0, -1.0, 0.0),
+            normal: Vector3::new(0.0, 1.0, 0.0),
             cd: 2.2,
             optics: PanelOptics::absorber(),
             cp_offset: Vector3::new(1.0, 0.0, 0.0),
@@ -2992,7 +3124,7 @@ mod tests {
         // Use mock to eliminate altitude-dependent density changes
         let panel = SurfacePanel::at_com(
             10.0,
-            Vector3::new(0.0, -1.0, 0.0),
+            Vector3::new(0.0, 1.0, 0.0),
             2.2,
             PanelOptics::absorber(),
         );
@@ -3026,7 +3158,7 @@ mod tests {
 
         let panel = SurfacePanel::at_com(
             area,
-            Vector3::new(0.0, -1.0, 0.0),
+            Vector3::new(0.0, 1.0, 0.0),
             cd,
             PanelOptics::absorber(),
         );
@@ -3049,6 +3181,100 @@ mod tests {
         );
     }
 
+    /// Cross-validation against Orekit's paneled drag model.
+    ///
+    /// The fixture's job is the face selection: the `sheltered_*` cases are
+    /// exactly zero in Orekit, and no fore-aft symmetric shape can show that —
+    /// the projected areas of an opposite pair sum to the same value whichever
+    /// face is picked, which is how #416 survived a cube test. The windward
+    /// sweep pins the cos θ law over the same geometry, and `edge_on` grazes the
+    /// boundary between them (`cos(π/2)` is 6.1e-17, not 0, so both sides
+    /// produce a force 16 orders down rather than nothing).
+    ///
+    /// Compared on the force, because Orekit's paneled model returns only an
+    /// acceleration; the torque this model builds from it is pinned by the exact
+    /// cross-product tests. The mock atmosphere and its zero co-rotation are
+    /// what keep the comparison about the panel law: the density and `v_rel` are
+    /// then the fixture's own numbers rather than this crate's atmosphere and
+    /// Earth rotation.
+    ///
+    /// Regenerate with `uv run tools/generate_orekit_panel_drag_fixtures.py`.
+    #[test]
+    fn orekit_panel_drag_force_reference() {
+        #[derive(serde::Deserialize)]
+        struct Case {
+            name: String,
+            panel_normal_body: [f64; 3],
+            force_body_n: [f64; 3],
+        }
+        #[derive(serde::Deserialize)]
+        struct Fixture {
+            density_kg_m3: f64,
+            area_m2: f64,
+            cd: f64,
+            mass_kg: f64,
+            position_inertial_m: [f64; 3],
+            velocity_inertial_m_s: [f64; 3],
+            cases: Vec<Case>,
+        }
+
+        let raw = include_str!("../../tests/fixtures/orekit_panel_drag_reference.json");
+        let fx: Fixture = serde_json::from_str(raw).expect("fixture parses");
+        assert!(fx.cases.len() >= 10, "expected the full case set");
+
+        // The fixture is in SI; this crate works in km and km/s.
+        let state = SpacecraftState {
+            orbit: OrbitalState::new(
+                Vector3::from_row_slice(&fx.position_inertial_m) / 1000.0,
+                Vector3::from_row_slice(&fx.velocity_inertial_m_s) / 1000.0,
+            ),
+            attitude: AttitudeState::identity(),
+            mass: fx.mass_kg,
+        };
+
+        let mut sheltered = 0;
+        for case in &fx.cases {
+            let panel = SurfacePanel::at_com(
+                fx.area_m2,
+                Vector3::from_row_slice(&case.panel_normal_body),
+                fx.cd,
+                PanelOptics::absorber(),
+            );
+            let drag = mock_drag(SpacecraftShape::panels(vec![panel]), fx.density_kg_m3);
+            // The attitude is identity, so the body frame is the inertial one
+            // and `F = m · a` needs only the km/s² → m/s² factor.
+            let ours = drag
+                .eval(0.0, &state, None)
+                .acceleration_inertial
+                .into_inner()
+                * fx.mass_kg
+                * 1000.0;
+            let theirs = Vector3::from_row_slice(&case.force_body_n);
+
+            if theirs == Vector3::zeros() {
+                sheltered += 1;
+                assert_eq!(
+                    ours,
+                    Vector3::zeros(),
+                    "{}: Orekit loads nothing on a face turned away from the flow, \
+                     and we produced {ours:?}",
+                    case.name
+                );
+                continue;
+            }
+            let err = (ours - theirs).magnitude() / theirs.magnitude();
+            assert!(
+                err < 1e-12,
+                "{}: orekit {theirs:?}, ours {ours:?}, rel_err={err:.3e}",
+                case.name
+            );
+        }
+        assert!(
+            sheltered >= 3,
+            "the sheltered faces are what this fixture is for, found {sheltered}"
+        );
+    }
+
     // SpacecraftDynamics integration
 
     #[test]
@@ -3061,7 +3287,7 @@ mod tests {
 
         let panel = SurfacePanel::at_com(
             10.0,
-            Vector3::new(0.0, -1.0, 0.0),
+            Vector3::new(0.0, 1.0, 0.0),
             2.2,
             PanelOptics::absorber(),
         );
@@ -3088,7 +3314,7 @@ mod tests {
 
         let panel = SurfacePanel::at_com(
             10.0,
-            Vector3::new(0.0, -1.0, 0.0),
+            Vector3::new(0.0, 1.0, 0.0),
             2.2,
             PanelOptics::absorber(),
         );
