@@ -22,8 +22,8 @@
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { AttitudeViewer } from "../src/lib/index.js";
 import type { AttitudeFrame, MarkerShape, Quat, Vec3 } from "../src/lib/index.js";
+import { AttitudeViewer } from "../src/lib/index.js";
 
 const params = new URLSearchParams(window.location.search);
 
