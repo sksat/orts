@@ -230,12 +230,14 @@ test("centred satellite gets Sun and nadir arrows, in the local-orbital basis", 
   // The head's distance from the origin pins the rendered proportions, which the
   // normalised direction cannot: this satellite has no 3D model, so it is drawn
   // as the orientation cube (half-extent 0.008 → apparent size 0.016), and the
-  // head's centre sits at `startOffset + length - headLength / 2` = 1.9 spans.
-  const EXPECTED_HEAD_DISTANCE = 1.9 * 0.016;
+  // head's centre sits at `startOffset + length - headLength / 2`. The centred
+  // satellite draws the cube marker, whose corners stand at sqrt(3)/2 of the
+  // span, so the tail starts there: sqrt(3)/2 + 1.5 - 0.1 = 2.266 spans.
+  const EXPECTED_HEAD_DISTANCE = (Math.sqrt(3) / 2 + 1.5 - 0.1) * 0.016;
   for (const v of vectors) {
     expect(
       v.distance,
-      `${v.kind} arrow's head should sit 1.9 spans out; a different distance means the ` +
+      `${v.kind} arrow's head should sit 2.266 spans out; a different distance means the ` +
         `offset or the arrow proportions changed`,
     ).toBeCloseTo(EXPECTED_HEAD_DISTANCE, 6);
   }

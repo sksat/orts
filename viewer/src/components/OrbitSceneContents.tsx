@@ -22,7 +22,7 @@ import { DEFAULT_FRAME, isLegacyEcef, type ReferenceFrame } from "../referenceFr
 import { getSatelliteModelConfig } from "../satelliteModels.js";
 import { type MarkerShape, resolveMarkerShape } from "../satelliteShapes.js";
 import { computeCameraUp, computeLvlhAxes, type LvlhAxes, SCENE_UP } from "../sceneFrame.js";
-import { defaultMarkerSize, resolveVisualSpan } from "../spacecraftScale.js";
+import { defaultMarkerSize, markerBoundingRadius, resolveVisualSpan } from "../spacecraftScale.js";
 import type { TrailBufferLike } from "../utils/TrailBuffer.js";
 import { body_orientation, earth_rotation_angle } from "../wasm/arikaInit.js";
 import { CelestialBody } from "./CelestialBody.js";
@@ -635,8 +635,9 @@ export function OrbitSceneContents({
             positionEci: originPosition,
             options: directionVectors,
           });
+          const centredModel = getSatelliteModelConfig(centeredSatId, satName);
           const visualSpan = resolveVisualSpan({
-            modelConfig: getSatelliteModelConfig(centeredSatId, satName),
+            modelConfig: centredModel,
             markerSize: defaultMarkerSize(shape),
           });
           return (
@@ -658,6 +659,9 @@ export function OrbitSceneContents({
                   position={ORIGIN}
                   vectors={arrows}
                   visualSpan={visualSpan}
+                  // A cube marker's corners stand further out than its faces; the
+                  // arrows start outside whichever shape is actually drawn.
+                  startRadius={markerBoundingRadius(centredModel ? null : shape, visualSpan)}
                   debugId={centeredSatId}
                 />
               )}
