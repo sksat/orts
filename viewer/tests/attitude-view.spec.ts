@@ -210,7 +210,9 @@ test("the attitude view drops the central body, the trails and the charts", asyn
   await expect(page.locator('[data-testid="time-series-chart"]')).toHaveCount(0);
 
   // The switch is recorded in the URL, so a reload or a shared link keeps it.
-  expect(page.url()).toContain("view=attitude");
+  // Waited for rather than read: the parameter is written by an effect, which is
+  // not ordered against the effects the scene assertions above waited on.
+  await expect(page).toHaveURL(/view=attitude/);
   await page.reload();
   await expect(page.locator('[data-testid="attitude-info"]')).toBeVisible();
   await connect(page);
@@ -224,7 +226,7 @@ test("the attitude view drops the central body, the trails and the charts", asyn
   await expect(page.locator('[data-testid="time-series-chart"]').first()).toBeVisible({
     timeout: 30000,
   });
-  expect(page.url()).not.toContain("view=attitude");
+  await expect(page).not.toHaveURL(/view=attitude/);
 });
 
 test("switching from a satellite-centred orbit view carries that satellite over", async ({
