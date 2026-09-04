@@ -33,17 +33,24 @@ export function DirectionArrows({ position, vectors, visualSpan, debugId }: Dire
   const groupRef = useRef<THREE.Group>(null);
   const headsRef = useRef(new Map<string, THREE.Object3D>());
 
+  // The getter reads the live scene objects, so it only has to be re-registered
+  // when the *set* of arrows changes — not when the array holding them is rebuilt,
+  // which a scene does on every sample. Keying the effect on the kinds (and
+  // reading the array through a ref) keeps it to one registration.
+  const vectorsRef = useRef(vectors);
+  vectorsRef.current = vectors;
+  const kinds = vectors.map((v) => v.kind).join(",");
   useEffect(() => {
     if (debugId == null) return;
     const heads = headsRef.current;
     return registerDirectionVectors(debugId, () =>
-      vectors.map<DrawnArrow>((v) => ({
+      vectorsRef.current.map<DrawnArrow>((v) => ({
         kind: v.kind,
         origin: groupRef.current,
         head: heads.get(v.kind) ?? null,
       })),
     );
-  }, [debugId, vectors]);
+  }, [debugId, kinds]);
 
   if (vectors.length === 0) return null;
 
