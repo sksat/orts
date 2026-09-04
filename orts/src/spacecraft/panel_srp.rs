@@ -9,6 +9,7 @@ use arika::earth::transform::EphemerisFrameBridge;
 
 use crate::model::{HasAttitude, HasFrame, HasMass, HasOrbit, Model};
 
+use super::lit_region::{MIN_FORCE_COSINE, lit_region};
 use super::{ExternalLoads, SpacecraftShape, SurfacePanel};
 
 /// Radiation-pressure force on one flat panel [N, body frame].
@@ -288,20 +289,24 @@ impl PanelSrp {
 
                 for panel in panels {
                     // Facing first: a back-facing panel produces nothing either
-                    // way, and the occlusion scan is O(N) per panel.
-                    if panel.normal.dot(&s_body) <= 0.0 {
+                    // way, and the shadow scan is O(N) per panel. The cutoff is
+                    // what keeps the shadow projection inside the range of f64;
+                    // see `MIN_FORCE_COSINE`.
+                    if panel.normal.dot(&s_body) < MIN_FORCE_COSINE {
                         continue;
                     }
-                    // A panel standing in the Sun's way keeps this one dark.
-                    // Panels without an outline never do, so an area-only fleet
-                    // is unaffected.
-                    if crate::spacecraft::surface::is_fully_occluded(panel, panels, &s_body) {
+                    // Panels standing in the Sun's way take a share of this one
+                    // and move where the rest of it pushes. Panels without an
+                    // outline cast nothing, so an area-only fleet is unaffected.
+                    let lit = lit_region(panel, panels, &s_body);
+                    if lit.fraction <= 0.0 {
                         continue;
                     }
-                    let force = panel_force(panel, &s_body, base_pressure); // [N]
+                    // [N] — the law is linear in area, so the lit share scales it
+                    let force = panel_force(panel, &s_body, base_pressure) * lit.fraction;
 
                     total_force_body += force;
-                    total_torque_body += panel.cp_offset.cross(&force);
+                    total_torque_body += lit.centroid.cross(&force);
                 }
 
                 // a_body [m/s²] → a_inertial [km/s²]
@@ -797,12 +802,63 @@ mod tests {
         };
         let mut total = Vector3::zeros();
         for panel in &panels {
-            if crate::spacecraft::surface::is_fully_occluded(panel, &panels, s_body) {
-                continue;
-            }
-            total += panel_force(panel, s_body, TEST_PRESSURE);
+            let lit = lit_region(panel, &panels, s_body);
+            total += panel_force(panel, s_body, TEST_PRESSURE) * lit.fraction;
         }
         total
+    }
+
+    /// A half-shadowed panel torques about the CoM as the lit half alone would.
+    ///
+    /// This is the case issue #407 is about, in the sharpest form the geometry
+    /// allows: the panel's centre of pressure sits on the CoM, so the old rule
+    /// — whole area, force at the panel's centre — produced exactly zero torque
+    /// from it however much of the panel lay in shadow.
+    ///
+    /// The reference is a panel cut down to the lit half and placed where that
+    /// half is, which is what "the force acts on the lit part" means. Building
+    /// it that way keeps the radiation pressure out of the comparison: both
+    /// sides of it went through the same model at the same epoch.
+    #[test]
+    fn eval_torques_a_half_shadowed_panel_as_its_lit_half_alone_would() {
+        let epoch = test_epoch();
+        let state = iss_state();
+        let s_body = sat_to_sun_unit(&epoch);
+
+        let optics = PanelOptics::new(0.1, 0.2);
+        let u = s_body.cross(&Vector3::new(0.0, 0.0, 1.0)).normalize();
+        let target = SurfacePanel::rectangle([1.0, 1.0], u, s_body, 2.2, optics);
+        // Covers u in [0, 1] of the target's u in [-1, 1], two metres upstream
+        // and wide enough in the other axis to overhang it — so the shadow is
+        // exactly half the target while the caster's own force is not tuned to
+        // cancel anything.
+        let caster = SurfacePanel::rectangle([0.5, 2.0], u, s_body, 2.2, optics)
+            .with_cp_offset(u * 0.5 + s_body * 2.0);
+        // The lit half as a panel in its own right: u in [-1, 0], centred at
+        // u = -0.5.
+        let lit_half =
+            SurfacePanel::rectangle([0.5, 1.0], u, s_body, 2.2, optics).with_cp_offset(u * -0.5);
+
+        let torque_of = |panels: Vec<SurfacePanel>| {
+            PanelSrp::for_earth(SpacecraftShape::panels(panels))
+                .eval(0.0, &state, Some(&epoch))
+                .torque_body
+                .into_inner()
+        };
+
+        let pair = torque_of(vec![target.clone(), caster.clone()]);
+        let caster_alone = torque_of(vec![caster.clone()]);
+        let want = torque_of(vec![lit_half]);
+
+        let got = pair - caster_alone;
+        assert!(
+            got.magnitude() > 0.0,
+            "a half-shadowed panel has to torque, got {got:?}"
+        );
+        assert!(
+            (got - want).magnitude() / want.magnitude() < 1e-12,
+            "the shadowed panel must torque as its lit half: {got:?} vs {want:?}"
+        );
     }
 
     /// The shaded panel is excluded by `PanelSrp::eval`, not just by the
@@ -989,22 +1045,33 @@ mod tests {
     }
 
     #[test]
-    fn a_panel_only_partly_covered_still_feels_the_sun() {
+    fn a_panel_only_partly_covered_feels_the_share_the_shadow_leaves() {
         let sun = Vector3::new(1.0, 0.0, 0.0);
-        // Half the width, so it cannot cover the far plate's corners.
+        // The near plate is 1 m on a side against the far plate's 2 m and sits
+        // squarely in front of its centre, so it takes 1 m² of the far plate's
+        // 4 m²: three quarters of it stay lit.
         let force = panel_srp_force(shaded_pair(0.5), &sun);
-        let both = {
-            let SpacecraftShape::Panels(panels) = shaded_pair(0.5) else {
-                panic!("expected panels");
-            };
-            panels
-                .iter()
-                .map(|p| panel_force(p, &sun, TEST_PRESSURE))
-                .sum::<Vector3<f64>>()
+        let SpacecraftShape::Panels(panels) = shaded_pair(0.5) else {
+            panic!("expected panels");
         };
+        let (far, near) = (
+            panel_force(&panels[0], &sun, TEST_PRESSURE),
+            panel_force(&panels[1], &sun, TEST_PRESSURE),
+        );
+        let want = far * 0.75 + near;
         assert!(
-            (force - both).magnitude() < 1e-18,
-            "partial cover is not occlusion here: {force:?} vs {both:?}"
+            (force - want).magnitude() < 1e-18,
+            "a quarter of the far plate is in shadow: {force:?} vs {want:?}"
+        );
+        // Between the two answers the old all-or-nothing test could give, so
+        // this fails if the share is ever rounded back to one of them.
+        assert!(
+            force.magnitude() < (far + near).magnitude(),
+            "a shadowed quarter has to cost something"
+        );
+        assert!(
+            force.magnitude() > near.magnitude(),
+            "only a quarter is shadowed, so the far plate still contributes"
         );
     }
 
@@ -1017,8 +1084,8 @@ mod tests {
         };
         let occluded = |sun: Vector3<f64>| {
             (
-                crate::spacecraft::surface::is_fully_occluded(&panels[0], &panels, &sun),
-                crate::spacecraft::surface::is_fully_occluded(&panels[1], &panels, &sun),
+                lit_region(&panels[0], &panels, &sun).fraction == 0.0,
+                lit_region(&panels[1], &panels, &sun).fraction == 0.0,
             )
         };
 
@@ -1050,8 +1117,9 @@ mod tests {
         .with_cp_offset(Vector3::new(2.0, 0.0, 0.0));
 
         let panels = vec![bare.clone(), big.clone()];
-        assert!(
-            !crate::spacecraft::surface::is_fully_occluded(&panels[0], &panels, &sun),
+        assert_eq!(
+            lit_region(&panels[0], &panels, &sun).fraction,
+            1.0,
             "a panel with no outline cannot be shaded"
         );
 
@@ -1071,8 +1139,9 @@ mod tests {
         )
         .with_cp_offset(Vector3::new(2.0, 0.0, 0.0));
         let panels = vec![far, bare_near];
-        assert!(
-            !crate::spacecraft::surface::is_fully_occluded(&panels[0], &panels, &sun),
+        assert_eq!(
+            lit_region(&panels[0], &panels, &sun).fraction,
+            1.0,
             "a panel with no outline cannot shade"
         );
     }
@@ -1091,8 +1160,9 @@ mod tests {
         let panels = vec![front, back];
         for sun in [Vector3::new(1.0, 0.0, 0.0), Vector3::new(-1.0, 0.0, 0.0)] {
             for (i, panel) in panels.iter().enumerate() {
-                assert!(
-                    !crate::spacecraft::surface::is_fully_occluded(panel, &panels, &sun),
+                assert_eq!(
+                    lit_region(panel, &panels, &sun).fraction,
+                    1.0,
                     "coincident faces must not shade each other (sun {sun:?}, panel {i})"
                 );
             }

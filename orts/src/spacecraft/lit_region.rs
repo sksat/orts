@@ -28,6 +28,16 @@ const MAX_SHADOW_VERTICES: usize = 2 * MAX_PANEL_CORNERS + 1;
 /// tolerance by the coordinates it is comparing.
 const ROUNDOFF: f64 = 32.0;
 
+/// The smallest `normal · upstream` a panel is given a force for.
+///
+/// This is a force cutoff, not just a guard against dividing by zero. Both
+/// force laws carry the projected area `A cos θ`, so a panel this close to
+/// edge-on contributes at most `1e-12` of its face-on load. It has to exist
+/// because [`lit_region`] carries shadow vertices to the target's plane along
+/// `1 / cos θ`, which sends them past the range of `f64` before `cos θ`
+/// reaches zero.
+pub(crate) const MIN_FORCE_COSINE: f64 = 1e-12;
+
 /// The lit part of a panel.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct LitRegion {
@@ -61,10 +71,15 @@ impl LitRegion {
 ///
 /// `upstream` points from the spacecraft toward where the light or the flow
 /// comes from — SRP passes `s_body`, drag passes `-v̂_body` — and must be unit
-/// length. The caller must have established that the panel faces it
-/// (`normal · upstream > 0`); at grazing incidence the projection below divides
-/// by that dot product, so the caller's own force cutoff is what keeps the
-/// arithmetic in range.
+/// length. Which way the panel faces does not matter: a shadow is measured
+/// along the light, so a panel whose normal points away from the source is
+/// answered for correctly too, and the force models decide separately whether
+/// such a panel gets a force at all.
+///
+/// The magnitude of `normal · upstream` does matter. The projection divides by
+/// it, so within [`MIN_FORCE_COSINE`] of edge-on the shadow vertices leave the
+/// range of `f64`; the caller's force cutoff is what keeps the arithmetic in
+/// range, and a vertex that overflows anyway drops its shadow.
 ///
 /// `others` may contain `panel` itself; it is excluded by identity.
 ///
@@ -166,21 +181,27 @@ fn shadow_on_target(
     let mut buf = [Vector3::zeros(); MAX_PANEL_CORNERS];
     let corners = other.corners_into(&mut buf)?;
 
-    // Only the part of the caster on the lit side of the target can shadow it.
-    // Clipping in 3D first, before projecting, is what makes a caster that
-    // tilts through the target shadow only the part of it that is really in
-    // front — projecting the whole caster would report the target fully dark.
-    let depth = |p: &Vector3<f64>| panel.normal.dot(&(p - panel.cp_offset));
-    let front: Vec<Vector3<f64>> = clip_3d(corners, &depth, &panel.cp_offset);
+    // How far back along the light a point sits from the target's plane. It is
+    // the distance the projection below travels, so measuring the side with it
+    // — rather than with the depth along the normal — is what makes the answer
+    // right for a target whose normal points away from the source as well.
+    let denom = panel.normal.dot(upstream);
+    let reach = |p: &Vector3<f64>| panel.normal.dot(&(p - panel.cp_offset)) / denom;
+
+    // Only the part of the caster on the source's side of the target can
+    // shadow it. Clipping in 3D first, before projecting, is what makes a
+    // caster that tilts through the target shadow only the part of it that is
+    // really in front — projecting the whole caster would report more shadow
+    // than there is.
+    let front: Vec<Vector3<f64>> = clip_3d(corners, &reach, &panel.cp_offset);
     if front.len() < 3 {
         return None;
     }
 
     // Carry each front vertex along the light to the target's plane.
-    let denom = panel.normal.dot(upstream);
     let mut poly: Vec<Vector2<f64>> = Vec::with_capacity(MAX_SHADOW_VERTICES);
     for q in &front {
-        let hit = q - upstream * (depth(q) / denom);
+        let hit = q - upstream * reach(q);
         let p = to_plane(&hit, &panel.cp_offset, u, v);
         // Grazing incidence can send a vertex past the range of f64 even though
         // every input was finite. A shadow that cannot be located is dropped,

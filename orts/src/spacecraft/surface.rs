@@ -9,6 +9,8 @@ use arika::frame;
 use nalgebra::Vector3;
 use tobari::{AtmosphereInput, AtmosphereModel, Exponential};
 
+use super::lit_region::{MIN_FORCE_COSINE, lit_region};
+
 use super::ExternalLoads;
 
 /// How a flat panel reflects sunlight, for radiation pressure.
@@ -291,29 +293,6 @@ impl SurfacePanel {
         }
     }
 
-    /// Whether `point` lies within the outline, projected onto the panel plane.
-    ///
-    /// `false` without an outline: a panel with no boundary contains nothing,
-    /// which is what keeps it from casting shadows.
-    ///
-    /// Each shape answers for itself. A triangle's three corners span a
-    /// parallelogram larger than the triangle, so a shared corner-based rule
-    /// would quietly over-report once meshes land.
-    pub(crate) fn outline_contains(&self, point: &Vector3<f64>) -> bool {
-        match self.outline {
-            None => false,
-            Some(PanelOutline::Rectangle {
-                half_extent: [hx, hy],
-                in_plane_x,
-            }) => {
-                let d = point - self.cp_offset;
-                let y = self.normal.cross(&in_plane_x);
-                d.dot(&in_plane_x).abs() <= hx * (1.0 + OUTLINE_EDGE_TOLERANCE)
-                    && d.dot(&y).abs() <= hy * (1.0 + OUTLINE_EDGE_TOLERANCE)
-            }
-        }
-    }
-
     /// The other side of the same thin plate: the normal is negated, and the
     /// area, drag coefficient and centre of pressure carry over.
     ///
@@ -551,96 +530,6 @@ impl SpacecraftShape {
     }
 }
 
-/// How far in front a shadow caster has to stand to count [m].
-///
-/// Absolute, and compared against a distance along the incoming direction, so
-/// for a caster nearly edge-on to it the same value admits a much smaller gap
-/// between the planes (`gap = t · cos θ`). Coplanar plates built through
-/// [`SurfacePanel::rectangle`] land within 2e-14 m of each other even at 100 m
-/// from the CoM, so this leaves several decades of margin — and the force it
-/// could wrongly drop scales with `cos θ`, which is what makes the asymmetry
-/// harmless. It is what stops the two faces of a thin plate, which share a
-/// plane, from shadowing each other.
-const OCCLUSION_DEPTH_EPS: f64 = 1e-9;
-
-/// How far outside an outline a corner may fall and still count as inside, as
-/// a fraction of the half-extent it is compared against.
-///
-/// One part in a billion, which is a nanometre on a one-metre panel. A corner
-/// grazing an edge needs it: with an in-plane axis whose components are inexact,
-/// a third of the corners of an exactly-covering caster land outside by up to
-/// 4.8e-16 of the half-extent (measured over 3600 axis angles), so an exact
-/// comparison would report a shadow or no shadow depending on the angle.
-///
-/// A fraction rather than a length because `rectangle` accepts half-extents
-/// down to `1e-150`, and an absolute nanometre would describe such a panel as
-/// 141 orders of magnitude wider than it is, letting it swallow targets it
-/// could never cover. Scaling down instead makes a panel that small fail
-/// containment, which reports no shadow — the direction that keeps a real force
-/// rather than removing one.
-const OUTLINE_EDGE_TOLERANCE: f64 = 1e-9;
-
-/// Whether every corner of `panel` lies behind one other panel, seen from
-/// `upstream`.
-///
-/// `upstream` points from the spacecraft toward where the light or the flow
-/// comes from. SRP passes `s_body`; drag passes `-v̂_body`, which is the side
-/// its own facing test treats as upwind — see the note there. It must be unit
-/// length.
-///
-/// `others` may contain `panel` itself, and no index is needed to exclude it: a
-/// corner sitting on its own panel's plane gives `t = 0`, which the depth test
-/// rejects. Taking an index instead would put an obligation on the caller that
-/// nothing can check — a wrong one silently drops a real shadow.
-///
-/// A panel without an outline neither casts a shadow nor receives one, so a
-/// fleet of area-only panels behaves exactly as it did before outlines existed.
-///
-/// Only single-panel occlusion is detected. A panel covered by two others
-/// between them still counts as lit — the case that needs it is a segmented
-/// structure standing in front of one face, which the panel list can describe
-/// but this test cannot see.
-pub(crate) fn is_fully_occluded(
-    panel: &SurfacePanel,
-    others: &[SurfacePanel],
-    upstream: &Vector3<f64>,
-) -> bool {
-    let mut buf = [Vector3::zeros(); MAX_PANEL_CORNERS];
-    let Some(corners) = panel.corners_into(&mut buf) else {
-        return false;
-    };
-    others
-        .iter()
-        .any(|other| blocks_all(corners, other, upstream))
-}
-
-/// Whether `caster` stands in front of every one of `corners`.
-///
-/// Each corner sends a ray toward `upstream`; the corner is covered when the ray
-/// crosses `caster`'s plane in front of it and lands within `caster`'s outline.
-/// Comparing silhouettes on a plane instead would call a caster that tilts
-/// through the panel a full shadow: its centre can sit in front while one edge
-/// is behind, and a projection cannot tell.
-fn blocks_all(corners: &[Vector3<f64>], caster: &SurfacePanel, upstream: &Vector3<f64>) -> bool {
-    // Two cases need no guard of their own, measured by removing them:
-    //
-    // A caster with no outline: `outline_contains` answers `false`.
-    //
-    // A caster edge-on to the incoming direction: `denom` is zero or nearly so,
-    // `t` runs to infinity, and the hit lands outside the outline. Special-casing
-    // it would only avoid the arithmetic, not change the answer.
-    let denom = caster.normal.dot(upstream);
-
-    corners.iter().all(|corner| {
-        // Where the ray from `corner` toward `upstream` meets the caster plane.
-        let t = caster.normal.dot(&(caster.cp_offset - corner)) / denom;
-        if t <= OCCLUSION_DEPTH_EPS {
-            return false; // level with the corner, or behind it
-        }
-        caster.outline_contains(&(corner + upstream * t))
-    })
-}
-
 /// Attitude-dependent drag model using flat surface panels.
 ///
 /// Implements [`Model`] to produce both translational acceleration and
@@ -816,25 +705,30 @@ impl<F: EarthFixedTransform> PanelDrag<F> {
                 // follows it, and this follows it.
                 let upstream = -v_hat_body;
                 for panel in panels {
-                    // cos(θ) = n̂ · (-v̂): panel must face the flow
-                    let cos_theta = panel.normal.dot(&upstream).max(0.0);
-                    if cos_theta <= 0.0 {
+                    // cos(θ) = n̂ · (-v̂): panel must face the flow. The cutoff
+                    // is what keeps the shadow projection inside the range of
+                    // f64; see `MIN_FORCE_COSINE`.
+                    let cos_theta = panel.normal.dot(&upstream);
+                    if cos_theta < MIN_FORCE_COSINE {
                         continue;
                     }
-                    // A panel upwind of this one shields it. Panels without an
-                    // outline never do, so an area-only fleet is unaffected.
-                    if is_fully_occluded(panel, panels, &upstream) {
+                    // A panel upwind of this one shields the part of it that
+                    // stands in the way, and moves where the rest of the force
+                    // acts. Panels without an outline shield nothing, so an
+                    // area-only fleet is unaffected.
+                    let lit = lit_region(panel, panels, &upstream);
+                    if lit.fraction <= 0.0 {
                         continue;
                     }
 
-                    let a_proj = panel.area * cos_theta; // m²
+                    let a_proj = panel.area * lit.fraction * cos_theta; // m²
 
                     // F = -½ ρ Cd A_proj |v|² v̂  [N]
                     let force =
                         -0.5 * rho * panel.cd * a_proj * v_body_mag_m * v_body_mag_m * v_hat_body;
 
                     total_force_body += force;
-                    total_torque_body += panel.cp_offset.cross(&force);
+                    total_torque_body += lit.centroid.cross(&force);
                 }
 
                 // a_body [m/s²] → a_inertial [km/s²]
@@ -1597,6 +1491,48 @@ mod tests {
         );
     }
 
+    /// A half-shielded panel torques as its exposed half alone would.
+    ///
+    /// Partial shielding is a behaviour change for drag as much as for SRP: the
+    /// old rule dropped a panel only when one other panel covered it whole, so
+    /// a panel half in the wake carried its full area at its own centre — here
+    /// the CoM, which produced no torque at all.
+    ///
+    /// `iss_state` puts the position on +x and the velocity on +y, and the
+    /// co-rotation term is along +y too, so the flow arrives along -y exactly.
+    #[test]
+    fn a_half_shielded_panel_drags_as_its_exposed_half_alone_would() {
+        let upstream = -Vector3::y();
+        let optics = PanelOptics::absorber();
+        let target = SurfacePanel::rectangle([1.0, 1.0], Vector3::x(), upstream, 2.2, optics);
+        // Shields x in [0, 1] of the target's x in [-1, 1], two metres upwind
+        // and overhanging in z so the shield's own force is not tuned to
+        // cancel the target's.
+        let shield = SurfacePanel::rectangle([0.5, 2.0], Vector3::x(), upstream, 2.2, optics)
+            .with_cp_offset(Vector3::x() * 0.5 + upstream * 2.0);
+        // The exposed half as a panel in its own right.
+        let exposed = SurfacePanel::rectangle([0.5, 1.0], Vector3::x(), upstream, 2.2, optics)
+            .with_cp_offset(Vector3::x() * -0.5);
+
+        let torque_of = |panels: Vec<SurfacePanel>| {
+            PanelDrag::for_earth(SpacecraftShape::panels(panels))
+                .eval(0.0, &iss_state(), None)
+                .torque_body
+                .into_inner()
+        };
+
+        let got = torque_of(vec![target, shield.clone()]) - torque_of(vec![shield]);
+        let want = torque_of(vec![exposed]);
+        assert!(
+            got.magnitude() > 0.0,
+            "a half-shielded panel has to torque, got {got:?}"
+        );
+        assert!(
+            (got - want).magnitude() / want.magnitude() < 1e-12,
+            "the shielded panel must torque as its exposed half: {got:?} vs {want:?}"
+        );
+    }
+
     #[test]
     fn panels_backface_zero_drag() {
         // Single panel facing +y (away from the +y flow) — backface
@@ -2190,35 +2126,34 @@ mod tests {
         );
     }
 
-    /// An offset that overflows is outside the outline, even one vast enough
-    /// that the tolerance overflows too.
+    /// A caster vast enough to overflow the arithmetic takes nothing away.
     ///
     /// `[f64::MAX, 1e-308]` is an accepted rectangle: both extents are finite
-    /// and positive and the area comes to 7.2. Scaling that half-extent by the
-    /// tolerance gives infinity, so the comparison along the long axis reads
-    /// `inf <= inf` and passes — and the answer is still right, because the
-    /// short axis sees `inf * 0`, which is NaN and fails. Nothing rests on the
-    /// overflowed bound either way: no finite offset can exceed a half-extent
-    /// of `f64::MAX`, so wherever a point can actually be, that bound and the
-    /// true one agree.
+    /// and positive and the area comes to 7.2. Its corners sit `1e308` from a
+    /// centre of pressure at `-1e308`, so carrying them into the target's frame
+    /// overflows. A shadow that cannot be located has to be dropped, which
+    /// leaves a force that may be too large — never a NaN in the loads.
     #[test]
-    fn an_offset_that_overflows_is_outside_a_vast_outline() {
+    fn a_caster_whose_coordinates_overflow_shadows_nothing() {
         let normal = Vector3::new(0.0, 0.0, 1.0);
         let axis = Vector3::new(1.0, 0.0, 0.0);
-        let panel = SurfacePanel::rectangle(
+        let target =
+            SurfacePanel::rectangle([1.0, 1.0], axis, normal, 2.2, PanelOptics::absorber());
+        let vast = SurfacePanel::rectangle(
             [f64::MAX, 1e-308],
             axis,
             normal,
             2.2,
             PanelOptics::absorber(),
         )
-        .with_cp_offset(axis * -1e308);
+        .with_cp_offset(Vector3::new(-1e308, 0.0, 1.0));
 
-        // 1e308 - (-1e308) overflows.
-        let beyond = axis * 1e308;
+        let lit = lit_region(&target, &[vast], &normal);
+        assert_eq!(lit.fraction, 1.0, "an unlocatable shadow must be dropped");
         assert!(
-            !panel.outline_contains(&beyond),
-            "an offset that overflows is within no outline"
+            lit.centroid.iter().all(|c| c.is_finite()),
+            "{:?}",
+            lit.centroid
         );
     }
 
@@ -2248,7 +2183,7 @@ mod tests {
 
         let panels = vec![target, caster];
         assert!(
-            is_fully_occluded(&panels[0], &panels, &normal),
+            lit_region(&panels[0], &panels, &normal).fraction == 0.0,
             "a caster the same size and directly upstream covers the panel"
         );
     }
@@ -2277,7 +2212,7 @@ mod tests {
 
         let panels = vec![target, caster];
         assert!(
-            !is_fully_occluded(&panels[0], &panels, &upstream),
+            lit_region(&panels[0], &panels, &upstream).fraction == 1.0,
             "a caster 1e-150 m across cannot cover a target 1e-9 m across"
         );
     }
@@ -2317,6 +2252,7 @@ mod tests {
         };
 
         let mut ever_behind = [false; MAX_PANEL_CORNERS];
+        let mut lit_by_tilt: Vec<f64> = Vec::new();
         for tilt in [
             Vector3::new(0.0, 1.0, 0.0),
             Vector3::new(0.0, -1.0, 0.0),
@@ -2350,8 +2286,19 @@ mod tests {
                     ever_behind[i] = true;
                 }
                 let hit = corner + upstream * t;
+                // The containment the test's premise rests on: every corner's
+                // ray does land inside the caster's rectangle, so the depth is
+                // the only thing that can keep that corner lit. Written out
+                // here because it is this test's premise, not a rule the model
+                // needs any more.
+                let PanelOutline::Rectangle {
+                    half_extent: [hx, hy],
+                    in_plane_x,
+                } = cutting.outline.expect("the caster is a rectangle");
+                let d = hit - cutting.cp_offset;
+                let y = cutting.normal.cross(&in_plane_x);
                 assert!(
-                    cutting.outline_contains(&hit),
+                    d.dot(&in_plane_x).abs() <= hx && d.dot(&y).abs() <= hy,
                     "tilt {tilt:?}: corner {corner:?} reaches the caster's outline at \
                      {hit:?}, so the depth is the only thing that can keep it lit"
                 );
@@ -2362,17 +2309,32 @@ mod tests {
             );
 
             let panels = vec![shaded.clone(), cutting];
+            let part = lit_region(&panels[0], &panels, &upstream).fraction;
             assert!(
-                !is_fully_occluded(&panels[0], &panels, &upstream),
-                "tilt {tilt:?}: a caster cutting through the panel leaves part of it lit"
+                part > 0.0 && part < 1.0,
+                "tilt {tilt:?}: a caster cutting through the panel leaves part of it lit, \
+                 got {part}"
             );
+            // The four tilts are the same geometry turned about the incoming
+            // direction, so the share has to come out the same. A rule that
+            // looked at one fixed corner would answer some tilts differently.
+            lit_by_tilt.push(part);
 
             // Slid upstream until it clears the target, the same plate does
             // cover it — so the answer above comes from the tilt, not a miss.
             let panels = vec![shaded.clone(), caster(2.0)];
-            assert!(
-                is_fully_occluded(&panels[0], &panels, &upstream),
+            assert_eq!(
+                lit_region(&panels[0], &panels, &upstream).fraction,
+                0.0,
                 "tilt {tilt:?}: clear of the panel, the same tilted plate covers it"
+            );
+        }
+
+        for (i, part) in lit_by_tilt.iter().enumerate() {
+            assert!(
+                (part - lit_by_tilt[0]).abs() < 1e-15,
+                "tilt {i} left {part} lit but the first left {}",
+                lit_by_tilt[0]
             );
         }
 
@@ -2419,8 +2381,9 @@ mod tests {
                 })
             .normalize();
             for upstream in [face.normal, oblique] {
-                assert!(
-                    is_fully_occluded(&panels[6], &panels, &upstream),
+                assert_eq!(
+                    lit_region(&panels[6], &panels, &upstream).fraction,
+                    0.0,
                     "the panel behind face {:?} has to be shaded from {upstream:?}",
                     face.normal
                 );
@@ -2434,7 +2397,7 @@ mod tests {
                         continue;
                     }
                     assert!(
-                        !is_fully_occluded(f, &panels, &upstream),
+                        lit_region(f, &panels, &upstream).fraction > 0.0,
                         "cube face {i} faces the source and must stay lit"
                     );
                 }
@@ -2475,8 +2438,9 @@ mod tests {
             "the caster has to be exactly edge-on for this to be the guard's case"
         );
         let panels = vec![shaded, caster];
-        assert!(
-            !is_fully_occluded(&panels[0], &panels, &upstream),
+        assert_eq!(
+            lit_region(&panels[0], &panels, &upstream).fraction,
+            1.0,
             "an edge-on caster has no projected area to cover anything with"
         );
     }
