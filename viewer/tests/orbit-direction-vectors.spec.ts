@@ -159,10 +159,10 @@ async function connect(page: import("@playwright/test").Page) {
 async function drawnVectors(
   page: import("@playwright/test").Page,
   id: string,
-  { expectSome }: { expectSome: boolean },
+  { expectKinds }: { expectKinds: readonly string[] },
 ): Promise<DrawnVector[] | null> {
   return page.evaluate(
-    async ([entityId, wantSome]) => {
+    async ([entityId, wanted]) => {
       const w = window as unknown as Record<string, unknown>;
       // Re-read the hook each pass: it is installed when the arrows first mount,
       // which can be after the connection is up. Reading it once and giving up
@@ -175,22 +175,27 @@ async function drawnVectors(
               ) => { kind: string; direction: [number, number, number]; distance: number }[] | null)
             | undefined
         )?.(entityId as string) ?? null;
+      const wantedKinds = wanted as readonly string[];
       for (let i = 0; i < 40; i++) {
         const drawn = read();
-        if (!wantSome) {
+        if (wantedKinds.length === 0) {
           // Absence has to settle too: give the scene the same window to draw
           // something before concluding it drew nothing. `null` is returned as
           // it is — a missing hook is a different fact from an empty list, and
           // coercing it here would make the caller's null check unfailable.
           if (i === 39) return drawn;
-        } else if (drawn != null && drawn.length > 0) {
+        } else if (drawn != null && wantedKinds.every((k) => drawn.some((d) => d.kind === k))) {
+          // Wait for the *named* arrows, not for any arrow: nadir needs nothing
+          // but a position, while the Sun waits on the WASM ephemeris, so a
+          // caller asserting both would otherwise read the moment nadir alone
+          // had arrived.
           return drawn;
         }
         await new Promise((r) => setTimeout(r, 100));
       }
       return read();
     },
-    [id, expectSome] as [string, boolean],
+    [id, expectKinds] as [string, readonly string[]],
   );
 }
 
@@ -205,7 +210,7 @@ test("centred satellite gets Sun and nadir arrows, in the local-orbital basis", 
     .selectOption(`satellite:${SAT_ENTITY_PATH}`);
   await expect(page.locator('[data-testid="frame-orientation-lvlh"]')).toBeVisible();
 
-  const vectors = await drawnVectors(page, SAT_ENTITY_PATH, { expectSome: true });
+  const vectors = await drawnVectors(page, SAT_ENTITY_PATH, { expectKinds: ["sun", "nadir"] });
   expect(vectors, "the debug hook should expose the drawn arrows").not.toBeNull();
   if (vectors == null) return;
 
@@ -256,13 +261,13 @@ test("a central-body view draws no arrows", async ({ page }) => {
   await page
     .locator('[data-testid="frame-selector-select"]')
     .selectOption(`satellite:${SAT_ENTITY_PATH}`);
-  const drawn = await drawnVectors(page, SAT_ENTITY_PATH, { expectSome: true });
+  const drawn = await drawnVectors(page, SAT_ENTITY_PATH, { expectKinds: ["sun", "nadir"] });
   expect(drawn?.length ?? 0, "arrows should be drawn while a satellite is centred").toBeGreaterThan(
     0,
   );
 
   await page.locator('[data-testid="frame-selector-select"]').selectOption("central_body");
-  const vectors = await drawnVectors(page, SAT_ENTITY_PATH, { expectSome: false });
+  const vectors = await drawnVectors(page, SAT_ENTITY_PATH, { expectKinds: [] });
   // `null` is the expected state, not merely an acceptable one: with nothing to
   // draw the scene does not mount `DirectionArrows` at all, so the hook is gone.
   // Collapsing null and [] here would also accept a component still mounted and
