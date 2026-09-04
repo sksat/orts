@@ -482,7 +482,13 @@ fn subtract_into(
     // so its edges fit an array.
     let mut edge_buf = [(Vector2::zeros(), Vector2::zeros()); MAX_SHADOW_VERTICES];
     let mut n_edges = 0;
-    for e in edges(shadow) {
+    // A zero-length edge is dropped rather than used as a half-plane. Clipping
+    // by one keeps the whole polygon — it bounds nothing — and here that would
+    // hand back the whole piece as the part "outside" it, on top of the parts
+    // the real edges contribute, so the pieces would overlap and their areas
+    // would add up to more than the piece they came from. That total then
+    // reads as a fully lit panel.
+    for e in edges(shadow).filter(|(a, b)| a != b) {
         debug_assert!(
             n_edges < MAX_SHADOW_VERTICES,
             "a shadow grew past its bound"
@@ -576,6 +582,12 @@ fn clip_half_plane(
         if da >= -eps(&a) {
             out.push(a);
         }
+        // A vertex exactly on the line is kept above, and the crossing on the
+        // edge that leaves the line from it is that same vertex, so the result
+        // can carry it twice. The area and the first moment are unaffected —
+        // the repeated pair contributes a zero cross product — and the
+        // zero-length edge it leaves is dropped where edges are used as
+        // half-planes, which is the only place it would matter.
         if (da >= -eps(&a)) != (db >= -eps(&b)) && da != db {
             out.push(crossing(a, b, da, db));
         }
@@ -1017,5 +1029,35 @@ mod tests {
             "centroid did not move with the spacecraft: {:?}",
             there.centroid
         );
+    }
+
+    #[test]
+    fn a_shadow_with_a_repeated_vertex_does_not_double_count_the_lit_part() {
+        // A clip keeps a vertex that lies exactly on the line and then finds
+        // the crossing on the edge that leaves the line from it, which is that
+        // same vertex — so a shadow polygon can arrive here with a zero-length
+        // edge. Clipping by such an edge keeps the whole polygon, and using it
+        // as one of the subtraction's half-planes would hand back the whole
+        // piece as the part "outside" it, on top of the real parts: the pieces
+        // overlap and their areas add up to more than the piece they came
+        // from, which reads as a fully lit panel.
+        let piece = vec![
+            Vector2::new(-1.0, -1.0),
+            Vector2::new(1.0, -1.0),
+            Vector2::new(1.0, 1.0),
+            Vector2::new(-1.0, 1.0),
+        ];
+        // The bottom half, with its second corner written twice.
+        let shadow = vec![
+            Vector2::new(-1.0, -1.0),
+            Vector2::new(1.0, -1.0),
+            Vector2::new(1.0, 0.0),
+            Vector2::new(1.0, 0.0),
+            Vector2::new(-1.0, 0.0),
+        ];
+        let mut pieces = Vec::new();
+        subtract_into(&piece, &shadow, &mut pieces);
+        let total: f64 = pieces.iter().map(|p| signed_area(p).abs()).sum();
+        near(total, 2.0, "the lit area of a square minus its bottom half");
     }
 }
