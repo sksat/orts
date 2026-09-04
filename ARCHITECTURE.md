@@ -194,9 +194,10 @@ sequenceDiagram
   (`OrbitViewer` → `OrbitScene` → `OrbitSceneContents`) and an attitude view
   (`AttitudeViewer` → `AttitudeScene` → `AttitudeSceneContents`), each a
   batteries-included wrapper over a bring-your-own-Canvas scene graph over an
-  internal renderer. They share the drawing primitives (`SpacecraftVisual`,
-  `DirectionArrows`) and the display-frame transform (`displayFrame.ts`) rather
-  than the scene graph — see [DESIGN.md](DESIGN.md) for why.
+  internal renderer. They share the display-frame transform (`displayFrame.ts`)
+  and `SpacecraftVisual` rather than the scene graph — see [DESIGN.md](DESIGN.md) for why.
+  `DirectionArrows` is written to the same contract and drawn today by the
+  attitude view; the orbit view picks it up in a follow-up.
 
 ## 6. Design principles
 

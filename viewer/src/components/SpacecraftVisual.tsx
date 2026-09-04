@@ -60,6 +60,17 @@ interface SpacecraftVisualProps {
    * as named arrows rather than one-pixel lines — see {@link BodyAxes}.
    */
   visualSpan?: number;
+  /**
+   * Whether a registered 3D model may stand in for the marker (default true).
+   *
+   * A model drawn without a quaternion sits at its own default orientation, which
+   * in the orbit view is honest — the model is a position marker there, and a
+   * satellite may arrive with no attitude at all. A view whose subject *is* the
+   * orientation passes false when the attitude is unusable, so the reader gets
+   * the marker that looks the same from every side instead of a model that
+   * appears to point somewhere.
+   */
+  model?: boolean;
 }
 
 /**
@@ -87,8 +98,9 @@ export function SpacecraftVisual({
   axisLength,
   modelScale,
   visualSpan,
+  model = true,
 }: SpacecraftVisualProps) {
-  const modelConfig = satId ? getSatelliteModelConfig(satId, satName) : null;
+  const modelConfig = model && satId ? getSatelliteModelConfig(satId, satName) : null;
   // The default axis length follows the scale the model is *drawn* at, not the
   // registry's: overriding one without the other would silently change the ratio
   // between a spacecraft and its axes.

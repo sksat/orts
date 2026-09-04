@@ -6,6 +6,7 @@ import {
   cameraDistanceForSpan,
   DEFAULT_CAMERA_FOV_DEGREES,
   NOMINAL_SPACECRAFT_SPAN,
+  usableFovDegrees,
 } from "../spacecraftScale.js";
 import { AttitudeScene } from "./AttitudeScene.js";
 import type { AttitudeViewerProps } from "./types.js";
@@ -84,17 +85,20 @@ function InitialCameraFit({ fov }: { fov: number }) {
  * ```
  */
 export function AttitudeViewer({ className, style, canvas, ...sceneProps }: AttitudeViewerProps) {
-  const fov = canvas?.camera?.fov ?? DEFAULT_FOV;
+  // The camera and the distance fitted for it read the field of view through the
+  // same guard: a value no camera can project with would otherwise reach the
+  // `PerspectiveCamera` itself and blank the canvas, however sound the distance.
+  const fov = usableFovDegrees(canvas?.camera?.fov);
   return (
     <div className={className} style={{ width: "100%", height: "100%", ...style }}>
       <Canvas
         camera={{
           position: DEFAULT_CAMERA_POSITION,
           up: SCENE_UP,
-          fov: DEFAULT_FOV,
           near: 0.01,
           far: 100,
           ...canvas?.camera,
+          fov,
         }}
         gl={{ ...canvas?.gl }}
       >

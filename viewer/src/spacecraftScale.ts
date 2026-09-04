@@ -163,6 +163,23 @@ export function frameAxisArrows(length: number, span: number): ArrowGeometry {
  */
 export const DEFAULT_CAMERA_FOV_DEGREES = 50;
 
+/**
+ * A vertical field of view a perspective camera can actually project with, or the
+ * default framing when the caller's value is not one.
+ *
+ * Outside (0°, 180°) there is no frustum: at 0 or NaN a projection matrix comes
+ * out degenerate and the canvas is blank, and past 180° the horizontal half-angle
+ * turns negative and any fit inverts. `fov` reaches the viewer from a public
+ * camera prop, so both the camera and the distance derived for it read it through
+ * here — sanitising only one of the two leaves a camera that cannot project at a
+ * distance that looks right.
+ */
+export function usableFovDegrees(fovDegrees: number | undefined): number {
+  return fovDegrees != null && Number.isFinite(fovDegrees) && fovDegrees > 0 && fovDegrees < 180
+    ? fovDegrees
+    : DEFAULT_CAMERA_FOV_DEGREES;
+}
+
 /** Empty space kept between the outermost drawn thing and the viewport edge. */
 const VIEW_MARGIN = 1.15;
 
@@ -199,16 +216,7 @@ export function drawnExtentForSpan(span: number): number {
  * when the proportions above change.
  */
 export function cameraDistanceForSpan(span: number, fovDegrees: number, aspect = 1): number {
-  // A field of view outside (0°, 180°) is not a frustum anything can be fitted
-  // to: at 0 or NaN the sine below is 0 or NaN, so the distance comes back
-  // infinite or NaN and the camera lands nowhere; past 180° the tangent turns
-  // negative and the horizontal fit inverts. `fov` reaches here from a public
-  // camera prop, so fall back to the framing these ratios were chosen for.
-  const usableFov =
-    Number.isFinite(fovDegrees) && fovDegrees > 0 && fovDegrees < 180
-      ? fovDegrees
-      : DEFAULT_CAMERA_FOV_DEGREES;
-  const halfVertical = (usableFov / 2) * (Math.PI / 180);
+  const halfVertical = (usableFovDegrees(fovDegrees) / 2) * (Math.PI / 180);
   // A viewport with no width or height has no aspect to fit; treat it as square
   // rather than returning an infinite distance a caller would place a camera at.
   const usable = Number.isFinite(aspect) && aspect > 0 ? aspect : 1;

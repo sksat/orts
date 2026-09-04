@@ -23,10 +23,10 @@ interface DirectionArrowsProps {
 /**
  * Reference-direction arrows drawn at a spacecraft.
  *
- * Shared by both views: the attitude view draws them at the origin, the orbit
- * view at the centred satellite's scene position. Proportions come from the
- * spacecraft's apparent size, so the same component works in a scene measured in
- * central-body radii and in one measured in spacecraft spans.
+ * Drawn by the attitude view, at the origin. Proportions come from the
+ * spacecraft's apparent size rather than from a scene length, so the component
+ * also works in a scene measured in central-body radii — which is how the orbit
+ * view draws them at a centred satellite in a follow-up.
  */
 export function DirectionArrows({ position, vectors, visualSpan, debugId }: DirectionArrowsProps) {
   const geometry = useMemo(() => arrowGeometryForSpan(visualSpan), [visualSpan]);

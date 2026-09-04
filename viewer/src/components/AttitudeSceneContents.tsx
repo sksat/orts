@@ -128,6 +128,9 @@ export function AttitudeSceneContents({
         axisLength={axisLengthForSpan(span)}
         modelScale={modelScale}
         visualSpan={span}
+        // Without a usable attitude a 3D model would be drawn at its own default
+        // orientation, which reads as a measured one in a view about orientation.
+        model={quaternion != null}
       />
 
       <DirectionArrows position={ORIGIN} vectors={vectors} visualSpan={span} debugId={satId} />
