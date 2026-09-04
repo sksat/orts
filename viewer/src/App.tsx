@@ -38,6 +38,7 @@ import { useSourceRuntime } from "./sources/useSourceRuntime.js";
 import { useWebSocketSource, WS_SOURCE_ID } from "./sources/useWebSocketSource.js";
 import { resolveTextureBaseUrl } from "./textureBaseUrl.js";
 import { resolveDefaultWsUrl } from "./utils/defaultWsUrl.js";
+import { finiteOrNull } from "./utils/finite.js";
 import { planInitialRangeQuery } from "./utils/initialRangeQuery.js";
 import {
   readTimeRangeParam,
@@ -388,6 +389,13 @@ export function App() {
     activeTorqueModels,
   } = useSimInfoDerived(simInfo);
 
+  // A source can hand over an epoch that is not a number: the CSV header parser
+  // runs `Number()` over `# epoch_jd` and forwards whatever comes out, so a
+  // malformed header arrives as NaN — non-null, and useless. The scenes reject it
+  // and fall back; the controls below must agree, or they offer a frame and a Sun
+  // arrow that nothing draws.
+  const epoch = finiteOrNull(epochJd);
+
   // Sim-declared marker shapes (from SatelliteInfo); the viewer can override these.
   const satelliteSimShapes = useMemo(() => {
     if (!simInfo) return undefined;
@@ -544,11 +552,11 @@ export function App() {
     ): readonly DirectionVectorKind[] =>
       resolveDirectionVectors({
         frame: LEGEND_FRAME,
-        sunEci: epochJd != null ? SUN_PRESENT : null,
+        sunEci: epoch != null ? SUN_PRESENT : null,
         positionEci: position ?? null,
         options,
       }).map((v) => v.kind),
-    [epochJd],
+    [epoch],
   );
 
   /** What the attitude view draws right now — the legend names exactly these. */
@@ -597,10 +605,10 @@ export function App() {
           computeLvlhAxes(attitudeBody?.position ?? null, attitudeBody?.velocity ?? null) != null
         );
       }
-      if (frame === "bodyFixed") return epochJd != null && centralBody === "earth";
+      if (frame === "bodyFixed") return epoch != null && centralBody === "earth";
       return true;
     },
-    [attitudeBody, epochJd, centralBody],
+    [attitudeBody, epoch, centralBody],
   );
   useEffect(() => {
     if (!attitudeFrameAvailable(attitudeFrame)) setAttitudeFrame("inertial");
@@ -680,7 +688,7 @@ export function App() {
               onReferenceFrameChange={setReferenceFrame}
               satellites={simInfo?.satellites}
               centralBody={centralBody}
-              epochJd={epochJd}
+              epochJd={epoch ?? undefined}
               orbitInfo={fileSource.orbitInfo}
               simInfo={simInfo}
               totalPoints={totalPoints}
@@ -709,11 +717,11 @@ export function App() {
               bodyFixedUnavailable={
                 centralBody !== "earth"
                   ? "The viewer models only Earth's rotation"
-                  : epochJd == null
+                  : epoch == null
                     ? "Requires epoch"
                     : undefined
               }
-              sunUnavailable={epochJd == null ? "Requires epoch" : undefined}
+              sunUnavailable={epoch == null ? "Requires epoch" : undefined}
               nadirUnavailable={
                 attitudeDrawableKinds.includes("nadir") ? undefined : "Requires a position"
               }
@@ -752,7 +760,7 @@ export function App() {
               centralBody={{ id: centralBody, radiusKm: centralBodyRadius }}
               satellites={satellites}
               referenceFrame={viewerFrame}
-              epochJd={epochJd ?? undefined}
+              epochJd={epoch ?? undefined}
               time={snapshot.currentTime}
               defaultMarkerShape={defaultMarkerShape}
               directionVectors={directionVectors}
@@ -766,7 +774,7 @@ export function App() {
                 centralBody={{ id: centralBody }}
                 body={attitudeBody}
                 orientation={attitudeFrame}
-                epochJd={epochJd ?? undefined}
+                epochJd={epoch ?? undefined}
                 time={snapshot.currentTime}
                 defaultMarkerShape={defaultMarkerShape}
                 directionVectors={directionVectors}
@@ -809,7 +817,7 @@ export function App() {
           onSpeedChange={realtimePlayback.setSpeed}
           isLive={realtimePlayback.snapshot.isLive}
           onGoLive={realtimePlayback.goLive}
-          epochJd={epochJd}
+          epochJd={epoch}
         />
       )}
 
