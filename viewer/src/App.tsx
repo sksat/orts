@@ -64,7 +64,10 @@ const VITE_TEXTURE_BASE_URL = import.meta.env.VITE_TEXTURE_BASE_URL;
  */
 const LEGEND_FRAME: DisplayFrame = { kind: "inertial", origin: null };
 
-/** Stands in for "the scene will have a Sun direction", which it computes itself. */
+/**
+ * Stands in for "the scene will have a Sun direction", which the scene computes
+ * itself, from the lighting. Any direction answers the question.
+ */
 const SUN_PRESENT: DisplayVec3 = [1, 0, 0];
 
 /** Both reference-direction arrows on, the starting state for either view. */
@@ -558,7 +561,7 @@ export function App() {
     ): readonly DirectionVectorKind[] =>
       resolveDirectionVectors({
         frame: LEGEND_FRAME,
-        sunEci: sunIsComputable ? SUN_PRESENT : null,
+        sunDisplay: sunIsComputable ? SUN_PRESENT : null,
         positionEci: position ?? null,
         options,
       }).map((v) => v.kind),
