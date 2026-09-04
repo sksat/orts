@@ -268,12 +268,11 @@ test("a near plane the scene cannot be resolved against falls back to the defaul
 });
 
 test("an extreme zoom leaves the camera somewhere Three.js can measure", async ({ page }) => {
-  // `zoom: 1e200` builds a finite projection matrix, so the prop guard passes it
-  // — and it narrows the effective field of view to 5.3e-199°, which the fit
-  // would answer with a distance of 6.5e200 spans. Three.js measures a position
-  // by summing its squared components, so that distance overflows the length and
-  // the far plane derived from it becomes infinite. The view stays at the framing
-  // it was built with instead.
+  // `zoom: 1e200` narrows the effective field of view to 5.3e-199°, which the fit
+  // would answer with a distance of 6.5e200 spans — past what the view matrix can
+  // carry to the GPU. Its projection coefficient, 2.1e200, is past that too, so
+  // the guard replaces the zoom; either way the camera has to end up somewhere
+  // the renderer can place it.
   await open(page, `epoch=${EPOCH}&zoom=1e200&controls=0`);
   const view = await cameraView(page);
   const distance = Math.hypot(...view.position);
@@ -327,36 +326,57 @@ test("arrows start at the marker when a registered model is not the thing drawn"
   );
 });
 
+/**
+ * Camera distance the way Three.js measures it, by summing the squared
+ * components. `Math.hypot` scales first and lands a bit-level step away, which is
+ * enough to make an assertion about a far plane derived from the other formula
+ * fail by one ULP.
+ */
+function renderedDistance(position: readonly number[]): number {
+  return Math.sqrt(position[0] ** 2 + position[1] ** 2 + position[2] ** 2);
+}
+
+/** Dolly the camera out until `past` spans, or fail the poll trying. */
+async function dollyPast(page: Page, past: number) {
+  await page.locator("canvas").hover();
+  await expect
+    .poll(
+      async () => {
+        for (let i = 0; i < 10; i++) await page.mouse.wheel(0, 240);
+        const view = await cameraView(page);
+        return Math.hypot(...view.position) > past;
+      },
+      { timeout: 20000 },
+    )
+    .toBe(true);
+}
+
 test("the far plane follows the camera out, instead of clipping the scene away", async ({
   page,
 }) => {
   // `OrbitControls` dollies without a limit while the scene sits at the origin,
   // so a viewer who scrolls past the far plane would lose the whole picture at
-  // once rather than watch it get small.
-  // A far plane the dolly reaches in a few notches: each wheel event moves the
-  // camera out by about 5%, so passing the default 100 from 7.1 spans would take
-  // some 50 of them. 12 spans is past the opening framing and short of a scroll.
-  await open(page, `epoch=${EPOCH}&far=12`);
+  // once rather than watch it get small. This plane is the viewer's own default,
+  // which makes keeping up with the camera its job.
+  await open(page, `epoch=${EPOCH}`);
   const before = await cameraView(page);
-  expect(before.far, "the caller's far plane is in effect").toBeCloseTo(12, 6);
-  await page.locator("canvas").hover();
-
-  await expect
-    .poll(
-      async () => {
-        for (let i = 0; i < 5; i++) await page.mouse.wheel(0, 240);
-        const view = await cameraView(page);
-        return Math.hypot(...view.position) > 12;
-      },
-      { timeout: 15000 },
-    )
-    .toBe(true);
+  await dollyPast(page, before.far);
 
   const after = await cameraView(page);
-  const distance = Math.hypot(...after.position);
+  const distance = renderedDistance(after.position);
   expect(after.far, "the far plane is still beyond the scene").toBeGreaterThanOrEqual(
     distance + drawnExtentForSpan(NOMINAL_SPACECRAFT_SPAN),
   );
+});
+
+test("a caller's own far plane is left where they put it", async ({ page }) => {
+  // The other half of that rule. A depth range someone chose is theirs, including
+  // a tight one they chose on purpose, and the viewer has no business widening it
+  // just because the camera moved.
+  await open(page, `epoch=${EPOCH}&far=12`);
+  expect((await cameraView(page)).far, "the caller's plane is in effect").toBeCloseTo(12, 6);
+  await dollyPast(page, 12);
+  expect((await cameraView(page)).far, "and it stays where they put it").toBeCloseTo(12, 6);
 });
 
 test("a body with no Sun ephemeris draws no Sun arrow", async ({ page }) => {

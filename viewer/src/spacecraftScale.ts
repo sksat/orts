@@ -110,14 +110,19 @@ export function markerBoundingRadius(shape: MarkerShape | null, span: number): n
  * Bounding radius of a 3D model of this apparent size.
  *
  * A registered model is known by one number, its largest extent, so all that can
- * be said is that it fits inside a cube of that side — and the cube's own
- * envelope therefore bounds it. Using half the span instead would put an arrow's
- * tail inside any model with extent on more than one axis, which is most of them.
+ * be said is that it fits inside a cube of that side — and for a model whose
+ * bounds are centred on its own origin, which the registered ones are, that
+ * cube's envelope bounds it. `nativeSpanUnits` records a size and not a radius,
+ * so an off-centre model would defeat this: bounds of `x = [10, 11]` are one unit
+ * across and ten units out. Half the span, on the other hand, would put an
+ * arrow's tail inside any model with extent on more than one axis, which is most
+ * of them.
  *
  * TODO: measure each model's own bounding radius the way `nativeSpanUnits` is
- * measured. The envelope over-corrects for a flat model — a panel reaches
- * sqrt(2)/2 of its span, not sqrt(3)/2 — which shows as a gap between the model
- * and the tail of an arrow along one of its long axes.
+ * measured, which would state the centring rather than assume it. The envelope
+ * also over-corrects for a flat model — a panel reaches sqrt(2)/2 of its span,
+ * not sqrt(3)/2 — which shows as a gap between the model and the tail of an arrow
+ * along one of its long axes.
  */
 export function modelBoundingRadius(span: number): number {
   return (Math.sqrt(3) / 2) * span;

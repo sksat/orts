@@ -135,8 +135,9 @@ export function resolveDisplayFrame(
 /**
  * How far from unit a normalised quaternion may land and still be used.
  *
- * Above the 1.1e-16 the division lands within for any magnitude a double
- * represents normally, and below the 1.3e-4 of the nearest case it has to reject.
+ * Above where the division lands for any magnitude a double represents normally —
+ * a few multiples of the machine epsilon, 4.4e-16 across the four-component cases
+ * measured — and far below the 1.3e-4 of the nearest case it has to reject.
  */
 const UNIT_QUATERNION_TOLERANCE = 1e-9;
 
@@ -162,10 +163,10 @@ export function unitAttitude(attitude: Quat | undefined): Quat | undefined {
   // does not: `Math.hypot` answers 5e-324 for `[5e-324, 5e-324, 0, 0]`, the
   // smallest number there is, so both components divide to 1 and the result has
   // a norm of 1.414 — which Three.js would apply as written, scaling the
-  // spacecraft by 41%. In the normal range the same division lands within
-  // 1.1e-16 of unit, so reading the result tells the two apart without a rule
-  // about the input's scale: `[1e-300, 0, 0, 0]` is the identity rotation
-  // written small, and it normalises exactly.
+  // spacecraft by 41%. In the normal range the same division lands a few
+  // multiples of the machine epsilon from unit, so reading the result tells the
+  // two apart without a rule about the input's scale: `[1e-300, 0, 0, 0]` is the
+  // identity rotation written small, and it normalises exactly.
   return Math.abs(Math.hypot(...unit) - 1) < UNIT_QUATERNION_TOLERANCE ? unit : undefined;
 }
 

@@ -129,7 +129,18 @@ describe("usablePosition", () => {
 describe("usableProjection", () => {
   it("passes through settings that describe a frustum", () => {
     const asked: CameraPropsInput = { zoom: 2, near: 0.5, far: 50 };
-    expect(usableProjection(asked, FOV, EXTENT)).toEqual({ fov: FOV, zoom: 2, near: 0.5, far: 50 });
+    expect(usableProjection(asked, FOV, EXTENT)).toEqual({
+      fov: FOV,
+      zoom: 2,
+      near: 0.5,
+      far: 50,
+      // The caller named this plane, so it is not the viewer's to keep moving.
+      farIsDefault: false,
+    });
+    expect(usableProjection({ zoom: 2 }, FOV, EXTENT).farIsDefault).toBe(true);
+    // A far plane that cannot describe a frustum is replaced, and the replacement
+    // is the default — the viewer's to maintain again.
+    expect(usableProjection({ near: 1, far: 0.5 }, FOV, EXTENT).farIsDefault).toBe(true);
   });
 
   it("yields a projection matrix Three.js can build, whatever it is given", () => {

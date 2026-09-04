@@ -83,6 +83,11 @@
           "target": "@components/orbit-viewer/components/EarthBody.tsx"
         },
         {
+          "path": "src/components/FarPlaneBeyondScene.tsx",
+          "type": "registry:component",
+          "target": "@components/orbit-viewer/components/FarPlaneBeyondScene.tsx"
+        },
+        {
           "path": "src/components/OrbitSceneContents.tsx",
           "type": "registry:component",
           "target": "@components/orbit-viewer/components/OrbitSceneContents.tsx"

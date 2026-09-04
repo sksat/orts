@@ -36,7 +36,7 @@ export interface CameraPropsInput {
 /** Near plane the default framing uses, in scene units. */
 export const DEFAULT_NEAR = 0.01;
 
-/** Far plane; the initial fit pushes it out when it moves the camera. */
+/** Far plane; the scene keeps it beyond what it draws while the controls are on. */
 export const DEFAULT_FAR = 100;
 
 /** A usable frustum: what to build the camera with. */
@@ -45,6 +45,14 @@ export interface UsableProjection {
   zoom: number;
   near: number;
   far: number;
+  /**
+   * Whether the far plane is the default rather than the caller's.
+   *
+   * A caller's depth range is theirs, including a deliberately tight one; the
+   * default is only a starting value and has to keep up with where the camera
+   * goes. Whoever moves the camera needs to know which of the two it is.
+   */
+  farIsDefault: boolean;
 }
 
 /**
@@ -103,9 +111,8 @@ export function usablePosition(
  * `sceneExtent` is the radius of what the view draws around the origin, which is
  * the scale a near plane has to be judged against: from around 1e17 of these
  * units the extent rounds away against the plane — `near + extent` is `near`
- * again — so no camera distance leaves the scene between the planes, and a
- * position fitted for that plane squares to infinity when its length is taken,
- * which sets the far plane to infinity.
+ * again — so there is no room between the planes for the scene to be drawn in,
+ * however far back the camera stands.
  */
 export function usableProjection(
   camera: CameraPropsInput | undefined,
@@ -125,9 +132,15 @@ export function usableProjection(
   // not the same check — grouping the half height as `(tan / zoom) * near` gives
   // 2.3e-24 for `near: MIN_VALUE, zoom: 1e-300` where Three.js's own order
   // underflows to 0, so the reassociated version accepts a camera whose matrix
-  // comes out infinite. `aspect` is the canvas's and is not known yet; it scales
-  // the width term the same way, and a square viewport is what the default
-  // framing assumes.
+  // comes out infinite.
+  //
+  // `aspect` belongs to a canvas that has no size yet, so this is the square
+  // viewport the default framing assumes. The horizontal coefficient divides by
+  // it, so a portrait canvas scales that term by 1/aspect and could overflow one
+  // whose square-viewport counterpart is finite. Reaching that takes a zoom
+  // already within a few orders of the float32 ceiling *and* a viewport narrow
+  // enough to multiply it past: at the default framing's coefficient of 2.14, an
+  // aspect below 1e-38.
   const halfHeight = (near * Math.tan((fov / 2) * (Math.PI / 180))) / zoom;
   const height = 2 * halfHeight;
   const projectionScale = (2 * near) / height;
@@ -152,6 +165,6 @@ export function usableProjection(
     asUploaded(depthOffset) &&
     near + sceneExtent - near > 0;
   return representable
-    ? { fov, zoom, near, far: depth }
-    : { fov, zoom: 1, near: DEFAULT_NEAR, far: DEFAULT_FAR };
+    ? { fov, zoom, near, far: depth, farIsDefault: depth !== camera?.far }
+    : { fov, zoom: 1, near: DEFAULT_NEAR, far: DEFAULT_FAR, farIsDefault: true };
 }

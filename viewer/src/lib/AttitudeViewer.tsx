@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 import { PerspectiveCamera } from "three";
 import { usableDirection, usablePosition, usableProjection } from "../cameraProps.js";
 import { CameraViewProbe } from "../components/CameraViewProbe.js";
+import { FarPlaneBeyondScene } from "../components/FarPlaneBeyondScene.js";
 import { SCENE_UP } from "../sceneFrame.js";
 import {
   cameraDistanceForSpan,
@@ -67,14 +68,14 @@ function InitialCameraFit({ fov, reframe }: { fov: number; reframe: boolean }) {
       camera instanceof PerspectiveCamera ? camera.near : 0,
     );
     const current = camera.position.length();
-    // Applying the fit has to leave a position Three.js can still measure. It
-    // sums the squared components, so a distance past about 1.3e154 overflows the
-    // length — and the scene derives the far plane from that same length, so the
-    // plane would go infinite with it. A `zoom` of 1e200 asks for exactly that:
-    // an effective field of view of 5.3e-199° fits from 6.5e200 spans away. The
-    // camera keeps the framing it was built with instead, which is drawable at
-    // any zoom.
-    const placeable = Number.isFinite(needed * needed);
+    // The distance the fit asks for goes through the same check a caller's
+    // position does, in the same precision: the view matrix carries it to WebGL
+    // as float32, so past 3.4e38 the camera is somewhere the renderer cannot
+    // place it and the canvas is blank. A narrow effective field of view asks for
+    // exactly that — a `zoom` of 1e38 leaves 5.3e-37° and fits from 6.5e38 spans
+    // away. The camera keeps the framing it was built with instead, which is
+    // drawable at any zoom.
+    const placeable = Number.isFinite(Math.fround(needed));
     if (reframe && placeable && current > 0 && needed > current) {
       camera.position.multiplyScalar(needed / current);
     }
@@ -124,8 +125,9 @@ export function AttitudeViewer({ className, style, canvas, ...sceneProps }: Atti
     canvas?.camera?.position as readonly number[] | undefined,
     DEFAULT_CAMERA_POSITION,
   );
-  // Whether the camera's *distance* is still ours to choose. `usableVector` hands
-  // back the fallback itself when the caller's position is no direction, so a
+  // Whether the camera's *distance* is still ours to choose. `usablePosition`
+  // hands back the fallback itself when the caller's position is no place to put
+  // a camera, so a
   // position that was supplied but unusable belongs to us as much as an absent
   // one — and checking the raw prop instead would leave the square default fit
   // standing on a portrait canvas. The far plane is settled either way, so the
@@ -144,6 +146,8 @@ export function AttitudeViewer({ className, style, canvas, ...sceneProps }: Atti
       >
         <CameraViewProbe />
         <InitialCameraFit fov={projection.fov} reframe={framingIsOurs} />
+        {/* Only for a plane this component chose. A caller's `far` is theirs. */}
+        {projection.farIsDefault && <FarPlaneBeyondScene span={NOMINAL_SPACECRAFT_SPAN} />}
         <AttitudeScene {...sceneProps} />
       </Canvas>
     </div>

@@ -1,13 +1,10 @@
 import { OrbitControls, type OrbitControlsProps } from "@react-three/drei";
-import { useFrame, useThree } from "@react-three/fiber";
-import { PerspectiveCamera } from "three";
 import type { DirectionVector } from "../directionVectors.js";
 import type { Quat, Vec3 } from "../displayFrame.js";
 import { getSatelliteModelConfig } from "../satelliteModels.js";
 import { type MarkerShape, resolveMarkerShape } from "../satelliteShapes.js";
 import {
   axisLengthForSpan,
-  drawnExtentForSpan,
   frameAxisArrows,
   frameAxisLengthForSpan,
   markerBoundingRadius,
@@ -33,34 +30,6 @@ const LIGHT_DISTANCE = 10;
 
 /** Opacity of the reference-frame triad, which sits behind the body axes. */
 const FRAME_AXES_OPACITY = 0.4;
-
-/**
- * Keep the far plane beyond the scene, wherever the camera ends up.
- *
- * The controls dolly without a limit, and the spacecraft sits at the origin, so
- * a viewer who zooms out past the far plane loses the whole scene at once — the
- * canvas goes blank rather than showing something small. The rule is the one the
- * opening framing uses, `far >= distance + R` for the sphere of radius
- * {@link drawnExtentForSpan}, applied continuously instead of once: it is two
- * numbers compared per frame, and it writes only when the camera has moved
- * beyond the plane.
- *
- * Placed in the scene rather than in the viewer's camera fit so that an embedder
- * who brings their own `<Canvas>` gets it too — the frustum has to contain what
- * this scene draws, whoever configured the camera.
- */
-function FarPlaneBeyondScene({ span }: { span: number }) {
-  const camera = useThree((s) => s.camera);
-  useFrame(() => {
-    if (!(camera instanceof PerspectiveCamera)) return;
-    const reach = camera.position.length() + drawnExtentForSpan(span);
-    if (Number.isFinite(reach) && camera.far < reach) {
-      camera.far = reach;
-      camera.updateProjectionMatrix();
-    }
-  });
-  return null;
-}
 
 /**
  * The reference frame's axes: the scene axes themselves, drawn at the origin.
@@ -161,8 +130,6 @@ export function AttitudeSceneContents({
           sunDirection[2] * span * LIGHT_DISTANCE,
         ]}
       />
-
-      <FarPlaneBeyondScene span={span} />
 
       {axes && <ReferenceAxes length={frameAxisLengthForSpan(span)} span={span} />}
 
