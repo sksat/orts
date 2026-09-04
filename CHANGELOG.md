@@ -110,7 +110,10 @@ section is subdivided by package.
   `cos θ = n̂·(-v̂_rel)`, which selects the face behind the body, while `PanelSrp`
   selects the face turned toward the Sun. The panel occlusion added in #424
   follows the model's own facing rule, so the shadow moved with it and fell on
-  the sheltered side too. A shape whose panels come in opposite pairs — `cube`,
+  the sheltered side too; it now falls on the side the gas arrives from. That is
+  a change of side and nothing else: which panels the occlusion drops, and what
+  it does with a panel only partly covered, are as #424 left them
+  ([#407](https://github.com/sksat/orts/issues/407)). A shape whose panels come in opposite pairs — `cube`,
   or any closed box — is unaffected in magnitude, since the projected areas of a
   pair sum to the same value whichever face is picked; what changes is which
   `cp_offset` the force acts through, so the attitude disturbance of a

@@ -1684,6 +1684,12 @@ mod tests {
     /// Both directions are asserted: a shadow that falls on the wrong side
     /// passes a one-sided test by removing the force of whichever panel it
     /// happens to be behind.
+    ///
+    /// Which side, and only that. What the occlusion does once it has the side
+    /// is what #424 left: a panel one other panel covers completely is dropped
+    /// whole, and a partly covered one still produces its full force, which is
+    /// an asymmetry of its own (#407). Both casters here cover their target
+    /// completely, so this test says nothing about that case either way.
     #[test]
     fn only_a_caster_between_the_flow_and_the_panel_shades_it() {
         let state = iss_state();
