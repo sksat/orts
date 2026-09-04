@@ -91,4 +91,4 @@ The guest accepts a JSON config blob via `init`:
 }
 ```
 
-All fields are optional (defaults are shown above). The host passes this string at `WasmController::new(pre, label, config)`.
+All fields are optional (defaults are shown above). The host passes this string at `WasmController::new(pre, label, config, body)`.

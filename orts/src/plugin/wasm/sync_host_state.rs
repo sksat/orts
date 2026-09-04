@@ -17,8 +17,6 @@ use std::collections::VecDeque;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
-use tobari::magnetic::TiltedDipole;
-
 use super::stream_state::{
     DEFAULT_STREAM_CAPACITY, ReadOutcome, StreamDelivery, Streams, WriteOutcome,
 };
@@ -82,9 +80,14 @@ pub(super) enum GuestResponse {
 pub struct HostState {
     /// Human-readable satellite / controller label for log messages.
     pub label: String,
-    /// Geomagnetic field model used by the `magnetic-field-eci` host
-    /// import. Currently fixed to `TiltedDipole::earth()`.
-    field: TiltedDipole,
+    /// Magnetic field model used by the `magnetic-field-eci` host import.
+    ///
+    /// Chosen from the central body: `TiltedDipole::earth()` on Earth, and
+    /// [`tobari::magnetic::NoField`] where this crate has no model
+    /// ([`crate::magnetic::field_is_modelled`]). A guest asking for the field
+    /// around Mars gets zero rather than Earth's field measured somewhere
+    /// else.
+    field: std::sync::Arc<dyn tobari::magnetic::MagneticFieldModel>,
     /// WASI context.
     wasi: wasmtime_wasi::WasiCtx,
     /// Resource table for WASI resources.
@@ -131,10 +134,11 @@ impl HostState {
         output_tx: mpsc::SyncSender<GuestResponse>,
         current_mode: Arc<Mutex<Option<String>>>,
         stream_names: Vec<String>,
+        body: arika::body::KnownBody,
     ) -> Self {
         Self {
             label: label.into(),
-            field: TiltedDipole::earth(),
+            field: crate::magnetic::field_for_body(body),
             wasi: wasmtime_wasi::WasiCtxBuilder::new().build(),
             table: wasmtime_wasi::ResourceTable::new(),
             input_rx,
@@ -182,7 +186,7 @@ impl host_env::Host for HostState {
             position_eci_km.z,
         );
         let epoch = arika::epoch::Epoch::from_jd(epoch.julian_date);
-        let b = crate::magnetic::field_eci(&self.field, &pos, &epoch);
+        let b = crate::magnetic::field_eci(self.field.as_ref(), &pos, &epoch);
         wit::Vec3 {
             x: b.x(),
             y: b.y(),
@@ -314,10 +318,14 @@ mod tests {
     use super::*;
 
     fn make_state() -> HostState {
+        make_state_for(arika::body::KnownBody::Earth)
+    }
+
+    fn make_state_for(body: arika::body::KnownBody) -> HostState {
         let (_, input_rx) = mpsc::channel();
         let (output_tx, _) = mpsc::sync_channel(1);
         let current_mode = Arc::new(Mutex::new(None));
-        HostState::new("test", input_rx, output_tx, current_mode, Vec::new())
+        HostState::new("test", input_rx, output_tx, current_mode, Vec::new(), body)
     }
 
     /// `seq` is encoded into `kind` so tests can assert delivery order /
@@ -378,7 +386,14 @@ mod tests {
         let (input_tx, input_rx) = mpsc::channel::<TickPacket>();
         let (output_tx, _output_rx) = mpsc::sync_channel::<GuestResponse>(4);
         let current_mode = Arc::new(Mutex::new(None));
-        let mut state = HostState::new("test", input_rx, output_tx, current_mode, Vec::new());
+        let mut state = HostState::new(
+            "test",
+            input_rx,
+            output_tx,
+            current_mode,
+            Vec::new(),
+            arika::body::KnownBody::Earth,
+        );
 
         // Tick 0 delivers two messages; the guest drains only one.
         input_tx
@@ -455,6 +470,38 @@ mod tests {
         assert_eq!(state.outbox.len(), 2);
         assert_eq!(state.outbox[0].kind, "test.tlm.v1");
         assert_eq!(state.outbox[1].kind, "test.tlm.v2");
+    }
+
+    /// The host answers zero where this crate has no field model.
+    ///
+    /// A guest can call `magnetic-field-eci` whether or not its config
+    /// declares a magnetic device, so the host is a third consumer of the
+    /// field alongside the magnetometer and the magnetorquer. On a Mars run it
+    /// used to read the position as if it were geocentric — 7000 km from Mars
+    /// answered with Earth's field 7000 km from Earth.
+    #[test]
+    fn magnetic_field_is_zero_where_no_model_exists() {
+        let pos = wit::Vec3 {
+            x: 7000.0,
+            y: 0.0,
+            z: 0.0,
+        };
+        let epoch = wit::Epoch {
+            julian_date: 2451545.0,
+        };
+        for body in [
+            arika::body::KnownBody::Mars,
+            arika::body::KnownBody::Moon,
+            arika::body::KnownBody::Sun,
+        ] {
+            let mut state = make_state_for(body);
+            let b = state.magnetic_field_eci(pos, epoch);
+            assert_eq!(
+                (b.x, b.y, b.z),
+                (0.0, 0.0, 0.0),
+                "{body:?} has no field model, so the host reports zero"
+            );
+        }
     }
 
     #[test]

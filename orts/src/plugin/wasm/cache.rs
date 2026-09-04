@@ -22,6 +22,7 @@
 //!         "plugin-sdk/examples/bdot-finite-diff/target/wasm32-wasip1/release/guest.wasm".as_ref(),
 //!         &format!("sat{i}"),
 //!         "",
+//!         arika::body::KnownBody::Earth,
 //!     )?;
 //!     // use ctrl ...
 //! }
@@ -138,8 +139,9 @@ impl WasmPluginCache {
         path: &Path,
         label: &str,
         config: &str,
+        body: arika::body::KnownBody,
     ) -> Result<WasmController, PluginError> {
-        self.build_sync_controller_with_streams(path, label, config, Vec::new())
+        self.build_sync_controller_with_streams(path, label, config, Vec::new(), body)
     }
 
     /// As [`build_sync_controller`](Self::build_sync_controller) but wired
@@ -150,19 +152,10 @@ impl WasmPluginCache {
         label: &str,
         config: &str,
         stream_names: Vec<String>,
+        body: arika::body::KnownBody,
     ) -> Result<WasmController, PluginError> {
         let pre = self.get_or_load_sync(path)?;
-        WasmController::new_with_streams(pre, label, config, stream_names)
-    }
-
-    /// Legacy alias for [`build_sync_controller`](Self::build_sync_controller).
-    pub fn build_controller(
-        &mut self,
-        path: &Path,
-        label: &str,
-        config: &str,
-    ) -> Result<WasmController, PluginError> {
-        self.build_sync_controller(path, label, config)
+        WasmController::new_with_streams(pre, label, config, stream_names, body)
     }
 
     fn get_or_load_sync(&mut self, path: &Path) -> Result<&PluginPre<HostState>, PluginError> {
@@ -198,8 +191,9 @@ impl WasmPluginCache {
         path: &Path,
         label: &str,
         config: &str,
+        body: arika::body::KnownBody,
     ) -> Result<AsyncWasmController, PluginError> {
-        self.build_async_controller_with_streams(path, label, config, Vec::new())
+        self.build_async_controller_with_streams(path, label, config, Vec::new(), body)
     }
 
     /// As [`build_async_controller`](Self::build_async_controller) but wired
@@ -210,9 +204,10 @@ impl WasmPluginCache {
         label: &str,
         config: &str,
         stream_names: Vec<String>,
+        body: arika::body::KnownBody,
     ) -> Result<AsyncWasmController, PluginError> {
         let built = self.get_or_load_async(path)?;
-        AsyncWasmController::new_with_streams(built, label, config, stream_names)
+        AsyncWasmController::new_with_streams(built, label, config, stream_names, body)
     }
 
     /// Borrow the async engine, creating it if this is the first

@@ -144,7 +144,8 @@ fn run_wasm(initial: AttitudeState, epoch: Epoch) -> Option<AttitudeState> {
     let engine = Arc::new(WasmEngine::new().expect("WasmEngine must init"));
     let component = Component::new(engine.inner(), &wasm_bytes).expect("Component must compile");
     let pre = WasmController::prepare(&engine, &component).expect("prepare must succeed");
-    let ctrl = WasmController::new(&pre, "oracle-bdot", "").expect("new must succeed");
+    let ctrl = WasmController::new(&pre, "oracle-bdot", "", arika::body::KnownBody::Earth)
+        .expect("new must succeed");
     Some(drive_wasm(Box::new(ctrl), initial, epoch))
 }
 
@@ -161,7 +162,12 @@ fn run_wasm_async(initial: AttitudeState, epoch: Epoch) -> Option<AttitudeState>
     }
     let mut cache = WasmPluginCache::new().expect("cache init");
     let ctrl = cache
-        .build_async_controller(&path, "oracle-bdot-async", "")
+        .build_async_controller(
+            &path,
+            "oracle-bdot-async",
+            "",
+            arika::body::KnownBody::Earth,
+        )
         .expect("build_async_controller");
     Some(drive_wasm(Box::new(ctrl), initial, epoch))
 }

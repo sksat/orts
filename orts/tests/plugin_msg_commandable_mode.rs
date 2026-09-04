@@ -69,7 +69,10 @@ fn load(binary: &str) -> Option<WasmController> {
     let engine = Arc::new(WasmEngine::new().expect("WasmEngine must init"));
     let component = Component::new(engine.inner(), &bytes).expect("Component must compile");
     let pre = WasmController::prepare(&engine, &component).expect("prepare must succeed");
-    Some(WasmController::new(&pre, "msg-test", "").expect("new must succeed"))
+    Some(
+        WasmController::new(&pre, "msg-test", "", arika::body::KnownBody::Earth)
+            .expect("new must succeed"),
+    )
 }
 
 fn spacecraft() -> SpacecraftState {

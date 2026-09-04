@@ -548,6 +548,7 @@ fn build_controller(
                             label,
                             &config_str,
                             streams.to_vec(),
+                            ctx.params.body,
                         )
                         .map_err(|e| format!("WasmController build failed: {e}"))?;
                     Ok(Box::new(ctrl))
@@ -561,6 +562,7 @@ fn build_controller(
                             label,
                             &config_str,
                             streams.to_vec(),
+                            ctx.params.body,
                         )
                         .map_err(|e| format!("AsyncWasmController build failed: {e}"))?;
                     Ok(Box::new(ctrl))
@@ -581,10 +583,10 @@ fn build_controller(
 
 /// Whether `body`'s magnetic field is modelled.
 ///
-/// `Igrf` and `TiltedDipole` are Earth's, and they are the only field models
-/// there are.
+/// The same rule the WASM host uses for `magnetic-field-eci`, so a run's
+/// devices and its plugin agree about what the field is.
 fn body_field_is_modelled(body: arika::body::KnownBody) -> bool {
-    body == arika::body::KnownBody::Earth
+    orts::magnetic::field_is_modelled(body)
 }
 
 /// How many warnings [`warn_no_field_model`] has emitted on this thread.
