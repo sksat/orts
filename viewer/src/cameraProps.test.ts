@@ -19,9 +19,11 @@ const FALLBACK: [number, number, number] = [3, 0, 1.5];
  * Whether the renderer can use a projection built from these settings.
  *
  * Read as a `Float32Array`, the precision WebGL receives the matrix in: a
- * coefficient can be a perfectly good double and an infinite uniform.
+ * coefficient can be a perfectly good double and an infinite uniform, or a fine
+ * double that rounds to zero. So the entries that have to carry a volume — the
+ * two scales and the depth mapping — are required to be there, not merely finite.
  */
-function projectionIsFinite({
+function projectionIsUsable({
   fov,
   zoom,
   near,
@@ -30,23 +32,27 @@ function projectionIsFinite({
   const camera = new PerspectiveCamera(fov, 1, near, far);
   camera.zoom = zoom;
   camera.updateProjectionMatrix();
-  const uploaded = new Float32Array(camera.projectionMatrix.elements);
-  return Array.from(uploaded).every(Number.isFinite);
+  const e = Array.from(new Float32Array(camera.projectionMatrix.elements));
+  if (!e.every(Number.isFinite)) return false;
+  // x scale, y scale, depth scale, depth offset.
+  return [e[0], e[5], e[10], e[14]].every((v) => v !== 0);
 }
 
 /**
  * Whether a camera at this position yields a view matrix the renderer can use.
  *
  * The view matrix is the inverse of the camera's world matrix, and WebGL receives
- * it as float32 — the same reading as the projection oracle, one matrix over.
+ * it as float32 — the same reading as the projection oracle, one matrix over. Its
+ * translation has to survive that reading as something other than zero, or the
+ * GPU has the camera at the origin whatever was asked for.
  */
-function viewMatrixIsFinite(position: readonly number[]): boolean {
+function viewMatrixIsUsable(position: readonly number[]): boolean {
   const camera = new PerspectiveCamera(FOV, 1, DEFAULT_NEAR, DEFAULT_FAR);
   camera.position.set(position[0], position[1], position[2]);
   camera.lookAt(new Vector3(0, 0, 0));
   camera.updateMatrixWorld(true);
-  const uploaded = new Float32Array(camera.matrixWorldInverse.elements);
-  return Array.from(uploaded).every(Number.isFinite);
+  const e = Array.from(new Float32Array(camera.matrixWorldInverse.elements));
+  return e.every(Number.isFinite) && [e[12], e[13], e[14]].some((v) => v !== 0);
 }
 
 describe("usableDirection", () => {
@@ -97,11 +103,11 @@ describe("usablePosition", () => {
       [200, 0, 0],
       [1e30, 0, 0],
       [3e38, 0, 0],
-      [1e-100, 0, 0],
+      [1e-30, 0, 0],
     ] as number[][]) {
       const out = usablePosition(v, FALLBACK);
       expect(out, `${v} is a position`).not.toBe(FALLBACK);
-      expect(viewMatrixIsFinite(out), `${v} yields a usable view matrix`).toBe(true);
+      expect(viewMatrixIsUsable(out), `${v} yields a usable view matrix`).toBe(true);
     }
   });
 
@@ -115,14 +121,18 @@ describe("usablePosition", () => {
       [1e100, 0, 0],
       [3e38, 3e38, 0],
       [2e38, 2e38, 2e38],
+      [1e-100, 0, 0],
       [0, 0, 0],
       [Number.NaN, 1, 1],
     ] as number[][]) {
       expect(usablePosition(v, FALLBACK), `${v} is no camera position`).toBe(FALLBACK);
     }
     expect(usableDirection([1e100, 0, 0], FALLBACK)).toEqual([1e100, 0, 0]);
-    // The oracle agrees about the pair that a per-component check would pass.
-    expect(viewMatrixIsFinite([3e38, 3e38, 0])).toBe(false);
+    expect(usableDirection([1e-100, 0, 0], FALLBACK)).toEqual([1e-100, 0, 0]);
+    // The oracle agrees about the two a per-component check would pass: one
+    // overflows the uploaded distance, the other rounds it away to nothing.
+    expect(viewMatrixIsUsable([3e38, 3e38, 0])).toBe(false);
+    expect(viewMatrixIsUsable([1e-100, 0, 0])).toBe(false);
   });
 });
 
@@ -167,7 +177,7 @@ describe("usableProjection", () => {
           for (const far of values) {
             const projection = usableProjection({ zoom, near, far }, fov, EXTENT);
             expect(
-              projectionIsFinite(projection),
+              projectionIsUsable(projection),
               `fov=${fov} zoom=${zoom} near=${near} far=${far} gave ${JSON.stringify(projection)}`,
             ).toBe(true);
           }
@@ -188,8 +198,11 @@ describe("usableProjection", () => {
       expect(projection.zoom, `zoom: ${zoom} cannot be built`).toBe(1);
       expect(projection.near).toBe(DEFAULT_NEAR);
     }
-    // And one that can: 1e30 leaves the coefficient at 2.1e30, inside float32.
+    // And the other end: 1e-300 leaves it at 2.1e-300, which rounds to zero and
+    // flattens the frustum. 1e30 and 1e-30 both stay inside float32.
+    expect(usableProjection({ zoom: 1e-300 }, FOV, EXTENT).zoom).toBe(1);
     expect(usableProjection({ zoom: 1e30 }, FOV, EXTENT).zoom).toBe(1e30);
+    expect(usableProjection({ zoom: 1e-30 }, FOV, EXTENT).zoom).toBe(1e-30);
   });
 
   it("replaces a near plane the scene's own size vanishes against", () => {

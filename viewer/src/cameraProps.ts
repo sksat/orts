@@ -18,9 +18,16 @@
  * becomes `Infinity` in the float32 uniform WebGL is handed — 3.4e38 is where
  * the numbers stop, not `Number.MAX_VALUE`.
  *
+ * Finite is not the whole of it either, because float32 runs out at both ends:
+ * `[1e-100, 0, 0]` is a camera position whose uploaded translation is exactly
+ * zero, so the GPU has the camera at the origin looking at the origin, and a
+ * `zoom` of 1e-300 leaves a y coefficient that rounds to zero, so nothing
+ * projects. Both matrices are perfectly finite.
+ *
  * `cameraProps.test.ts` holds the rule to Three.js and to that precision:
- * whatever these functions accept has to yield a projection matrix that is still
- * finite as a `Float32Array`, and a unit view direction.
+ * whatever these functions accept has to yield a projection matrix that still
+ * describes a volume as a `Float32Array`, a camera the renderer can tell the
+ * position of, and a unit view direction.
  */
 
 /** The camera settings an embedder may pass, as much of them as is checked here. */
@@ -93,7 +100,9 @@ export function usableDirection(
  * What the matrix carries is the *distance*, not the components, so that is what
  * is measured: `[3e38, 3e38, 0]` has both components inside float32 and a length
  * of 4.24e38 that is not, and the view matrix comes out infinite while a
- * per-component check passes it.
+ * per-component check passes it. The same measurement catches the other end,
+ * where `[1e-100, 0, 0]` rounds to a translation of exactly zero and the renderer
+ * has the camera at the origin, looking at the origin.
  */
 export function usablePosition(
   value: readonly number[] | undefined,
@@ -102,7 +111,8 @@ export function usablePosition(
   const direction = usableDirection(value, fallback);
   if (direction === fallback) return fallback;
   const [x, y, z] = direction;
-  return Number.isFinite(Math.fround(Math.hypot(x, y, z))) ? direction : fallback;
+  const uploaded = Math.fround(Math.hypot(x, y, z));
+  return Number.isFinite(uploaded) && uploaded > 0 ? direction : fallback;
 }
 
 /**
@@ -150,19 +160,23 @@ export function usableProjection(
   const range = depth - near;
   const depthScale = -(depth + near) / range;
   const depthOffset = (-2 * depth * near) / range;
-  // Every coefficient is checked in the precision it is used in. Three.js keeps
-  // the matrix as doubles and WebGL is handed a float32 copy of it, so a
-  // coefficient of 2.1e200 — which `zoom: 1e200` produces — is a fine double and
-  // an infinite uniform, and the canvas is blank with every double-precision
-  // check passing.
-  const asUploaded = (value: number) => Number.isFinite(Math.fround(value));
+  // Every coefficient is checked in the precision it is used in, and at both ends
+  // of it. Three.js keeps the matrix as doubles and WebGL is handed a float32
+  // copy, so a coefficient of 2.1e200 — which `zoom: 1e200` produces — is a fine
+  // double and an infinite uniform, while 2.1e-300, from a `zoom` of 1e-300,
+  // rounds to zero and flattens the frustum. Either way the canvas is blank with
+  // every double-precision check passing.
+  const uploadable = (value: number) => {
+    const uploaded = Math.fround(value);
+    return Number.isFinite(uploaded) && uploaded !== 0;
+  };
   const representable =
     Number.isFinite(halfHeight) &&
     halfHeight > 0 &&
-    asUploaded(projectionScale) &&
     projectionScale > 0 &&
-    asUploaded(depthScale) &&
-    asUploaded(depthOffset) &&
+    uploadable(projectionScale) &&
+    uploadable(depthScale) &&
+    uploadable(depthOffset) &&
     near + sceneExtent - near > 0;
   return representable
     ? { fov, zoom, near, far: depth, farIsDefault: depth !== camera?.far }
