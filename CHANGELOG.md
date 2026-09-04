@@ -120,7 +120,7 @@ section is subdivided by package.
   single-sided panel offset from the centre of mass had the wrong sign, and a
   single-sided panel turned into the flow produced no drag at all. A new Orekit
   fixture (`tools/generate_orekit_panel_drag_fixtures.py`) pins the face
-  selection and the cos θ law against Orekit's paneled drag model. ([#PR](https://github.com/sksat/orts/pull/PR))
+  selection and the cos θ law against Orekit's paneled drag model. ([#437](https://github.com/sksat/orts/pull/437))
 - `SurfacePanel::at_com` and `SurfacePanel::rectangle` reject a direction vector
   whose magnitude cannot be computed, instead of building a panel whose normal
   is infinite. They normalised first and then checked the result was long

@@ -102,7 +102,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   誤っていたし、流れに向けた片面のパネルには抵抗が付かなかった。面の選び方と cos θ の
   法則は、Orekit の paneled drag model に対する fixture
   (`tools/generate_orekit_panel_drag_fixtures.py`) で固定した。
-  ([#PR](https://github.com/sksat/orts/pull/PR))
+  ([#437](https://github.com/sksat/orts/pull/437))
 - `SurfacePanel::at_com` と `SurfacePanel::rectangle` が、magnitude を計算できない
   方向ベクトルを、無限大の normal を持つ panel にせず reject するようになった。
   正規化した後で結果の長さを検査していたので、`[1e-200, 1e-200, 1e-200]` が通って
