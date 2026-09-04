@@ -26,11 +26,13 @@ const KEPLER_MAX_ITERATIONS: usize = 100;
 
 /// Solve Kepler's equation `M = E - e·sin(E)` for eccentric anomaly E.
 ///
-/// Newton-Raphson, kept inside a bracket that contains the root: near periapsis
-/// at high eccentricity `f' = 1 - e·cos(E)` approaches `1 - e`, and an
-/// unguarded Newton step from `E₀ = M` there is long enough to leave the
-/// interval and not come back. Bisecting instead of taking such a step
-/// converges for every eccentricity the signature accepts.
+/// Newton-Raphson, kept inside a bracket that contains the root: at high
+/// eccentricity `f' = 1 - e·cos(E)` falls to `1 - e` at periapsis, and near
+/// there an unguarded Newton step from `E₀ = M` is long enough to leave the
+/// interval and not come back. At `e = 0.995, M = 0.4` the step is 4.64 rad,
+/// landing at `E = 5.04` outside the bracket `[-0.595, 1.395]`. Bisecting
+/// instead of taking such a step converges for every eccentricity the
+/// signature accepts.
 ///
 /// # Arguments
 /// * `mean_anomaly` - Mean anomaly M [rad]
@@ -704,12 +706,29 @@ mod tests {
     #[test]
     fn kepler_solution_satisfies_the_equation_at_every_eccentricity() {
         let mut worst = (0.0f64, 0.0f64, 0.0f64);
-        for &e in &[0.0, 0.1, 0.5, 0.7, 0.9, 0.95, 0.99, 0.995, 0.999] {
+        // The last entry is the largest `f64` below 1, where the bracket is
+        // widest and the iteration budget is closest to being spent in full.
+        for &e in &[
+            0.0,
+            0.1,
+            0.5,
+            0.7,
+            0.9,
+            0.95,
+            0.99,
+            0.995,
+            0.999,
+            1.0f64.next_down(),
+        ] {
             // 0.05 rad steps across two full revolutions, so the reduction of
             // `M` and both signs of the residual are covered.
             for i in -252..=252 {
                 let m = i as f64 * 0.05;
                 let e_anom = solve_kepler_equation(m, e);
+                assert!(
+                    e_anom.is_finite(),
+                    "E must be finite: got {e_anom} at M={m}, e={e}"
+                );
                 // `solve_kepler_equation` reduces M the same way; the residual
                 // is against the reduced value it actually solved for.
                 let residual = e_anom - e * e_anom.sin() - m % (2.0 * PI);
@@ -719,8 +738,8 @@ mod tests {
             }
         }
         // 1e-13 rather than the solver's 1e-14 step threshold: the step is on
-        // E, and near periapsis at e = 0.999 the residual is that step times
-        // `f' = 1 - e·cos(E)`, which is 1.999 there.
+        // E, and the residual is that step times `f' = 1 - e·cos(E)`, which is
+        // largest at apoapsis where it reaches `1 + e < 2`.
         assert!(
             worst.0.abs() < 1e-13,
             "E must solve M = E - e·sin(E): residual {:.3e} at M={}, e={} (E={})",
