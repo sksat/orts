@@ -233,6 +233,21 @@ test("switching from a satellite-centred orbit view carries that satellite over"
   await page.goto("/?noAutoConnect=1");
   await connect(page);
 
+  // The centred satellite is carried over from the *rendered* list, which is
+  // empty until the first sample arrives. Switching before then would find no
+  // satellite to carry and the assertion would fail on timing.
+  await expect
+    .poll(
+      () =>
+        page.evaluate((id) => {
+          const w = window as unknown as Record<string, unknown>;
+          const get = w.__debug_get_sat_world_quat as ((id: string) => number[] | null) | undefined;
+          return get?.(id) != null;
+        }, SAT_ENTITY_PATH),
+      { timeout: 30000 },
+    )
+    .toBe(true);
+
   await page
     .locator('[data-testid="frame-selector-select"]')
     .selectOption(`satellite:${SAT_ENTITY_PATH}`);
@@ -322,7 +337,9 @@ test("turning an arrow off stops it being drawn", async ({ page }) => {
       return null;
     }, SAT_ENTITY_PATH);
 
-  expect(await kinds()).toEqual(["nadir", "sun"]);
+  // Both arrows, not "some arrow": nadir needs only a position while the Sun
+  // waits on the WASM ephemeris, so reading once could catch nadir alone.
+  await expect.poll(async () => await kinds(), { timeout: 15000 }).toEqual(["nadir", "sun"]);
 
   await page.locator('[data-testid="direction-vector-sun"]').click();
   await expect.poll(async () => await kinds(), { timeout: 10000 }).toEqual(["nadir"]);
