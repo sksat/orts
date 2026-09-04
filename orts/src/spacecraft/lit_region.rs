@@ -103,10 +103,10 @@ pub(crate) fn lit_region(
     // The plane coordinates are in units of the panel's own half-extents, so
     // the target is the unit square whatever the panel measures. Working in
     // metres instead puts the aspect ratio into every comparison: `rectangle`
-    // judges the half-extents by their product, so a valid 7.2 m² panel can be
-    // 1e308 m along one axis and 1e-308 m along the other, and its first
-    // moment overflows before the shadow is even subtracted.
-    let (ua, va) = (u / hx, v / hy);
+    // judges the half-extents by their product, so a panel of a few square
+    // metres can be `f64::MAX` along one axis and `1e-308` along the other,
+    // and its first moment overflows before the shadow is even subtracted.
+    let half = [hx, hy];
 
     let mut buf = [Vector3::zeros(); MAX_PANEL_CORNERS];
     let Some(corners) = panel.corners_into(&mut buf) else {
@@ -114,7 +114,7 @@ pub(crate) fn lit_region(
     };
     let target: Vec<Vector2<f64>> = corners
         .iter()
-        .map(|c| to_plane(c, &panel.cp_offset, &ua, &va))
+        .map(|c| to_plane(c, &panel.cp_offset, &u, &v, half))
         .collect();
     let target_area = signed_area(&target).abs();
     if !target_area.is_finite() || target_area <= 0.0 {
@@ -128,7 +128,7 @@ pub(crate) fn lit_region(
         if std::ptr::eq(other, panel) {
             continue;
         }
-        if let Some(s) = shadow_on_target(panel, other, upstream, &ua, &va, &target) {
+        if let Some(s) = shadow_on_target(panel, other, upstream, &u, &v, half, &target) {
             shadows.push(s);
         }
     }
@@ -188,6 +188,7 @@ fn shadow_on_target(
     upstream: &Vector3<f64>,
     u: &Vector3<f64>,
     v: &Vector3<f64>,
+    half: [f64; 2],
     target: &[Vector2<f64>],
 ) -> Option<Vec<Vector2<f64>>> {
     let mut buf = [Vector3::zeros(); MAX_PANEL_CORNERS];
@@ -220,7 +221,7 @@ fn shadow_on_target(
     let mut poly: Vec<Vector2<f64>> = Vec::with_capacity(MAX_SHADOW_VERTICES);
     for q in &front {
         let hit = q - upstream * (depth(q) / denom);
-        let p = to_plane(&hit, &panel.cp_offset, u, v);
+        let p = to_plane(&hit, &panel.cp_offset, u, v, half);
         // Grazing incidence can send a vertex past the range of f64 even though
         // every input was finite. A shadow that cannot be located is dropped,
         // which leaves the force in place rather than removing one that exists.
@@ -236,15 +237,21 @@ fn shadow_on_target(
     (trimmed.len() >= 3 && area > scale).then_some(trimmed)
 }
 
-/// `panel`'s corner offset written in the panel's own in-plane axes.
+/// A point in the panel's plane, in units of the panel's half-extents.
+///
+/// The division comes after the dot product, not before: `rectangle` accepts a
+/// half-extent of `1e-310` as long as the area is finite, and its reciprocal is
+/// not representable, so scaling the axis first would send every coordinate to
+/// infinity.
 fn to_plane(
     p: &Vector3<f64>,
     origin: &Vector3<f64>,
     u: &Vector3<f64>,
     v: &Vector3<f64>,
+    half: [f64; 2],
 ) -> Vector2<f64> {
     let d = p - origin;
-    Vector2::new(d.dot(u), d.dot(v))
+    Vector2::new(d.dot(u) / half[0], d.dot(v) / half[1])
 }
 
 /// Keep the part of a 3D convex polygon where `depth` is above its own
@@ -586,26 +593,30 @@ mod tests {
 
     #[test]
     fn a_panel_of_an_extreme_aspect_ratio_is_still_shadowed() {
-        // `rectangle` judges the half-extents by their product, so
-        // `[f64::MAX, 1e-308]` is an accepted 7.2 m² rectangle. Its long edges
-        // are 3.6e308 and its short ones 2e-308, which overflow and underflow
-        // a length; measuring the edge by its largest component instead keeps
-        // both usable, and a caster over half of it takes half of it.
-        let (long, short) = (f64::MAX / 2.0, 1e-308);
+        // `rectangle` judges the half-extents by their product, so both of
+        // these are accepted rectangles of a few square metres. Each breaks a
+        // different piece of arithmetic if the geometry is done in metres: the
+        // first has edges that overflow a length one way and underflow it the
+        // other, and a first moment that overflows; the second has a
+        // half-extent that is subnormal, whose reciprocal overflows. A caster
+        // over half of either has to take half of it.
         let normal = Vector3::z();
-        let target = SurfacePanel::rectangle([long, short], Vector3::x(), normal, 2.2, optics());
-        // Covers x in [0, long] of the target's x in [-long, long].
-        let caster =
-            SurfacePanel::rectangle([long / 2.0, short], Vector3::x(), normal, 2.2, optics())
-                .with_cp_offset(Vector3::new(long / 2.0, 0.0, 1.0));
+        for (long, short) in [(f64::MAX / 2.0, 1e-308), (1e300, 1e-310)] {
+            let target =
+                SurfacePanel::rectangle([long, short], Vector3::x(), normal, 2.2, optics());
+            // Covers x in [0, long] of the target's x in [-long, long].
+            let caster =
+                SurfacePanel::rectangle([long / 2.0, short], Vector3::x(), normal, 2.2, optics())
+                    .with_cp_offset(Vector3::new(long / 2.0, 0.0, 1.0));
 
-        let lit = lit_region(&target, &[caster], &normal);
-        near(lit.fraction, 0.5, "lit fraction");
-        near(
-            lit.centroid.x / long,
-            -0.5,
-            "centroid along u, in half-extents",
-        );
+            let lit = lit_region(&target, &[caster], &normal);
+            near(lit.fraction, 0.5, "lit fraction");
+            near(
+                lit.centroid.x / long,
+                -0.5,
+                "centroid along u, in half-extents",
+            );
+        }
     }
 
     #[test]
