@@ -10,7 +10,7 @@
 
 use nalgebra::{Vector2, Vector3};
 
-use super::surface::{MAX_PANEL_CORNERS, SurfacePanel};
+use super::surface::{MAX_PANEL_CORNERS, PanelOutline, SurfacePanel};
 
 /// The most vertices a shadow polygon can have.
 ///
@@ -94,6 +94,19 @@ pub(crate) fn lit_region(
     let Some((u, v)) = panel.in_plane_axes() else {
         return LitRegion::all_lit(panel);
     };
+    let PanelOutline::Rectangle {
+        half_extent: [hx, hy],
+        ..
+    } = panel
+        .outline
+        .expect("in_plane_axes answered, so there is an outline");
+    // The plane coordinates are in units of the panel's own half-extents, so
+    // the target is the unit square whatever the panel measures. Working in
+    // metres instead puts the aspect ratio into every comparison: `rectangle`
+    // judges the half-extents by their product, so a valid 7.2 m² panel can be
+    // 1e308 m along one axis and 1e-308 m along the other, and its first
+    // moment overflows before the shadow is even subtracted.
+    let (ua, va) = (u / hx, v / hy);
 
     let mut buf = [Vector3::zeros(); MAX_PANEL_CORNERS];
     let Some(corners) = panel.corners_into(&mut buf) else {
@@ -101,7 +114,7 @@ pub(crate) fn lit_region(
     };
     let target: Vec<Vector2<f64>> = corners
         .iter()
-        .map(|c| to_plane(c, &panel.cp_offset, &u, &v))
+        .map(|c| to_plane(c, &panel.cp_offset, &ua, &va))
         .collect();
     let target_area = signed_area(&target).abs();
     if !target_area.is_finite() || target_area <= 0.0 {
@@ -115,7 +128,7 @@ pub(crate) fn lit_region(
         if std::ptr::eq(other, panel) {
             continue;
         }
-        if let Some(s) = shadow_on_target(panel, other, upstream, &u, &v, &target) {
+        if let Some(s) = shadow_on_target(panel, other, upstream, &ua, &va, &target) {
             shadows.push(s);
         }
     }
@@ -159,10 +172,11 @@ pub(crate) fn lit_region(
         return LitRegion::all_lit(panel);
     }
 
+    // Back from half-extents to metres.
     let centre = moment / lit_area;
     LitRegion {
         fraction: (lit_area / target_area).clamp(0.0, 1.0),
-        centroid: panel.cp_offset + u * centre.x + v * centre.y,
+        centroid: panel.cp_offset + u * (centre.x * hx) + v * (centre.y * hy),
     }
 }
 
@@ -195,7 +209,9 @@ fn shadow_on_target(
     // caster that tilts through the target shadow only the part of it that is
     // really in front — projecting the whole caster would report more shadow
     // than there is.
-    let front: Vec<Vector3<f64>> = clip_3d(corners, &toward_source, &panel.cp_offset);
+    let front: Vec<Vector3<f64>> = clip_3d(corners, &toward_source, &|p: &Vector3<f64>| {
+        dot_roundoff(&panel.normal, &(p - panel.cp_offset))
+    });
     if front.len() < 3 {
         return None;
     }
@@ -231,20 +247,16 @@ fn to_plane(
     Vector2::new(d.dot(u), d.dot(v))
 }
 
-/// Keep the part of a 3D convex polygon where `depth` is positive.
+/// Keep the part of a 3D convex polygon where `depth` is above its own
+/// roundoff, judged by `eps` at each vertex.
 fn clip_3d(
     poly: &[Vector3<f64>],
     depth: &impl Fn(&Vector3<f64>) -> f64,
-    origin: &Vector3<f64>,
+    eps: &impl Fn(&Vector3<f64>) -> f64,
 ) -> Vec<Vector3<f64>> {
     let mut out = Vec::with_capacity(MAX_PANEL_CORNERS + 1);
     for i in 0..poly.len() {
         let (a, b) = (&poly[i], &poly[(i + 1) % poly.len()]);
-        // The tolerance follows the magnitudes the subtraction inside `depth`
-        // works on, so a panel 1e-150 m across and one 1e150 m across are both
-        // judged against their own roundoff.
-        let eps =
-            |p: &Vector3<f64>| ROUNDOFF * f64::EPSILON * p.abs().max().max(origin.abs().max());
         let (da, db) = (depth(a), depth(b));
         if da > eps(a) {
             out.push(*a);
@@ -254,6 +266,20 @@ fn clip_3d(
         }
     }
     out
+}
+
+/// The roundoff a dot product `n · d` can carry, given both vectors.
+///
+/// The bound follows the terms the sum actually adds up, not the length of
+/// either vector. The difference matters for the extreme shapes the panel
+/// constructors accept: for a panel `1e308` m along one axis, a tolerance
+/// scaled from that coordinate comes to `1e293` and swallows every real
+/// distance, while the term along the normal — the only one the dot product
+/// keeps — may be exactly zero.
+fn dot_roundoff(n: &Vector3<f64>, d: &Vector3<f64>) -> f64 {
+    ROUNDOFF
+        * f64::EPSILON
+        * (n.x.abs() * d.x.abs() + n.y.abs() * d.y.abs() + n.z.abs() * d.z.abs())
 }
 
 /// The signed area of a polygon, positive when its vertices run
@@ -339,29 +365,39 @@ fn edges(poly: &[Vector2<f64>]) -> impl Iterator<Item = (Vector2<f64>, Vector2<f
 /// Keep the part of `poly` on the left of the line `p -> q`.
 fn clip_half_plane(poly: &[Vector2<f64>], p: &Vector2<f64>, q: &Vector2<f64>) -> Vec<Vector2<f64>> {
     let dir = q - p;
-    let len = dir.norm();
-    if !len.is_finite() || len <= 0.0 {
-        return poly.to_vec();
+    // Scaled by the largest component rather than by the length. `rectangle`
+    // accepts half-extents from 1e-150 to 1e150 and judges only their product,
+    // so a panel `f64::MAX` by `1e-308` is a valid 7.2 m² rectangle whose edge
+    // lengths overflow one way and underflow the other. The largest component
+    // is representable whenever the edge is, and dividing by it leaves a
+    // direction whose components are at most one.
+    let scale = dir.abs().max();
+    if !scale.is_finite() || scale <= 0.0 {
+        return poly.to_vec(); // the edge is a point, so it bounds nothing
     }
-    // A true distance, so the tolerance below is a length in the target's own
-    // units rather than an area-like cross product.
-    let normal = Vector2::new(-dir.y, dir.x) / len;
+    let unit = dir / scale;
+    // Not a true distance — `unit` is only unit-ish — but linear in the point
+    // and in the same units as the coordinates, which is what the tolerance
+    // below is scaled from.
+    let normal = Vector2::new(-unit.y, unit.x);
     let dist = |x: &Vector2<f64>| normal.dot(&(x - p));
-    let eps = ROUNDOFF
-        * f64::EPSILON
-        * poly
-            .iter()
-            .map(|x| x.abs().max())
-            .fold(p.abs().max(), f64::max);
+    // Per vertex, and from the terms this dot product adds up: a panel with
+    // one huge axis and one tiny one needs a different tolerance along each,
+    // and a single tolerance taken from the largest coordinate anywhere would
+    // hide every distance along the tiny one.
+    let eps = |x: &Vector2<f64>| {
+        let d = x - p;
+        ROUNDOFF * f64::EPSILON * (normal.x.abs() * d.x.abs() + normal.y.abs() * d.y.abs())
+    };
 
     let mut out = Vec::with_capacity(poly.len() + 1);
     for i in 0..poly.len() {
         let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
         let (da, db) = (dist(&a), dist(&b));
-        if da >= -eps {
+        if da >= -eps(&a) {
             out.push(a);
         }
-        if (da >= -eps) != (db >= -eps) && da != db {
+        if (da >= -eps(&a)) != (db >= -eps(&b)) && da != db {
             out.push(a + (b - a) * (da / (da - db)));
         }
     }
@@ -371,7 +407,7 @@ fn clip_half_plane(poly: &[Vector2<f64>], p: &Vector2<f64>, q: &Vector2<f64>) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spacecraft::surface::{PanelOptics, PanelOutline};
+    use crate::spacecraft::surface::PanelOptics;
     use nalgebra::Vector3;
 
     fn optics() -> PanelOptics {
@@ -545,6 +581,30 @@ mod tests {
             lit_region(&back, &[front], &-normal).fraction,
             1.0,
             "nor the other way round"
+        );
+    }
+
+    #[test]
+    fn a_panel_of_an_extreme_aspect_ratio_is_still_shadowed() {
+        // `rectangle` judges the half-extents by their product, so
+        // `[f64::MAX, 1e-308]` is an accepted 7.2 m² rectangle. Its long edges
+        // are 3.6e308 and its short ones 2e-308, which overflow and underflow
+        // a length; measuring the edge by its largest component instead keeps
+        // both usable, and a caster over half of it takes half of it.
+        let (long, short) = (f64::MAX / 2.0, 1e-308);
+        let normal = Vector3::z();
+        let target = SurfacePanel::rectangle([long, short], Vector3::x(), normal, 2.2, optics());
+        // Covers x in [0, long] of the target's x in [-long, long].
+        let caster =
+            SurfacePanel::rectangle([long / 2.0, short], Vector3::x(), normal, 2.2, optics())
+                .with_cp_offset(Vector3::new(long / 2.0, 0.0, 1.0));
+
+        let lit = lit_region(&target, &[caster], &normal);
+        near(lit.fraction, 0.5, "lit fraction");
+        near(
+            lit.centroid.x / long,
+            -0.5,
+            "centroid along u, in half-extents",
         );
     }
 
