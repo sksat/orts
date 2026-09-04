@@ -107,6 +107,23 @@ export function markerBoundingRadius(shape: MarkerShape | null, span: number): n
 }
 
 /**
+ * Bounding radius of a 3D model of this apparent size.
+ *
+ * A registered model is known by one number, its largest extent, so all that can
+ * be said is that it fits inside a cube of that side — and the cube's own
+ * envelope therefore bounds it. Using half the span instead would put an arrow's
+ * tail inside any model with extent on more than one axis, which is most of them.
+ *
+ * TODO: measure each model's own bounding radius the way `nativeSpanUnits` is
+ * measured. The envelope over-corrects for a flat model — a panel reaches
+ * sqrt(2)/2 of its span, not sqrt(3)/2 — which shows as a gap between the model
+ * and the tail of an arrow along one of its long axes.
+ */
+export function modelBoundingRadius(span: number): number {
+  return (Math.sqrt(3) / 2) * span;
+}
+
+/**
  * Arrow proportions for a spacecraft of this apparent size.
  *
  * `startRadius` is where the arrow's tail sits; pass

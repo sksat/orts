@@ -336,7 +336,16 @@ export interface AttitudeSceneDataProps {
    * as a picture, not as an EOP-correct frame.
    */
   epochJd?: number;
-  /** Seconds since the epoch, when `body.time` is not given. Default 0. */
+  /**
+   * Seconds since the epoch, when `body.time` is not given. Default 0.
+   *
+   * Added to the epoch by arika's `Epoch<Utc>::add_seconds`, which is naive
+   * UTC-JD arithmetic: across a leap second the instant it names is one second
+   * away from the elapsed-SI-time answer, another 15 arcseconds of Earth
+   * rotation on top of the dUT1 approximation above. Every wasm time binding
+   * shares that arithmetic, so this is a property of the module rather than of
+   * this view.
+   */
   time?: number;
   /** Marker shape default for a spacecraft with no 3D model. */
   defaultMarkerShape?: MarkerShape | null;

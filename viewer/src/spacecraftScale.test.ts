@@ -9,6 +9,7 @@ import {
   frameAxisLengthForSpan,
   initialCameraDistance,
   markerBoundingRadius,
+  modelBoundingRadius,
   NOMINAL_SPACECRAFT_SPAN,
   resolveVisualSpan,
   spanNormalizedModelScale,
@@ -212,6 +213,16 @@ describe("sizes derived from the span", () => {
   it("pulls further back for a narrower field of view", () => {
     expect(cameraDistanceForSpan(1, 30, 1)).toBeGreaterThan(cameraDistanceForSpan(1, 50, 1));
     expect(cameraDistanceForSpan(1, 50, 1)).toBeGreaterThan(cameraDistanceForSpan(1, 75, 1));
+  });
+
+  it("bounds a model by the cube its largest extent fits in", () => {
+    const span = 1;
+    // All a registered model reports is its largest extent, so it fits in a cube
+    // of that side and the cube's corner is the furthest it can reach. Half the
+    // span would sit inside any model with extent on more than one axis.
+    expect(modelBoundingRadius(span)).toBeCloseTo((Math.sqrt(3) / 2) * span, 12);
+    expect(modelBoundingRadius(span)).toBe(markerBoundingRadius("axes-cube", span));
+    expect(modelBoundingRadius(span)).toBeGreaterThan(markerBoundingRadius("sphere", span));
   });
 
   it("clears a near plane that the fitted distance alone would leave in front of the scene", () => {

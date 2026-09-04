@@ -8,6 +8,7 @@ import {
   frameAxisArrows,
   frameAxisLengthForSpan,
   markerBoundingRadius,
+  modelBoundingRadius,
   NOMINAL_SPACECRAFT_SPAN,
   spanNormalizedModelScale,
 } from "../spacecraftScale.js";
@@ -146,9 +147,10 @@ export function AttitudeSceneContents({
         position={ORIGIN}
         vectors={vectors}
         visualSpan={span}
-        // A cube marker's corners stand further out than its faces; the arrows
-        // start outside whichever shape is actually drawn.
-        startRadius={markerBoundingRadius(modelConfig ? null : shape, span)}
+        // The arrows start outside whatever is actually drawn: a cube marker's
+        // corners stand further out than its faces, and a model is bounded only
+        // by the envelope of the cube its largest extent fits in.
+        startRadius={modelConfig ? modelBoundingRadius(span) : markerBoundingRadius(shape, span)}
         debugId={satId}
       />
 

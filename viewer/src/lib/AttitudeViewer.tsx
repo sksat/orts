@@ -33,15 +33,21 @@ const DEFAULT_CAMERA_POSITION: [number, number, number] = (() => {
 })();
 
 /**
- * Pull the camera back once, if the viewport turns out to be narrower than the
- * default framing assumed.
+ * Settle the camera once the canvas has a size: pull it back if the viewport is
+ * narrower than the default framing assumed, and open the far plane far enough to
+ * reach the spacecraft.
  *
  * The `camera` prop is read at mount, before the canvas has a size, so a portrait
  * embedding would otherwise clip the axes sideways. Applied on the first sizing
  * only: reframing on every resize would undo a zoom the viewer had chosen, and
  * this is a starting view, not a constraint.
+ *
+ * `reframe` says whether the *distance* is ours to choose. The far plane is not
+ * conditional on that: a caller who supplies a position of `[200, 0, 0]` and no
+ * `far` gets the default 100, which leaves the spacecraft at the origin behind
+ * the far plane — a blank canvas from a camera aimed correctly at it.
  */
-function InitialCameraFit({ fov }: { fov: number }) {
+function InitialCameraFit({ fov, reframe }: { fov: number; reframe: boolean }) {
   const camera = useThree((s) => s.camera);
   const size = useThree((s) => s.size);
   const applied = useRef(false);
@@ -67,7 +73,7 @@ function InitialCameraFit({ fov }: { fov: number }) {
     // view of 5.3e-199° fits from 6.5e200 spans away. The camera keeps the
     // framing it was built with instead, which is drawable at any zoom.
     const placeable = Number.isFinite(needed * needed);
-    if (placeable && current > 0 && needed > current) {
+    if (reframe && placeable && current > 0 && needed > current) {
       camera.position.multiplyScalar(needed / current);
     }
 
@@ -79,7 +85,7 @@ function InitialCameraFit({ fov }: { fov: number }) {
       camera.far = reach;
       camera.updateProjectionMatrix();
     }
-  }, [camera, size, fov]);
+  }, [camera, size, fov, reframe]);
   return null;
 }
 
@@ -121,11 +127,12 @@ export function AttitudeViewer({ className, style, canvas, ...sceneProps }: Atti
     canvas?.camera?.position as readonly number[] | undefined,
     DEFAULT_CAMERA_POSITION,
   );
-  // Whether the framing is still ours to adjust. `usableVector` hands back the
-  // fallback itself when the caller's position is no direction, so a position
-  // that was supplied but unusable belongs to us as much as an absent one — and
-  // checking the raw prop instead would leave the square default fit standing on
-  // a portrait canvas.
+  // Whether the camera's *distance* is still ours to choose. `usableVector` hands
+  // back the fallback itself when the caller's position is no direction, so a
+  // position that was supplied but unusable belongs to us as much as an absent
+  // one — and checking the raw prop instead would leave the square default fit
+  // standing on a portrait canvas. The far plane is settled either way, so the
+  // helper always mounts.
   const framingIsOurs = position === DEFAULT_CAMERA_POSITION;
   return (
     <div className={className} style={{ width: "100%", height: "100%", ...style }}>
@@ -139,7 +146,7 @@ export function AttitudeViewer({ className, style, canvas, ...sceneProps }: Atti
         gl={{ ...canvas?.gl }}
       >
         <CameraViewProbe />
-        {framingIsOurs && <InitialCameraFit fov={projection.fov} />}
+        <InitialCameraFit fov={projection.fov} reframe={framingIsOurs} />
         <AttitudeScene {...sceneProps} />
       </Canvas>
     </div>

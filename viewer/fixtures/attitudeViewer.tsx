@@ -21,6 +21,7 @@
  * | controls    | `0` mounts no OrbitControls                    |
  * | near        | camera near plane, in spacecraft spans         |
  * | zoom        | camera zoom                                    |
+ * | campos      | camera position `x,y,z` in spacecraft spans     |
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -66,6 +67,7 @@ const epoch = params.get("epoch");
 const time = params.get("t");
 const near = params.get("near");
 const zoom = params.get("zoom");
+const cameraPosition = vec3("campos");
 
 createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>
@@ -83,12 +85,13 @@ createRoot(document.getElementById("root") as HTMLElement).render(
       time={time == null ? undefined : Number(time)}
       controls={params.get("controls") !== "0"}
       canvas={
-        near == null && zoom == null
+        near == null && zoom == null && cameraPosition == null
           ? undefined
           : {
               camera: {
                 ...(near == null ? {} : { near: Number(near) }),
                 ...(zoom == null ? {} : { zoom: Number(zoom) }),
+                ...(cameraPosition == null ? {} : { position: cameraPosition }),
               },
             }
       }

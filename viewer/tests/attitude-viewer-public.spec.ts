@@ -283,6 +283,20 @@ test("an extreme zoom leaves the camera somewhere Three.js can measure", async (
   expect(distance).toBeGreaterThan(0);
 });
 
+test("a caller's own camera position still gets a far plane that reaches the scene", async ({
+  page,
+}) => {
+  // Supplying a position takes the *distance* out of the viewer's hands, not the
+  // depth range: 200 spans out with the default far plane of 100 leaves the
+  // spacecraft behind it, so the canvas is blank from a camera aimed correctly at
+  // it. The camera stays where the caller put it and the far plane opens.
+  await open(page, `epoch=${EPOCH}&campos=200,0,0&controls=0`);
+  const view = await cameraView(page);
+  const distance = Math.hypot(...view.position);
+  expect(distance, "the caller's distance is kept").toBeCloseTo(200, 3);
+  expect(view.far, "the far plane reaches past the spacecraft").toBeGreaterThan(distance);
+});
+
 test("a body with no Sun ephemeris draws no Sun arrow", async ({ page }) => {
   // Uranus has no elements in arika, and `sun_direction_from_body` answers +X
   // there — a guess the view must not draw.

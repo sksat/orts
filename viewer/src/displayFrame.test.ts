@@ -209,7 +209,35 @@ describe("unitAttitude", () => {
     expect(unitAttitude([0, 0, 0, 0])).toBeUndefined();
     expect(unitAttitude([Number.NaN, 0, 0, 0])).toBeUndefined();
     expect(unitAttitude([1, Number.POSITIVE_INFINITY, 0, 0])).toBeUndefined();
-    expect(unitAttitude([1e-300, 0, 0, 0])).toBeUndefined();
+  });
+
+  it("normalises a rotation written at a tiny scale", () => {
+    // A small magnitude is not a missing rotation: these divide to the identity
+    // exactly. The previous cutoff at 1e-10 turned them into "no attitude" on
+    // nothing but their scale — `[1e-300, 0, 0, 0]` was pinned as invalid here.
+    for (const q of [
+      [1e-11, 0, 0, 0],
+      [1e-300, 0, 0, 0],
+      [5e-324, 0, 0, 0],
+    ] as Quat[]) {
+      const out = unitAttitude(q);
+      if (out == null) throw new Error(`${q.join(",")} names the identity rotation`);
+      expect(out).toEqual([1, 0, 0, 0]);
+    }
+  });
+
+  it("reports no attitude when the normalised result is not a unit quaternion", () => {
+    // At subnormal magnitudes the division does not land on the unit sphere:
+    // `Math.hypot([5e-324, 5e-324, 0, 0])` is 5e-324, the smallest number there
+    // is, so both components divide to 1 and the norm comes out at 1.414. Three
+    // applies the components as written, so that would scale the spacecraft by
+    // 41% — the check reads the result rather than the input's scale.
+    for (const q of [
+      [5e-324, 5e-324, 0, 0],
+      [1e-320, 1e-320, 0, 0],
+    ] as Quat[]) {
+      expect(unitAttitude(q), `${q.join(",")} cannot be normalised`).toBeUndefined();
+    }
   });
 
   it("normalises a quaternion whose components would overflow when squared", () => {
