@@ -13,23 +13,121 @@ use nalgebra::Vector3;
 #[allow(unused_imports)]
 use crate::math::F64Ext;
 
-/// Solve Kepler's equation `M = E - e·sin(E)` for eccentric anomaly E
-/// using Newton-Raphson iteration.
+/// Iterations [`solve_kepler_equation`] may take.
+///
+/// Newton reaches the 1e-14 step threshold in a handful of steps wherever it
+/// converges on its own. The bisection fallback sets the floor: halving a
+/// bracket of width `2e ≤ 2` down to that threshold takes
+/// `log2(2 / 1e-14) ≈ 48` steps, and the rest of the budget covers the Newton
+/// steps interleaved with them. Measured over two revolutions of `M` at
+/// eccentricities up to the largest `f64` below 1, the residual
+/// `E - e·sin(E) - M` stays under 8.9e-16.
+const KEPLER_MAX_ITERATIONS: usize = 100;
+
+/// `x - sin(x)`, without the cancellation that subtraction carries near zero.
+///
+/// Both terms approach `x` as `x → 0` while the difference approaches `x³/6`,
+/// so the subtraction keeps only the low bits: at `x = 3e-7` it loses about 13
+/// digits, leaving an absolute error near `ulp(x)`. The series carries no such
+/// loss, and truncating it after `x⁹` costs `x¹¹/39916800`. Measured against a
+/// series carried to `x¹³`, the relative errors cross between 0.1 and 0.15: at
+/// 0.1 the series is 1.5e-15 and the subtraction 1.8e-14, at 0.15 it is
+/// 3.9e-14 against 1.4e-15. Dropping the `x⁹` term moves that crossing down to
+/// about 0.02.
+fn x_minus_sin(x: f64) -> f64 {
+    const SERIES_BELOW: f64 = 0.1;
+    if x.abs() < SERIES_BELOW {
+        let x2 = x * x;
+        x * x2 / 6.0 * (1.0 - x2 / 20.0 * (1.0 - x2 / 42.0 * (1.0 - x2 / 72.0)))
+    } else {
+        x - x.sin()
+    }
+}
+
+/// Solve Kepler's equation `M = E - e·sin(E)` for eccentric anomaly E.
+///
+/// Newton-Raphson, kept inside a bracket that contains the root: at high
+/// eccentricity `f' = 1 - e·cos(E)` falls to `1 - e` at periapsis, and near
+/// there an unguarded Newton step from `E₀ = M` is long enough to leave the
+/// interval and not come back. At `e = 0.995, M = 0.4` the step is 4.64 rad,
+/// landing at `E = 5.04` outside the bracket `[-0.595, 1.395]`. Bisecting
+/// instead of taking such a step converges for every eccentricity the
+/// signature accepts.
 ///
 /// # Arguments
 /// * `mean_anomaly` - Mean anomaly M [rad]
 /// * `eccentricity` - Orbital eccentricity (0 ≤ e < 1)
 ///
 /// # Returns
-/// Eccentric anomaly E [rad]
+///
+/// Eccentric anomaly E [rad], within `e` of the reduced `M`.
+///
+/// The residual is evaluated at the periapsis nearest `E`, so how accurately it
+/// can be computed is set by its own magnitude rather than by the size of `E`.
+/// What that leaves is the spacing of `f64` itself, which grows with `E`: a
+/// root just below `2π` is placed to `ulp(2π) = 8.9e-16`, one just above zero
+/// to far finer.
 pub fn solve_kepler_equation(mean_anomaly: f64, eccentricity: f64) -> f64 {
     let m = mean_anomaly % (2.0 * PI);
-    let mut e_anom = m; // initial guess
-    for _ in 0..50 {
-        let f = e_anom - eccentricity * e_anom.sin() - m;
-        let f_prime = 1.0 - eccentricity * e_anom.cos();
-        let delta = f / f_prime;
-        e_anom -= delta;
+    // `E = M + e·sin(E)` puts the root within `e` of `M`, and `f` increases
+    // monotonically (`f' = 1 - e·cos(E) > 0` for `e < 1`), so `f(m - e) ≤ 0`
+    // and `f(m + e) ≥ 0` bracket it for any `M`. For `e = 0` the bracket is the
+    // single point `m`, which is the root.
+    let mut lo = m - eccentricity;
+    let mut hi = m + eccentricity;
+    let mut e_anom = m;
+    for _ in 0..KEPLER_MAX_ITERATIONS {
+        // The residual, evaluated at the periapsis nearest `e_anom`.
+        //
+        // `sin` has period 2π, so shifting `E` and `M` by the same `2πk` leaves
+        // the equation alone: with `u = E - 2πk` and `w = M - 2πk` the residual
+        // is `u - e·sin(u) - w`, rearranged below as `(1-e)·u + e·(u - sin u)`
+        // to keep those two from cancelling. `k` is 0 or ±1 because the reduced
+        // `M` is inside one revolution and `E` is within `e` of it, and both
+        // shifts are exact where they matter (Sterbenz).
+        //
+        // Written at `E` instead, the `E ≈ 2π` branch subtracts two values near
+        // 2π and loses the residual whose sign the bracket update below reads.
+        // A wrong sign there moves an endpoint past the root and takes it out
+        // of the bracket for good. The shift puts `u` near zero at either
+        // periapsis, where `x_minus_sin` is accurate.
+        let k = (e_anom / (2.0 * PI)).round();
+        let u = e_anom - k * (2.0 * PI);
+        let w = m - k * (2.0 * PI);
+        let f = (1.0 - eccentricity) * u + eccentricity * x_minus_sin(u) - w;
+        if f > 0.0 {
+            hi = e_anom;
+        } else {
+            lo = e_anom;
+        }
+
+        // `cos` shares `sin`'s period, so this is the derivative at `E` too.
+        let f_prime = 1.0 - eccentricity * u.cos();
+        let step = -f / f_prime;
+        // `|step| = |f| / |f'|` and `f' ≤ 1 + e < 2`, so a step this small
+        // means the residual is already within twice it. Checking here rather
+        // than after the bracket test matters because `e_anom` has just become
+        // an endpoint: a step that rounds away to nothing would read as
+        // "outside the bracket" and send the iteration bisecting away from a
+        // root it had already found. At `M = π` that cost 46 iterations and
+        // left the answer 16 ulp off.
+        if step.abs() < 1e-14 {
+            e_anom += step;
+            break;
+        }
+
+        let newton = e_anom + step;
+        // A Newton step that leaves the bracket says nothing about where the
+        // root is; the bracket does. Its midpoint also makes progress when
+        // `f_prime` underflows to zero and the step is not finite at all.
+        let next = if newton > lo && newton < hi {
+            newton
+        } else {
+            0.5 * (lo + hi)
+        };
+
+        let delta = next - e_anom;
+        e_anom = next;
         if delta.abs() < 1e-14 {
             break;
         }
@@ -651,6 +749,177 @@ mod tests {
             (m - m_check).abs() < 1e-12,
             "High-e convergence: M={m}, E={e_anom}, M_check={m_check}"
         );
+    }
+
+    /// The returned E solves the equation it is named for, over the whole
+    /// eccentricity range the signature accepts.
+    ///
+    /// The oracle is Kepler's equation itself, written here as the plain
+    /// `E - e·sin(E) - M`. The solver evaluates the same quantity rearranged
+    /// as `(1-e)·E + e·(E - sin(E)) - M`, and stops on the size of its Newton
+    /// step rather than on that residual. Asserting the residual therefore
+    /// checks a quantity the iteration never checks against a threshold of its
+    /// own, which a `ν → M → ν` round-trip does not do.
+    ///
+    /// `test_kepler_equation_high_eccentricity` samples one point, `e = 0.99`
+    /// with `M = 1.0`, which Newton reaches from `E₀ = M` in a few steps. The
+    /// grid here includes the starting points from which it does not.
+    #[test]
+    fn kepler_solution_satisfies_the_equation_at_every_eccentricity() {
+        let mut worst = (0.0f64, 0.0f64, 0.0f64);
+        // The last entry is the largest `f64` below 1, where the bracket is
+        // widest and the iteration budget is closest to being spent in full.
+        for &e in &[
+            0.0,
+            0.1,
+            0.5,
+            0.7,
+            0.9,
+            0.95,
+            0.99,
+            0.995,
+            0.999,
+            1.0f64.next_down(),
+        ] {
+            // 0.05 rad steps across two full revolutions, so the reduction of
+            // `M` and both signs of the residual are covered.
+            for i in -252..=252 {
+                let m = i as f64 * 0.05;
+                let e_anom = solve_kepler_equation(m, e);
+                assert!(
+                    e_anom.is_finite(),
+                    "E must be finite: got {e_anom} at M={m}, e={e}"
+                );
+                // `solve_kepler_equation` reduces M the same way; the residual
+                // is against the reduced value it actually solved for.
+                let residual = e_anom - e * e_anom.sin() - m % (2.0 * PI);
+                if residual.abs() > worst.0.abs() {
+                    worst = (residual, m, e);
+                }
+            }
+        }
+        // 1e-13 rather than the solver's 1e-14 step threshold: the step is on
+        // E, and the residual is that step times `f' = 1 - e·cos(E)`, which is
+        // largest at apoapsis where it reaches `1 + e < 2`. The measured worst
+        // is 8.9e-16, so this leaves the analytical bound its margin rather
+        // than pinning today's number. `the_root_at_pi_is_returned_exactly`
+        // is what holds the accuracy at the point that used to be worst.
+        assert!(
+            worst.0.abs() < 1e-13,
+            "E must solve M = E - e·sin(E): residual {:.3e} at M={}, e={} (E={})",
+            worst.0,
+            worst.1,
+            worst.2,
+            solve_kepler_equation(worst.1, worst.2)
+        );
+    }
+
+    /// Near periapsis at `e` one ulp below 1, the root is found to 1e-12.
+    ///
+    /// `E` and `e·sin(E)` are equal to 13 digits at `E = 3e-7`, so subtracting
+    /// them leaves the sign of `f` up to the rounding of `e·sin(E)`. The
+    /// bracket update reads that sign, and a wrong one moves an endpoint past
+    /// the root. Measured with the residual written as a plain subtraction:
+    /// `E = 3.0968e-7` against a root of `3.1000864616e-7`, off by 1.1e-3
+    /// relative.
+    ///
+    /// The expected roots come from bisecting `E(1-e) + e(E - sin E) - M`,
+    /// whose terms are evaluated without cancelling against each other. As a
+    /// check on their magnitude, `(1-e)·E` is negligible against `E³/6` here,
+    /// so `E → (6M)^(1/3)`: 3.107e-7 for the first row, 0.2% from the root.
+    #[test]
+    fn a_near_parabolic_orbit_near_periapsis_keeps_its_root() {
+        let e = 1.0f64.next_down();
+        for &(m, root) in &[
+            (5e-21, 3.100_086_461_6e-7),
+            (1e-20, 3.909_195_816_0e-7),
+            (1e-15, 1.817_119_370_9e-5),
+        ] {
+            let e_anom = solve_kepler_equation(m, e);
+            let relative = (e_anom - root).abs() / root;
+            assert!(
+                relative < 1e-9,
+                "M={m}, e={e}: E={e_anom:e} is {relative:.3e} away from {root:e}"
+            );
+        }
+    }
+
+    /// The periapsis just below `2π` is found as accurately as the one at zero.
+    ///
+    /// Both `M` values here name the same point of the orbit, so the solver has
+    /// to be as accurate at `E ≈ 2π` as at `E ≈ 0`. Evaluating the residual at
+    /// `E` rather than at the nearest periapsis subtracts two values near 2π:
+    /// measured that way, `M = 6.283185307179464` returned
+    /// `E = 6.283097238421463`, off by 2.1e-8.
+    ///
+    /// The expected root comes from bisecting `u - e·sin(u) - v` with
+    /// `u = 2π - E` and `v = 2π - M`, whose terms carry no cancellation
+    /// against each other.
+    #[test]
+    fn the_periapsis_below_two_pi_is_as_accurate_as_the_one_at_zero() {
+        let e = 0.9999999999;
+        let m = 6.283185307179464;
+        let root = 6.283097259381490;
+        let e_anom = solve_kepler_equation(m, e);
+        let relative = (e_anom - root).abs() / root;
+        assert!(
+            relative < 1e-14,
+            "M={m}, e={e}: E={e_anom:.15} is {relative:.3e} away from {root:.15}"
+        );
+    }
+
+    /// `M = π` is answered with `π` itself, at every eccentricity.
+    ///
+    /// `E = π` solves `M = E - e·sin(E)` for any `e` because `sin(π) = 0`, so
+    /// the starting point is already the root. `sin(π)` is 1.2e-16 rather than
+    /// zero in `f64`, which leaves a residual for Newton to work on and a step
+    /// too small to change `E`; the iteration has to recognise that instead of
+    /// walking away from it. Measured before the step check went in: 13 to 16
+    /// ulp of drift, worst at `e = 0.5` and `e = 0.995`.
+    #[test]
+    fn the_root_at_pi_is_returned_exactly() {
+        for &e in &[0.0, 0.1, 0.5, 0.9, 0.995, 0.999] {
+            let e_anom = solve_kepler_equation(PI, e);
+            assert_eq!(
+                e_anom.to_bits(),
+                PI.to_bits(),
+                "M = π must give exactly π at e={e}: got {e_anom:.17} ({} ulp off)",
+                e_anom.to_bits() as i64 - PI.to_bits() as i64
+            );
+        }
+    }
+
+    /// Newton from `E₀ = M` diverges here, and the solver used to return the
+    /// diverged iterate as the answer.
+    ///
+    /// Measured before the bracket went in: `e = 0.995, M = 0.4` returned
+    /// `E = 2.7e6` rad, and the true anomaly that follows from it was 352.9°
+    /// away from the one the root gives. `f' = 1 - e·cos(E)` is 8.35e-2 at
+    /// `E₀ = 0.4`, which makes the first step 4.64 rad — past the root at 1.376
+    /// and out of `[-0.595, 1.395]`, after which the iteration is loose.
+    #[test]
+    fn a_diverging_newton_start_still_gives_the_root() {
+        for &(m, e) in &[
+            (0.4, 0.995),
+            (0.45, 0.995),
+            (5.9, 0.995),
+            (6.2, 0.995),
+            (0.25, 0.99),
+            (5.85, 0.99),
+        ] {
+            let e_anom = solve_kepler_equation(m, e);
+            let residual = e_anom - e * e_anom.sin() - m;
+            assert!(
+                residual.abs() < 1e-13,
+                "M={m}, e={e}: E={e_anom} leaves a residual of {residual:.3e}"
+            );
+            // `E = M + e·sin(E)` bounds the root to within e of M. The
+            // diverged values were 6 orders of magnitude outside it.
+            assert!(
+                (e_anom - m).abs() <= e + 1e-12,
+                "M={m}, e={e}: E={e_anom} is further than e from M"
+            );
+        }
     }
 
     #[test]
