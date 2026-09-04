@@ -19,9 +19,9 @@ use crate::math::F64Ext;
 /// converges on its own. The bisection fallback sets the floor: halving a
 /// bracket of width `2e ≤ 2` down to that threshold takes
 /// `log2(2 / 1e-14) ≈ 48` steps, and the rest of the budget covers the Newton
-/// steps interleaved with them. As `e` approaches 1 the budget can be spent in
-/// full; measured across the eccentricities nearest 1 that `f64` holds, the
-/// residual `E - e·sin(E) - M` stays under 2.1e-14 either way.
+/// steps interleaved with them. Measured over two revolutions of `M` at
+/// eccentricities up to the largest `f64` below 1, the residual
+/// `E - e·sin(E) - M` stays under 8.9e-16.
 const KEPLER_MAX_ITERATIONS: usize = 100;
 
 /// Solve Kepler's equation `M = E - e·sin(E)` for eccentric anomaly E.
@@ -58,7 +58,20 @@ pub fn solve_kepler_equation(mean_anomaly: f64, eccentricity: f64) -> f64 {
         }
 
         let f_prime = 1.0 - eccentricity * e_anom.cos();
-        let newton = e_anom - f / f_prime;
+        let step = -f / f_prime;
+        // `|step| = |f| / |f'|` and `f' ≤ 1 + e < 2`, so a step this small
+        // means the residual is already within twice it. Checking here rather
+        // than after the bracket test matters because `e_anom` has just become
+        // an endpoint: a step that rounds away to nothing would read as
+        // "outside the bracket" and send the iteration bisecting away from a
+        // root it had already found. At `M = π` that cost 46 iterations and
+        // left the answer 16 ulp off.
+        if step.abs() < 1e-14 {
+            e_anom += step;
+            break;
+        }
+
+        let newton = e_anom + step;
         // A Newton step that leaves the bracket says nothing about where the
         // root is; the bracket does. Its midpoint also makes progress when
         // `f_prime` underflows to zero and the step is not finite at all.
@@ -739,7 +752,10 @@ mod tests {
         }
         // 1e-13 rather than the solver's 1e-14 step threshold: the step is on
         // E, and the residual is that step times `f' = 1 - e·cos(E)`, which is
-        // largest at apoapsis where it reaches `1 + e < 2`.
+        // largest at apoapsis where it reaches `1 + e < 2`. The measured worst
+        // is 8.9e-16, so this leaves the analytical bound its margin rather
+        // than pinning today's number. `the_root_at_pi_is_returned_exactly`
+        // is what holds the accuracy at the point that used to be worst.
         assert!(
             worst.0.abs() < 1e-13,
             "E must solve M = E - e·sin(E): residual {:.3e} at M={}, e={} (E={})",
@@ -748,6 +764,27 @@ mod tests {
             worst.2,
             solve_kepler_equation(worst.1, worst.2)
         );
+    }
+
+    /// `M = π` is answered with `π` itself, at every eccentricity.
+    ///
+    /// `E = π` solves `M = E - e·sin(E)` for any `e` because `sin(π) = 0`, so
+    /// the starting point is already the root. `sin(π)` is 1.2e-16 rather than
+    /// zero in `f64`, which leaves a residual for Newton to work on and a step
+    /// too small to change `E`; the iteration has to recognise that instead of
+    /// walking away from it. Measured before the step check went in: 13 to 16
+    /// ulp of drift, worst at `e = 0.5` and `e = 0.995`.
+    #[test]
+    fn the_root_at_pi_is_returned_exactly() {
+        for &e in &[0.0, 0.1, 0.5, 0.9, 0.995, 0.999] {
+            let e_anom = solve_kepler_equation(PI, e);
+            assert_eq!(
+                e_anom.to_bits(),
+                PI.to_bits(),
+                "M = π must give exactly π at e={e}: got {e_anom:.17} ({} ulp off)",
+                e_anom.to_bits() as i64 - PI.to_bits() as i64
+            );
+        }
     }
 
     /// Newton from `E₀ = M` diverges here, and the solver used to return the
