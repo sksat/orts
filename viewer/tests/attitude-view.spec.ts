@@ -344,3 +344,47 @@ test("turning an arrow off stops it being drawn", async ({ page }) => {
   await page.locator('[data-testid="direction-vector-sun"]').click();
   await expect.poll(async () => await kinds(), { timeout: 10000 }).toEqual(["nadir"]);
 });
+
+test("the app's own far plane follows the camera out of the attitude view", async ({ page }) => {
+  // The app configures this Canvas, so the far plane is the app's and keeping it
+  // beyond the spacecraft is the app's job — `AttitudeViewer` does it for the
+  // plane it chooses, and neither touches a plane an embedder chose. Without the
+  // mount, dollying out past 100 spans loses the whole scene at once, since the
+  // spacecraft sits at the origin.
+  await page.goto("/?noAutoConnect=1&view=attitude");
+  await connect(page);
+
+  const cameraView = async () =>
+    page.evaluate(() => {
+      const w = window as unknown as {
+        __debug_get_camera_view?: () => {
+          position: [number, number, number];
+          far: number;
+        } | null;
+      };
+      return w.__debug_get_camera_view?.() ?? null;
+    });
+
+  await expect.poll(async () => (await cameraView()) != null, { timeout: 15000 }).toBe(true);
+  const before = await cameraView();
+  if (before == null) throw new Error("no camera hook in the attitude view");
+
+  await page.locator("canvas").hover();
+  const distance = (p: readonly number[]) => Math.sqrt(p[0] ** 2 + p[1] ** 2 + p[2] ** 2);
+  await expect
+    .poll(
+      async () => {
+        for (let i = 0; i < 10; i++) await page.mouse.wheel(0, 240);
+        const view = await cameraView();
+        return view != null && distance(view.position) > before.far;
+      },
+      { timeout: 20000 },
+    )
+    .toBe(true);
+
+  const after = await cameraView();
+  if (after == null) throw new Error("the camera hook went away");
+  expect(after.far, "the far plane is still beyond the spacecraft").toBeGreaterThan(
+    distance(after.position),
+  );
+});
