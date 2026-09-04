@@ -11,6 +11,7 @@ import {
   NOMINAL_SPACECRAFT_SPAN,
   resolveVisualSpan,
   spanNormalizedModelScale,
+  usableFovDegrees,
 } from "./spacecraftScale.js";
 
 /** A model with a measured native span (the ISS entry's numbers). */
@@ -171,20 +172,40 @@ describe("sizes derived from the span", () => {
     expect(cameraDistanceForSpan(1, 179, 1)).toBeLessThan(fallback);
   });
 
-  it("clamps a field of view too narrow for the fit to mean anything", () => {
-    // Finite and positive, so the range check admits them, and the fit divides by
-    // sin(fov/2): 1e-300 degrees asks for 3e302 spans, which is a number and no
-    // use to a depth buffer. The floor is 0.1°, and it is a clamp rather than the
-    // default because a narrow view is a request worth respecting.
-    const floor = cameraDistanceForSpan(1, 0.1, 1);
-    for (const fov of [1e-300, Number.MIN_VALUE, 0.01]) {
-      expect(cameraDistanceForSpan(1, fov, 1)).toBeCloseTo(floor, 6);
+  it("fits any angle a frustum can have, however narrow", () => {
+    // A `zoom` narrows the *effective* field of view below anything a camera prop
+    // would be given — zoom 1000 on 50° leaves about 0.05° — and fitting that as
+    // though it were wider puts the camera too close and clips the scene. So the
+    // fit takes the angle as it stands and the distance grows with it.
+    const wide = cameraDistanceForSpan(1, DEFAULT_CAMERA_FOV_DEGREES, 1);
+    const narrow = cameraDistanceForSpan(1, 0.1, 1);
+    const narrower = cameraDistanceForSpan(1, 0.05, 1);
+    expect(narrow).toBeGreaterThan(wide * 100);
+    expect(narrower).toBeGreaterThan(narrow * 1.9);
+    expect(Number.isFinite(narrower)).toBe(true);
+  });
+
+  it("falls back when an angle leaves no distance to compute", () => {
+    // Below roughly 1e-300 degrees the sine underflows and the quotient is
+    // infinite; there is no camera placement to return, so the default framing is.
+    const fallback = cameraDistanceForSpan(1, DEFAULT_CAMERA_FOV_DEGREES, 1);
+    for (const fov of [Number.MIN_VALUE, 1e-320]) {
+      const d = cameraDistanceForSpan(1, fov, 1);
+      expect(Number.isFinite(d)).toBe(true);
+      expect(d).toBeCloseTo(fallback, 12);
     }
-    // Above the floor the request stands: far away, and finite.
-    const narrow = cameraDistanceForSpan(1, 0.5, 1);
-    expect(Number.isFinite(narrow)).toBe(true);
-    expect(narrow).toBeLessThan(floor);
-    expect(narrow).toBeGreaterThan(cameraDistanceForSpan(1, DEFAULT_CAMERA_FOV_DEGREES, 1) * 50);
+  });
+
+  it("keeps a camera's own field of view inside what a camera can project", () => {
+    // The prop that reaches `PerspectiveCamera` is clamped, unlike the fit: a
+    // projection matrix built from 1e-300 degrees is degenerate whatever distance
+    // accompanies it.
+    expect(usableFovDegrees(0.01)).toBeCloseTo(0.1, 12);
+    expect(usableFovDegrees(1e-300)).toBeCloseTo(0.1, 12);
+    expect(usableFovDegrees(50)).toBe(50);
+    expect(usableFovDegrees(Number.NaN)).toBe(DEFAULT_CAMERA_FOV_DEGREES);
+    expect(usableFovDegrees(0)).toBe(DEFAULT_CAMERA_FOV_DEGREES);
+    expect(usableFovDegrees(180)).toBe(DEFAULT_CAMERA_FOV_DEGREES);
   });
 
   it("pulls further back for a narrower field of view", () => {

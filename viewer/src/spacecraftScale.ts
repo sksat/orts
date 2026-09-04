@@ -198,10 +198,12 @@ export function usableFovDegrees(fovDegrees: number | undefined): number {
     return DEFAULT_CAMERA_FOV_DEGREES;
   }
   // A narrow view is a legitimate request — a telescope framing of the same
-  // spacecraft — so it is clamped rather than replaced. The floor is where the
-  // fit stops meaning anything: the distance goes as 1/sin(fov/2), so 1e-300
-  // degrees asks for 3e302 spans (a finite number, and no use to a depth
-  // buffer), while a tenth of a degree asks for some 3000.
+  // spacecraft — so it is clamped rather than replaced. The floor is where a
+  // *camera* stops being one: the distance fitted for it goes as 1/sin(fov/2),
+  // so 1e-300 degrees asks for 3e302 spans, a finite number and no use to a
+  // depth buffer, while a tenth of a degree asks for some 3000. A `zoom` narrows
+  // the view further, and that is fitted as it stands — see
+  // {@link cameraDistanceForSpan}.
   return Math.max(fovDegrees, MIN_CAMERA_FOV_DEGREES);
 }
 
@@ -245,9 +247,16 @@ export function cameraDistanceForSpan(span: number, fovDegrees: number, aspect =
   // A viewport with no width or height has no aspect to fit; treat it as square
   // rather than returning an infinite distance a caller would place a camera at.
   const usable = Number.isFinite(aspect) && aspect > 0 ? aspect : 1;
-  const distance = fittedDistance(span, usableFovDegrees(fovDegrees), usable);
-  // The clamp above keeps the quotient finite for every field of view; this is
-  // the belt for an aspect or an extent that still produces nothing usable.
+  // Any angle a frustum can have is fitted as asked, including one far narrower
+  // than a camera prop may be — a zoom of 1000 leaves an *effective* fov of
+  // 0.05°, and fitting that as though it were wider puts the camera too close and
+  // clips the scene. What is rejected is an angle that is no angle, and a result
+  // that comes back unusable: below roughly 1e-300 degrees the sine underflows
+  // and the quotient is infinite.
+  const angled = Number.isFinite(fovDegrees) && fovDegrees > 0 && fovDegrees < 180;
+  const distance = angled
+    ? fittedDistance(span, fovDegrees, usable)
+    : fittedDistance(span, DEFAULT_CAMERA_FOV_DEGREES, usable);
   return Number.isFinite(distance) && distance > 0
     ? distance
     : fittedDistance(span, DEFAULT_CAMERA_FOV_DEGREES, 1);
