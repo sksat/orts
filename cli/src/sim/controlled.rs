@@ -16,13 +16,15 @@ use orts::sensor::{Gyroscope, Magnetometer, SensorBundle, StarTracker};
 use orts::setup::default_third_bodies;
 
 use crate::sim::core::spacecraft_dynamics_for;
+use core::ops::ControlFlow;
 use nalgebra::Vector3;
+use orts::group::IntegratorConfig;
 use orts::spacecraft::{
     MtqAssembly, ReactionWheelAssembly, SpacecraftDynamics, SpacecraftState, ThrusterAssembly,
     ThrusterAssemblyCore, ThrusterSpec,
 };
 use tobari::magnetic::igrf::Igrf;
-use utsuroi::{Integrator, Rk4};
+use utsuroi::{Dop853, DormandPrince, IntegrationError, Integrator, Rk4};
 
 use crate::config::{ControllerConfig, MtqConfig, ReactionWheelConfig, SensorChoice};
 use crate::satellite::SatelliteSpec;
@@ -392,21 +394,29 @@ pub fn next_fleet_event_t(sats: &[ControlledSatellite], horizon: f64) -> f64 {
 /// span is the caller's — `stream_interval` in `serve`, the gap between fleet
 /// events in `run` — and has no reason to be a multiple of the controller's
 /// period, so a span shorter than the period integrates without a tick.
+///
+/// Takes `params` rather than an integrator and an epoch so that both callers
+/// read the same fields: the integrator selection lives in
+/// [`SimParams::integrator_config`] and neither `run` nor `serve` can hand this
+/// loop a different one. That is the shape the fix here needed — the selection
+/// used to be the caller's to make, and the controlled callers made a different
+/// one from the groups.
 pub fn advance_controlled(
     sat: &mut ControlledSatellite,
     from: f64,
     to: f64,
-    params_dt: f64,
-    epoch: Option<&Epoch>,
+    params: &SimParams,
 ) -> Result<(), String> {
+    let integrator = params.integrator_config();
+    let epoch = params.epoch.as_ref();
     let mut t = from;
     while sat.tick_due_at(to) {
         let tick_t = sat.next_tick_t();
-        propagate_controlled(sat, t, tick_t, params_dt)?;
+        propagate_controlled(sat, t, tick_t, &integrator)?;
         tick_controller(sat, tick_t, epoch)?;
         t = tick_t;
     }
-    propagate_controlled(sat, t, to, params_dt)
+    propagate_controlled(sat, t, to, &integrator)
 }
 
 /// Integrate `[t0, t1]` under the command the actuators already hold.
@@ -417,24 +427,64 @@ pub fn advance_controlled(
 /// *fixed* period, so a controller runs on its own schedule via
 /// [`tick_controller`] and nothing else may move it.
 ///
-/// `params_dt` is the requested ODE step; it is capped by the span so a step
-/// cannot reach past `t1`.
+/// `integrator` carries the step the config asked for. For `Rk4` that is the
+/// fixed step, capped by the span so it cannot reach past `t1`; for the adaptive
+/// pair it is the first step the controller tries.
+///
+/// The adaptive steppers are rebuilt for each span rather than carried across
+/// them, which is what `IndependentGroup` does for its own spans. Keeping a
+/// stepper's own `dt` instead would drag the truncated last step of one span
+/// into the next: `advance_to` computes `h = dt.min(t_target - t)` and then
+/// stores `h * factor`, so a span boundary would shrink the step the next span
+/// starts from.
 pub fn propagate_controlled(
     sat: &mut ControlledSatellite,
     t0: f64,
     t1: f64,
-    params_dt: f64,
+    integrator: &IntegratorConfig,
 ) -> Result<(), String> {
     if t1 <= t0 {
         return Ok(());
     }
-    let dt_ode = params_dt.min(t1 - t0);
-    // `try_integrate` rather than `integrate`: the latter panics on a bad step
-    // or a stalled clock, and this returns `Result` so serve can send the
-    // client an Error down its graceful-halt path.
-    sat.state = Rk4
-        .try_integrate(&sat.dynamics, sat.state.clone(), t0, t1, dt_ode, |_, _| {})
-        .map_err(|e| format!("integration failed on [{t0:.3}, {t1:.3}]: {e}"))?;
+    let span = |e: IntegrationError| format!("integration failed on [{t0:.3}, {t1:.3}]: {e}");
+
+    match integrator {
+        IntegratorConfig::Rk4 { dt } => {
+            let dt_ode = dt.min(t1 - t0);
+            // `try_integrate` rather than `integrate`: the latter panics on a
+            // bad step or a stalled clock, and this returns `Result` so serve
+            // can send the client an Error down its graceful-halt path.
+            sat.state = Rk4
+                .try_integrate(&sat.dynamics, sat.state.clone(), t0, t1, dt_ode, |_, _| {})
+                .map_err(span)?;
+        }
+        IntegratorConfig::Dp45 { dt, tolerances } => {
+            let mut stepper = DormandPrince.stepper(
+                &sat.dynamics,
+                sat.state.clone(),
+                t0,
+                *dt,
+                tolerances.clone(),
+            );
+            stepper
+                .advance_to(t1, |_, _| {}, |_, _| ControlFlow::<String>::Continue(()))
+                .map_err(span)?;
+            sat.state = stepper.into_state();
+        }
+        IntegratorConfig::Dop853 { dt, tolerances } => {
+            let mut stepper = Dop853.stepper(
+                &sat.dynamics,
+                sat.state.clone(),
+                t0,
+                *dt,
+                tolerances.clone(),
+            );
+            stepper
+                .advance_to(t1, |_, _| {}, |_, _| ControlFlow::<String>::Continue(()))
+                .map_err(span)?;
+            sat.state = stepper.into_state();
+        }
+    }
     Ok(())
 }
 
@@ -798,10 +848,28 @@ mod tests {
         (sat, ticks)
     }
 
+    /// A `SimParams` carrying just the fields the controlled loop reads.
+    ///
+    /// Built from the CLI defaults so it is the same shape a run gets, then
+    /// overridden field by field.
+    fn params_with(integrator: crate::cli::IntegratorChoice, dt: f64, tol: f64) -> SimParams {
+        use clap::Parser;
+        let args = crate::cli::SimArgs::parse_from(["orts"]);
+        let mut params = SimParams::from_sim_args(&args, false);
+        params.integrator = integrator;
+        params.dt = dt;
+        params.tolerances = utsuroi::Tolerances {
+            atol: tol,
+            rtol: tol,
+        };
+        params
+    }
+
     /// Step one satellite the way a caller does — through the same function
     /// `serve` and `run` call, so an error in that loop fails these tests.
     fn advance(sat: &mut ControlledSatellite, from: f64, to: f64, params_dt: f64) {
-        advance_controlled(sat, from, to, params_dt, None).expect("integrates and ticks");
+        let params = params_with(crate::cli::IntegratorChoice::Rk4, params_dt, 1e-9);
+        advance_controlled(sat, from, to, &params).expect("integrates and ticks");
     }
 
     /// A span shorter than the sample period does not tick the controller.
@@ -979,6 +1047,69 @@ mod tests {
         validate_tick_advances(5.0, 0.1).expect("an ordinary period is fine");
     }
 
+    /// The configured integrator is the one that runs the controlled loop.
+    ///
+    /// Each arm propagates one orbit of the same satellite with a requested step
+    /// of a whole period. For `Rk4` that is the step, and a single step cannot
+    /// follow the orbit; for the adaptive pair it is only the first guess, which
+    /// the error control then subdivides. The reference is the same span under
+    /// `Rk4` at 0.5 s, a step 11,000 times finer.
+    ///
+    /// The propagation runs through `advance_controlled`, the function `run` and
+    /// `serve` both call, so what this measures is the whole path from
+    /// `SimParams` to the integrator — not `propagate_controlled` alone.
+    /// `propagate_controlled` used to take a bare `dt` and hardcode `Rk4`, and
+    /// the selection was the caller's to make: `[integrator]` reached the
+    /// orbit-only and spacecraft groups while the controlled callers passed
+    /// `params.dt` on its own. Every arm then returned the coarse `Rk4` answer.
+    #[test]
+    fn the_configured_integrator_reaches_the_controlled_loop() {
+        use crate::cli::IntegratorChoice;
+
+        let period = 2.0
+            * std::f64::consts::PI
+            * (6778.0f64.powi(3) / arika::body::KnownBody::Earth.properties().mu).sqrt();
+        let after_one_orbit = |choice: IntegratorChoice, dt: f64| {
+            // A controller period past the span, so no tick interrupts it and
+            // the integrator is the only thing under test.
+            let (mut sat, _) = satellite_with(period * 2.0, 0.0);
+            let params = params_with(choice, dt, 1e-10);
+            advance_controlled(&mut sat, 0.0, period, &params).expect("integrates");
+            *sat.state.plant.orbit.position()
+        };
+
+        let reference = after_one_orbit(IntegratorChoice::Rk4, 0.5);
+        let coarse_rk4 = (after_one_orbit(IntegratorChoice::Rk4, period) - reference).norm();
+        let dop853 = (after_one_orbit(IntegratorChoice::Dop853, period) - reference).norm();
+        let dp45 = (after_one_orbit(IntegratorChoice::Dp45, period) - reference).norm();
+
+        // Measured: one RK4 step over the period lands 5.95e4 km from the
+        // reference, while DOP853 lands 2.8e-9 km from it and DP45 4.7e-6 km.
+        // The bound is 1 km, which both sides clear by four orders or more.
+        assert!(
+            coarse_rk4 > 1.0,
+            "one RK4 step over a whole period cannot follow the orbit, \
+             got {coarse_rk4:.3e} km from the reference"
+        );
+        assert!(
+            dop853 < 1.0,
+            "DOP853 subdivides the span, got {dop853:.3e} km from the reference"
+        );
+        assert!(
+            dp45 < 1.0,
+            "DP45 subdivides the span, got {dp45:.3e} km from the reference"
+        );
+        // The two adaptive arms are told apart, so serving one where the config
+        // asked for the other fails here. At the same tolerance the 8th-order
+        // method holds a tighter error than the 5th: measured, 2.8e-9 km
+        // against 4.7e-6 km, a factor of 1700. The bound is 10.
+        assert!(
+            dop853 * 10.0 < dp45,
+            "DOP853 should hold a tighter error than DP45 at the same tolerance: \
+             {dop853:.3e} km against {dp45:.3e} km"
+        );
+    }
+
     /// Two controllers at different rates each run at their own.
     ///
     /// `orts run` used to drive the fleet on the shortest period, so the 1.0 s
@@ -996,7 +1127,8 @@ mod tests {
         while t < 1.0 - 1e-12 {
             let next_t = next_fleet_event_t(&fleet, 1.0);
             for sat in &mut fleet {
-                propagate_controlled(sat, t, next_t, 0.01).expect("integrates");
+                propagate_controlled(sat, t, next_t, &IntegratorConfig::Rk4 { dt: 0.01 })
+                    .expect("integrates");
                 if sat.tick_due_at(next_t) {
                     tick_controller(sat, next_t, None).expect("ticks");
                 }

@@ -3,7 +3,7 @@ use std::ops::ControlFlow;
 use arika::body::KnownBody;
 use arika::frame::{SimpleEci, Vec3};
 use orts::OrbitalState;
-use orts::group::{HasPosition, IndependentGroup, IntegratorConfig};
+use orts::group::{HasPosition, IndependentGroup};
 use orts::orbital::kepler::KeplerianElements;
 use orts::record::archetypes::OrbitalState as RecordOrbitalState;
 use orts::record::components::{
@@ -498,21 +498,6 @@ fn report_contact_windows(params: &SimParams, monitors: Vec<VisibilityMonitor<Si
     }
 }
 
-/// Integrator selection for the `run` propagation loop.
-fn integrator_config(params: &SimParams) -> IntegratorConfig {
-    match params.integrator {
-        IntegratorChoice::Rk4 => IntegratorConfig::Rk4 { dt: params.dt },
-        IntegratorChoice::Dp45 => IntegratorConfig::Dp45 {
-            dt: params.dt,
-            tolerances: params.tolerances.clone(),
-        },
-        IntegratorChoice::Dop853 => IntegratorConfig::Dop853 {
-            dt: params.dt,
-            tolerances: params.tolerances.clone(),
-        },
-    }
-}
-
 /// Terminate a satellite on surface impact or atmospheric entry.
 ///
 /// Generic over the state so the orbit-only and spacecraft paths share one
@@ -547,7 +532,7 @@ pub fn run_simulation(params: &SimParams) -> Result<Recording, CmdError> {
     use crate::sim::core::sat_params;
     use orts::setup::{build_orbital_system, default_third_bodies};
 
-    let mut group = IndependentGroup::new(integrator_config(params))
+    let mut group = IndependentGroup::new(params.integrator_config())
         .with_event_checker(body_event_checker::<OrbitalState>(params));
 
     let third_bodies = default_third_bodies(&params.body).map_err(|e| {
@@ -594,7 +579,7 @@ pub fn run_spacecraft_simulation(params: &SimParams) -> Result<Recording, CmdErr
     use orts::spacecraft::SpacecraftState;
 
     let mut group =
-        IndependentGroup::new(integrator_config(params)).with_event_checker(body_event_checker::<
+        IndependentGroup::new(params.integrator_config()).with_event_checker(body_event_checker::<
             orts::effector::AugmentedState<SpacecraftState>,
         >(params));
 
@@ -1224,12 +1209,13 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Result<Record
         // holds; only the ones whose tick lands there see their controller.
         // A span shorter than a period — the run's last one, or the gap
         // between two rates — therefore integrates without a tick.
+        //
+        // `next_t` is the earliest tick in the fleet, so no tick of this
+        // satellite lies strictly inside the span and `advance_controlled`
+        // reduces to propagate-then-tick here. Sharing it with `serve` is what
+        // keeps one integrator selection across both.
         let step_one = |sat: &mut crate::sim::controlled::ControlledSatellite| {
-            crate::sim::controlled::propagate_controlled(sat, t, next_t, params.dt)?;
-            if sat.tick_due_at(next_t) {
-                crate::sim::controlled::tick_controller(sat, next_t, params.epoch.as_ref())?;
-            }
-            Ok::<(), String>(())
+            crate::sim::controlled::advance_controlled(sat, t, next_t, params)
         };
 
         // `try_for_each` rather than `for_each` + exit: a rayon worker calling
