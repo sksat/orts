@@ -62,6 +62,51 @@ async function cameraView(page: Page): Promise<CameraView> {
   return view;
 }
 
+/**
+ * What the scene actually contains, counted from the live graph.
+ *
+ * The quaternion registry hands back the spacecraft's `Object3D`, and walking
+ * `.parent` from it reaches the scene root — `canvas.__r3f` is null, so this is
+ * the way in. See .claude/skills/playwright-viewer-testing.
+ */
+async function sceneInventory(page: Page) {
+  return await page.evaluate((id) => {
+    const w = window as unknown as {
+      __debug_sat_quat_registry?: Map<string, () => { parent: unknown } | null>;
+    };
+    const start = w.__debug_sat_quat_registry?.get(id)?.();
+    if (start == null) return null;
+    type Node = {
+      type: string;
+      parent: Node | null;
+      children: Node[];
+      material?: { depthTest?: boolean };
+      renderOrder?: number;
+    };
+    let root = start as unknown as Node;
+    while (root.parent != null) root = root.parent;
+    const counts: Record<string, number> = {};
+    const sprites: { depthTest: boolean; renderOrder: number }[] = [];
+    const meshGeometries: string[] = [];
+    const walk = (node: Node) => {
+      counts[node.type] = (counts[node.type] ?? 0) + 1;
+      if (node.type === "Mesh") {
+        const geo = (node as unknown as { geometry?: { type?: string } }).geometry;
+        meshGeometries.push(geo?.type ?? "?");
+      }
+      if (node.type === "Sprite") {
+        sprites.push({
+          depthTest: node.material?.depthTest ?? true,
+          renderOrder: node.renderOrder ?? 0,
+        });
+      }
+      for (const child of node.children) walk(child);
+    };
+    walk(root);
+    return { counts, sprites, meshGeometries };
+  }, SAT);
+}
+
 /** Rendered body axis `axis` in scene coordinates, from the world quaternion. */
 async function bodyAxisInScene(page: Page, axis: 0 | 1 | 2) {
   const q = await page.evaluate((id) => window.__debug_get_sat_world_quat?.(id), SAT);
@@ -377,6 +422,51 @@ test("a caller's own far plane is left where they put it", async ({ page }) => {
   expect((await cameraView(page)).far, "the caller's plane is in effect").toBeCloseTo(12, 6);
   await dollyPast(page, 12);
   expect((await cameraView(page)).far, "and it stays where they put it").toBeCloseTo(12, 6);
+});
+
+test("both triads are drawn as meshes with letters, and no GL lines remain", async ({ page }) => {
+  // The point of the whole axis rework: WebGL ignores `linewidth`, so an
+  // `AxesHelper`'s lines are one pixel wide however close the camera gets, and a
+  // static picture gives a reader nothing to tell the axes apart by. The
+  // quaternion hook reads the spacecraft group's transform, so it passes just the
+  // same if the triads regress to lines or lose their letters — this counts what
+  // is in the scene instead.
+  await open(page, `epoch=${EPOCH}`);
+  // The Sun's arrow waits on the WASM ephemeris, and it is part of the count
+  // below; taking the inventory before it mounts would count 13 meshes and pass
+  // for the wrong reason.
+  await expectArrows(page, ["sun"]);
+
+  const scene = await sceneInventory(page);
+  expect(scene, "the scene graph should be reachable").not.toBeNull();
+  if (scene == null) return;
+
+  // Six letters: X, Y and Z on the body triad and on the reference frame's.
+  expect(scene.counts.Sprite, "one letter per axis on each triad").toBe(6);
+  // Each is drawn last and without a depth test, so a letter on an axis pointing
+  // away from the reader stays readable rather than buried in the spacecraft.
+  for (const sprite of scene.sprites) {
+    expect(sprite.depthTest).toBe(false);
+    expect(sprite.renderOrder).toBeGreaterThan(0);
+  }
+
+  // Every arrow is a shaft and a head: six axes across the two triads plus the
+  // Sun's, so seven of each. The marker is the box that reveals orientation.
+  const geometries = scene.meshGeometries;
+  expect(
+    geometries.filter((g) => g === "CylinderGeometry"),
+    "one shaft per arrow",
+  ).toHaveLength(7);
+  expect(
+    geometries.filter((g) => g === "ConeGeometry"),
+    "one head per arrow",
+  ).toHaveLength(7);
+  expect(
+    geometries.filter((g) => g === "BoxGeometry"),
+    "the marker",
+  ).toHaveLength(1);
+  expect(scene.counts.AxesHelper ?? 0, "no 1px triad is left").toBe(0);
+  expect(scene.counts.LineSegments ?? 0, "and no GL lines at all").toBe(0);
 });
 
 test("a body with no Sun ephemeris draws no Sun arrow", async ({ page }) => {
