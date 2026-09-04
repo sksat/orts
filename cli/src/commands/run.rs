@@ -1,7 +1,7 @@
 use std::ops::ControlFlow;
 
 use arika::body::KnownBody;
-use arika::frame::{SimpleEci, Vec3};
+use arika::frame::{Frame, SimpleEci, Vec3};
 use orts::OrbitalState;
 use orts::group::{HasPosition, IndependentGroup, IntegratorConfig};
 use orts::orbital::kepler::KeplerianElements;
@@ -816,6 +816,10 @@ fn sim_metadata(params: &SimParams) -> orts::record::recording::SimMetadata {
         altitude: first_sat.map(|s| s.altitude(&params.body)),
         period: first_sat.map(|s| s.period),
         orbit_description: orbit_desc,
+        // Taken from the type rather than named as a literal: when the
+        // propagation frame becomes a parameter this is `F::DESCRIPTOR` and
+        // cannot drift from what was actually integrated in.
+        integration_frame: Some(<SimpleEci as Frame>::DESCRIPTOR),
     }
 }
 

@@ -17,6 +17,7 @@
 //! (integration error, controller fault, stream overflow / stuck peer,
 //! boundary reset) — be unit-tested in-process without a runtime.
 
+use arika::frame::{Frame, SimpleEci};
 use std::collections::{HashMap, VecDeque};
 use std::ops::ControlFlow;
 use std::sync::Arc;
@@ -1329,6 +1330,8 @@ fn build_info_message(params: &SimParams) -> Result<WsMessage, String> {
             .unwrap()
             .to_string(),
         central_body_radius: params.body.properties().radius,
+        // From the type, so it cannot disagree with what was integrated in.
+        integration_frame: <SimpleEci as Frame>::DESCRIPTOR.name().to_string(),
         epoch_jd: params.epoch.map(|e| e.jd()),
         satellites: satellites_info,
     })
