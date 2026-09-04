@@ -397,6 +397,12 @@ describe("resolveDisplayFrame", () => {
     }[] = [
       { frame: ECEF_FRAME, orientation: "bodyFixed", inputs: { era: 1.4 } },
       { frame: ECEF_FRAME, orientation: "bodyFixed", inputs: { era: null } },
+      // Non-finite ERA. The gate is `era != null`, so these reach the kernel as
+      // they did before the wrapper existed; a refactor of floating-point code
+      // has to say what it does with them rather than leave it to be discovered.
+      { frame: ECEF_FRAME, orientation: "bodyFixed", inputs: { era: Number.NaN } },
+      { frame: ECEF_FRAME, orientation: "bodyFixed", inputs: { era: Number.POSITIVE_INFINITY } },
+      { frame: ECEF_FRAME, orientation: "bodyFixed", inputs: { era: Number.NEGATIVE_INFINITY } },
       { frame: ECI_FRAME, orientation: "inertial", inputs: { era: 1.4 } },
       { frame: ECI_FRAME, orientation: "inertial", inputs: { originPosition: r } },
       {
