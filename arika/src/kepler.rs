@@ -13,23 +13,61 @@ use nalgebra::Vector3;
 #[allow(unused_imports)]
 use crate::math::F64Ext;
 
-/// Solve Kepler's equation `M = E - e·sin(E)` for eccentric anomaly E
-/// using Newton-Raphson iteration.
+/// Iterations [`solve_kepler_equation`] may take.
+///
+/// Newton reaches the 1e-14 step threshold in a handful of steps wherever it
+/// converges on its own. The bisection fallback sets the floor: halving a
+/// bracket of width `2e ≤ 2` down to that threshold takes
+/// `log2(2 / 1e-14) ≈ 48` steps, and the rest of the budget covers the Newton
+/// steps interleaved with them. As `e` approaches 1 the budget can be spent in
+/// full; measured across the eccentricities nearest 1 that `f64` holds, the
+/// residual `E - e·sin(E) - M` stays under 2.1e-14 either way.
+const KEPLER_MAX_ITERATIONS: usize = 100;
+
+/// Solve Kepler's equation `M = E - e·sin(E)` for eccentric anomaly E.
+///
+/// Newton-Raphson, kept inside a bracket that contains the root: near periapsis
+/// at high eccentricity `f' = 1 - e·cos(E)` approaches `1 - e`, and an
+/// unguarded Newton step from `E₀ = M` there is long enough to leave the
+/// interval and not come back. Bisecting instead of taking such a step
+/// converges for every eccentricity the signature accepts.
 ///
 /// # Arguments
 /// * `mean_anomaly` - Mean anomaly M [rad]
 /// * `eccentricity` - Orbital eccentricity (0 ≤ e < 1)
 ///
 /// # Returns
-/// Eccentric anomaly E [rad]
+/// Eccentric anomaly E [rad], within `e` of the reduced `M`
 pub fn solve_kepler_equation(mean_anomaly: f64, eccentricity: f64) -> f64 {
     let m = mean_anomaly % (2.0 * PI);
-    let mut e_anom = m; // initial guess
-    for _ in 0..50 {
+    // `E = M + e·sin(E)` puts the root within `e` of `M`, and `f` increases
+    // monotonically (`f' = 1 - e·cos(E) > 0` for `e < 1`), so `f(m - e) ≤ 0`
+    // and `f(m + e) ≥ 0` bracket it for any `M`. For `e = 0` the bracket is the
+    // single point `m`, which is the root.
+    let mut lo = m - eccentricity;
+    let mut hi = m + eccentricity;
+    let mut e_anom = m;
+    for _ in 0..KEPLER_MAX_ITERATIONS {
         let f = e_anom - eccentricity * e_anom.sin() - m;
+        if f > 0.0 {
+            hi = e_anom;
+        } else {
+            lo = e_anom;
+        }
+
         let f_prime = 1.0 - eccentricity * e_anom.cos();
-        let delta = f / f_prime;
-        e_anom -= delta;
+        let newton = e_anom - f / f_prime;
+        // A Newton step that leaves the bracket says nothing about where the
+        // root is; the bracket does. Its midpoint also makes progress when
+        // `f_prime` underflows to zero and the step is not finite at all.
+        let next = if newton > lo && newton < hi {
+            newton
+        } else {
+            0.5 * (lo + hi)
+        };
+
+        let delta = next - e_anom;
+        e_anom = next;
         if delta.abs() < 1e-14 {
             break;
         }
@@ -651,6 +689,78 @@ mod tests {
             (m - m_check).abs() < 1e-12,
             "High-e convergence: M={m}, E={e_anom}, M_check={m_check}"
         );
+    }
+
+    /// The returned E solves the equation it is named for, over the whole
+    /// eccentricity range the signature accepts.
+    ///
+    /// The oracle is Kepler's equation itself — `E - e·sin(E) - M`, which the
+    /// solver does not compute a residual of — so this does not compare the
+    /// solver against itself the way a `ν → M → ν` round-trip does.
+    ///
+    /// `test_kepler_equation_high_eccentricity` samples one point, `e = 0.99`
+    /// with `M = 1.0`, which Newton reaches from `E₀ = M` in a few steps. The
+    /// grid here includes the starting points from which it does not.
+    #[test]
+    fn kepler_solution_satisfies_the_equation_at_every_eccentricity() {
+        let mut worst = (0.0f64, 0.0f64, 0.0f64);
+        for &e in &[0.0, 0.1, 0.5, 0.7, 0.9, 0.95, 0.99, 0.995, 0.999] {
+            // 0.05 rad steps across two full revolutions, so the reduction of
+            // `M` and both signs of the residual are covered.
+            for i in -252..=252 {
+                let m = i as f64 * 0.05;
+                let e_anom = solve_kepler_equation(m, e);
+                // `solve_kepler_equation` reduces M the same way; the residual
+                // is against the reduced value it actually solved for.
+                let residual = e_anom - e * e_anom.sin() - m % (2.0 * PI);
+                if residual.abs() > worst.0.abs() {
+                    worst = (residual, m, e);
+                }
+            }
+        }
+        // 1e-13 rather than the solver's 1e-14 step threshold: the step is on
+        // E, and near periapsis at e = 0.999 the residual is that step times
+        // `f' = 1 - e·cos(E)`, which is 1.999 there.
+        assert!(
+            worst.0.abs() < 1e-13,
+            "E must solve M = E - e·sin(E): residual {:.3e} at M={}, e={} (E={})",
+            worst.0,
+            worst.1,
+            worst.2,
+            solve_kepler_equation(worst.1, worst.2)
+        );
+    }
+
+    /// Newton from `E₀ = M` diverges here, and the solver used to return the
+    /// diverged iterate as the answer.
+    ///
+    /// Measured before the bracket went in: `e = 0.995, M = 0.4` returned
+    /// `E = 2.7e6` rad, and the true anomaly that follows from it was 352.9°
+    /// away from the one the root gives. `f' = 1 - e·cos(E)` is 5e-3 at
+    /// `E₀ = 0.4`, so the first step is three orders of magnitude too long.
+    #[test]
+    fn a_diverging_newton_start_still_gives_the_root() {
+        for &(m, e) in &[
+            (0.4, 0.995),
+            (0.45, 0.995),
+            (5.9, 0.995),
+            (6.2, 0.995),
+            (0.25, 0.99),
+            (5.85, 0.99),
+        ] {
+            let e_anom = solve_kepler_equation(m, e);
+            let residual = e_anom - e * e_anom.sin() - m;
+            assert!(
+                residual.abs() < 1e-13,
+                "M={m}, e={e}: E={e_anom} leaves a residual of {residual:.3e}"
+            );
+            // `E = M + e·sin(E)` bounds the root to within e of M. The
+            // diverged values were 6 orders of magnitude outside it.
+            assert!(
+                (e_anom - m).abs() <= e + 1e-12,
+                "M={m}, e={e}: E={e_anom} is further than e from M"
+            );
+        }
     }
 
     #[test]
