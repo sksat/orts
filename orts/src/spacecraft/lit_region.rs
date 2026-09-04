@@ -366,7 +366,7 @@ fn clip_3d<'b>(
             write(*a);
         }
         if (da > eps(a)) != (db > eps(b)) && da != db {
-            write(a + (b - a) * (da / (da - db)));
+            write(crossing(*a, *b, da, db));
         }
     }
     &out[..n]
@@ -390,8 +390,38 @@ fn clip_3d<'b>(
 /// closer than that, so the tolerance has to say so.
 fn plane_roundoff(n: &Vector3<f64>, p: &Vector3<f64>, origin: &Vector3<f64>) -> f64 {
     let d = p - origin;
-    let term = |i: usize| n[i].abs() * (d[i].abs() + p[i].abs() + origin[i].abs());
-    ROUNDOFF * f64::EPSILON * (term(0) + term(1) + term(2))
+    // The largest term rather than their sum: a coordinate can reach
+    // `f64::MAX`, where a sum of terms that size overflows and leaves an
+    // infinite tolerance — which would call every point coplanar and drop
+    // every shadow. `ROUNDOFF` already covers the factor of three this gives
+    // up against the sum. Nothing is taken from an axis the normal ignores
+    // either: a coordinate whose own subtraction overflowed would otherwise
+    // turn `0 * inf` into a NaN tolerance, which rejects every point.
+    let term = |i: usize| {
+        if n[i] == 0.0 {
+            0.0
+        } else {
+            n[i].abs() * d[i].abs().max(p[i].abs()).max(origin[i].abs())
+        }
+    };
+    ROUNDOFF * f64::EPSILON * term(0).max(term(1)).max(term(2))
+}
+
+/// Where a segment crosses a boundary, given the signed distances at its ends.
+///
+/// As a convex combination rather than `a + (b - a) * t`: an accepted panel can
+/// put its corners at `±f64::MAX`, where the difference of two finite endpoints
+/// overflows and the vertex comes out NaN, which drops a shadow that is really
+/// there. The parameter is formed from distances scaled by the larger of the
+/// two for the same reason.
+fn crossing<T>(a: T, b: T, da: f64, db: f64) -> T
+where
+    T: std::ops::Mul<f64, Output = T> + std::ops::Add<T, Output = T>,
+{
+    let m = da.abs().max(db.abs());
+    let (da, db) = (da / m, db / m);
+    let t = da / (da - db);
+    a * (1.0 - t) + b * t
 }
 
 /// The signed area of a polygon, positive when its vertices run
@@ -517,8 +547,19 @@ fn clip_half_plane(
     // coordinates is not known to the precision of the difference.
     let eps = |x: &Vector2<f64>| {
         let d = x - p;
-        let term = |n: f64, d: f64, a: f64, b: f64| n.abs() * (d.abs() + a.abs() + b.abs());
-        ROUNDOFF * f64::EPSILON * (term(normal.x, d.x, x.x, p.x) + term(normal.y, d.y, x.y, p.y))
+        // Same shape as the 3D bound, and for the same reasons: the largest
+        // term rather than the sum, because a plane coordinate can reach
+        // `f64::MAX` where the sum overflows into an infinite tolerance; and
+        // nothing from an axis the normal ignores, because a coordinate whose
+        // own subtraction overflowed would otherwise turn `0 * inf` into NaN.
+        let term = |n: f64, d: f64, a: f64, b: f64| {
+            if n == 0.0 {
+                0.0
+            } else {
+                n.abs() * d.abs().max(a.abs()).max(b.abs())
+            }
+        };
+        ROUNDOFF * f64::EPSILON * term(normal.x, d.x, x.x, p.x).max(term(normal.y, d.y, x.y, p.y))
     };
 
     out.clear();
@@ -529,7 +570,7 @@ fn clip_half_plane(
             out.push(a);
         }
         if (da >= -eps(&a)) != (db >= -eps(&b)) && da != db {
-            out.push(a + (b - a) * (da / (da - db)));
+            out.push(crossing(a, b, da, db));
         }
     }
 }
@@ -632,7 +673,16 @@ mod tests {
         let b = plate_at(1.0, (-1.0, 2.0), (-1.0, 0.0));
         let one = lit_region(&target, &[a.clone(), b.clone()], &Vector3::z());
         let other = lit_region(&target, &[b, a], &Vector3::z());
-        assert_eq!(one, other);
+        // To roundoff, not bitwise: the shadows are subtracted in the order
+        // given, so the areas and moments are summed in a different order
+        // either way, and floating-point addition is not associative.
+        near(one.fraction, other.fraction, "lit fraction");
+        assert!(
+            (one.centroid - other.centroid).norm() < 1e-15,
+            "{:?} vs {:?}",
+            one.centroid,
+            other.centroid
+        );
     }
 
     #[test]
@@ -650,6 +700,43 @@ mod tests {
         let lit = lit_region(&target, &[cover], &Vector3::z());
         assert_eq!(lit.fraction, 0.0);
         assert_eq!(lit.centroid, target.cp_offset);
+    }
+
+    #[test]
+    fn a_caster_reaching_the_ends_of_f64_keeps_the_answer_finite() {
+        // In units of the target's half-extents, a caster's coordinates are
+        // its size over the target's, and `rectangle` accepts both ends of
+        // that ratio: a target 1e-150 m across with a caster 1e158 by 1e-150
+        // (4e8 m², a finite area, which is all the constructor asks) is 1e308
+        // by 1 in plane units, so two of its corners differ by more than f64
+        // can hold.
+        //
+        // How much of the target that shadows is not answerable in f64: the
+        // crossing parameter carries sixteen digits and the segment spans
+        // 1e308, so the target's own edge sits far below the resolution of the
+        // interpolation. What has to hold is that nothing NaN or infinite
+        // escapes — a NaN fraction would poison the whole spacecraft's
+        // acceleration, not just this panel's. That is what the convex
+        // combination and the tolerances taken from the largest term buy: the
+        // difference of the endpoints and the sum of the tolerance's terms
+        // both overflow here.
+        let normal = Vector3::z();
+        let small = 1e-150;
+        let target = SurfacePanel::rectangle([small, small], Vector3::x(), normal, 2.2, optics());
+        let vast = SurfacePanel::rectangle([1e158, small], Vector3::x(), normal, 2.2, optics())
+            .with_cp_offset(Vector3::z() * small);
+
+        let lit = lit_region(&target, &[vast], &normal);
+        assert!(
+            (0.0..=1.0).contains(&lit.fraction),
+            "the lit share has to stay a share, got {}",
+            lit.fraction
+        );
+        assert!(
+            lit.centroid.iter().all(|c| c.is_finite()),
+            "{:?}",
+            lit.centroid
+        );
     }
 
     #[test]
