@@ -619,9 +619,19 @@ export function App() {
     },
     [attitudeBody, epoch, centralBody],
   );
-  useEffect(() => {
-    if (!attitudeFrameAvailable(attitudeFrame)) setAttitudeFrame("inertial");
-  }, [attitudeFrame, attitudeFrameAvailable]);
+  /**
+   * The frame the attitude view is actually drawn in: the request, gated on what
+   * the data supports.
+   *
+   * Derived rather than written back into the state. An effect that corrected the
+   * selection would run after the render it corrects, leaving one frame where the
+   * selector named `localOrbital` while the scene had already fallen back to
+   * inertial — and it would also forget the request, so a momentary gap in the
+   * velocity would drop the reader out of the frame they chose for good.
+   */
+  const drawnAttitudeFrame: AttitudeFrame = attitudeFrameAvailable(attitudeFrame)
+    ? attitudeFrame
+    : "inertial";
 
   // Total points across all satellite buffers.
   // chartBufferVersion bumps on data ingest AND on resetBuffers (clear),
@@ -717,7 +727,7 @@ export function App() {
               satellites={attitudeSubjects}
               selectedSatelliteId={attitudeSubjectId}
               onSelectedSatelliteChange={setSelectedSatelliteId}
-              orientation={attitudeFrame}
+              orientation={drawnAttitudeFrame}
               onOrientationChange={setAttitudeFrame}
               localOrbitalUnavailable={
                 attitudeFrameAvailable("localOrbital")
@@ -785,7 +795,7 @@ export function App() {
               <AttitudeScene
                 centralBody={{ id: centralBody }}
                 body={attitudeBody}
-                orientation={attitudeFrame}
+                orientation={drawnAttitudeFrame}
                 epochJd={epoch ?? undefined}
                 time={snapshot.currentTime}
                 defaultMarkerShape={defaultMarkerShape}
