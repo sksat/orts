@@ -730,7 +730,9 @@ export function App() {
               }
               sunUnavailable={sunUnavailableReason}
               nadirUnavailable={
-                attitudeDrawableKinds.includes("nadir") ? undefined : "Requires a non-zero position"
+                attitudeDrawableKinds.includes("nadir")
+                  ? undefined
+                  : "Requires a finite, non-zero position"
               }
               directionVectors={directionVectors}
               onDirectionVectorsChange={setDirectionVectors}
