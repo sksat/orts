@@ -36,7 +36,7 @@ interface EarthBodyProps {
   /** When true, atmosphere uses physical scale (~100km). Default false (amplified). */
   physicalScale?: boolean;
   /** Bumped when server notifies high-res textures are available. Triggers re-upgrade. */
-  textureRevision?: number;
+  textureRevision?: number | string;
   /** Base URL for fetching high-res textures. */
   textureBaseUrl?: string;
 }
