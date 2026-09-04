@@ -77,6 +77,17 @@ export function geodetic_to_ecef(lat_deg: number, lon_deg: number, altitude_km: 
 export function geodetic_to_eci(lat_deg: number, lon_deg: number, altitude_km: number, epoch_jd: number): Float64Array;
 
 /**
+ * Whether the Sun direction for this body is computed rather than guessed.
+ *
+ * [`sun_direction_from_body`] answers `+X` (the vernal equinox) for a body it
+ * cannot place. A caller that draws the Sun as an arrow asks here first: a
+ * fixed direction is fine for lighting and reads as a measurement when drawn.
+ *
+ * `body`: body identifier string (e.g., "earth", "mars")
+ */
+export function has_sun_ephemeris(body: string): boolean;
+
+/**
  * Convert Julian Date + elapsed sim time to a UTC date/time string.
  *
  * Returns ISO 8601 string like "2024-03-20T12:00:00Z".
@@ -152,6 +163,7 @@ export interface InitOutput {
     readonly eci_to_ecef_batch: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly geodetic_to_ecef: (a: number, b: number, c: number) => [number, number];
     readonly geodetic_to_eci: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly has_sun_ephemeris: (a: number, b: number) => number;
     readonly jd_to_utc_string: (a: number, b: number) => [number, number];
     readonly orbit_derived_batch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly sun_direction_eci: (a: number, b: number) => [number, number];

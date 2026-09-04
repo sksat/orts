@@ -202,6 +202,17 @@ pub fn sun_distance_from_body(body: &str, epoch: &Epoch<Tdb>) -> f64 {
 /// - Unknown bodies: fallback to +X direction (vernal equinox)
 ///
 /// The returned vector points FROM the body TOWARD the Sun.
+/// Whether a Sun direction from this central body is computed rather than
+/// guessed.
+///
+/// [`sun_direction_from_body`] answers `+X` — the vernal equinox — for a body it
+/// cannot place, which a caller cannot tell from a real direction. A viewer that
+/// draws the Sun as an arrow has to know the difference: a fixed direction is
+/// fine for lighting and reads as a measurement when drawn.
+pub fn has_sun_ephemeris(body: &str) -> bool {
+    matches!(body, "earth" | "moon") || planets::has_heliocentric_elements(body)
+}
+
 pub fn sun_direction_from_body(body: &str, epoch: &Epoch<Tdb>) -> Vec3<frame::Gcrs> {
     match body {
         "earth" | "moon" => sun_direction_eci(epoch),
@@ -898,5 +909,22 @@ mod tests {
             sun_position_from_body(KnownBody::Sun, &epoch),
             Err(SunPositionError::CentralBodyIsSun)
         );
+    }
+
+    #[test]
+    fn has_sun_ephemeris_separates_computed_directions_from_the_fallback() {
+        // The bodies whose direction is computed: Earth and the Moon from the
+        // geocentric series, Mercury through Saturn from the Standish elements.
+        for body in [
+            "earth", "moon", "mercury", "venus", "mars", "jupiter", "saturn",
+        ] {
+            assert!(has_sun_ephemeris(body), "{body} has an ephemeris here");
+        }
+        // The rest fall back to +X in `sun_direction_from_body`, which a caller
+        // must be able to tell from a real direction. Uranus and Neptune have no
+        // elements here; the Sun has no direction to itself.
+        for body in ["sun", "uranus", "neptune", "pluto", "", "Earth"] {
+            assert!(!has_sun_ephemeris(body), "{body} has no ephemeris here");
+        }
     }
 }

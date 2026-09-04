@@ -145,7 +145,7 @@ export function AttitudeScene({
 
   // The Sun in this display frame, from the same hook that lights the orbit
   // scene: one computation feeds both the arrow and the light, so they agree.
-  const { sunDirection, sunDirectionEci } = useSunLighting({
+  const { sunDirection, sunDirectionEci, sunDirectionIsComputed } = useSunLighting({
     centralBody: centralBody.id,
     epochJd: effectiveEpochJd,
     quantizedSimTime: Math.floor(t / SUN_TIME_QUANTUM) * SUN_TIME_QUANTUM,
@@ -157,13 +157,14 @@ export function AttitudeScene({
     () =>
       resolveDirectionVectors({
         frame,
-        // Without an epoch the hook falls back to a fixed direction, which is
-        // fine for lighting and wrong for an arrow claiming where the Sun is.
-        sunEci: effectiveEpochJd != null ? sunDirectionEci : null,
+        // The hook falls back to a fixed direction when it cannot compute one —
+        // no epoch, or a central body arika cannot place. That is fine for
+        // lighting and wrong for an arrow claiming where the Sun is.
+        sunEci: sunDirectionIsComputed ? sunDirectionEci : null,
         positionEci: position,
         options: vectorOptions,
       }),
-    [frame, effectiveEpochJd, sunDirectionEci, position, vectorOptions],
+    [frame, sunDirectionIsComputed, sunDirectionEci, position, vectorOptions],
   );
 
   const displayQuat = useMemo(() => displayQuaternion(frame, attitude), [frame, attitude]);
