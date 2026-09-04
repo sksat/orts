@@ -104,6 +104,23 @@ section is subdivided by package.
   0.33 m, and the three shorter Harris-Priester oracles by 20-40%. ([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- `PanelDrag` applies drag to the face turned into the flow, not the sheltered
+  one. `v_rel` is the spacecraft's velocity through the atmosphere, so in the
+  body frame the gas arrives from `+v_rel`; the facing test read
+  `cos θ = n̂·(-v̂_rel)`, which selects the face behind the body, while `PanelSrp`
+  selects the face turned toward the Sun. The panel occlusion added in #424
+  follows the model's own facing rule, so the shadow moved with it and fell on
+  the sheltered side too; it now falls on the side the gas arrives from. That is
+  a change of side and nothing else: which panels the occlusion drops, and what
+  it does with a panel only partly covered, are as #424 left them
+  ([#407](https://github.com/sksat/orts/issues/407)). A shape whose panels come in opposite pairs — `cube`,
+  or any closed box — is unaffected in magnitude, since the projected areas of a
+  pair sum to the same value whichever face is picked; what changes is which
+  `cp_offset` the force acts through, so the attitude disturbance of a
+  single-sided panel offset from the centre of mass had the wrong sign, and a
+  single-sided panel turned into the flow produced no drag at all. A new Orekit
+  fixture (`tools/generate_orekit_panel_drag_fixtures.py`) pins the face
+  selection and the cos θ law against Orekit's paneled drag model. ([#437](https://github.com/sksat/orts/pull/437))
 - `SurfacePanel::at_com` and `SurfacePanel::rectangle` reject a direction vector
   whose magnitude cannot be computed, instead of building a panel whose normal
   is infinite. They normalised first and then checked the result was long

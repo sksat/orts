@@ -1,0 +1,178 @@
+{
+  "description": "Orekit reference forces for a single single-sided flat panel under atmospheric drag. The spacecraft flies along +y with an identity attitude, so the gas arrives from +y; each case gives the panel normal in the body frame. The sheltered cases are exactly zero: Orekit loads only the face turned into the flow.",
+  "generator": "tools/generate_orekit_panel_drag_fixtures.py",
+  "orekit_version": "orekit-13.1.7",
+  "orekit_convention": {
+    "relative_velocity": "velocity of the atmosphere with respect to the spacecraft, i.e. the negative of orts's v_rel",
+    "double_sided": "false, so only flux from the positive normal counts",
+    "lift_ratio": "0, matching the pure flat-plate law orts implements",
+    "absorption": "1",
+    "reflection": "0"
+  },
+  "density_kg_m3": 1e-11,
+  "area_m2": 10.0,
+  "cd": 2.2,
+  "mass_kg": 1000.0,
+  "velocity_inertial_m_s": [
+    0.0,
+    7670.0,
+    0.0
+  ],
+  "position_inertial_m": [
+    7000000.0,
+    0.0,
+    0.0
+  ],
+  "cases": [
+    {
+      "name": "windward_face_on",
+      "incidence_deg": 0.0,
+      "faces_the_flow": true,
+      "panel_normal_body": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "force_body_n": [
+        0.0,
+        -0.0064711790000000005,
+        0.0
+      ]
+    },
+    {
+      "name": "windward_15deg",
+      "incidence_deg": 15.0,
+      "faces_the_flow": true,
+      "panel_normal_body": [
+        0.25881904510252074,
+        0.9659258262890683,
+        0.0
+      ],
+      "force_body_n": [
+        0.0,
+        -0.006250678922639467,
+        0.0
+      ]
+    },
+    {
+      "name": "windward_30deg",
+      "incidence_deg": 30.0,
+      "faces_the_flow": true,
+      "panel_normal_body": [
+        0.49999999999999994,
+        0.8660254037844387,
+        0.0
+      ],
+      "force_body_n": [
+        0.0,
+        -0.005604205406436381,
+        0.0
+      ]
+    },
+    {
+      "name": "windward_45deg",
+      "incidence_deg": 45.0,
+      "faces_the_flow": true,
+      "panel_normal_body": [
+        0.7071067811865475,
+        0.7071067811865476,
+        0.0
+      ],
+      "force_body_n": [
+        0.0,
+        -0.004575814553171982,
+        0.0
+      ]
+    },
+    {
+      "name": "windward_60deg",
+      "incidence_deg": 60.0,
+      "faces_the_flow": true,
+      "panel_normal_body": [
+        0.8660254037844386,
+        0.5000000000000001,
+        0.0
+      ],
+      "force_body_n": [
+        0.0,
+        -0.003235589500000001,
+        0.0
+      ]
+    },
+    {
+      "name": "windward_75deg",
+      "incidence_deg": 75.0,
+      "faces_the_flow": true,
+      "panel_normal_body": [
+        0.9659258262890683,
+        0.25881904510252074,
+        0.0
+      ],
+      "force_body_n": [
+        0.0,
+        -0.0016748643694674851,
+        0.0
+      ]
+    },
+    {
+      "name": "sheltered_face_on",
+      "incidence_deg": 0.0,
+      "faces_the_flow": false,
+      "panel_normal_body": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "force_body_n": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "sheltered_30deg",
+      "incidence_deg": 30.0,
+      "faces_the_flow": false,
+      "panel_normal_body": [
+        0.49999999999999994,
+        -0.8660254037844387,
+        0.0
+      ],
+      "force_body_n": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "sheltered_60deg",
+      "incidence_deg": 60.0,
+      "faces_the_flow": false,
+      "panel_normal_body": [
+        0.8660254037844386,
+        -0.5000000000000001,
+        0.0
+      ],
+      "force_body_n": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "edge_on",
+      "incidence_deg": 90.0,
+      "faces_the_flow": true,
+      "panel_normal_body": [
+        1.0,
+        6.123233995736766e-17,
+        0.0
+      ],
+      "force_body_n": [
+        0.0,
+        -3.9624543245297855e-19,
+        0.0
+      ]
+    }
+  ]
+}
