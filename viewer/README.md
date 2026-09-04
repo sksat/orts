@@ -75,8 +75,14 @@ import { OrbitScene, SCENE_UP } from "<pkg>/lib";
 - `{ center: "centralBody", orientation: "bodyFixed" }` — ECEF-like
 - `{ center: { satelliteId }, orientation: "inertial" }` — satellite at origin,
   star-fixed axes (the body appears to move around it)
-- `{ center: { satelliteId }, orientation: "localOrbital" }` — LVLH; the body
-  stays "below" as the satellite orbits
+- `{ center: { satelliteId }, orientation: "localOrbital" }` — the orbit frame
+  below; the body stays "below" as the satellite orbits
+
+The orbit frame's axes are worth stating, since LVLH and RSW conventions differ
+in order and sign and the attitude view draws letters on them: scene **+X** is
+in-track (`crossTrack × radial`, the velocity direction for a circular orbit),
+**+Y** is cross-track (`normalize(r × v)`, the orbit normal) and **+Z** is radial
+*outward*, so nadir points along scene **−Z**.
 
 ### Trails
 
@@ -121,8 +127,9 @@ camera framing does not depend on the real size.
 
 `orientation` picks the display frame — `"inertial"` (default), `"bodyFixed"`
 (needs `epochJd`, and an Earth central body, whose rotation angle is the one the
-viewer models), `"localOrbital"` (needs `position` and `velocity`). A request
-whose inputs are absent falls back to `"inertial"`.
+viewer models), `"localOrbital"` (needs `position` and `velocity`, and puts the
+axes where the orbit frame above does). A request whose inputs are absent falls
+back to `"inertial"`.
 
 `directionVectors` selects the arrows (`{ sun, nadir }`, both on by default). An
 arrow whose input is absent is not drawn: without `epochJd` there is no Sun

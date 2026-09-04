@@ -150,8 +150,9 @@ export interface CentralBody {
  * - `{ satelliteId }` + `inertial` — that satellite at the origin with the axes
  *   star-fixed: the central body appears to move around the satellite as it
  *   orbits, and the camera does not co-rotate.
- * - `{ satelliteId }` + `localOrbital` — that satellite at the origin, LVLH axes
- *   (radial / along-track / cross-track): the central body stays "below" as the
+ * - `{ satelliteId }` + `localOrbital` — that satellite at the origin in the
+ *   orbit frame {@link AttitudeFrame} spells out (scene +X in-track, +Y
+ *   cross-track, +Z radially outward), so the central body stays "below" as the
  *   satellite orbits. Requires the satellite's velocity; without it the view
  *   falls back to a radial-up camera follow.
  */
@@ -283,6 +284,19 @@ export const DEFAULT_VIEWER_FRAME: ViewerReferenceFrame = {
  * body, whose rotation angle is the one the viewer models); `localOrbital` needs
  * the spacecraft's position and velocity. A requested orientation whose inputs
  * are absent falls back to `inertial`.
+ *
+ * `localOrbital` is an orbit frame, and its name does not pin the axes down —
+ * LVLH and RSW conventions differ in both order and sign, and the view draws
+ * letters on these axes for a reader to interpret. This renderer maps
+ *
+ * - scene **+X** to in-track, `crossTrack × radial`, which is the velocity
+ *   direction for a circular orbit;
+ * - scene **+Y** to cross-track, `normalize(r × v)`, the orbit normal;
+ * - scene **+Z** to radial *outward*, `normalize(r)`, so nadir points along
+ *   scene −Z.
+ *
+ * Read against the convention that puts +Z at nadir, the labelled axes would
+ * come out inverted.
  */
 export type AttitudeFrame = "inertial" | "bodyFixed" | "localOrbital";
 
