@@ -211,7 +211,7 @@ fn shadow_on_target(
     // really in front — projecting the whole caster would report more shadow
     // than there is.
     let front: Vec<Vector3<f64>> = clip_3d(corners, &toward_source, &|p: &Vector3<f64>| {
-        dot_roundoff(&panel.normal, &(p - panel.cp_offset))
+        plane_roundoff(&panel.normal, p, &panel.cp_offset)
     });
     if front.len() < 3 {
         return None;
@@ -275,18 +275,26 @@ fn clip_3d(
     out
 }
 
-/// The roundoff a dot product `n · d` can carry, given both vectors.
+/// The roundoff `n · (p - origin)` can carry.
 ///
-/// The bound follows the terms the sum actually adds up, not the length of
-/// either vector. The difference matters for the extreme shapes the panel
-/// constructors accept: for a panel `1e308` m along one axis, a tolerance
-/// scaled from that coordinate comes to `1e293` and swallows every real
-/// distance, while the term along the normal — the only one the dot product
-/// keeps — may be exactly zero.
-fn dot_roundoff(n: &Vector3<f64>, d: &Vector3<f64>) -> f64 {
-    ROUNDOFF
-        * f64::EPSILON
-        * (n.x.abs() * d.x.abs() + n.y.abs() * d.y.abs() + n.z.abs() * d.z.abs())
+/// Two sources, and both have to be counted. The dot product's own error
+/// follows the terms it adds up — not the length of either vector: for a panel
+/// `1e308` m along one axis a tolerance scaled from that coordinate comes to
+/// `1e293` and swallows every real distance, while the term along the normal,
+/// the only one the dot product keeps, may be exactly zero.
+///
+/// The subtraction adds error of its own, proportional to the operands rather
+/// than to the difference. A corner is built as `cp_offset + offset`, which
+/// rounds at the scale of `cp_offset`, so recovering `offset` from it leaves a
+/// residue of about `EPSILON * |cp_offset|` — 1e-14 m for a panel a hundred
+/// metres from the CoM. Scaling only from the recovered difference put that
+/// residue above the tolerance and let a coincident back face read as standing
+/// in front of its own front face. Positions that far out are not known any
+/// closer than that, so the tolerance has to say so.
+fn plane_roundoff(n: &Vector3<f64>, p: &Vector3<f64>, origin: &Vector3<f64>) -> f64 {
+    let d = p - origin;
+    let term = |i: usize| n[i].abs() * (d[i].abs() + p[i].abs() + origin[i].abs());
+    ROUNDOFF * f64::EPSILON * (term(0) + term(1) + term(2))
 }
 
 /// The signed area of a polygon, positive when its vertices run
@@ -388,13 +396,15 @@ fn clip_half_plane(poly: &[Vector2<f64>], p: &Vector2<f64>, q: &Vector2<f64>) ->
     // below is scaled from.
     let normal = Vector2::new(-unit.y, unit.x);
     let dist = |x: &Vector2<f64>| normal.dot(&(x - p));
-    // Per vertex, and from the terms this dot product adds up: a panel with
-    // one huge axis and one tiny one needs a different tolerance along each,
-    // and a single tolerance taken from the largest coordinate anywhere would
-    // hide every distance along the tiny one.
+    // Per vertex, and from the terms this dot product adds up plus the
+    // operands of its subtraction — the same bound the 3D side uses, for the
+    // same two reasons: a panel with one huge axis and one tiny one needs a
+    // different tolerance along each, and a difference of two large
+    // coordinates is not known to the precision of the difference.
     let eps = |x: &Vector2<f64>| {
         let d = x - p;
-        ROUNDOFF * f64::EPSILON * (normal.x.abs() * d.x.abs() + normal.y.abs() * d.y.abs())
+        let term = |n: f64, d: f64, a: f64, b: f64| n.abs() * (d.abs() + a.abs() + b.abs());
+        ROUNDOFF * f64::EPSILON * (term(normal.x, d.x, x.x, p.x) + term(normal.y, d.y, x.y, p.y))
     };
 
     let mut out = Vec::with_capacity(poly.len() + 1);
@@ -616,6 +626,35 @@ mod tests {
                 -0.5,
                 "centroid along u, in half-extents",
             );
+        }
+    }
+
+    #[test]
+    fn a_back_face_far_from_the_centre_of_mass_shadows_nothing() {
+        // A corner is built as `cp_offset + offset`, which rounds at the scale
+        // of `cp_offset`, so recovering the offset from it leaves a residue of
+        // about `EPSILON * |cp_offset|` — 1e-14 m at a hundred metres, far
+        // above the roundoff of the offset itself. A tolerance scaled only
+        // from the recovered difference let that residue put part of a
+        // coincident back face on the source's side. A boom-mounted array is
+        // the shape this happens to, so the sweep runs out to 100 m.
+        for arm in [1.0, 10.0, 100.0] {
+            for i in 0..40 {
+                let a = 0.19 * i as f64;
+                let normal =
+                    Vector3::new(a.cos(), (1.3 * a).sin(), (0.7 * a + 0.4).cos()).normalize();
+                let u = normal.cross(&Vector3::new(0.2, 0.8, -0.1)).normalize();
+                let at = Vector3::new((0.9 * a).cos(), (1.1 * a).sin(), (0.5 * a).cos()) * arm;
+                let front = SurfacePanel::rectangle([1.0, 1.0], u, normal, 2.2, optics())
+                    .with_cp_offset(at);
+                let back = front.back_face(optics());
+                assert_eq!(
+                    lit_region(&front, &[back], &normal).fraction,
+                    1.0,
+                    "arm {arm} m, orientation {i}: a coincident back face must not \
+                     shadow the front"
+                );
+            }
         }
     }
 
