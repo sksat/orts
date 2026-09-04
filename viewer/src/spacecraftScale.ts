@@ -262,6 +262,31 @@ export function cameraDistanceForSpan(span: number, fovDegrees: number, aspect =
     : fittedDistance(span, DEFAULT_CAMERA_FOV_DEGREES, 1);
 }
 
+/**
+ * Camera distance for the opening view: far enough to fit the scene in the
+ * viewport, and far enough that the near plane falls in front of it.
+ *
+ * Those are separate constraints. A `near` reaches the camera from a public prop,
+ * chosen without knowing this view's scale, and one that sits past the scene is a
+ * perfectly buildable frustum with nothing inside it: at the default field of
+ * view the fit stands some seven spans off with the nearest drawn point four and
+ * a half spans away, so a `near` of ten spans renders an empty canvas. Clearing
+ * the sphere of radius {@link drawnExtentForSpan} takes `d >= near + R`, the same
+ * sphere and the same reasoning the far plane is pushed out for.
+ */
+export function initialCameraDistance(
+  span: number,
+  fovDegrees: number,
+  aspect: number,
+  near: number,
+): number {
+  const fitted = cameraDistanceForSpan(span, fovDegrees, aspect);
+  // A near plane that is not one imposes no constraint; the camera prop is
+  // checked before it reaches the camera, so this only guards the arithmetic.
+  const cleared = Number.isFinite(near) && near > 0 ? near + drawnExtentForSpan(span) : 0;
+  return Math.max(fitted, cleared);
+}
+
 /** Distance that fits the drawn sphere at this field of view and aspect. */
 function fittedDistance(span: number, fovDegrees: number, aspect: number): number {
   const halfVertical = (fovDegrees / 2) * (Math.PI / 180);

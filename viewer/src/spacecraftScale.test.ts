@@ -7,6 +7,7 @@ import {
   DEFAULT_CAMERA_FOV_DEGREES,
   drawnExtentForSpan,
   frameAxisLengthForSpan,
+  initialCameraDistance,
   markerBoundingRadius,
   NOMINAL_SPACECRAFT_SPAN,
   resolveVisualSpan,
@@ -211,6 +212,33 @@ describe("sizes derived from the span", () => {
   it("pulls further back for a narrower field of view", () => {
     expect(cameraDistanceForSpan(1, 30, 1)).toBeGreaterThan(cameraDistanceForSpan(1, 50, 1));
     expect(cameraDistanceForSpan(1, 50, 1)).toBeGreaterThan(cameraDistanceForSpan(1, 75, 1));
+  });
+
+  it("clears a near plane that the fitted distance alone would leave in front of the scene", () => {
+    const span = 1;
+    const fitted = cameraDistanceForSpan(span, DEFAULT_CAMERA_FOV_DEGREES, 1);
+    const extent = drawnExtentForSpan(span);
+    // A near plane inside the framing changes nothing: the fit already binds.
+    expect(initialCameraDistance(span, DEFAULT_CAMERA_FOV_DEGREES, 1, 0.01)).toBeCloseTo(
+      fitted,
+      12,
+    );
+    // One past the scene does bind, and the whole drawn sphere ends up beyond it:
+    // this is the case that framed the scene correctly and drew none of it.
+    for (const near of [fitted, 10, 1000]) {
+      const d = initialCameraDistance(span, DEFAULT_CAMERA_FOV_DEGREES, 1, near);
+      expect(d - extent).toBeGreaterThanOrEqual(near);
+      expect(d).toBeGreaterThanOrEqual(fitted);
+    }
+  });
+
+  it("imposes no near-plane constraint for a value that is not a near plane", () => {
+    // The camera prop is checked before it reaches the camera, so these never
+    // arrive; the arithmetic must not turn them into a NaN camera position.
+    const fitted = cameraDistanceForSpan(1, DEFAULT_CAMERA_FOV_DEGREES, 1);
+    for (const near of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(initialCameraDistance(1, DEFAULT_CAMERA_FOV_DEGREES, 1, near)).toBeCloseTo(fitted, 12);
+    }
   });
 
   it("measures the drawn extent from the outermost thing in the scene", () => {

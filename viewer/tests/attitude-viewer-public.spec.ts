@@ -12,6 +12,7 @@
  * test. See .claude/skills/playwright-viewer-testing.
  */
 import { expect, type Page, test } from "@playwright/test";
+import { drawnExtentForSpan, NOMINAL_SPACECRAFT_SPAN } from "../src/spacecraftScale.js";
 
 /** The fixture's own id, which is what the debug registries are keyed by. */
 const SAT = "fixture-sat";
@@ -42,6 +43,23 @@ async function open(page: Page, query: string) {
       { timeout: 15000 },
     )
     .toBe(true);
+}
+
+interface CameraView {
+  position: [number, number, number];
+  forward: [number, number, number];
+  near: number;
+  far: number;
+}
+
+/** The rendered camera, after R3F's `lookAt` and the initial fit have moved it. */
+async function cameraView(page: Page): Promise<CameraView> {
+  const view = await page.evaluate(() => {
+    const w = window as unknown as { __debug_get_camera_view?: () => CameraView | null };
+    return w.__debug_get_camera_view?.() ?? null;
+  });
+  if (view == null) throw new Error("no camera hook: the probe did not register");
+  return view;
 }
 
 /** Rendered body axis `axis` in scene coordinates, from the world quaternion. */
@@ -199,20 +217,7 @@ test("with controls disabled the camera still faces the spacecraft", async ({ pa
   // `lookAt(0, 0, 0)` to a camera it builds from props, and the initial fit only
   // scales the position along that same ray.
   await open(page, `epoch=${EPOCH}&controls=0`);
-  const view = await page.evaluate(() => {
-    const w = window as unknown as {
-      __debug_get_camera_view?: () => {
-        position: [number, number, number];
-        forward: [number, number, number];
-        near: number;
-        far: number;
-      } | null;
-    };
-    return w.__debug_get_camera_view?.() ?? null;
-  });
-  expect(view, "the camera hook should be registered").not.toBeNull();
-  if (view == null) return;
-
+  const view = await cameraView(page);
   const distance = Math.hypot(...view.position);
   expect(distance, "the camera sits away from the spacecraft").toBeGreaterThan(1);
   // The camera looks along the ray from its position to the origin.
@@ -224,6 +229,42 @@ test("with controls disabled the camera still faces the spacecraft", async ({ pa
   // distance would clip the origin however well the camera is aimed.
   expect(view.far).toBeGreaterThan(distance);
   expect(view.near).toBeLessThan(distance);
+});
+
+test("a near plane past the scene pulls the camera back instead of blanking it", async ({
+  page,
+}) => {
+  // `near` reaches the camera from a public prop, chosen without knowing this
+  // view's scale. Ten spans is a perfectly good frustum that the default framing
+  // — some seven spans out — leaves entirely behind the near plane, so the fit
+  // has to clear it as well as fit the viewport.
+  const near = 10;
+  await open(page, `epoch=${EPOCH}&near=${near}&controls=0`);
+  const view = await cameraView(page);
+  expect(view.near, "the prop reached the camera").toBeCloseTo(near, 6);
+
+  const distance = Math.hypot(...view.position);
+  const extent = drawnExtentForSpan(NOMINAL_SPACECRAFT_SPAN);
+  // The whole drawn sphere sits between the planes, so something is on screen.
+  expect(distance - extent).toBeGreaterThanOrEqual(near);
+  expect(view.far).toBeGreaterThanOrEqual(distance + extent);
+});
+
+test("a near plane the scene cannot be resolved against falls back to the default", async ({
+  page,
+}) => {
+  // Past 1e17 spans the drawn extent rounds away against the near plane — adding
+  // it changes nothing — so no camera distance can put the spacecraft between
+  // the planes, and a position fitted for that plane squares to infinity when
+  // its length is taken. The framing reverts rather than compute with it.
+  await open(page, `epoch=${EPOCH}&near=1e17&controls=0`);
+  const view = await cameraView(page);
+  expect(view.near, "the unusable near plane was replaced").toBeLessThan(1);
+  const distance = Math.hypot(...view.position);
+  expect(Number.isFinite(distance)).toBe(true);
+  expect(Number.isFinite(view.far)).toBe(true);
+  expect(view.far).toBeGreaterThan(distance);
+  expect(view.near).toBeLessThan(distance - drawnExtentForSpan(NOMINAL_SPACECRAFT_SPAN));
 });
 
 test("a body with no Sun ephemeris draws no Sun arrow", async ({ page }) => {

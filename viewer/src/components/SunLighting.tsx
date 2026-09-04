@@ -39,17 +39,7 @@ export interface SunLightingState {
   /** Sun direction in the active display frame. */
   sunDirection: THREE.Vector3;
   /**
-   * Sun direction in the central-body inertial frame, before the display
-   * transform. Exposed so a consumer that draws the Sun *and* other reference
-   * directions can put them all through one transform, instead of mixing an
-   * already-transformed direction with untransformed ones.
-   *
-   * With no epoch this is the documented fixed fallback, not a measurement —
-   * see {@link SunLightingState.sunDirectionIsComputed}.
-   */
-  sunDirectionEci: [number, number, number];
-  /**
-   * Whether `sunDirectionEci` came out of an ephemeris.
+   * Whether `sunDirection` came out of an ephemeris.
    *
    * False without an epoch, and false for a central body arika cannot place:
    * `sun_direction_from_body` answers +X — the vernal equinox — in that case, and
@@ -124,7 +114,7 @@ export function useSunLighting({
     [sunDirection, lightDistance],
   );
 
-  return { sunDirection, sunDirectionEci, sunDirectionIsComputed, sunIntensity, lightPosition };
+  return { sunDirection, sunDirectionIsComputed, sunIntensity, lightPosition };
 }
 
 /**

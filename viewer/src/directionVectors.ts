@@ -2,10 +2,12 @@
  * Reference directions drawn at a spacecraft: where the Sun is, where the
  * central body is.
  *
- * Both arrive in the central-body inertial frame and leave in the display frame,
- * through the same {@link displayDirection} the position and the attitude go
- * through — an arrow that followed a different convention from the body it is
- * drawn on would be worse than no arrow.
+ * Both leave in the display frame, the one the body they are drawn on is placed
+ * in — an arrow following a different convention from that body would be worse
+ * than no arrow. They reach here differently: the Sun already transformed, by the
+ * lighting that computed it, and the position in the central-body inertial frame,
+ * turned here by {@link displayDirection} — the same frame rotation the attitude
+ * is turned by, which reaches it as a quaternion instead.
  *
  * A direction is dropped rather than guessed when its input is missing: no
  * epoch means no Sun (a fixed vernal-equinox arrow would read as a measurement),
@@ -52,10 +54,17 @@ export interface DirectionVectorInputs {
   /** The display frame the spacecraft itself is drawn in. */
   frame: DisplayRotationFrame | DisplayFrame;
   /**
-   * Sun direction in the central-body inertial frame. Null when no epoch is
-   * known, which is what makes the Sun unknown rather than fixed.
+   * Direction to the Sun in the display frame — the direction the lighting places
+   * its light along. Null when the Sun is unknown rather than fixed: no epoch, or
+   * a central body no ephemeris places.
+   *
+   * It arrives transformed while the position does not, so that the arrow and the
+   * light cannot point differently: the vector is turned into the display frame
+   * once, where it is computed, and both read that result (DESIGN.md). Turning it
+   * again here would make their agreement a coincidence of two call sites
+   * choosing the same frame.
    */
-  sunEci?: Vec3 | null;
+  sunDisplay?: Vec3 | null;
   /** Spacecraft position in the central-body inertial frame [km]. */
   positionEci?: Vec3 | null;
   /** Which arrows the view asks for. Both default to on. */
@@ -81,26 +90,26 @@ function normalize(v: Vec3 | null | undefined): Vec3 | null {
 /**
  * Resolve the arrows to draw, in display-frame axes.
  *
- * Normalisation happens before the frame transform so the degenerate cases
- * (zero, NaN, Infinity) are rejected in one place and no arrow can carry a
- * non-finite direction into the geometry.
+ * Every input is normalised, and the degenerate cases (zero, NaN, Infinity) are
+ * rejected there, in one place, so no arrow can carry a non-finite direction into
+ * the geometry. Only the position is then transformed; the Sun arrives in the
+ * display frame already.
  */
 export function resolveDirectionVectors({
   frame,
-  sunEci = null,
+  sunDisplay = null,
   positionEci = null,
   options,
 }: DirectionVectorInputs): DirectionVector[] {
   const vectors: DirectionVector[] = [];
 
   if (options?.sun !== false) {
-    const sun = normalize(sunEci);
+    // Normalised, not transformed: the direction is already in the display frame.
+    // The length is still checked, so a degenerate value cannot reach the
+    // geometry as a rotation onto a zero vector.
+    const sun = normalize(sunDisplay);
     if (sun != null) {
-      vectors.push({
-        kind: "sun",
-        direction: displayDirection(frame, sun),
-        color: DIRECTION_VECTOR_COLORS.sun,
-      });
+      vectors.push({ kind: "sun", direction: sun, color: DIRECTION_VECTOR_COLORS.sun });
     }
   }
 

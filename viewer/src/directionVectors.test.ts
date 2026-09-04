@@ -6,7 +6,7 @@ import {
   type DirectionVectorKind,
   resolveDirectionVectors,
 } from "./directionVectors.js";
-import type { DisplayFrame, Vec3 } from "./displayFrame.js";
+import { type DisplayFrame, displayDirection, type Vec3 } from "./displayFrame.js";
 import { computeLvlhAxes } from "./sceneFrame.js";
 
 const MU = 398600.4418;
@@ -71,18 +71,20 @@ describe("resolveDirectionVectors", () => {
     expect(nadir[2]).toBeCloseTo(-r[2] / len, 12);
   });
 
-  it("rotates the Sun by -ERA about Z in the body-fixed frame", () => {
-    // ERA = +π/2: an inertial +X Sun points along -Y once the body has turned.
-    const sun = find(
-      resolveDirectionVectors({
-        frame: { kind: "bodyFixed", era: Math.PI / 2 },
-        sunEci: [1, 0, 0],
-      }),
-      "sun",
-    ).direction;
-    expect(sun[0]).toBeCloseTo(0, 12);
-    expect(sun[1]).toBeCloseTo(-1, 12);
-    expect(sun[2]).toBeCloseTo(0, 12);
+  it("leaves the Sun as the lighting aimed it, in every frame", () => {
+    // The lighting has already turned this vector into the display frame, so
+    // turning it again here would rotate it twice: in the body-fixed frame below
+    // a second -ERA would take +X to -Y instead of leaving it where it is.
+    const { r, v } = orbitState(7000, 1.4, 0.6);
+    const aimed: Vec3 = [1, 0, 0];
+    for (const frame of [
+      INERTIAL,
+      { kind: "bodyFixed", era: Math.PI / 2 } as DisplayFrame,
+      localOrbitalFrame(r, v),
+    ]) {
+      const sun = find(resolveDirectionVectors({ frame, sunDisplay: aimed }), "sun").direction;
+      expect(sun).toEqual(aimed);
+    }
   });
 
   it("returns unit vectors in every frame, from unnormalised inputs", () => {
@@ -96,7 +98,7 @@ describe("resolveDirectionVectors", () => {
       // A position in km and a Sun direction scaled by 5: neither is a unit vector.
       const vectors = resolveDirectionVectors({
         frame,
-        sunEci: [SUN_ECI[0] * 5, SUN_ECI[1] * 5, SUN_ECI[2] * 5],
+        sunDisplay: [SUN_ECI[0] * 5, SUN_ECI[1] * 5, SUN_ECI[2] * 5],
         positionEci: r,
       });
       expect(vectors).toHaveLength(2);
@@ -107,20 +109,24 @@ describe("resolveDirectionVectors", () => {
   });
 
   it("preserves the angle between the Sun and nadir through the frame transform", () => {
-    // Both arrows go through one rotation, so their relative geometry — the thing
-    // an operator reads off the picture — cannot depend on the chosen frame.
+    // The relative geometry — the thing an operator reads off the picture —
+    // cannot depend on the chosen frame. The Sun reaches the resolver already
+    // transformed, so the invariant is checked over the composition the scene
+    // builds: the lighting's transform, then this resolver's.
     const { r, v } = orbitState(7200, 3.3, 0.8);
-    const expected = dot(
-      find(resolveDirectionVectors({ frame: INERTIAL, sunEci: SUN_ECI, positionEci: r }), "sun")
-        .direction,
-      find(resolveDirectionVectors({ frame: INERTIAL, sunEci: SUN_ECI, positionEci: r }), "nadir")
-        .direction,
-    );
+    const asLit = (frame: DisplayFrame) =>
+      resolveDirectionVectors({
+        frame,
+        sunDisplay: displayDirection(frame, SUN_ECI),
+        positionEci: r,
+      });
+    const inertial = asLit(INERTIAL);
+    const expected = dot(find(inertial, "sun").direction, find(inertial, "nadir").direction);
     for (const frame of [
       { kind: "bodyFixed", era: 2.1 } as DisplayFrame,
       localOrbitalFrame(r, v),
     ]) {
-      const vectors = resolveDirectionVectors({ frame, sunEci: SUN_ECI, positionEci: r });
+      const vectors = asLit(frame);
       expect(dot(find(vectors, "sun").direction, find(vectors, "nadir").direction)).toBeCloseTo(
         expected,
         12,
@@ -142,7 +148,11 @@ describe("resolveDirectionVectors", () => {
       [Number.NaN, 0, 0],
       [Number.POSITIVE_INFINITY, 1, 2],
     ] as (Vec3 | null)[]) {
-      const vectors = resolveDirectionVectors({ frame: INERTIAL, sunEci: SUN_ECI, positionEci });
+      const vectors = resolveDirectionVectors({
+        frame: INERTIAL,
+        sunDisplay: SUN_ECI,
+        positionEci,
+      });
       expect(vectors.map((v) => v.kind)).toEqual(["sun"]);
       for (const vec of vectors) {
         expect(vec.direction.every(Number.isFinite)).toBe(true);
@@ -155,25 +165,25 @@ describe("resolveDirectionVectors", () => {
     // infinite and dividing by it would give a zero vector — which a rotation
     // onto it turns into an invalid quaternion rather than a dropped arrow.
     const huge: Vec3 = [1e200, 1e200, 1e200];
-    expect(resolveDirectionVectors({ frame: INERTIAL, sunEci: huge, positionEci: huge })).toEqual(
-      [],
-    );
+    expect(
+      resolveDirectionVectors({ frame: INERTIAL, sunDisplay: huge, positionEci: huge }),
+    ).toEqual([]);
   });
 
   it("omits the Sun when its direction is zero or non-finite", () => {
     const { r } = orbitState(7000, 0.5, 0.2);
-    for (const sunEci of [
+    for (const sunDisplay of [
       [0, 0, 0],
       [0, Number.NaN, 0],
     ] as Vec3[]) {
-      const vectors = resolveDirectionVectors({ frame: INERTIAL, sunEci, positionEci: r });
+      const vectors = resolveDirectionVectors({ frame: INERTIAL, sunDisplay, positionEci: r });
       expect(vectors.map((v) => v.kind)).toEqual(["nadir"]);
     }
   });
 
   it("honours the per-direction options", () => {
     const { r } = orbitState(7000, 0.5, 0.2);
-    const inputs = { frame: INERTIAL, sunEci: SUN_ECI, positionEci: r };
+    const inputs = { frame: INERTIAL, sunDisplay: SUN_ECI, positionEci: r };
     expect(
       resolveDirectionVectors({ ...inputs, options: { sun: false } }).map((v) => v.kind),
     ).toEqual(["nadir"]);
@@ -192,7 +202,11 @@ describe("resolveDirectionVectors", () => {
 
   it("tags each direction with the colour the legend uses", () => {
     const { r } = orbitState(7000, 0.5, 0.2);
-    const vectors = resolveDirectionVectors({ frame: INERTIAL, sunEci: SUN_ECI, positionEci: r });
+    const vectors = resolveDirectionVectors({
+      frame: INERTIAL,
+      sunDisplay: SUN_ECI,
+      positionEci: r,
+    });
     expect(find(vectors, "sun").color).toBe(DIRECTION_VECTOR_COLORS.sun);
     expect(find(vectors, "nadir").color).toBe(DIRECTION_VECTOR_COLORS.nadir);
   });

@@ -7,6 +7,7 @@ import {
   cameraDistanceForSpan,
   DEFAULT_CAMERA_FOV_DEGREES,
   drawnExtentForSpan,
+  initialCameraDistance,
   NOMINAL_SPACECRAFT_SPAN,
   usableFovDegrees,
 } from "../spacecraftScale.js";
@@ -49,10 +50,13 @@ function InitialCameraFit({ fov }: { fov: number }) {
     // A `zoom` narrows the field of view, so fit the *effective* one — a camera
     // framed for 50° and zoomed 2× sees half as much and would clip.
     const effectiveFov = camera instanceof PerspectiveCamera ? camera.getEffectiveFOV() : fov;
-    const needed = cameraDistanceForSpan(
+    // A `near` from the camera prop can also sit past the scene, which frames it
+    // correctly and draws none of it, so the distance clears that plane too.
+    const needed = initialCameraDistance(
       NOMINAL_SPACECRAFT_SPAN,
       effectiveFov,
       size.width / size.height,
+      camera instanceof PerspectiveCamera ? camera.near : 0,
     );
     const current = camera.position.length();
     if (current > 0 && needed > current) camera.position.multiplyScalar(needed / current);
@@ -119,10 +123,21 @@ function usableProjection(camera: CameraProps) {
   // Positive and finite is not enough on its own: the projection is built from
   // these, and `zoom: MAX_VALUE` or `near: MAX_VALUE` leaves the frustum's half
   // height at the near plane zero or infinite — a matrix with no volume in it.
-  // Checking the derived quantity beats guessing at bounds for each input.
   const halfHeight = (Math.tan((fov / 2) * (Math.PI / 180)) / zoom) * near;
+  // A near plane can also be too far out to describe *this* scene. From 1e17
+  // spans the drawn extent rounds away against it — `near + extent` is `near`
+  // again — so no distance leaves the spacecraft between the planes, and the
+  // position fitted for it squares to infinity when its length is taken, which
+  // sets the far plane to infinity. What the scene draws is the scale to judge
+  // that by; both checks read a derived quantity rather than guess at a bound
+  // for each input.
+  const extent = drawnExtentForSpan(NOMINAL_SPACECRAFT_SPAN);
+  const resolvesTheScene = near + extent - near > 0;
   const representable =
-    Number.isFinite(halfHeight) && halfHeight > 0 && Number.isFinite(depth - near);
+    Number.isFinite(halfHeight) &&
+    halfHeight > 0 &&
+    Number.isFinite(depth - near) &&
+    resolvesTheScene;
   return representable
     ? { fov, zoom, near, far: depth }
     : { fov, zoom: 1, near: DEFAULT_NEAR, far: DEFAULT_FAR };

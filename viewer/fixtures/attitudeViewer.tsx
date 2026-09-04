@@ -19,6 +19,7 @@
  * | velocity    | `x,y,z` km/s                                   |
  * | shape       | marker shape override                          |
  * | controls    | `0` mounts no OrbitControls                    |
+ * | near        | camera near plane, in spacecraft spans         |
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -62,6 +63,7 @@ const attitude: Quat =
 
 const epoch = params.get("epoch");
 const time = params.get("t");
+const near = params.get("near");
 
 createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>
@@ -78,6 +80,7 @@ createRoot(document.getElementById("root") as HTMLElement).render(
       epochJd={epoch == null ? undefined : Number(epoch)}
       time={time == null ? undefined : Number(time)}
       controls={params.get("controls") !== "0"}
+      canvas={near == null ? undefined : { camera: { near: Number(near) } }}
     />
   </StrictMode>,
 );

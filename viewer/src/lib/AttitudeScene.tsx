@@ -145,7 +145,7 @@ export function AttitudeScene({
 
   // The Sun in this display frame, from the same hook that lights the orbit
   // scene: one computation feeds both the arrow and the light, so they agree.
-  const { sunDirection, sunDirectionEci, sunDirectionIsComputed } = useSunLighting({
+  const { sunDirection, sunDirectionIsComputed } = useSunLighting({
     centralBody: centralBody.id,
     epochJd: effectiveEpochJd,
     quantizedSimTime: Math.floor(t / SUN_TIME_QUANTUM) * SUN_TIME_QUANTUM,
@@ -153,25 +153,29 @@ export function AttitudeScene({
     sceneAmplification: 1,
   });
 
+  // The light always gets a direction (a fixed one with no epoch, so a 3D model
+  // is not left black); it is the *arrow* that is dropped when the Sun is unknown.
+  const sunSceneDirection: Vec3 = useMemo(
+    () => [sunDirection.x, sunDirection.y, sunDirection.z],
+    [sunDirection],
+  );
+
   const vectors = useMemo(
     () =>
       resolveDirectionVectors({
         frame,
-        // The hook falls back to a fixed direction when it cannot compute one —
-        // no epoch, or a central body arika cannot place. That is fine for
-        // lighting and wrong for an arrow claiming where the Sun is.
-        sunEci: sunDirectionIsComputed ? sunDirectionEci : null,
+        // The very vector the light is placed along, so the arrow cannot claim a
+        // different Sun. The hook falls back to a fixed direction when it cannot
+        // compute one — no epoch, or a central body arika cannot place — which is
+        // fine for lighting and wrong for an arrow claiming where the Sun is.
+        sunDisplay: sunDirectionIsComputed ? sunSceneDirection : null,
         positionEci: position,
         options: vectorOptions,
       }),
-    [frame, sunDirectionIsComputed, sunDirectionEci, position, vectorOptions],
+    [frame, sunDirectionIsComputed, sunSceneDirection, position, vectorOptions],
   );
 
   const displayQuat = useMemo(() => displayQuaternion(frame, attitude), [frame, attitude]);
-
-  // The light always gets a direction (a fixed one with no epoch, so a 3D model
-  // is not left black); it is the *arrow* that is dropped when the Sun is unknown.
-  const sunSceneDirection: Vec3 = [sunDirection.x, sunDirection.y, sunDirection.z];
 
   return (
     <AttitudeSceneContents
