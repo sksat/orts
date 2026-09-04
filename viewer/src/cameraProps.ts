@@ -81,6 +81,11 @@ export function usableDirection(
  * the trip to the GPU: it becomes the translation in a view matrix that WebGL
  * receives as float32, where anything past 3.4e38 is `Infinity` and blanks the
  * scene. `[1e100, 0, 0]` is a perfectly good double and no place to put a camera.
+ *
+ * What the matrix carries is the *distance*, not the components, so that is what
+ * is measured: `[3e38, 3e38, 0]` has both components inside float32 and a length
+ * of 4.24e38 that is not, and the view matrix comes out infinite while a
+ * per-component check passes it.
  */
 export function usablePosition(
   value: readonly number[] | undefined,
@@ -88,7 +93,8 @@ export function usablePosition(
 ): [number, number, number] {
   const direction = usableDirection(value, fallback);
   if (direction === fallback) return fallback;
-  return direction.every((c) => Number.isFinite(Math.fround(c))) ? direction : fallback;
+  const [x, y, z] = direction;
+  return Number.isFinite(Math.fround(Math.hypot(x, y, z))) ? direction : fallback;
 }
 
 /**

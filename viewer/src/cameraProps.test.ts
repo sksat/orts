@@ -34,6 +34,21 @@ function projectionIsFinite({
   return Array.from(uploaded).every(Number.isFinite);
 }
 
+/**
+ * Whether a camera at this position yields a view matrix the renderer can use.
+ *
+ * The view matrix is the inverse of the camera's world matrix, and WebGL receives
+ * it as float32 — the same reading as the projection oracle, one matrix over.
+ */
+function viewMatrixIsFinite(position: readonly number[]): boolean {
+  const camera = new PerspectiveCamera(FOV, 1, DEFAULT_NEAR, DEFAULT_FAR);
+  camera.position.set(position[0], position[1], position[2]);
+  camera.lookAt(new Vector3(0, 0, 0));
+  camera.updateMatrixWorld(true);
+  const uploaded = new Float32Array(camera.matrixWorldInverse.elements);
+  return Array.from(uploaded).every(Number.isFinite);
+}
+
 describe("usableDirection", () => {
   it("keeps a direction Three.js can normalise", () => {
     // `up` only names a direction, so its magnitude is free: `lookAt` normalises
@@ -81,29 +96,33 @@ describe("usablePosition", () => {
       [3, 0, 1.5],
       [200, 0, 0],
       [1e30, 0, 0],
+      [3e38, 0, 0],
       [1e-100, 0, 0],
     ] as number[][]) {
       const out = usablePosition(v, FALLBACK);
       expect(out, `${v} is a position`).not.toBe(FALLBACK);
-      // The oracle: the view matrix carries this as a float32 translation.
-      expect(Array.from(new Float32Array(out)).every(Number.isFinite)).toBe(true);
+      expect(viewMatrixIsFinite(out), `${v} yields a usable view matrix`).toBe(true);
     }
   });
 
   it("replaces a position that cannot survive the float32 the GPU receives", () => {
     // The view matrix reaches WebGL as float32, where anything past 3.4e38 is
-    // `Infinity` and blanks the scene — `[1e100, 0, 0]` is a fine double and no
-    // place to put a camera. It is still a usable *direction*, which is why the
-    // two are checked apart.
+    // `Infinity` and blanks the scene. What it carries is the distance, not the
+    // components: `[3e38, 3e38, 0]` is inside float32 on every axis and 4.24e38
+    // long. `[1e100, 0, 0]` is a fine double and no place to put a camera — and
+    // still a usable *direction*, which is why the two are checked apart.
     for (const v of [
       [1e100, 0, 0],
-      [1e39, 1e39, 0],
+      [3e38, 3e38, 0],
+      [2e38, 2e38, 2e38],
       [0, 0, 0],
       [Number.NaN, 1, 1],
     ] as number[][]) {
       expect(usablePosition(v, FALLBACK), `${v} is no camera position`).toBe(FALLBACK);
     }
     expect(usableDirection([1e100, 0, 0], FALLBACK)).toEqual([1e100, 0, 0]);
+    // The oracle agrees about the pair that a per-component check would pass.
+    expect(viewMatrixIsFinite([3e38, 3e38, 0])).toBe(false);
   });
 });
 
