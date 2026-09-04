@@ -2189,6 +2189,38 @@ mod tests {
         );
     }
 
+    /// An offset that overflows is outside the outline, even one vast enough
+    /// that the tolerance overflows too.
+    ///
+    /// `[f64::MAX, 1e-308]` is an accepted rectangle: both extents are finite
+    /// and positive and the area comes to 7.2. Scaling that half-extent by the
+    /// tolerance gives infinity, so the comparison along the long axis reads
+    /// `inf <= inf` and passes — and the answer is still right, because the
+    /// short axis sees `inf * 0`, which is NaN and fails. Nothing rests on the
+    /// overflowed bound either way: no finite offset can exceed a half-extent
+    /// of `f64::MAX`, so wherever a point can actually be, that bound and the
+    /// true one agree.
+    #[test]
+    fn an_offset_that_overflows_is_outside_a_vast_outline() {
+        let normal = Vector3::new(0.0, 0.0, 1.0);
+        let axis = Vector3::new(1.0, 0.0, 0.0);
+        let panel = SurfacePanel::rectangle(
+            [f64::MAX, 1e-308],
+            axis,
+            normal,
+            2.2,
+            PanelOptics::absorber(),
+        )
+        .with_cp_offset(axis * -1e308);
+
+        // 1e308 - (-1e308) overflows.
+        let beyond = axis * 1e308;
+        assert!(
+            !panel.outline_contains(&beyond),
+            "an offset that overflows is within no outline"
+        );
+    }
+
     /// An exactly-sized caster covers the panel even where the arithmetic
     /// lands the corners a rounding outside its outline.
     ///
