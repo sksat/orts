@@ -486,14 +486,13 @@ export function OrbitSceneContents({
 
   // Sun direction + intensity (display frame). Shared by the lights and by the
   // lit bodies below, so the scene holds them and passes them down explicitly.
-  const { sunDirection, sunDirectionEci, sunDirectionIsComputed, sunIntensity, lightPosition } =
-    useSunLighting({
-      centralBody,
-      epochJd,
-      quantizedSimTime,
-      displayFrame: sceneDisplayFrame,
-      sceneAmplification,
-    });
+  const { sunDirection, sunDirectionIsComputed, sunIntensity, lightPosition } = useSunLighting({
+    centralBody,
+    epochJd,
+    quantizedSimTime,
+    displayFrame: sceneDisplayFrame,
+    sceneAmplification,
+  });
 
   // Earth rotation angle for the mesh: ERA in ECI, 0 in ECEF (Earth is static)
   const earthRotation = isEcef ? 0 : era;
@@ -632,10 +631,14 @@ export function OrbitSceneContents({
           // centre is never body-fixed, so the scene-level ERA plays no part.
           const arrows = resolveDirectionVectors({
             frame: sceneDisplayFrame,
-            // The hook falls back to a fixed direction when it cannot compute
-            // one — no epoch, or a central body arika cannot place. Fine for the
+            // The direction the lights are placed along, reused rather than
+            // computed again, so the arrow and the lighting cannot disagree. The
+            // hook falls back to a fixed direction when it cannot compute one —
+            // no epoch, or a central body arika cannot place. Fine for the
             // lights; an arrow drawn from it would claim to be a measurement.
-            sunEci: sunDirectionIsComputed ? sunDirectionEci : null,
+            sunDisplay: sunDirectionIsComputed
+              ? [sunDirection.x, sunDirection.y, sunDirection.z]
+              : null,
             positionEci: originPosition,
             // Here this prop is an *enable* list: the orbit view draws no arrows
             // unless asked, so an option left out means off. `resolveDirectionVectors`
