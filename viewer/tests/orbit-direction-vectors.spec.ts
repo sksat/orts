@@ -48,10 +48,18 @@ let configPath: string;
 function spawnServer(configFile: string): Promise<{ child: ChildProcess; port: number }> {
   const binary = process.env.ORTS_BINARY ?? path.resolve(__dirname, "../../target/debug/orts");
   const child = spawn(binary, ["serve", "--port", "0", "--config", configFile], {
+    // stderr is where the server announces its URL. Named explicitly so the
+    // reader below cannot end up on the runner's own stdin, which never ends.
+    stdio: ["ignore", "ignore", "pipe"],
     env: { ...process.env, ORTS_DISABLE_TEXTURE_DOWNLOAD: "1" },
   });
   return new Promise((resolve, reject) => {
-    const rl = createInterface({ input: child.stderr ?? process.stdin });
+    const serverLog = child.stderr;
+    if (serverLog == null) {
+      reject(new Error("orts serve was spawned without a stderr pipe"));
+      return;
+    }
+    const rl = createInterface({ input: serverLog });
     const onError = (err: Error) => {
       settle();
       reject(err);
