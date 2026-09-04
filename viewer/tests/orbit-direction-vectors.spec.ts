@@ -179,14 +179,16 @@ async function drawnVectors(
         const drawn = read();
         if (!wantSome) {
           // Absence has to settle too: give the scene the same window to draw
-          // something before concluding it drew nothing.
-          if (i === 39) return drawn ?? [];
+          // something before concluding it drew nothing. `null` is returned as
+          // it is — a missing hook is a different fact from an empty list, and
+          // coercing it here would make the caller's null check unfailable.
+          if (i === 39) return drawn;
         } else if (drawn != null && drawn.length > 0) {
           return drawn;
         }
         await new Promise((r) => setTimeout(r, 100));
       }
-      return read() ?? [];
+      return read();
     },
     [id, expectSome] as [string, boolean],
   );

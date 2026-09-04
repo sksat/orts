@@ -486,13 +486,14 @@ export function OrbitSceneContents({
 
   // Sun direction + intensity (display frame). Shared by the lights and by the
   // lit bodies below, so the scene holds them and passes them down explicitly.
-  const { sunDirection, sunDirectionEci, sunIntensity, lightPosition } = useSunLighting({
-    centralBody,
-    epochJd,
-    quantizedSimTime,
-    displayFrame: sceneDisplayFrame,
-    sceneAmplification,
-  });
+  const { sunDirection, sunDirectionEci, sunDirectionIsComputed, sunIntensity, lightPosition } =
+    useSunLighting({
+      centralBody,
+      epochJd,
+      quantizedSimTime,
+      displayFrame: sceneDisplayFrame,
+      sceneAmplification,
+    });
 
   // Earth rotation angle for the mesh: ERA in ECI, 0 in ECEF (Earth is static)
   const earthRotation = isEcef ? 0 : era;
@@ -631,9 +632,18 @@ export function OrbitSceneContents({
           // centre is never body-fixed, so the scene-level ERA plays no part.
           const arrows = resolveDirectionVectors({
             frame: sceneDisplayFrame,
-            sunEci: epochJd != null ? sunDirectionEci : null,
+            // The hook falls back to a fixed direction when it cannot compute
+            // one — no epoch, or a central body arika cannot place. Fine for the
+            // lights; an arrow drawn from it would claim to be a measurement.
+            sunEci: sunDirectionIsComputed ? sunDirectionEci : null,
             positionEci: originPosition,
-            options: directionVectors,
+            // Here this prop is an *enable* list: the orbit view draws no arrows
+            // unless asked, so an option left out means off. `resolveDirectionVectors`
+            // reads a missing field as on, which is the attitude view's default.
+            options: {
+              sun: directionVectors?.sun === true,
+              nadir: directionVectors?.nadir === true,
+            },
           });
           const centredModel = getSatelliteModelConfig(centeredSatId, satName);
           const visualSpan = resolveVisualSpan({
@@ -654,7 +664,7 @@ export function OrbitSceneContents({
                 lvlhAxes={lvlhAxes}
                 markerShape={shape}
               />
-              {directionVectors != null && (
+              {arrows.length > 0 && (
                 <DirectionArrows
                   position={ORIGIN}
                   vectors={arrows}
