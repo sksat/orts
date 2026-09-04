@@ -176,14 +176,22 @@ async function drawnVectors(
             | undefined
         )?.(entityId as string) ?? null;
       const wantedKinds = wanted as readonly string[];
-      for (let i = 0; i < 40; i++) {
+      // Waiting for an arrow to appear needs a window as long as the slowest
+      // thing it waits on: the Sun's direction comes from the arika WASM, and
+      // `OrbitScene` passes no epoch until that module resolves, which on a cold
+      // CI run takes longer than mounting the scene does. Concluding that nothing
+      // is drawn needs only the scene to settle — the caller has already drawn
+      // the arrows in this same document, so a slow module cannot make that
+      // conclusion arrive for the wrong reason.
+      const passes = wantedKinds.length === 0 ? 40 : 150;
+      for (let i = 0; i < passes; i++) {
         const drawn = read();
         if (wantedKinds.length === 0) {
-          // Absence has to settle too: give the scene the same window to draw
-          // something before concluding it drew nothing. `null` is returned as
-          // it is — a missing hook is a different fact from an empty list, and
-          // coercing it here would make the caller's null check unfailable.
-          if (i === 39) return drawn;
+          // Absence has to settle too: give the scene a window to draw something
+          // before concluding it drew nothing. `null` is returned as it is — a
+          // missing hook is a different fact from an empty list, and coercing it
+          // here would make the caller's null check unfailable.
+          if (i === passes - 1) return drawn;
         } else if (drawn != null && wantedKinds.every((k) => drawn.some((d) => d.kind === k))) {
           // Wait for the *named* arrows, not for any arrow: nadir needs nothing
           // but a position, while the Sun waits on the WASM ephemeris, so a
