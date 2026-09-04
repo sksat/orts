@@ -25,7 +25,7 @@ re_log_types = "0.33"
 # back into every `--workspace` build even though `orts` opts out.
 re_sdk_types = { version = "0.33", default-features = false }
 # Required for wasm32 target (getrandom needs js feature for browser)
-getrandom = { version = "0.3", features = ["wasm_js"] }
+getrandom = { version = "0.4", features = ["wasm_js"] }
 
 serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = { version = "0.6", optional = true }
