@@ -195,13 +195,6 @@ pub fn sun_distance_from_body(body: &str, epoch: &Epoch<Tdb>) -> f64 {
     }
 }
 
-/// Sun direction (unit vector) as seen from a given central body, in J2000 equatorial frame.
-///
-/// - `"earth"` / `"moon"`: delegates to [`sun_direction_eci`] (Moon parallax < 0.15°, negligible)
-/// - Other known planets: computed from heliocentric orbital elements
-/// - Unknown bodies: fallback to +X direction (vernal equinox)
-///
-/// The returned vector points FROM the body TOWARD the Sun.
 /// Whether a Sun direction from this central body is computed rather than
 /// guessed.
 ///
@@ -213,6 +206,13 @@ pub fn has_sun_ephemeris(body: &str) -> bool {
     matches!(body, "earth" | "moon") || planets::has_heliocentric_elements(body)
 }
 
+/// Sun direction (unit vector) as seen from a given central body, in J2000 equatorial frame.
+///
+/// - `"earth"` / `"moon"`: delegates to [`sun_direction_eci`] (Moon parallax < 0.15°, negligible)
+/// - Other known planets: computed from heliocentric orbital elements
+/// - Unknown bodies: fallback to +X direction (vernal equinox)
+///
+/// The returned vector points FROM the body TOWARD the Sun.
 pub fn sun_direction_from_body(body: &str, epoch: &Epoch<Tdb>) -> Vec3<frame::Gcrs> {
     match body {
         "earth" | "moon" => sun_direction_eci(epoch),

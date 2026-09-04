@@ -7,6 +7,7 @@ import {
   axisLengthForSpan,
   frameAxisArrows,
   frameAxisLengthForSpan,
+  markerBoundingRadius,
   NOMINAL_SPACECRAFT_SPAN,
   spanNormalizedModelScale,
 } from "../spacecraftScale.js";
@@ -133,7 +134,15 @@ export function AttitudeSceneContents({
         model={quaternion != null}
       />
 
-      <DirectionArrows position={ORIGIN} vectors={vectors} visualSpan={span} debugId={satId} />
+      <DirectionArrows
+        position={ORIGIN}
+        vectors={vectors}
+        visualSpan={span}
+        // A cube marker's corners stand further out than its faces; the arrows
+        // start outside whichever shape is actually drawn.
+        startRadius={markerBoundingRadius(modelConfig ? null : shape, span)}
+        debugId={satId}
+      />
 
       {controls !== false && (
         <OrbitControls

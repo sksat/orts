@@ -193,16 +193,6 @@ pub fn ecliptic_to_equatorial(v: &Vector3<f64>, epsilon: f64) -> Vector3<f64> {
     )
 }
 
-/// Compute heliocentric position of a planet in the ecliptic frame [km].
-///
-/// Returns `None` if the body is not a recognized planet.
-/// Accuracy: ~1 arcminute for inner planets, sufficient for sun-direction lighting.
-///
-/// # Time scale
-///
-/// Meeus ephemerides take a dynamical time argument (TDB), so this signature
-/// requires `&Epoch<Tdb>` — the caller converts at the boundary
-/// (`utc.to_tdb()`).
 /// Standish elements for a body, by the id the rest of the crate uses.
 fn elements_for(body: &str) -> Option<&'static OrbitalElements> {
     match body {
@@ -224,6 +214,16 @@ pub fn has_heliocentric_elements(body: &str) -> bool {
     elements_for(body).is_some()
 }
 
+/// Compute heliocentric position of a planet in the ecliptic frame [km].
+///
+/// Returns `None` if the body is not a recognized planet.
+/// Accuracy: ~1 arcminute for inner planets, sufficient for sun-direction lighting.
+///
+/// # Time scale
+///
+/// Meeus ephemerides take a dynamical time argument (TDB), so this signature
+/// requires `&Epoch<Tdb>` — the caller converts at the boundary
+/// (`utc.to_tdb()`).
 pub fn heliocentric_position_ecliptic(body: &str, epoch: &Epoch<Tdb>) -> Option<Vector3<f64>> {
     let elements = elements_for(body)?;
 

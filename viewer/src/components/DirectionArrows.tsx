@@ -14,6 +14,11 @@ interface DirectionArrowsProps {
   /** The spacecraft's apparent size in scene units, which sets the proportions. */
   visualSpan: number;
   /**
+   * Where an arrow's tail sits, in scene units — the radius of what is drawn, so
+   * the arrow does not begin inside it. Defaults to the sphere marker's.
+   */
+  startRadius?: number;
+  /**
    * Optional spacecraft id. When set, the *rendered* directions are published
    * (dev/E2E only) via `window.__debug_get_direction_vectors(id)`.
    */
@@ -28,8 +33,17 @@ interface DirectionArrowsProps {
  * also works in a scene measured in central-body radii — which is how the orbit
  * view draws them at a centred satellite in a follow-up.
  */
-export function DirectionArrows({ position, vectors, visualSpan, debugId }: DirectionArrowsProps) {
-  const geometry = useMemo(() => arrowGeometryForSpan(visualSpan), [visualSpan]);
+export function DirectionArrows({
+  position,
+  vectors,
+  visualSpan,
+  startRadius,
+  debugId,
+}: DirectionArrowsProps) {
+  const geometry = useMemo(
+    () => arrowGeometryForSpan(visualSpan, startRadius),
+    [visualSpan, startRadius],
+  );
   const groupRef = useRef<THREE.Group>(null);
   const headsRef = useRef(new Map<string, THREE.Object3D>());
 

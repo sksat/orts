@@ -5,6 +5,7 @@ import { SCENE_UP } from "../sceneFrame.js";
 import {
   cameraDistanceForSpan,
   DEFAULT_CAMERA_FOV_DEGREES,
+  drawnExtentForSpan,
   NOMINAL_SPACECRAFT_SPAN,
   usableFovDegrees,
 } from "../spacecraftScale.js";
@@ -54,6 +55,15 @@ function InitialCameraFit({ fov }: { fov: number }) {
     );
     const current = camera.position.length();
     if (current > 0 && needed > current) camera.position.multiplyScalar(needed / current);
+
+    // A narrow field of view fits from far away — 1° needs some 345 spans — and
+    // the default far plane would then cut the scene off in front of the
+    // spacecraft: a blank canvas at a correct distance.
+    const reach = camera.position.length() + drawnExtentForSpan(NOMINAL_SPACECRAFT_SPAN);
+    if (camera instanceof PerspectiveCamera && camera.far < reach) {
+      camera.far = reach;
+      camera.updateProjectionMatrix();
+    }
   }, [camera, size, fov]);
   return null;
 }

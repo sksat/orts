@@ -7,6 +7,7 @@ import {
   DEFAULT_CAMERA_FOV_DEGREES,
   drawnExtentForSpan,
   frameAxisLengthForSpan,
+  markerBoundingRadius,
   NOMINAL_SPACECRAFT_SPAN,
   resolveVisualSpan,
   spanNormalizedModelScale,
@@ -135,18 +136,26 @@ describe("sizes derived from the span", () => {
     expect(cameraDistanceForSpan(1, 50, 0.5)).toBeGreaterThan(square);
   });
 
-  it("starts an arrow clear of a marker's faces, though not its corners", () => {
-    // Recorded rather than fixed: the offset is half the apparent size, which
-    // clears a sphere marker and a cube's faces, while a cube's corner sits at
-    // sqrt(3)/2 of the span. Closing the remaining overlap needs a bounding
-    // radius per shape, not a larger constant — raising it would push arrows
-    // away from every spacecraft to clear the shape that reaches furthest.
+  it("starts an arrow outside the shape actually drawn, corners included", () => {
+    // The cube marker is a span on a side, so its corners stand at sqrt(3)/2 of
+    // the span: an arrow that started at half the span began inside it and
+    // emerged 0.366 span later, along every body diagonal.
     const span = 1;
-    const arrow = arrowGeometryForSpan(span);
-    expect(arrow.startOffset).toBeCloseTo(span / 2, 12);
-    const cubeCorner = (Math.sqrt(3) / 2) * span;
-    expect(arrow.startOffset).toBeLessThan(cubeCorner);
-    expect(cubeCorner - arrow.startOffset).toBeCloseTo(0.366, 3);
+    const sphere = arrowGeometryForSpan(span, markerBoundingRadius("sphere", span));
+    const cube = arrowGeometryForSpan(span, markerBoundingRadius("axes-cube", span));
+    expect(sphere.startOffset).toBeCloseTo(span / 2, 12);
+    expect(cube.startOffset).toBeCloseTo((Math.sqrt(3) / 2) * span, 12);
+    // A model has no bounding radius here, so it gets the sphere's.
+    expect(markerBoundingRadius(null, span)).toBeCloseTo(span / 2, 12);
+    // The arrow keeps its length; only its tail moves, so the tip follows.
+    expect(cube.length).toBeCloseTo(sphere.length, 12);
+    expect(cube.startOffset + cube.length).toBeGreaterThan(sphere.startOffset + sphere.length);
+  });
+
+  it("frames for the widest marker, so no shape is cropped", () => {
+    const span = 1;
+    const cube = arrowGeometryForSpan(span, markerBoundingRadius("axes-cube", span));
+    expect(drawnExtentForSpan(span)).toBeGreaterThanOrEqual(cube.startOffset + cube.length);
   });
 
   it("treats a field of view no camera could use as the default framing", () => {

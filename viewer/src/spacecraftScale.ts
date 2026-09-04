@@ -15,6 +15,7 @@
 
 import { axisLabelExtent } from "./axisTriad.js";
 import type { SatelliteModelConfig } from "./satelliteModels.js";
+import type { MarkerShape } from "./satelliteShapes.js";
 
 /** Apparent size of the spacecraft in a scene that has no other length scale. */
 export const NOMINAL_SPACECRAFT_SPAN = 1;
@@ -28,19 +29,14 @@ const FRAME_AXIS_LENGTH_RATIO = 2;
 /**
  * Arrow proportions, as ratios of the spacecraft's apparent size.
  *
- * `START_OFFSET` is half the apparent size, which clears a sphere marker and the
- * faces of a cube one; starting at the centre buries the first half of every
- * arrow. A cube's *corner* reaches `sqrt(3)/2` of the span, so an arrow aimed
- * along a body diagonal still begins inside the marker and emerges partway.
- * Closing that needs a bounding radius per marker and per model: raising the
- * constant to the circumscribed radius would push every arrow away from every
- * spacecraft to clear the one shape that reaches furthest.
+ * An arrow starts at the surface of what is drawn — see
+ * {@link markerBoundingRadius} — because starting at the centre buries its first
+ * half inside the spacecraft.
  */
 const ARROW_LENGTH_RATIO = 1.5;
 const ARROW_SHAFT_RADIUS_RATIO = 0.015;
 const ARROW_HEAD_LENGTH_RATIO = 0.2;
 const ARROW_HEAD_RADIUS_RATIO = 0.06;
-const ARROW_START_OFFSET_RATIO = 0.5;
 
 /**
  * Apparent size (largest extent) of a drawn spacecraft, in scene units.
@@ -96,14 +92,34 @@ export interface ArrowGeometry {
   startOffset: number;
 }
 
-/** Arrow proportions for a spacecraft of this apparent size. */
-export function arrowGeometryForSpan(span: number): ArrowGeometry {
+/**
+ * Radius of the sphere that encloses the drawn spacecraft, which is where an
+ * arrow can start without beginning inside it.
+ *
+ * The sphere marker's radius is half the span. The cube marker is a span on a
+ * side, so its corners stand at `sqrt(3)/2` of the span — half a span clears its
+ * faces and not its corners, and an arrow along a body diagonal emerged partway.
+ * A registered 3D model has no bounding radius here; the span is its largest
+ * extent, so half of it is the closest thing available.
+ */
+export function markerBoundingRadius(shape: MarkerShape | null, span: number): number {
+  return shape === "axes-cube" ? (Math.sqrt(3) / 2) * span : span / 2;
+}
+
+/**
+ * Arrow proportions for a spacecraft of this apparent size.
+ *
+ * `startRadius` is where the arrow's tail sits; pass
+ * {@link markerBoundingRadius} for the shape actually drawn. The default is the
+ * sphere's, the smallest of them.
+ */
+export function arrowGeometryForSpan(span: number, startRadius = span / 2): ArrowGeometry {
   return {
     length: span * ARROW_LENGTH_RATIO,
     shaftRadius: span * ARROW_SHAFT_RADIUS_RATIO,
     headLength: span * ARROW_HEAD_LENGTH_RATIO,
     headRadius: span * ARROW_HEAD_RADIUS_RATIO,
-    startOffset: span * ARROW_START_OFFSET_RATIO,
+    startOffset: startRadius,
   };
 }
 
@@ -191,7 +207,8 @@ const VIEW_MARGIN = 1.15;
  * so fitting the axes alone crops them.
  */
 export function drawnExtentForSpan(span: number): number {
-  const arrow = arrowGeometryForSpan(span);
+  // The widest marker decides, so the framing holds whichever shape is drawn.
+  const arrow = arrowGeometryForSpan(span, markerBoundingRadius("axes-cube", span));
   return Math.max(axisLabelExtent(frameAxisLengthForSpan(span)), arrow.startOffset + arrow.length);
 }
 
