@@ -62,12 +62,11 @@ fn x_minus_sin(x: f64) -> f64 {
 ///
 /// Eccentric anomaly E [rad], within `e` of the reduced `M`.
 ///
-/// How precisely `E` is pinned down near periapsis at `e` close to 1 is set by
-/// the conditioning of the equation, not by the iteration: `ΔE = f / f'` with
-/// `f' = 1 - e·cos(E)` falling to `1 - e` there, and `f` cannot be evaluated
-/// below the rounding of its own largest term. At `e = 0.9999999999` and `M`
-/// within 1e-13 of `2π`, `f' = 4e-9`, so a residual at the `f64` floor of
-/// 1e-16 already leaves `E` uncertain by 2e-8.
+/// The residual is evaluated at the periapsis nearest `E`, so how accurately it
+/// can be computed is set by its own magnitude rather than by the size of `E`.
+/// What that leaves is the spacing of `f64` itself, which grows with `E`: a
+/// root just below `2π` is placed to `ulp(2π) = 8.9e-16`, one just above zero
+/// to far finer.
 pub fn solve_kepler_equation(mean_anomaly: f64, eccentricity: f64) -> f64 {
     let m = mean_anomaly % (2.0 * PI);
     // `E = M + e·sin(E)` puts the root within `e` of `M`, and `f` increases
@@ -78,19 +77,32 @@ pub fn solve_kepler_equation(mean_anomaly: f64, eccentricity: f64) -> f64 {
     let mut hi = m + eccentricity;
     let mut e_anom = m;
     for _ in 0..KEPLER_MAX_ITERATIONS {
-        // `E - e·sin(E)` rearranged as `(1-e)·E + e·(E - sin(E))`. Written
-        // directly, the two terms cancel near periapsis at `e` close to 1 and
-        // the sign of `f` becomes unreliable, which is what the bracket update
-        // below reads. A wrong sign there moves an endpoint past the root and
-        // takes it out of the bracket for good.
-        let f = (1.0 - eccentricity) * e_anom + eccentricity * x_minus_sin(e_anom) - m;
+        // The residual, evaluated at the periapsis nearest `e_anom`.
+        //
+        // `sin` has period 2π, so shifting `E` and `M` by the same `2πk` leaves
+        // the equation alone: with `u = E - 2πk` and `w = M - 2πk` the residual
+        // is `u - e·sin(u) - w`, rearranged below as `(1-e)·u + e·(u - sin u)`
+        // to keep those two from cancelling. `k` is 0 or ±1 because the reduced
+        // `M` is inside one revolution and `E` is within `e` of it, and both
+        // shifts are exact where they matter (Sterbenz).
+        //
+        // Written at `E` instead, the `E ≈ 2π` branch subtracts two values near
+        // 2π and loses the residual whose sign the bracket update below reads.
+        // A wrong sign there moves an endpoint past the root and takes it out
+        // of the bracket for good. The shift puts `u` near zero at either
+        // periapsis, where `x_minus_sin` is accurate.
+        let k = (e_anom / (2.0 * PI)).round();
+        let u = e_anom - k * (2.0 * PI);
+        let w = m - k * (2.0 * PI);
+        let f = (1.0 - eccentricity) * u + eccentricity * x_minus_sin(u) - w;
         if f > 0.0 {
             hi = e_anom;
         } else {
             lo = e_anom;
         }
 
-        let f_prime = 1.0 - eccentricity * e_anom.cos();
+        // `cos` shares `sin`'s period, so this is the derivative at `E` too.
+        let f_prime = 1.0 - eccentricity * u.cos();
         let step = -f / f_prime;
         // `|step| = |f| / |f'|` and `f' ≤ 1 + e < 2`, so a step this small
         // means the residual is already within twice it. Checking here rather
@@ -830,6 +842,30 @@ mod tests {
                 "M={m}, e={e}: E={e_anom:e} is {relative:.3e} away from {root:e}"
             );
         }
+    }
+
+    /// The periapsis just below `2π` is found as accurately as the one at zero.
+    ///
+    /// Both `M` values here name the same point of the orbit, so the solver has
+    /// to be as accurate at `E ≈ 2π` as at `E ≈ 0`. Evaluating the residual at
+    /// `E` rather than at the nearest periapsis subtracts two values near 2π:
+    /// measured that way, `M = 6.283185307179464` returned
+    /// `E = 6.283097238421463`, off by 2.1e-8.
+    ///
+    /// The expected root comes from bisecting `u - e·sin(u) - v` with
+    /// `u = 2π - E` and `v = 2π - M`, whose terms carry no cancellation
+    /// against each other.
+    #[test]
+    fn the_periapsis_below_two_pi_is_as_accurate_as_the_one_at_zero() {
+        let e = 0.9999999999;
+        let m = 6.283185307179464;
+        let root = 6.283097259381490;
+        let e_anom = solve_kepler_equation(m, e);
+        let relative = (e_anom - root).abs() / root;
+        assert!(
+            relative < 1e-14,
+            "M={m}, e={e}: E={e_anom:.15} is {relative:.3e} away from {root:.15}"
+        );
     }
 
     /// `M = π` is answered with `π` itself, at every eccentricity.
