@@ -42,10 +42,11 @@ const DEFAULT_CAMERA_POSITION: [number, number, number] = (() => {
  * only: reframing on every resize would undo a zoom the viewer had chosen, and
  * this is a starting view, not a constraint.
  *
- * `reframe` says whether the *distance* is ours to choose. The far plane is not
- * conditional on that: a caller who supplies a position of `[200, 0, 0]` and no
- * `far` gets the default 100, which leaves the spacecraft at the origin behind
- * the far plane — a blank canvas from a camera aimed correctly at it.
+ * `reframe` says whether the distance is ours to choose. The depth range is not
+ * settled here at all: a caller's position of `[200, 0, 0]` with the default
+ * `far` of 100, and a viewer dollying out past it, are the same problem — the
+ * scene at the origin falls behind the far plane and the canvas goes blank — and
+ * the scene holds that invariant continuously.
  */
 function InitialCameraFit({ fov, reframe }: { fov: number; reframe: boolean }) {
   const camera = useThree((s) => s.camera);
@@ -76,15 +77,10 @@ function InitialCameraFit({ fov, reframe }: { fov: number; reframe: boolean }) {
     if (reframe && placeable && current > 0 && needed > current) {
       camera.position.multiplyScalar(needed / current);
     }
-
-    // A narrow field of view fits from far away — 1° needs some 345 spans — and
-    // the default far plane would then cut the scene off in front of the
-    // spacecraft: a blank canvas at a correct distance.
-    const reach = camera.position.length() + drawnExtentForSpan(NOMINAL_SPACECRAFT_SPAN);
-    if (camera instanceof PerspectiveCamera && camera.far < reach) {
-      camera.far = reach;
-      camera.updateProjectionMatrix();
-    }
+    // The far plane is not settled here. A narrow field of view fits from far
+    // away — 1° needs some 345 spans — and so does a viewer dollying out, so the
+    // scene keeps the plane beyond itself for as long as it is mounted rather
+    // than once at this moment. See `FarPlaneBeyondScene`.
   }, [camera, size, fov, reframe]);
   return null;
 }

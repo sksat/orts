@@ -22,6 +22,8 @@
  * | near        | camera near plane, in spacecraft spans         |
  * | zoom        | camera zoom                                    |
  * | campos      | camera position `x,y,z` in spacecraft spans     |
+ * | name        | display name, which the model registry matches  |
+ * | far         | camera far plane, in spacecraft spans           |
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -68,6 +70,7 @@ const time = params.get("t");
 const near = params.get("near");
 const zoom = params.get("zoom");
 const cameraPosition = vec3("campos");
+const far = params.get("far");
 
 createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>
@@ -78,6 +81,7 @@ createRoot(document.getElementById("root") as HTMLElement).render(
         attitude,
         position: vec3("position"),
         velocity: vec3("velocity"),
+        name: params.get("name") ?? undefined,
         markerShape: (params.get("shape") as MarkerShape | null) ?? undefined,
       }}
       orientation={(params.get("orientation") as AttitudeFrame | null) ?? "inertial"}
@@ -85,12 +89,13 @@ createRoot(document.getElementById("root") as HTMLElement).render(
       time={time == null ? undefined : Number(time)}
       controls={params.get("controls") !== "0"}
       canvas={
-        near == null && zoom == null && cameraPosition == null
+        near == null && zoom == null && far == null && cameraPosition == null
           ? undefined
           : {
               camera: {
                 ...(near == null ? {} : { near: Number(near) }),
                 ...(zoom == null ? {} : { zoom: Number(zoom) }),
+                ...(far == null ? {} : { far: Number(far) }),
                 ...(cameraPosition == null ? {} : { position: cameraPosition }),
               },
             }

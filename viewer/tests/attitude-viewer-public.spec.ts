@@ -297,6 +297,68 @@ test("a caller's own camera position still gets a far plane that reaches the sce
   expect(view.far, "the far plane reaches past the spacecraft").toBeGreaterThan(distance);
 });
 
+test("arrows start at the marker when a registered model is not the thing drawn", async ({
+  page,
+}) => {
+  // Two scenes that draw the same thing. `ISS` matches the model registry, so a
+  // model exists for that spacecraft — but a zero quaternion is no attitude, and
+  // a model at its own default orientation would read as a measured one, so both
+  // scenes fall back to the sphere marker. The arrows therefore have to reach
+  // exactly as far in both. Keyed on the registry knowing a model rather than on
+  // one being drawn, the named scene starts its arrows at the model's envelope
+  // and they reach 0.37 spans further than the sphere they are drawn against.
+  const reach = async (query: string) => {
+    // Not through `open`: it waits for the body-axis hook, which a spacecraft
+    // with no usable attitude never registers. The Sun arrow says the scene
+    // mounted.
+    await page.goto(`/fixtures/attitude-viewer.html?${query}`, { waitUntil: "load" });
+    await expect(page.locator("canvas")).toBeVisible();
+    await expectArrows(page, ["sun"]);
+    const sun = (await drawnArrows(page)).find((a) => a.kind === "sun");
+    if (sun == null) throw new Error("no Sun arrow was drawn");
+    return sun.distance;
+  };
+
+  const registered = await reach(`epoch=${EPOCH}&attitude=0,0,0,0&name=ISS`);
+  const plain = await reach(`epoch=${EPOCH}&attitude=0,0,0,0`);
+  expect(registered, "both scenes draw a sphere, so both arrows reach the same").toBeCloseTo(
+    plain,
+    6,
+  );
+});
+
+test("the far plane follows the camera out, instead of clipping the scene away", async ({
+  page,
+}) => {
+  // `OrbitControls` dollies without a limit while the scene sits at the origin,
+  // so a viewer who scrolls past the far plane would lose the whole picture at
+  // once rather than watch it get small.
+  // A far plane the dolly reaches in a few notches: each wheel event moves the
+  // camera out by about 5%, so passing the default 100 from 7.1 spans would take
+  // some 50 of them. 12 spans is past the opening framing and short of a scroll.
+  await open(page, `epoch=${EPOCH}&far=12`);
+  const before = await cameraView(page);
+  expect(before.far, "the caller's far plane is in effect").toBeCloseTo(12, 6);
+  await page.locator("canvas").hover();
+
+  await expect
+    .poll(
+      async () => {
+        for (let i = 0; i < 5; i++) await page.mouse.wheel(0, 240);
+        const view = await cameraView(page);
+        return Math.hypot(...view.position) > 12;
+      },
+      { timeout: 15000 },
+    )
+    .toBe(true);
+
+  const after = await cameraView(page);
+  const distance = Math.hypot(...after.position);
+  expect(after.far, "the far plane is still beyond the scene").toBeGreaterThanOrEqual(
+    distance + drawnExtentForSpan(NOMINAL_SPACECRAFT_SPAN),
+  );
+});
+
 test("a body with no Sun ephemeris draws no Sun arrow", async ({ page }) => {
   // Uranus has no elements in arika, and `sun_direction_from_body` answers +X
   // there — a guess the view must not draw.

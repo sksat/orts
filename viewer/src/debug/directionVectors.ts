@@ -7,8 +7,8 @@
  * pixels — an arrow is a few triangles against a dark background, and a pixel
  * test on it would fail for reasons unrelated to the geometry.
  *
- * The direction is measured from the live scene graph, as the unit vector from
- * an arrow's origin to its head. Reporting the resolved input instead would pass
+ * The direction and the reach are measured from the live scene graph, from an
+ * arrow's origin to its head. Reporting the resolved input instead would pass
  * even if the geometry's own axis, the rotation onto it, or the head's placement
  * were wrong — the parts a rendering test exists to cover. No-op outside dev
  * builds.
@@ -22,6 +22,15 @@ export interface DebugDirectionVector {
   kind: string;
   /** Unit vector from the arrow's origin to its head, in world (scene) axes. */
   direction: [number, number, number];
+  /**
+   * World distance from the origin to the head [scene units].
+   *
+   * Where the arrow reaches, which moves with the radius its tail starts at —
+   * the marker's or, when one is drawn, the model's. Measured from the scene
+   * graph like the direction, so a test comparing two scenes reads the geometry
+   * rather than the number that was passed in.
+   */
+  distance: number;
 }
 
 /** The scene objects an arrow's drawn direction is measured between. */
@@ -50,7 +59,7 @@ function measure(arrows: DrawnArrow[]): DebugDirectionVector[] {
     const len = d.length();
     if (!(len > 0)) continue;
     d.divideScalar(len);
-    out.push({ kind: arrow.kind, direction: [d.x, d.y, d.z] });
+    out.push({ kind: arrow.kind, direction: [d.x, d.y, d.z], distance: len });
   }
   return out;
 }

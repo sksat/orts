@@ -1,10 +1,13 @@
 import { OrbitControls, type OrbitControlsProps } from "@react-three/drei";
+import { useFrame, useThree } from "@react-three/fiber";
+import { PerspectiveCamera } from "three";
 import type { DirectionVector } from "../directionVectors.js";
 import type { Quat, Vec3 } from "../displayFrame.js";
 import { getSatelliteModelConfig } from "../satelliteModels.js";
 import { type MarkerShape, resolveMarkerShape } from "../satelliteShapes.js";
 import {
   axisLengthForSpan,
+  drawnExtentForSpan,
   frameAxisArrows,
   frameAxisLengthForSpan,
   markerBoundingRadius,
@@ -30,6 +33,34 @@ const LIGHT_DISTANCE = 10;
 
 /** Opacity of the reference-frame triad, which sits behind the body axes. */
 const FRAME_AXES_OPACITY = 0.4;
+
+/**
+ * Keep the far plane beyond the scene, wherever the camera ends up.
+ *
+ * The controls dolly without a limit, and the spacecraft sits at the origin, so
+ * a viewer who zooms out past the far plane loses the whole scene at once — the
+ * canvas goes blank rather than showing something small. The rule is the one the
+ * opening framing uses, `far >= distance + R` for the sphere of radius
+ * {@link drawnExtentForSpan}, applied continuously instead of once: it is two
+ * numbers compared per frame, and it writes only when the camera has moved
+ * beyond the plane.
+ *
+ * Placed in the scene rather than in the viewer's camera fit so that an embedder
+ * who brings their own `<Canvas>` gets it too — the frustum has to contain what
+ * this scene draws, whoever configured the camera.
+ */
+function FarPlaneBeyondScene({ span }: { span: number }) {
+  const camera = useThree((s) => s.camera);
+  useFrame(() => {
+    if (!(camera instanceof PerspectiveCamera)) return;
+    const reach = camera.position.length() + drawnExtentForSpan(span);
+    if (Number.isFinite(reach) && camera.far < reach) {
+      camera.far = reach;
+      camera.updateProjectionMatrix();
+    }
+  });
+  return null;
+}
 
 /**
  * The reference frame's axes: the scene axes themselves, drawn at the origin.
@@ -99,6 +130,12 @@ export function AttitudeSceneContents({
     ? (spanNormalizedModelScale(modelConfig, span) ?? undefined)
     : undefined;
 
+  // Whether the model is the thing on screen. Without a usable attitude a model
+  // would be drawn at its own default orientation, which reads as a measured one
+  // in a view about orientation, so a marker stands in — and one value decides
+  // both what is drawn and what the arrows have to start outside of.
+  const modelIsDrawn = modelConfig != null && quaternion != null;
+
   // Without a usable attitude, nothing drawn may imply one. An explicit shape —
   // or the app's default, which the `satShape` URL param persists — outranks
   // `hasAttitude` in `resolveMarkerShape`, so the orientation-revealing cube
@@ -125,6 +162,8 @@ export function AttitudeSceneContents({
         ]}
       />
 
+      <FarPlaneBeyondScene span={span} />
+
       {axes && <ReferenceAxes length={frameAxisLengthForSpan(span)} span={span} />}
 
       <SpacecraftVisual
@@ -138,19 +177,20 @@ export function AttitudeSceneContents({
         axisLength={axisLengthForSpan(span)}
         modelScale={modelScale}
         visualSpan={span}
-        // Without a usable attitude a 3D model would be drawn at its own default
-        // orientation, which reads as a measured one in a view about orientation.
-        model={quaternion != null}
+        model={modelIsDrawn}
       />
 
       <DirectionArrows
         position={ORIGIN}
         vectors={vectors}
         visualSpan={span}
-        // The arrows start outside whatever is actually drawn: a cube marker's
-        // corners stand further out than its faces, and a model is bounded only
-        // by the envelope of the cube its largest extent fits in.
-        startRadius={modelConfig ? modelBoundingRadius(span) : markerBoundingRadius(shape, span)}
+        // Outside whatever is actually drawn: a cube marker's corners stand
+        // further out than its faces, and a model is bounded only by the envelope
+        // of the cube its largest extent fits in. Keyed on the model being drawn
+        // rather than on the registry knowing one, or a registered spacecraft
+        // with an unusable attitude would draw a sphere and start its arrows at
+        // the model's envelope, well outside it.
+        startRadius={modelIsDrawn ? modelBoundingRadius(span) : markerBoundingRadius(shape, span)}
         debugId={satId}
       />
 
