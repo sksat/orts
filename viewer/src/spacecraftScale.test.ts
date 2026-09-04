@@ -135,6 +135,20 @@ describe("sizes derived from the span", () => {
     expect(cameraDistanceForSpan(1, 50, 0.5)).toBeGreaterThan(square);
   });
 
+  it("starts an arrow clear of a marker's faces, though not its corners", () => {
+    // Recorded rather than fixed: the offset is half the apparent size, which
+    // clears a sphere marker and a cube's faces, while a cube's corner sits at
+    // sqrt(3)/2 of the span. Closing the remaining overlap needs a bounding
+    // radius per shape, not a larger constant — raising it would push arrows
+    // away from every spacecraft to clear the shape that reaches furthest.
+    const span = 1;
+    const arrow = arrowGeometryForSpan(span);
+    expect(arrow.startOffset).toBeCloseTo(span / 2, 12);
+    const cubeCorner = (Math.sqrt(3) / 2) * span;
+    expect(arrow.startOffset).toBeLessThan(cubeCorner);
+    expect(cubeCorner - arrow.startOffset).toBeCloseTo(0.366, 3);
+  });
+
   it("treats a field of view no camera could use as the default framing", () => {
     // `fov` arrives from a public camera prop. At 0 or NaN the fit divides by a
     // sine of 0 or NaN; past 180° the horizontal term goes negative and the fit

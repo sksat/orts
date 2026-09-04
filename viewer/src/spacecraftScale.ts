@@ -28,8 +28,13 @@ const FRAME_AXIS_LENGTH_RATIO = 2;
 /**
  * Arrow proportions, as ratios of the spacecraft's apparent size.
  *
- * `START_OFFSET` keeps an arrow's tail outside the spacecraft; starting at the
- * centre buries the first half of every arrow inside the model.
+ * `START_OFFSET` is half the apparent size, which clears a sphere marker and the
+ * faces of a cube one; starting at the centre buries the first half of every
+ * arrow. A cube's *corner* reaches `sqrt(3)/2` of the span, so an arrow aimed
+ * along a body diagonal still begins inside the marker and emerges partway.
+ * Closing that needs a bounding radius per marker and per model: raising the
+ * constant to the circumscribed radius would push every arrow away from every
+ * spacecraft to clear the one shape that reaches furthest.
  */
 const ARROW_LENGTH_RATIO = 1.5;
 const ARROW_SHAFT_RADIUS_RATIO = 0.015;

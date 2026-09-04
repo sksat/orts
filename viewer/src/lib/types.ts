@@ -324,7 +324,11 @@ export interface AttitudeSceneDataProps {
   body: AttitudeBodyState;
   /** Display orientation. Default `"inertial"`. */
   orientation?: AttitudeFrame;
-  /** Julian Date of the simulation epoch. Without it there is no Sun direction. */
+  /**
+   * Julian Date of the simulation epoch, **in UTC** — `arika`'s `Epoch::from_jd`
+   * reads it as a UTC JD before deriving the Sun direction and Earth's rotation,
+   * so a TT or TDB value shifts both. Without an epoch there is no Sun direction.
+   */
   epochJd?: number;
   /** Seconds since the epoch, when `body.time` is not given. Default 0. */
   time?: number;

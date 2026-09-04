@@ -13,6 +13,7 @@ import {
   resolveDisplayFrame,
   resolveDisplayOrientation,
   trailTransformKey,
+  unitAttitude,
   type Vec3,
 } from "./displayFrame.js";
 import type { ReferenceFrame } from "./referenceFrame.js";
@@ -177,6 +178,46 @@ describe("displayPosition", () => {
     expect(p[0]).toBeCloseTo(0, 12);
     expect(p[1]).toBeCloseTo(0, 12);
     expect(p[2]).toBeCloseTo(5, 12);
+  });
+});
+
+describe("unitAttitude", () => {
+  it("normalises an attitude that has drifted off unit norm", () => {
+    // Three.js applies the components without normalising, so a norm of 1.05
+    // would scale the spacecraft by 1.05² through its rotation matrix.
+    const drifted: Quat = [1.05, 0, 0, 0];
+    const q = unitAttitude(drifted);
+    if (q == null) throw new Error("a finite non-zero attitude must normalise");
+    expect(Math.hypot(...q)).toBeCloseTo(1, 12);
+    // The rotation itself is unchanged: scaling a quaternion scales its norm,
+    // not the rotation it names.
+    const axis: Vec3 = [0, 1, 0];
+    expect(rotate(q, axis)).toEqual(rotate([1, 0, 0, 0], axis));
+  });
+
+  it("leaves a unit attitude alone", () => {
+    const q = quatFromEuler(0.3, -0.5, 1.1);
+    const out = unitAttitude(q);
+    if (out == null) throw new Error("a unit attitude must survive");
+    for (const i of [0, 1, 2, 3]) expect(out[i]).toBeCloseTo(q[i], 12);
+  });
+
+  it("reports no attitude for input that names no rotation", () => {
+    // Each of these would otherwise reach the scene matrices: the zero
+    // quaternion collapses the spacecraft, a NaN component spreads.
+    expect(unitAttitude(undefined)).toBeUndefined();
+    expect(unitAttitude([0, 0, 0, 0])).toBeUndefined();
+    expect(unitAttitude([Number.NaN, 0, 0, 0])).toBeUndefined();
+    expect(unitAttitude([1, Number.POSITIVE_INFINITY, 0, 0])).toBeUndefined();
+    expect(unitAttitude([1e-300, 0, 0, 0])).toBeUndefined();
+  });
+
+  it("normalises a quaternion whose components would overflow when squared", () => {
+    // `Math.hypot` scales before squaring, so a large but finite attitude still
+    // normalises instead of dividing by an infinite norm.
+    const q = unitAttitude([1e200, 1e200, 0, 0]);
+    if (q == null) throw new Error("a finite attitude must normalise");
+    expect(Math.hypot(...q)).toBeCloseTo(1, 12);
   });
 });
 

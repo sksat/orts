@@ -133,6 +133,26 @@ export function resolveDisplayFrame(
 }
 
 /**
+ * A caller's attitude as a unit quaternion, or undefined when it does not name a
+ * rotation.
+ *
+ * Three.js applies the components with `Quaternion.set`, which does not
+ * normalise: a non-unit quaternion scales and skews the very spacecraft it is
+ * meant to orient, and a non-finite component spreads through the scene
+ * matrices. A simulator's attitude drifts off unit norm as it integrates, so the
+ * fix is to normalise what can be normalised and reject the rest — an unusable
+ * attitude then reads as *no* attitude, which the views already draw (no body
+ * axes, and the marker that looks the same from every side).
+ */
+export function unitAttitude(attitude: Quat | undefined): Quat | undefined {
+  if (attitude == null) return undefined;
+  const [w, x, y, z] = attitude;
+  const n = Math.hypot(w, x, y, z);
+  if (!(Number.isFinite(n) && n > 1e-10)) return undefined;
+  return [w / n, x / n, y / n, z / n];
+}
+
+/**
  * Express an inertial position [km] in the display frame, scaled to scene units.
  */
 export function displayPosition(

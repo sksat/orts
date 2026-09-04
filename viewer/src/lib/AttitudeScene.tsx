@@ -7,6 +7,7 @@ import {
   displayQuaternion,
   type Quat,
   resolveDisplayOrientation,
+  unitAttitude,
   type Vec3,
 } from "../displayFrame.js";
 import { computeLvlhAxes } from "../sceneFrame.js";
@@ -75,7 +76,10 @@ export function AttitudeScene({
   const arikaReady = useArikaReady(epoch != null);
   const effectiveEpochJd = arikaReady ? epoch : null;
 
-  const t = finiteOrNull(body.time ?? time) ?? 0;
+  // Each source is checked before the choice between them: `??` only falls
+  // through for null and undefined, so a NaN `body.time` would win the selection
+  // and then be rejected, discarding a scene-level `time` that was fine.
+  const t = finiteOrNull(body.time) ?? finiteOrNull(time) ?? 0;
 
   // The caller's tuples are copied here, and everything downstream keys its
   // memoisation on these copies. Keying on the caller's array would key on its
@@ -91,7 +95,10 @@ export function AttitudeScene({
   // the subject of this whole view, standing still.
   const [qw, qx, qy, qz] = body.attitude ?? [];
   const attitude = useMemo<Quat | undefined>(
-    () => (qw != null && qx != null && qy != null && qz != null ? [qw, qx, qy, qz] : undefined),
+    () =>
+      qw != null && qx != null && qy != null && qz != null
+        ? unitAttitude([qw, qx, qy, qz])
+        : undefined,
     [qw, qx, qy, qz],
   );
 
