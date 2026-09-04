@@ -420,7 +420,14 @@ where
 {
     let m = da.abs().max(db.abs());
     let (da, db) = (da / m, db / m);
-    let t = da / (da - db);
+    // Clamped to the segment. The side test allows each end its own roundoff
+    // tolerance, so both ends can be on the same side of zero while landing on
+    // opposite sides of the test — distances of `2eps` and `eps/2` give
+    // `t = 4/3` — and an unclamped parameter would put the vertex a third of an
+    // edge past the end, growing a nearly coplanar caster instead of clipping
+    // it. Clamping keeps the boundary where the distances put it, which
+    // shifting them by the tolerance instead would not.
+    let t = (da / (da - db)).clamp(0.0, 1.0);
     a * (1.0 - t) + b * t
 }
 
