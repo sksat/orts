@@ -28,7 +28,7 @@ import {
   modelBoundingRadius,
   resolveVisualSpan,
 } from "../spacecraftScale.js";
-import { finiteOrNull } from "../utils/finite.js";
+import { finiteOrNull, firstFiniteTime } from "../utils/finite.js";
 import type { TrailBufferLike } from "../utils/TrailBuffer.js";
 import { body_orientation, earth_rotation_angle } from "../wasm/arikaInit.js";
 import { CelestialBody } from "./CelestialBody.js";
@@ -461,23 +461,15 @@ export function OrbitSceneContents({
   // stays frozen), and the Sun drawn *at* the centred satellite has to be the Sun
   // at that satellite's time, not at whichever time the Map happens to yield
   // first. Falls back to the first available position for a central-body view.
-  // Iterate the Map's values directly rather than materializing an array every
-  // render just to find the first non-null entry.
-  let firstPosition: OrbitPoint | null = null;
-  if (satellitePositions) {
-    for (const p of satellitePositions.values()) {
-      if (p != null) {
-        firstPosition = p;
-        break;
-      }
-    }
-  }
+  // The Map's values are iterated directly rather than materialized into an array
+  // every render just to find one entry.
+  const fallbackTime = firstFiniteTime(satellitePositions?.values());
   const centeredPosition = centeredSatId != null ? satellitePositions?.get(centeredSatId) : null;
-  // The first *finite* time, not the first present one: `??` falls through on
-  // null and undefined, so a NaN `t` on the centred satellite would win over a
-  // usable fallback and reach the Earth rotation angle and the quantised Sun
-  // time below, both of which are WASM calls.
-  const simTime = finiteOrNull(centeredPosition?.t) ?? finiteOrNull(firstPosition?.t) ?? 0;
+  // Each candidate goes through a finite check, because `??` falls through only
+  // on null and undefined: a NaN `t` on the centred satellite would otherwise win
+  // over a usable fallback and reach the Earth rotation angle and the quantised
+  // Sun time below, both of which are WASM calls.
+  const simTime = finiteOrNull(centeredPosition?.t) ?? fallbackTime ?? 0;
   const quantizedSimTime = Math.floor(simTime / 60) * 60;
 
   // Earth rotation angle (ERA) via WASM — updates every frame via simTime (not quantized)

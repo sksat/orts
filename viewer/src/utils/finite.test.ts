@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { finiteOrNull } from "./finite.js";
+import { finiteOrNull, firstFiniteTime } from "./finite.js";
 
 describe("finiteOrNull", () => {
   it("keeps zero, which a falsy check would drop", () => {
@@ -23,5 +23,26 @@ describe("finiteOrNull", () => {
   it("passes absence through unchanged", () => {
     expect(finiteOrNull(null)).toBeNull();
     expect(finiteOrNull(undefined)).toBeNull();
+  });
+});
+
+describe("firstFiniteTime", () => {
+  it("skips a sample whose time is not a number and keeps looking", () => {
+    // The case the scene got wrong twice: one satellite's `t` is NaN while
+    // another carries a good time, and stopping at the first sample that exists
+    // leaves the scene with no time rather than that one.
+    expect(firstFiniteTime([{ t: Number.NaN }, { t: 120 }])).toBe(120);
+    expect(firstFiniteTime([null, undefined, { t: Number.POSITIVE_INFINITY }, { t: 7 }])).toBe(7);
+  });
+
+  it("takes the first finite time it finds", () => {
+    expect(firstFiniteTime([{ t: 0 }, { t: 120 }])).toBe(0);
+    expect(firstFiniteTime([{ t: -30 }, { t: 120 }])).toBe(-30);
+  });
+
+  it("reports none when nothing carries a time", () => {
+    expect(firstFiniteTime(undefined)).toBeNull();
+    expect(firstFiniteTime([])).toBeNull();
+    expect(firstFiniteTime([null, { t: Number.NaN }, {}])).toBeNull();
   });
 });
