@@ -145,22 +145,29 @@ function usableProjection(camera: CameraProps) {
 
 export function AttitudeViewer({ className, style, canvas, ...sceneProps }: AttitudeViewerProps) {
   const projection = usableProjection(canvas?.camera);
+  const position = usableVector(
+    canvas?.camera?.position as readonly number[] | undefined,
+    DEFAULT_CAMERA_POSITION,
+  );
+  // Whether the framing is still ours to adjust. `usableVector` hands back the
+  // fallback itself when the caller's position is no direction, so a position
+  // that was supplied but unusable belongs to us as much as an absent one — and
+  // checking the raw prop instead would leave the square default fit standing on
+  // a portrait canvas.
+  const framingIsOurs = position === DEFAULT_CAMERA_POSITION;
   return (
     <div className={className} style={{ width: "100%", height: "100%", ...style }}>
       <Canvas
         camera={{
           ...canvas?.camera,
-          position: usableVector(
-            canvas?.camera?.position as readonly number[] | undefined,
-            DEFAULT_CAMERA_POSITION,
-          ),
+          position,
           up: usableVector(canvas?.camera?.up as readonly number[] | undefined, SCENE_UP),
           ...projection,
         }}
         gl={{ ...canvas?.gl }}
       >
         <CameraViewProbe />
-        {canvas?.camera?.position == null && <InitialCameraFit fov={projection.fov} />}
+        {framingIsOurs && <InitialCameraFit fov={projection.fov} />}
         <AttitudeScene {...sceneProps} />
       </Canvas>
     </div>
