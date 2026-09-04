@@ -861,11 +861,11 @@ mod tests {
         );
     }
 
-    /// The shaded panel is excluded by `PanelSrp::eval`, not just by the
-    /// occlusion test called on its own.
+    /// The shaded panel is excluded by `PanelSrp::eval`, not just by
+    /// `lit_region` called on its own.
     ///
-    /// The tests below reach `is_fully_occluded` through a helper, so deleting
-    /// the call inside `eval` would leave them green. This one goes through the
+    /// The tests below reach `lit_region` through a helper, so deleting the
+    /// call inside `eval` would leave them green. This one goes through the
     /// model and checks the torque as well as the acceleration: the hidden
     /// panel has its own `cp_offset`, so a force wrongly attributed to it shows
     /// up there even when the magnitudes happen to be close.
