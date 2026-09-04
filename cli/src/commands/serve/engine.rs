@@ -22,13 +22,12 @@ use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use orts::OrbitalState;
+use orts::group::IndependentGroup;
 use orts::group::prop_group::{PropGroupOutcome, SatId};
-use orts::group::{IndependentGroup, IntegratorConfig};
 use orts::orbital::OrbitalSystem;
 use orts::orbital::gravity::GravityField;
 use orts::spacecraft::{SpacecraftDynamics, SpacecraftState};
 
-use crate::cli::IntegratorChoice;
 use crate::config::SatelliteConfig;
 use crate::satellite::{SatelliteInfo, SatelliteSpec};
 use crate::sim::controlled::ControlledSatellite;
@@ -119,14 +118,8 @@ impl SimGroup {
             // to call the controller once per span with `dt = span`, so a span
             // shorter than the period ran the controller too often and
             // shortened its hold.
-            crate::sim::controlled::advance_controlled(
-                sat,
-                current_t,
-                target_t,
-                params.dt,
-                params.epoch.as_ref(),
-            )
-            .map_err(|e| format!("controlled simulation error at t={current_t:.3}: {e}"))?;
+            crate::sim::controlled::advance_controlled(sat, current_t, target_t, params)
+                .map_err(|e| format!("controlled simulation error at t={current_t:.3}: {e}"))?;
         }
         Ok(())
     }
@@ -396,17 +389,7 @@ impl ServeEngine {
         params: Arc<SimParams>,
         mut history: HistoryBuffer,
     ) -> Result<EngineInit, String> {
-        let config = match params.integrator {
-            IntegratorChoice::Rk4 => IntegratorConfig::Rk4 { dt: params.dt },
-            IntegratorChoice::Dp45 => IntegratorConfig::Dp45 {
-                dt: params.dt,
-                tolerances: params.tolerances.clone(),
-            },
-            IntegratorChoice::Dop853 => IntegratorConfig::Dop853 {
-                dt: params.dt,
-                tolerances: params.tolerances.clone(),
-            },
-        };
+        let config = params.integrator_config();
 
         let body_radius = params.body.properties().radius;
         let atmosphere_altitude = params.body.properties().atmosphere_altitude;

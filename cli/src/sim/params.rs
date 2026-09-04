@@ -207,6 +207,27 @@ impl SimParams {
 }
 
 impl SimParams {
+    /// The integrator the config asks for, as the group and the controlled loop
+    /// both take it.
+    ///
+    /// One place so the three propagation paths cannot disagree: `orts run`'s
+    /// orbit-only and spacecraft groups, `orts serve`'s groups, and the
+    /// controlled loop that both of those commands share. `--json` reports
+    /// `integrator` from the same field, so the report follows whatever runs.
+    pub fn integrator_config(&self) -> orts::group::IntegratorConfig {
+        match self.integrator {
+            IntegratorChoice::Rk4 => orts::group::IntegratorConfig::Rk4 { dt: self.dt },
+            IntegratorChoice::Dp45 => orts::group::IntegratorConfig::Dp45 {
+                dt: self.dt,
+                tolerances: self.tolerances.clone(),
+            },
+            IntegratorChoice::Dop853 => orts::group::IntegratorConfig::Dop853 {
+                dt: self.dt,
+                tolerances: self.tolerances.clone(),
+            },
+        }
+    }
+
     /// Build an atmosphere model from the current parameters.
     pub fn build_atmosphere_model(&self) -> Option<Box<dyn tobari::AtmosphereModel>> {
         match self.atmosphere {
