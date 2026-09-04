@@ -24,6 +24,26 @@ use crate::math::F64Ext;
 /// `E - e·sin(E) - M` stays under 8.9e-16.
 const KEPLER_MAX_ITERATIONS: usize = 100;
 
+/// `x - sin(x)`, without the cancellation that subtraction carries near zero.
+///
+/// Both terms approach `x` as `x → 0` while the difference approaches `x³/6`,
+/// so the subtraction keeps only the low bits: at `x = 3e-7` it loses about 13
+/// digits, leaving an absolute error near `ulp(x)`. The series carries no such
+/// loss, and truncating it after `x⁹` costs `x¹¹/39916800`. Measured against a
+/// series carried to `x¹³`, the relative errors cross between 0.1 and 0.15: at
+/// 0.1 the series is 1.5e-15 and the subtraction 1.8e-14, at 0.15 it is
+/// 3.9e-14 against 1.4e-15. Dropping the `x⁹` term moves that crossing down to
+/// about 0.02.
+fn x_minus_sin(x: f64) -> f64 {
+    const SERIES_BELOW: f64 = 0.1;
+    if x.abs() < SERIES_BELOW {
+        let x2 = x * x;
+        x * x2 / 6.0 * (1.0 - x2 / 20.0 * (1.0 - x2 / 42.0 * (1.0 - x2 / 72.0)))
+    } else {
+        x - x.sin()
+    }
+}
+
 /// Solve Kepler's equation `M = E - e·sin(E)` for eccentric anomaly E.
 ///
 /// Newton-Raphson, kept inside a bracket that contains the root: at high
@@ -50,7 +70,12 @@ pub fn solve_kepler_equation(mean_anomaly: f64, eccentricity: f64) -> f64 {
     let mut hi = m + eccentricity;
     let mut e_anom = m;
     for _ in 0..KEPLER_MAX_ITERATIONS {
-        let f = e_anom - eccentricity * e_anom.sin() - m;
+        // `E - e·sin(E)` rearranged as `(1-e)·E + e·(E - sin(E))`. Written
+        // directly, the two terms cancel near periapsis at `e` close to 1 and
+        // the sign of `f` becomes unreliable, which is what the bracket update
+        // below reads. A wrong sign there moves an endpoint past the root and
+        // takes it out of the bracket for good.
+        let f = (1.0 - eccentricity) * e_anom + eccentricity * x_minus_sin(e_anom) - m;
         if f > 0.0 {
             hi = e_anom;
         } else {
@@ -764,6 +789,36 @@ mod tests {
             worst.2,
             solve_kepler_equation(worst.1, worst.2)
         );
+    }
+
+    /// Near periapsis at `e` one ulp below 1, the root is found to 1e-12.
+    ///
+    /// `E` and `e·sin(E)` are equal to 13 digits at `E = 3e-7`, so subtracting
+    /// them leaves the sign of `f` up to the rounding of `e·sin(E)`. The
+    /// bracket update reads that sign, and a wrong one moves an endpoint past
+    /// the root. Measured with the residual written as a plain subtraction:
+    /// `E = 3.0968e-7` against a root of `3.1000864616e-7`, off by 1.1e-3
+    /// relative.
+    ///
+    /// The expected roots come from bisecting `E(1-e) + e(E - sin E) - M`,
+    /// whose terms are evaluated without cancelling against each other. As a
+    /// check on their magnitude, `(1-e)·E` is negligible against `E³/6` here,
+    /// so `E → (6M)^(1/3)`: 3.107e-7 for the first row, 0.2% from the root.
+    #[test]
+    fn a_near_parabolic_orbit_near_periapsis_keeps_its_root() {
+        let e = 1.0f64.next_down();
+        for &(m, root) in &[
+            (5e-21, 3.100_086_461_6e-7),
+            (1e-20, 3.909_195_816_0e-7),
+            (1e-15, 1.817_119_370_9e-5),
+        ] {
+            let e_anom = solve_kepler_equation(m, e);
+            let relative = (e_anom - root).abs() / root;
+            assert!(
+                relative < 1e-9,
+                "M={m}, e={e}: E={e_anom:e} is {relative:.3e} away from {root:e}"
+            );
+        }
     }
 
     /// `M = π` is answered with `π` itself, at every eccentricity.
