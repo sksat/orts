@@ -22,7 +22,12 @@ import { DEFAULT_FRAME, isLegacyEcef, type ReferenceFrame } from "../referenceFr
 import { getSatelliteModelConfig } from "../satelliteModels.js";
 import { type MarkerShape, resolveMarkerShape } from "../satelliteShapes.js";
 import { computeCameraUp, computeLvlhAxes, type LvlhAxes, SCENE_UP } from "../sceneFrame.js";
-import { defaultMarkerSize, markerBoundingRadius, resolveVisualSpan } from "../spacecraftScale.js";
+import {
+  defaultMarkerSize,
+  markerBoundingRadius,
+  modelBoundingRadius,
+  resolveVisualSpan,
+} from "../spacecraftScale.js";
 import type { TrailBufferLike } from "../utils/TrailBuffer.js";
 import { body_orientation, earth_rotation_angle } from "../wasm/arikaInit.js";
 import { CelestialBody } from "./CelestialBody.js";
@@ -672,9 +677,16 @@ export function OrbitSceneContents({
                   position={ORIGIN}
                   vectors={arrows}
                   visualSpan={visualSpan}
-                  // A cube marker's corners stand further out than its faces; the
-                  // arrows start outside whichever shape is actually drawn.
-                  startRadius={markerBoundingRadius(centredModel ? null : shape, visualSpan)}
+                  // Outside whatever is actually drawn: a cube marker's corners
+                  // stand further out than its faces, and a model is bounded by
+                  // the envelope of the cube its largest extent fits in. The
+                  // sphere's radius would leave the tail inside a model, which
+                  // reaches past half its span on a diagonal.
+                  startRadius={
+                    centredModel
+                      ? modelBoundingRadius(visualSpan)
+                      : markerBoundingRadius(shape, visualSpan)
+                  }
                   debugId={centeredSatId}
                 />
               )}
