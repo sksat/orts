@@ -361,11 +361,12 @@ impl SurfacePanel {
 /// cannot be computed.
 ///
 /// Checking the normalised result is not enough. A vector whose squared norm
-/// underflows normalises to `[inf, inf, inf]`, and one whose squared norm
-/// overflows normalises to `[0, 0, 0]`; both have every component finite, so
-/// the input has to be measured before it is divided. An infinite normal is the
-/// worse of the two, since `|n| > 0.5` reads it as a valid direction and every
-/// force built from it is NaN.
+/// underflows normalises to `[inf, inf, inf]`, and an infinite magnitude
+/// passes any lower bound: the `|n| > 0.5` this replaced read it as a valid
+/// direction, and every force built from that normal is NaN. One whose squared
+/// norm overflows normalises to `[0, 0, 0]` and is rejected, since dividing by
+/// an infinite norm gives zero. Both start from finite components, so it is the
+/// input that has to be measured, before it is divided.
 fn unit_direction(v: Vector3<f64>, what: &str) -> Vector3<f64> {
     let mag = v.magnitude();
     assert!(
