@@ -27,7 +27,7 @@
 //! WasmEngine::new()           -> Engine (shared, Arc)
 //! Component::new(&engine, ..) -> Component (shared, Arc)
 //! Linker + Plugin::add_to_linker -> PluginPre (shared, Arc)
-//! WasmController::new(pre, label, config):
+//! WasmController::new(pre, label, config, body):
 //!   - spawn worker thread
 //!   - worker: Store::new, instantiate, call metadata() + call run()
 //!   - outer: receive metadata, return

@@ -202,11 +202,7 @@ impl AsyncWasmController {
         runtime.handle().spawn(async move {
             let host_state = AsyncHostState {
                 label: label_for_task,
-                field: if crate::magnetic::field_is_modelled(body) {
-                    std::sync::Arc::new(tobari::magnetic::TiltedDipole::earth())
-                } else {
-                    std::sync::Arc::new(tobari::magnetic::NoField)
-                },
+                field: crate::magnetic::field_for_body(body),
                 wasi: wasmtime_wasi::WasiCtxBuilder::new().build(),
                 table: wasmtime_wasi::ResourceTable::new(),
                 input_rx,

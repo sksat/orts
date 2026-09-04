@@ -17,7 +17,6 @@ use std::collections::VecDeque;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
-use tobari::magnetic::TiltedDipole;
 
 use super::stream_state::{
     DEFAULT_STREAM_CAPACITY, ReadOutcome, StreamDelivery, Streams, WriteOutcome,
@@ -140,11 +139,7 @@ impl HostState {
     ) -> Self {
         Self {
             label: label.into(),
-            field: if crate::magnetic::field_is_modelled(body) {
-                std::sync::Arc::new(TiltedDipole::earth())
-            } else {
-                std::sync::Arc::new(tobari::magnetic::NoField)
-            },
+            field: crate::magnetic::field_for_body(body),
             wasi: wasmtime_wasi::WasiCtxBuilder::new().build(),
             table: wasmtime_wasi::ResourceTable::new(),
             input_rx,
@@ -482,9 +477,9 @@ mod tests {
     ///
     /// A guest can call `magnetic-field-eci` whether or not its config
     /// declares a magnetic device, so the host is a third consumer of the
-    /// field alongside the magnetometer and the magnetorquer. Around Mars it
-    /// used to answer with Earth's field, measured 384 400 km and one body
-    /// away.
+    /// field alongside the magnetometer and the magnetorquer. On a Mars run it
+    /// used to read the position as if it were geocentric — 7000 km from Mars
+    /// answered with Earth's field 7000 km from Earth.
     #[test]
     fn magnetic_field_is_zero_where_no_model_exists() {
         let pos = wit::Vec3 {

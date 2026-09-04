@@ -27,6 +27,23 @@ pub fn field_is_modelled(body: arika::body::KnownBody) -> bool {
     body == arika::body::KnownBody::Earth
 }
 
+/// The field model to serve for `body`.
+///
+/// [`TiltedDipole`](tobari::magnetic::TiltedDipole) on Earth — what the WASM
+/// host's `magnetic-field-eci` has always used — and
+/// [`NoField`](tobari::magnetic::NoField) where [`field_is_modelled`] says
+/// there is none, so the answer is zero rather than Earth's field read at a
+/// position that is not geocentric.
+///
+/// Both WASM backends call this, so the sync and async hosts cannot disagree.
+pub fn field_for_body(body: arika::body::KnownBody) -> std::sync::Arc<dyn MagneticFieldModel> {
+    if field_is_modelled(body) {
+        std::sync::Arc::new(tobari::magnetic::TiltedDipole::earth())
+    } else {
+        std::sync::Arc::new(tobari::magnetic::NoField)
+    }
+}
+
 /// Evaluate a magnetic field model and return the result in the
 /// propagation frame `F`.
 ///
@@ -66,4 +83,46 @@ pub fn field_eci(
         position_eci,
         &EarthOrientation::simple(*epoch),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arika::body::KnownBody;
+    use arika::earth::geodetic::Geodetic;
+
+    /// The model served for a body is that body's, on both WASM backends.
+    ///
+    /// Both host states call [`field_for_body`], so this ties the body to the
+    /// model once for the sync and the async path — an async-only regression
+    /// would have to route around this function.
+    #[test]
+    fn field_for_body_is_zero_where_no_model_exists() {
+        let epoch = Epoch::<Utc>::j2000();
+        let input = MagneticFieldInput {
+            geodetic: Geodetic {
+                latitude: 0.0,
+                longitude: 0.0,
+                altitude: 400.0,
+            },
+            utc: &epoch,
+        };
+
+        for body in [KnownBody::Mars, KnownBody::Moon, KnownBody::Sun] {
+            assert_eq!(
+                field_for_body(body).field_ecef(&input),
+                [0.0, 0.0, 0.0],
+                "{body:?} has no field model, so the host serves zero"
+            );
+        }
+
+        let on_earth = field_for_body(KnownBody::Earth).field_ecef(&input);
+        let magnitude =
+            (on_earth[0] * on_earth[0] + on_earth[1] * on_earth[1] + on_earth[2] * on_earth[2])
+                .sqrt();
+        assert!(
+            (1e-5..1e-4).contains(&magnitude),
+            "Earth's field is modelled, so the host serves 20-60 µT, got {magnitude:.3e} T"
+        );
+    }
 }
