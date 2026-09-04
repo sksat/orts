@@ -28,6 +28,7 @@ import {
   modelBoundingRadius,
   resolveVisualSpan,
 } from "../spacecraftScale.js";
+import { finiteOrNull } from "../utils/finite.js";
 import type { TrailBufferLike } from "../utils/TrailBuffer.js";
 import { body_orientation, earth_rotation_angle } from "../wasm/arikaInit.js";
 import { CelestialBody } from "./CelestialBody.js";
@@ -472,7 +473,11 @@ export function OrbitSceneContents({
     }
   }
   const centeredPosition = centeredSatId != null ? satellitePositions?.get(centeredSatId) : null;
-  const simTime = centeredPosition?.t ?? firstPosition?.t ?? 0;
+  // The first *finite* time, not the first present one: `??` falls through on
+  // null and undefined, so a NaN `t` on the centred satellite would win over a
+  // usable fallback and reach the Earth rotation angle and the quantised Sun
+  // time below, both of which are WASM calls.
+  const simTime = finiteOrNull(centeredPosition?.t) ?? finiteOrNull(firstPosition?.t) ?? 0;
   const quantizedSimTime = Math.floor(simTime / 60) * 60;
 
   // Earth rotation angle (ERA) via WASM — updates every frame via simTime (not quantized)
