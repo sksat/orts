@@ -858,8 +858,9 @@ mod tests {
     ///
     /// Measured before the bracket went in: `e = 0.995, M = 0.4` returned
     /// `E = 2.7e6` rad, and the true anomaly that follows from it was 352.9°
-    /// away from the one the root gives. `f' = 1 - e·cos(E)` is 5e-3 at
-    /// `E₀ = 0.4`, so the first step is three orders of magnitude too long.
+    /// away from the one the root gives. `f' = 1 - e·cos(E)` is 8.35e-2 at
+    /// `E₀ = 0.4`, which makes the first step 4.64 rad — past the root at 1.376
+    /// and out of `[-0.595, 1.395]`, after which the iteration is loose.
     #[test]
     fn a_diverging_newton_start_still_gives_the_root() {
         for &(m, e) in &[
