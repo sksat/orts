@@ -10,7 +10,7 @@
 
 use nalgebra::{Vector2, Vector3};
 
-use super::surface::{MAX_PANEL_CORNERS, PanelOutline, SurfacePanel};
+use super::surface::{MAX_PANEL_CORNERS, SurfacePanel};
 
 /// The most vertices a shadow polygon can have.
 ///
@@ -91,11 +91,9 @@ pub(crate) fn lit_region(
     others: &[SurfacePanel],
     upstream: &Vector3<f64>,
 ) -> LitRegion {
-    let Some(PanelOutline::Rectangle { in_plane_x, .. }) = panel.outline else {
+    let Some((u, v)) = panel.in_plane_axes() else {
         return LitRegion::all_lit(panel);
     };
-    let u = in_plane_x;
-    let v = panel.normal.cross(&u);
 
     let mut buf = [Vector3::zeros(); MAX_PANEL_CORNERS];
     let Some(corners) = panel.corners_into(&mut buf) else {
@@ -369,7 +367,7 @@ fn clip_half_plane(poly: &[Vector2<f64>], p: &Vector2<f64>, q: &Vector2<f64>) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spacecraft::surface::PanelOptics;
+    use crate::spacecraft::surface::{PanelOptics, PanelOutline};
     use nalgebra::Vector3;
 
     fn optics() -> PanelOptics {
@@ -515,6 +513,35 @@ mod tests {
         let blocker = SurfacePanel::at_com(100.0, -Vector3::y(), 2.2, optics())
             .with_cp_offset(Vector3::new(0.0, -1.0, 0.0));
         assert_eq!(lit_region(&target, &[blocker], &sun(80.0)).fraction, 1.0);
+    }
+
+    #[test]
+    fn a_back_face_built_from_a_barely_off_axis_shadows_nothing() {
+        // `rectangle` accepts an in-plane axis up to 1e-9 off perpendicular. At
+        // 5e-10 the corners it generates sit 5e-10 either side of the panel's
+        // own plane — seventy thousand times the roundoff the shadow arithmetic
+        // works at — so half of a coincident back face read as standing in
+        // front of the front face and shadowed half of it. The axes are
+        // projected back onto the plane, so both faces are exactly coplanar and
+        // neither shadows the other.
+        let normal = Vector3::z();
+        let off_axis = Vector3::new(1.0, 0.0, 5e-10).normalize();
+        assert!(
+            normal.dot(&off_axis) > 1e-10,
+            "the axis has to be off perpendicular for this to be the case"
+        );
+        let front = SurfacePanel::rectangle([1.0, 1.0], off_axis, normal, 2.2, optics());
+        let back = front.back_face(optics());
+        assert_eq!(
+            lit_region(&front, &[back.clone()], &normal).fraction,
+            1.0,
+            "a coincident back face must not shadow the front"
+        );
+        assert_eq!(
+            lit_region(&back, &[front], &-normal).fraction,
+            1.0,
+            "nor the other way round"
+        );
     }
 
     #[test]

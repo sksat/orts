@@ -269,6 +269,31 @@ impl SurfacePanel {
         }
     }
 
+    /// The outline's axes, exactly perpendicular to the normal and to each
+    /// other, or `None` without an outline.
+    ///
+    /// The stored axis is only perpendicular to within the `1e-9` the
+    /// constructors accept, and that slack puts the corners off the panel's own
+    /// plane — by `1e-9` of the half-extent, which is tens of thousands of
+    /// times the roundoff the shadow arithmetic works at. It made half of a
+    /// coincident back face read as standing in front of its own front face.
+    /// Projecting the axis back onto the plane costs nothing and leaves the
+    /// corners where the panel says they are.
+    pub(crate) fn in_plane_axes(&self) -> Option<(Vector3<f64>, Vector3<f64>)> {
+        let PanelOutline::Rectangle { in_plane_x, .. } = self.outline?;
+        let flat = in_plane_x - self.normal * self.normal.dot(&in_plane_x);
+        let mag = flat.magnitude();
+        // The constructors reject an axis along the normal, so this is
+        // unreachable through them. A panel that arrived here anyway has no
+        // usable outline, and reporting none keeps its force rather than
+        // removing one.
+        if !mag.is_finite() || mag <= 0.0 {
+            return None;
+        }
+        let u = flat / mag;
+        Some((u, self.normal.cross(&u)))
+    }
+
     /// Write the outline's corners in order into `buf`, or `None` without one.
     ///
     /// Corner-count varies by shape, so the filled prefix is returned rather
@@ -278,16 +303,16 @@ impl SurfacePanel {
         &self,
         buf: &'b mut [Vector3<f64>; MAX_PANEL_CORNERS],
     ) -> Option<&'b [Vector3<f64>]> {
+        let (x, y) = self.in_plane_axes()?;
         match self.outline? {
             PanelOutline::Rectangle {
                 half_extent: [hx, hy],
-                in_plane_x,
+                ..
             } => {
-                let y = self.normal.cross(&in_plane_x);
-                buf[0] = self.cp_offset + in_plane_x * hx + y * hy;
-                buf[1] = self.cp_offset + in_plane_x * hx - y * hy;
-                buf[2] = self.cp_offset - in_plane_x * hx - y * hy;
-                buf[3] = self.cp_offset - in_plane_x * hx + y * hy;
+                buf[0] = self.cp_offset + x * hx + y * hy;
+                buf[1] = self.cp_offset + x * hx - y * hy;
+                buf[2] = self.cp_offset - x * hx - y * hy;
+                buf[3] = self.cp_offset - x * hx + y * hy;
                 Some(&buf[..4])
             }
         }
