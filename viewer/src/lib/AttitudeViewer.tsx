@@ -33,20 +33,20 @@ const DEFAULT_CAMERA_POSITION: [number, number, number] = (() => {
 })();
 
 /**
- * Settle the camera once the canvas has a size: pull it back if the viewport is
- * narrower than the default framing assumed, and open the far plane far enough to
- * reach the spacecraft.
+ * Choose the camera's distance once the canvas has a size, pulling it back if the
+ * viewport is narrower than the default framing assumed.
  *
  * The `camera` prop is read at mount, before the canvas has a size, so a portrait
  * embedding would otherwise clip the axes sideways. Applied on the first sizing
  * only: reframing on every resize would undo a zoom the viewer had chosen, and
  * this is a starting view, not a constraint.
  *
- * `reframe` says whether the distance is ours to choose. The depth range is not
- * settled here at all: a caller's position of `[200, 0, 0]` with the default
+ * `reframe` says whether that distance is ours to choose at all. The depth range
+ * is not this component's: a caller's position of `[200, 0, 0]` with the default
  * `far` of 100, and a viewer dollying out past it, are the same problem — the
  * scene at the origin falls behind the far plane and the canvas goes blank — and
- * the scene holds that invariant continuously.
+ * `FarPlaneBeyondScene`, in the scene itself, holds that invariant for as long as
+ * the scene is mounted.
  */
 function InitialCameraFit({ fov, reframe }: { fov: number; reframe: boolean }) {
   const camera = useThree((s) => s.camera);
