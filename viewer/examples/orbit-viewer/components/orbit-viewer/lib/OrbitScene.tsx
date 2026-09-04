@@ -50,6 +50,7 @@ export function OrbitScene({
   textureVersion,
   defaultMarkerShape,
   atmosphereScale,
+  directionVectors,
   controls = true,
   axes = true,
 }: OrbitSceneProps) {
@@ -178,6 +179,7 @@ export function OrbitScene({
       physicalScale={physicalScale}
       textureBaseUrl={textureBaseUrl}
       textureRevision={textureVersion}
+      directionVectors={directionVectors}
       controls={controls}
       axes={axes}
     />

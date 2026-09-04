@@ -8,6 +8,7 @@ import {
   entityPathToBodyId,
   getBodyRadius,
 } from "../bodies.js";
+import { type DirectionVectorOptions, resolveDirectionVectors } from "../directionVectors.js";
 import { displayPosition, displayRotation, resolveDisplayFrame } from "../displayFrame.js";
 import {
   computeSceneAmplification,
@@ -21,13 +22,23 @@ import { DEFAULT_FRAME, isLegacyEcef, type ReferenceFrame } from "../referenceFr
 import { getSatelliteModelConfig } from "../satelliteModels.js";
 import { type MarkerShape, resolveMarkerShape } from "../satelliteShapes.js";
 import { computeCameraUp, computeLvlhAxes, type LvlhAxes, SCENE_UP } from "../sceneFrame.js";
+import {
+  defaultMarkerSize,
+  markerBoundingRadius,
+  modelBoundingRadius,
+  resolveVisualSpan,
+} from "../spacecraftScale.js";
 import type { TrailBufferLike } from "../utils/TrailBuffer.js";
 import { body_orientation, earth_rotation_angle } from "../wasm/arikaInit.js";
 import { CelestialBody } from "./CelestialBody.js";
+import { DirectionArrows } from "./DirectionArrows.js";
 import { OrbitTrail } from "./OrbitTrail.js";
 import { buildRenderEntries } from "./renderEntries.js";
 import { Satellite } from "./Satellite.js";
 import { AMBIENT_INTENSITY, SunLighting, useSunLighting } from "./SunLighting.js";
+
+/** The centred satellite sits exactly at the world origin. */
+const ORIGIN: [number, number, number] = [0, 0, 0];
 
 /** Color palette for multiple satellites. */
 const SATELLITE_COLORS = [0x00ff88, 0xff4488, 0x44aaff, 0xffaa44, 0xaa44ff];
@@ -341,6 +352,11 @@ export interface OrbitSceneContentsProps {
   controls?: boolean | Partial<OrbitControlsProps>;
   /** Render the reference axes helper. Default `true`. */
   axes?: boolean;
+  /**
+   * Reference-direction arrows to draw at the centred satellite. Omitted draws
+   * none; a central-body view draws none either way.
+   */
+  directionVectors?: DirectionVectorOptions;
 }
 
 /**
@@ -369,6 +385,7 @@ export function OrbitSceneContents({
   textureBaseUrl,
   controls = true,
   axes = true,
+  directionVectors,
 }: OrbitSceneContentsProps) {
   // Default camera package (controls + frame-aware rig). `false` opts out
   // entirely; an object enables it and is spread onto OrbitControls.
@@ -438,9 +455,13 @@ export function OrbitSceneContents({
     };
   }, [lvlhActive, cameraTracking, originPosition]);
 
-  // Determine sim time for sun direction from the first available satellite
-  // position. Iterate the Map's values directly rather than materializing an
-  // array every render just to find the first non-null entry.
+  // Sim time for the Sun direction and the body rotation. The centred satellite
+  // owns it when there is one: satellites carry their own times (a terminated one
+  // stays frozen), and the Sun drawn *at* the centred satellite has to be the Sun
+  // at that satellite's time, not at whichever time the Map happens to yield
+  // first. Falls back to the first available position for a central-body view.
+  // Iterate the Map's values directly rather than materializing an array every
+  // render just to find the first non-null entry.
   let firstPosition: OrbitPoint | null = null;
   if (satellitePositions) {
     for (const p of satellitePositions.values()) {
@@ -450,7 +471,8 @@ export function OrbitSceneContents({
       }
     }
   }
-  const simTime = firstPosition?.t ?? 0;
+  const centeredPosition = centeredSatId != null ? satellitePositions?.get(centeredSatId) : null;
+  const simTime = centeredPosition?.t ?? firstPosition?.t ?? 0;
   const quantizedSimTime = Math.floor(simTime / 60) * 60;
 
   // Earth rotation angle (ERA) via WASM — updates every frame via simTime (not quantized)
@@ -469,7 +491,7 @@ export function OrbitSceneContents({
 
   // Sun direction + intensity (display frame). Shared by the lights and by the
   // lit bodies below, so the scene holds them and passes them down explicitly.
-  const { sunDirection, sunIntensity, lightPosition } = useSunLighting({
+  const { sunDirection, sunDirectionIsComputed, sunIntensity, lightPosition } = useSunLighting({
     centralBody,
     epochJd,
     quantizedSimTime,
@@ -602,24 +624,73 @@ export function OrbitSceneContents({
               </group>
             );
           }
+          const shape = resolveMarkerShape({
+            override: satelliteShapes?.get(centeredSatId),
+            simShape: satelliteSimShapes?.get(centeredSatId),
+            globalDefault: defaultMarkerShape,
+            hasAttitude: pos.qw != null,
+          });
+          const satName = satelliteNames?.get(centeredSatId);
+          // The centred satellite is drawn exactly at the world origin, so the
+          // arrows start there too. Its display frame is the scene's: a satellite
+          // centre is never body-fixed, so the scene-level ERA plays no part.
+          const arrows = resolveDirectionVectors({
+            frame: sceneDisplayFrame,
+            // The direction the lights are placed along, reused rather than
+            // computed again, so the arrow and the lighting cannot disagree. The
+            // hook falls back to a fixed direction when it cannot compute one —
+            // no epoch, or a central body arika cannot place. Fine for the
+            // lights; an arrow drawn from it would claim to be a measurement.
+            sunDisplay: sunDirectionIsComputed
+              ? [sunDirection.x, sunDirection.y, sunDirection.z]
+              : null,
+            positionEci: originPosition,
+            // Here this prop is an *enable* list: the orbit view draws no arrows
+            // unless asked, so an option left out means off. `resolveDirectionVectors`
+            // reads a missing field as on, which is the attitude view's default.
+            options: {
+              sun: directionVectors?.sun === true,
+              nadir: directionVectors?.nadir === true,
+            },
+          });
+          const centredModel = getSatelliteModelConfig(centeredSatId, satName);
+          const visualSpan = resolveVisualSpan({
+            modelConfig: centredModel,
+            markerSize: defaultMarkerSize(shape),
+          });
           return (
-            <Satellite
-              position={pos}
-              scaleRadius={centralBodyRadius}
-              color={color}
-              referenceFrame={referenceFrame}
-              epochJd={epochJd ?? undefined}
-              satId={centeredSatId}
-              satName={satelliteNames?.get(centeredSatId)}
-              originPosition={originPosition}
-              lvlhAxes={lvlhAxes}
-              markerShape={resolveMarkerShape({
-                override: satelliteShapes?.get(centeredSatId),
-                simShape: satelliteSimShapes?.get(centeredSatId),
-                globalDefault: defaultMarkerShape,
-                hasAttitude: pos.qw != null,
-              })}
-            />
+            <>
+              <Satellite
+                position={pos}
+                scaleRadius={centralBodyRadius}
+                color={color}
+                referenceFrame={referenceFrame}
+                epochJd={epochJd ?? undefined}
+                satId={centeredSatId}
+                satName={satName}
+                originPosition={originPosition}
+                lvlhAxes={lvlhAxes}
+                markerShape={shape}
+              />
+              {arrows.length > 0 && (
+                <DirectionArrows
+                  position={ORIGIN}
+                  vectors={arrows}
+                  visualSpan={visualSpan}
+                  // Outside whatever is actually drawn: a cube marker's corners
+                  // stand further out than its faces, and a model is bounded by
+                  // the envelope of the cube its largest extent fits in. The
+                  // sphere's radius would leave the tail inside a model, which
+                  // reaches past half its span on a diagonal.
+                  startRadius={
+                    centredModel
+                      ? modelBoundingRadius(visualSpan)
+                      : markerBoundingRadius(shape, visualSpan)
+                  }
+                  debugId={centeredSatId}
+                />
+              )}
+            </>
           );
         })()}
 

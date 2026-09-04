@@ -8,10 +8,12 @@ export interface DebugDirectionVector {
   /** Unit vector from the arrow's origin to its head, in world (scene) axes. */
   direction: [number, number, number];
   /**
-   * World distance from the origin to the head [scene units].
+   * World distance from the arrow's origin to its head's centre [scene units].
    *
-   * Where the arrow reaches, which moves with the radius its tail starts at —
-   * the marker's or, when one is drawn, the model's. Measured from the scene
+   * How far the arrow reaches, which moves with the radius its tail starts at —
+   * the marker's, or the model's when one is drawn. Reported unnormalised so a
+   * test can pin the proportions as well: it is `startOffset + length -
+   * headLength / 2` for the spacecraft's apparent size. Measured from the scene
    * graph like the direction, so a test comparing two scenes reads the geometry
    * rather than the number that was passed in.
    */
