@@ -1,11 +1,7 @@
 import { useThree } from "@react-three/fiber";
 import { useEffect, useRef } from "react";
 import { PerspectiveCamera } from "three";
-import {
-  drawnExtentForSpan,
-  initialCameraDistance,
-  NOMINAL_SPACECRAFT_SPAN,
-} from "../spacecraftScale.js";
+import { initialCameraDistance, NOMINAL_SPACECRAFT_SPAN } from "../spacecraftScale.js";
 
 /**
  * Choose the camera's distance once the canvas has a size, pulling it back if the
