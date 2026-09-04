@@ -32,13 +32,14 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 #### Changed
 - **BREAKING**: `SurfacePanel` に public な `outline: Option<PanelOutline>` が
   増えたので、struct literal はこの field を書く必要がある。`PanelSrp` と
-  `PanelDrag` は、別のパネルが手前に立っているパネルを飛ばすようになった (以前は
+  `PanelDrag` は、別のパネルに完全に覆われたパネルを飛ばすようになった (以前は
   全面照射として計算していた)。判定に参加するのは輪郭を持つパネルだけで、`at_com`
   で作ったパネルは従来と同じ力を出し、遮蔽もしないし遮蔽もされない。輪郭を持つ
   パネルは `SurfacePanel::rectangle` で作り、面積は半寸法から導出する。
   `SpacecraftShape::cube` の 6 面も輪郭を持つようになった (面自身の力は変わらないが、
   cube の隣に足したパネルが面の陰にいることを判定できる)。見つかるのは 1 枚に完全に
-  隠れる場合だけで、2 枚の和で覆われる配置は照射扱いのままである。([#424](https://github.com/sksat/orts/pull/424))
+  覆われる場合だけで、一部だけ隠れるパネルは全面照射として力を出し、2 枚の和で
+  覆われる配置も照射扱いのままである。([#424](https://github.com/sksat/orts/pull/424))
 - `SatelliteParams` が `SpacecraftShape` を optional で持ち、
   `build_spacecraft_dynamics` がそれを見て等方面の `SolarRadiationPressure` /
   `AtmosphericDrag` の代わりに `PanelSrp` / `PanelDrag` を install するように
@@ -246,7 +247,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   (`area` または `half_extent` + `in_plane_x` ([#424](https://github.com/sksat/orts/pull/424))、`normal`, `cd`,
   `specular`, `diffuse`, `cp_offset`, `two_sided`
   ([#399](https://github.com/sksat/orts/pull/399))、`back` ([#395](https://github.com/sksat/orts/pull/395)))。
-  `half_extent` を書くとパネルに輪郭ができ、別のパネルがその手前に立っていることを
+  `half_extent` を書くとパネルに輪郭ができ、別のパネルに完全に覆われていることを
   判定できるようになる。`area` だけのパネルは、照らされたときの力は同じだが遮蔽の
   判定には関与しない。
   パネルは片面なので、薄板 (太陽電池パドル) には裏面を書く。表裏が同じなら

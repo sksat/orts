@@ -87,8 +87,8 @@ impl PanelOptics {
 ///
 /// A panel needs none of this to produce a force: the flat-plate law uses the
 /// projected area, the normal and the optics, and never the boundary. It is
-/// here so that one panel can be found to stand between another and the Sun or
-/// the flow, which needs the boundary and nothing else.
+/// here so that one panel can be found to cover another completely, seen from
+/// the Sun or the flow, which needs the boundary and nothing else.
 ///
 /// An enum because the shapes will not stay one: a mesh read from CAD gives
 /// triangles. Three operations know the shapes — `SurfacePanel::corners_into`,
@@ -526,7 +526,7 @@ impl SpacecraftShape {
     /// Generates 6 panels (±x, ±y, ±z), each `2 * half_size` on a side, with the
     /// centre of pressure at the face centre (`half_size` m from CoM along the
     /// face normal). The faces carry their outline, so a panel added beside the
-    /// cube — a solar array, say — can be found standing in front of one.
+    /// cube — a solar array, say — can be found completely covered by one.
     ///
     /// # Panics
     /// Panics unless `half_size` is positive and finite, and unless the area it

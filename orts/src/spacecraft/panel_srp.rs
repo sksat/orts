@@ -178,8 +178,10 @@ impl PanelSrp {
     ///
     /// Panels still shade each other. That is a property of the shape rather
     /// than of an orbit, so it is not something either constructor turns off:
-    /// an outlined panel standing behind another one contributes nothing here
-    /// too.
+    /// an outlined panel that another one completely covers contributes nothing
+    /// here either. Complete cover by one panel is the whole of what is found —
+    /// a panel half in shadow produces its full force, as does one that two
+    /// others cover between them.
     ///
     /// # Panics
     /// Panics unless every panel normal is unit length and every outline is

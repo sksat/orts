@@ -381,8 +381,12 @@ pub struct PanelConfig {
     /// `normal × in_plane_x`. The area follows from these.
     ///
     /// Writing them gives the panel a boundary, which is what lets another
-    /// panel be found standing in front of it. Without them the panel still
+    /// panel be found covering it completely. Without them the panel still
     /// produces the same force when lit, but takes no part in shadowing.
+    ///
+    /// Complete cover by one panel is the whole of what is found: a panel half
+    /// in shadow produces its full force, as does one that two others cover
+    /// between them.
     ///
     /// The boundary is centred on `cp_offset`, so these are half-widths about
     /// that point rather than about the CoM: a plate 2 m across, on an arm
