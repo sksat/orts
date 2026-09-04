@@ -95,7 +95,8 @@ export function OrbitOverlay({
         unavailable={{
           sun: noCentre ?? (drawableVectorKinds.includes("sun") ? undefined : "Requires epoch"),
           nadir:
-            noCentre ?? (drawableVectorKinds.includes("nadir") ? undefined : "Requires a position"),
+            noCentre ??
+            (drawableVectorKinds.includes("nadir") ? undefined : "Requires a non-zero position"),
         }}
       />
       {orbitInfo && (

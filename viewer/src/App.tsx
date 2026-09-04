@@ -706,7 +706,7 @@ export function App() {
               localOrbitalUnavailable={
                 attitudeFrameAvailable("localOrbital")
                   ? undefined
-                  : "Requires a position and velocity"
+                  : "Requires a position and velocity that define an orbit plane"
               }
               bodyFixedUnavailable={
                 centralBody !== "earth"
@@ -717,7 +717,7 @@ export function App() {
               }
               sunUnavailable={epoch == null ? "Requires epoch" : undefined}
               nadirUnavailable={
-                attitudeDrawableKinds.includes("nadir") ? undefined : "Requires a position"
+                attitudeDrawableKinds.includes("nadir") ? undefined : "Requires a non-zero position"
               }
               directionVectors={directionVectors}
               onDirectionVectorsChange={setDirectionVectors}
