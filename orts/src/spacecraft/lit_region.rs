@@ -179,19 +179,23 @@ fn shadow_on_target(
     let mut buf = [Vector3::zeros(); MAX_PANEL_CORNERS];
     let corners = other.corners_into(&mut buf)?;
 
-    // How far back along the light a point sits from the target's plane. It is
-    // the distance the projection below travels, so measuring the side with it
-    // — rather than with the depth along the normal — is what makes the answer
-    // right for a target whose normal points away from the source as well.
     let denom = panel.normal.dot(upstream);
-    let reach = |p: &Vector3<f64>| panel.normal.dot(&(p - panel.cp_offset)) / denom;
+    // Distance from the target's plane, along the normal.
+    let depth = |p: &Vector3<f64>| panel.normal.dot(&(p - panel.cp_offset));
+    // Positive on the side the source is on. The sign is what makes the answer
+    // right for a target whose normal points away from the source; the
+    // magnitude stays a distance in metres, which is what the tolerance below
+    // is scaled for. Dividing by `denom` here instead would multiply the
+    // roundoff in a coplanar caster's depth by `1 / cos θ` and let it read as
+    // standing in front at oblique incidence.
+    let toward_source = |p: &Vector3<f64>| depth(p) * denom.signum();
 
     // Only the part of the caster on the source's side of the target can
     // shadow it. Clipping in 3D first, before projecting, is what makes a
     // caster that tilts through the target shadow only the part of it that is
     // really in front — projecting the whole caster would report more shadow
     // than there is.
-    let front: Vec<Vector3<f64>> = clip_3d(corners, &reach, &panel.cp_offset);
+    let front: Vec<Vector3<f64>> = clip_3d(corners, &toward_source, &panel.cp_offset);
     if front.len() < 3 {
         return None;
     }
@@ -199,7 +203,7 @@ fn shadow_on_target(
     // Carry each front vertex along the light to the target's plane.
     let mut poly: Vec<Vector2<f64>> = Vec::with_capacity(MAX_SHADOW_VERTICES);
     for q in &front {
-        let hit = q - upstream * reach(q);
+        let hit = q - upstream * (depth(q) / denom);
         let p = to_plane(&hit, &panel.cp_offset, u, v);
         // Grazing incidence can send a vertex past the range of f64 even though
         // every input was finite. A shadow that cannot be located is dropped,
@@ -541,6 +545,59 @@ mod tests {
             lit_region(&back, &[front], &-normal).fraction,
             1.0,
             "nor the other way round"
+        );
+    }
+
+    #[test]
+    fn a_coincident_back_face_shadows_nothing_at_grazing_incidence() {
+        // The side test compares a distance from the target's plane against a
+        // tolerance in metres. Dividing that distance by `cos θ` first — the
+        // way the projection has to — turns the roundoff left in a coplanar
+        // caster's corners into 1e-4 m at `cos θ = 1e-12`, which clears any
+        // roundoff tolerance: measured that way, the back face takes half of
+        // the front face's area.
+        //
+        // Whether that roundoff is there at all depends on the orientation:
+        // the corner arithmetic cancels exactly for some and leaves up to
+        // 2.2e-16 m for others, so one orientation cannot stand for the case.
+        // The light arrives at the cutoff, the shallowest angle the force
+        // models ask about.
+        let mut worst_residue = 0.0f64;
+        for i in 0..400 {
+            let a = 0.017 * i as f64;
+            let normal = Vector3::new(a.cos(), (1.3 * a).sin(), (0.7 * a + 0.4).cos()).normalize();
+            let u = normal.cross(&Vector3::new(0.2, 0.8, -0.1)).normalize();
+            let front = SurfacePanel::rectangle([1.0, 1.0], u, normal, 2.2, optics());
+            let back = front.back_face(optics());
+
+            let mut buf = [Vector3::zeros(); MAX_PANEL_CORNERS];
+            let residue = back
+                .corners_into(&mut buf)
+                .expect("a rectangle has corners")
+                .iter()
+                .map(|c| normal.dot(&(c - front.cp_offset)).abs())
+                .fold(0.0, f64::max);
+            worst_residue = worst_residue.max(residue);
+
+            let grazing = (u * (1.0 - MIN_FORCE_COSINE * MIN_FORCE_COSINE).sqrt()
+                + normal * MIN_FORCE_COSINE)
+                .normalize();
+            assert!(
+                normal.dot(&grazing) >= MIN_FORCE_COSINE * 0.9,
+                "orientation {i}: the light has to arrive at the cutoff, got n·s = {}",
+                normal.dot(&grazing)
+            );
+            assert_eq!(
+                lit_region(&front, &[back], &grazing).fraction,
+                1.0,
+                "orientation {i}: a coincident back face must not shadow the \
+                 front, however shallow the light"
+            );
+        }
+        assert!(
+            worst_residue > 0.0,
+            "no orientation left any roundoff in the corners, so the sweep \
+             cannot see the case it is about"
         );
     }
 
