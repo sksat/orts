@@ -540,6 +540,12 @@ jobs:
           KBLE_VERSION=0.5.0
           cargo binstall --no-confirm "kble@${KBLE_VERSION}"
 
+      # Named explicitly so the kble suites fail if the install ever puts the
+      # binary somewhere else: their fallback is a PATH lookup, and finding
+      # nothing there makes them soft-skip, which hides the breakage.
+      - name: Point the kble suites at the binary
+        run: echo "KBLE_BIN=$HOME/.cargo/bin/kble" >> "$GITHUB_ENV"
+
       - name: Download orts binary
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -577,17 +583,29 @@ jobs:
         env:
           ORTS_BIN: ${{ github.workspace }}/bin/orts
         run: |
-          cargo test --locked -p orts-cli --test plugin_backend_e2e
-          cargo test --locked -p orts-cli --test serve_dynamic_controlled_add_e2e
-          cargo test --locked -p orts-cli --test throughput_mode_speedup_e2e
+          # The suites the build step above already compiled, in one
+          # invocation. Nine separate ones each re-resolved the workspace
+          # first, which measured 0.6 s apiece — small, but so is the reason to
+          # repeat the same command nine times. Cargo still runs the binaries
+          # one after another and prints `Running tests/<suite>.rs` before each,
+          # so a failure still names its suite.
+          #
+          # `e2e` stays separate because it needs a filter, and a filter in a
+          # combined invocation would apply to every target.
+          #
+          # run_mode_e2e's README quick-start and controller-config tests need
+          # the guest WASM; under `rust-test`, which does not build it, they
+          # soft-skip.
+          cargo test --locked -p orts-cli \
+            --test plugin_backend_e2e \
+            --test serve_dynamic_controlled_add_e2e \
+            --test throughput_mode_speedup_e2e \
+            --test plugin_msg_config_command_e2e \
+            --test serve_stream_bridge_e2e \
+            --test serve_kble_e2e \
+            --test serve_kble_stdio_e2e \
+            --test run_mode_e2e
           cargo test --locked -p orts-cli --test e2e test_controlled_simulation_via_config
-          cargo test --locked -p orts-cli --test plugin_msg_config_command_e2e
-          cargo test --locked -p orts-cli --test serve_stream_bridge_e2e
-          cargo test --locked -p orts-cli --test serve_kble_e2e
-          cargo test --locked -p orts-cli --test serve_kble_stdio_e2e
-          # The README quick-start and controller-config tests need the guest
-          # WASM; under `rust-test`, which does not build it, they soft-skip.
-          cargo test --locked -p orts-cli --test run_mode_e2e
 
   # Build CLI with embedded viewer SPA in release profile.
   # Runs on main push (smoke test) AND tag push (release job consumes
