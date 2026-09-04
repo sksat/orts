@@ -59,7 +59,15 @@ fn x_minus_sin(x: f64) -> f64 {
 /// * `eccentricity` - Orbital eccentricity (0 ≤ e < 1)
 ///
 /// # Returns
-/// Eccentric anomaly E [rad], within `e` of the reduced `M`
+///
+/// Eccentric anomaly E [rad], within `e` of the reduced `M`.
+///
+/// How precisely `E` is pinned down near periapsis at `e` close to 1 is set by
+/// the conditioning of the equation, not by the iteration: `ΔE = f / f'` with
+/// `f' = 1 - e·cos(E)` falling to `1 - e` there, and `f` cannot be evaluated
+/// below the rounding of its own largest term. At `e = 0.9999999999` and `M`
+/// within 1e-13 of `2π`, `f' = 4e-9`, so a residual at the `f64` floor of
+/// 1e-16 already leaves `E` uncertain by 2e-8.
 pub fn solve_kepler_equation(mean_anomaly: f64, eccentricity: f64) -> f64 {
     let m = mean_anomaly % (2.0 * PI);
     // `E = M + e·sin(E)` puts the root within `e` of `M`, and `f` increases
