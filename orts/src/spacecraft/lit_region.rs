@@ -19,6 +19,71 @@ use super::surface::{MAX_PANEL_CORNERS, PanelOutline, SurfacePanel};
 /// from the clip to the target.
 const MAX_SHADOW_VERTICES: usize = 2 * MAX_PANEL_CORNERS + 1;
 
+/// A convex polygon of at most [`MAX_SHADOW_VERTICES`] vertices, on the stack.
+///
+/// The pairwise work — a caster clipped to the target's plane and then to the
+/// target — runs for every panel pair at every integrator stage and is bounded,
+/// so it does not go to the heap. Only a pair that really overlaps allocates,
+/// and only for the subtraction, whose piece count is not bounded this way.
+#[derive(Clone, Copy)]
+struct StackPoly {
+    pts: [Vector2<f64>; MAX_SHADOW_VERTICES],
+    len: usize,
+}
+
+impl StackPoly {
+    fn new() -> Self {
+        Self {
+            pts: [Vector2::zeros(); MAX_SHADOW_VERTICES],
+            len: 0,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn as_slice(&self) -> &[Vector2<f64>] {
+        &self.pts[..self.len]
+    }
+}
+
+/// Where a clip writes its result.
+///
+/// The pairwise path wants the stack and the subtraction wants the heap; one
+/// clip serves both rather than two that can drift apart.
+trait Vertices {
+    fn clear(&mut self);
+    fn push(&mut self, p: Vector2<f64>);
+}
+
+impl Vertices for StackPoly {
+    fn clear(&mut self) {
+        self.len = 0;
+    }
+
+    fn push(&mut self, p: Vector2<f64>) {
+        // The bound is `MAX_SHADOW_VERTICES` by construction; a debug assert
+        // rather than a release panic, and dropping the vertex is the same
+        // failure the bound rules out.
+        debug_assert!(self.len < MAX_SHADOW_VERTICES, "clip overran its bound");
+        if self.len < MAX_SHADOW_VERTICES {
+            self.pts[self.len] = p;
+            self.len += 1;
+        }
+    }
+}
+
+impl Vertices for Vec<Vector2<f64>> {
+    fn clear(&mut self) {
+        Vec::clear(self);
+    }
+
+    fn push(&mut self, p: Vector2<f64>) {
+        Vec::push(self, p);
+    }
+}
+
 /// Roundoff allowance, as a multiple of [`f64::EPSILON`] times the magnitudes
 /// that went into a subtraction.
 ///
@@ -112,23 +177,26 @@ pub(crate) fn lit_region(
     let Some(corners) = panel.corners_into(&mut buf) else {
         return LitRegion::all_lit(panel);
     };
-    let target: Vec<Vector2<f64>> = corners
-        .iter()
-        .map(|c| to_plane(c, &panel.cp_offset, &u, &v, half))
-        .collect();
-    let target_area = signed_area(&target).abs();
+    let mut target = StackPoly::new();
+    for c in corners {
+        target.push(to_plane(c, &panel.cp_offset, &u, &v, half));
+    }
+    let target = target;
+    let target_area = signed_area(target.as_slice()).abs();
     if !target_area.is_finite() || target_area <= 0.0 {
         return LitRegion::all_lit(panel);
     }
 
     // Every shadow, already trimmed to the target so that later arithmetic
     // stays inside the target's own scale.
-    let mut shadows: Vec<Vec<Vector2<f64>>> = Vec::new();
+    // Each shadow came out of the bounded pairwise path, so they share one
+    // allocation instead of taking one apiece.
+    let mut shadows: Vec<StackPoly> = Vec::new();
     for other in others {
         if std::ptr::eq(other, panel) {
             continue;
         }
-        if let Some(s) = shadow_on_target(panel, other, upstream, &u, &v, half, &target) {
+        if let Some(s) = shadow_on_target(panel, other, upstream, &u, &v, half, target.as_slice()) {
             shadows.push(s);
         }
     }
@@ -141,13 +209,14 @@ pub(crate) fn lit_region(
     // (inclusion-exclusion) needs 2^k - 1 terms for k shadows and builds the
     // small lit area out of the cancellation of larger ones; disjoint pieces
     // are bounded by the arrangement of the shadow edges and only ever added.
-    let mut pieces = vec![target.clone()];
+    let mut pieces = vec![target.as_slice().to_vec()];
+    let mut next: Vec<Vec<Vector2<f64>>> = Vec::new();
     for shadow in &shadows {
-        let mut next: Vec<Vec<Vector2<f64>>> = Vec::new();
+        next.clear();
         for piece in &pieces {
-            subtract_into(piece, shadow, &mut next);
+            subtract_into(piece, shadow.as_slice(), &mut next);
         }
-        pieces = next;
+        std::mem::swap(&mut pieces, &mut next);
         if pieces.is_empty() {
             return LitRegion::all_dark(panel);
         }
@@ -190,7 +259,7 @@ fn shadow_on_target(
     v: &Vector3<f64>,
     half: [f64; 2],
     target: &[Vector2<f64>],
-) -> Option<Vec<Vector2<f64>>> {
+) -> Option<StackPoly> {
     let mut buf = [Vector3::zeros(); MAX_PANEL_CORNERS];
     let corners = other.corners_into(&mut buf)?;
 
@@ -210,16 +279,20 @@ fn shadow_on_target(
     // caster that tilts through the target shadow only the part of it that is
     // really in front — projecting the whole caster would report more shadow
     // than there is.
-    let front: Vec<Vector3<f64>> = clip_3d(corners, &toward_source, &|p: &Vector3<f64>| {
-        plane_roundoff(&panel.normal, p, &panel.cp_offset)
-    });
+    let mut front_buf = [Vector3::zeros(); MAX_PANEL_CORNERS + 1];
+    let front = clip_3d(
+        corners,
+        &toward_source,
+        &|p: &Vector3<f64>| plane_roundoff(&panel.normal, p, &panel.cp_offset),
+        &mut front_buf,
+    );
     if front.len() < 3 {
         return None;
     }
 
     // Carry each front vertex along the light to the target's plane.
-    let mut poly: Vec<Vector2<f64>> = Vec::with_capacity(MAX_SHADOW_VERTICES);
-    for q in &front {
+    let mut poly = StackPoly::new();
+    for q in front {
         let hit = q - upstream * (depth(q) / denom);
         let p = to_plane(&hit, &panel.cp_offset, u, v, half);
         // Grazing incidence can send a vertex past the range of f64 even though
@@ -231,10 +304,21 @@ fn shadow_on_target(
         poly.push(p);
     }
 
-    let trimmed = intersect_convex(&poly, target);
-    let area = signed_area(&trimmed).abs();
+    // Trim to the target, one target edge at a time, on the stack: this runs
+    // for every panel pair at every integrator stage, and only a pair that
+    // really does overlap goes on to allocate.
+    let mut spare = StackPoly::new();
+    for (a, b) in edges(target) {
+        if poly.len() < 3 {
+            return None;
+        }
+        clip_half_plane(poly.as_slice(), &a, &b, &mut spare);
+        std::mem::swap(&mut poly, &mut spare);
+    }
+
+    let area = signed_area(poly.as_slice()).abs();
     let scale = ROUNDOFF * f64::EPSILON * signed_area(target).abs();
-    (trimmed.len() >= 3 && area > scale).then_some(trimmed)
+    (poly.len() >= 3 && area > scale).then_some(poly)
 }
 
 /// A point in the panel's plane, in units of the panel's half-extents.
@@ -256,23 +340,36 @@ fn to_plane(
 
 /// Keep the part of a 3D convex polygon where `depth` is above its own
 /// roundoff, judged by `eps` at each vertex.
-fn clip_3d(
+///
+/// Writes into `out` and returns the filled prefix: a half-space clip of a
+/// panel outline adds at most one vertex, so the caller can hold the result on
+/// the stack.
+fn clip_3d<'b>(
     poly: &[Vector3<f64>],
     depth: &impl Fn(&Vector3<f64>) -> f64,
     eps: &impl Fn(&Vector3<f64>) -> f64,
-) -> Vec<Vector3<f64>> {
-    let mut out = Vec::with_capacity(MAX_PANEL_CORNERS + 1);
+    out: &'b mut [Vector3<f64>; MAX_PANEL_CORNERS + 1],
+) -> &'b [Vector3<f64>] {
+    let cap = out.len();
+    let mut n = 0;
     for i in 0..poly.len() {
         let (a, b) = (&poly[i], &poly[(i + 1) % poly.len()]);
         let (da, db) = (depth(a), depth(b));
+        let mut write = |p: Vector3<f64>| {
+            debug_assert!(n < cap, "the half-space clip overran its bound");
+            if n < cap {
+                out[n] = p;
+                n += 1;
+            }
+        };
         if da > eps(a) {
-            out.push(*a);
+            write(*a);
         }
         if (da > eps(a)) != (db > eps(b)) && da != db {
-            out.push(a + (b - a) * (da / (da - db)));
+            write(a + (b - a) * (da / (da - db)));
         }
     }
-    out
+    &out[..n]
 }
 
 /// The roundoff `n · (p - origin)` can carry.
@@ -329,19 +426,6 @@ fn area_and_moment(poly: &[Vector2<f64>]) -> (f64, Vector2<f64>) {
     (area.abs(), m / 6.0 * area.signum())
 }
 
-/// The intersection of two convex polygons, by clipping `poly` against every
-/// edge of `by`.
-fn intersect_convex(poly: &[Vector2<f64>], by: &[Vector2<f64>]) -> Vec<Vector2<f64>> {
-    let mut out = poly.to_vec();
-    for (p, q) in edges(by) {
-        if out.len() < 3 {
-            return Vec::new();
-        }
-        out = clip_half_plane(&out, &p, &q);
-    }
-    out
-}
-
 /// The lit part of `piece` outside `shadow`, as disjoint convex polygons.
 ///
 /// Edge `j` of the shadow contributes the part of `piece` outside `j` and
@@ -352,18 +436,38 @@ fn subtract_into(
     shadow: &[Vector2<f64>],
     out: &mut Vec<Vec<Vector2<f64>>>,
 ) {
-    let edges: Vec<_> = edges(shadow).collect();
-    for j in 0..edges.len() {
-        let (p, q) = edges[j];
-        let mut part = clip_half_plane(piece, &q, &p); // outside edge j
-        for &(pe, qe) in &edges[..j] {
+    // A piece can carry a vertex per edge of every shadow subtracted so far,
+    // which is not bounded the way the pairwise work is, so these are on the
+    // heap — and reused across the edges rather than allocated per edge.
+    let mut part: Vec<Vector2<f64>> = Vec::new();
+    let mut spare: Vec<Vector2<f64>> = Vec::new();
+    // The shadow is one of the bounded polygons the pairwise work produced,
+    // so its edges fit an array.
+    let mut edge_buf = [(Vector2::zeros(), Vector2::zeros()); MAX_SHADOW_VERTICES];
+    let mut n_edges = 0;
+    for e in edges(shadow) {
+        debug_assert!(
+            n_edges < MAX_SHADOW_VERTICES,
+            "a shadow grew past its bound"
+        );
+        if n_edges < MAX_SHADOW_VERTICES {
+            edge_buf[n_edges] = e;
+            n_edges += 1;
+        }
+    }
+    let shadow_edges = &edge_buf[..n_edges];
+    for j in 0..shadow_edges.len() {
+        let (p, q) = shadow_edges[j];
+        clip_half_plane(piece, &q, &p, &mut part); // outside edge j
+        for &(pe, qe) in &shadow_edges[..j] {
             if part.len() < 3 {
                 break;
             }
-            part = clip_half_plane(&part, &pe, &qe);
+            clip_half_plane(&part, &pe, &qe, &mut spare);
+            std::mem::swap(&mut part, &mut spare);
         }
         if part.len() >= 3 && signed_area(&part).abs() > 0.0 {
-            out.push(part);
+            out.push(part.clone());
         }
     }
 }
@@ -377,8 +481,13 @@ fn edges(poly: &[Vector2<f64>]) -> impl Iterator<Item = (Vector2<f64>, Vector2<f
     })
 }
 
-/// Keep the part of `poly` on the left of the line `p -> q`.
-fn clip_half_plane(poly: &[Vector2<f64>], p: &Vector2<f64>, q: &Vector2<f64>) -> Vec<Vector2<f64>> {
+/// Keep the part of `poly` on the left of the line `p -> q`, in `out`.
+fn clip_half_plane(
+    poly: &[Vector2<f64>],
+    p: &Vector2<f64>,
+    q: &Vector2<f64>,
+    out: &mut impl Vertices,
+) {
     let dir = q - p;
     // Scaled by the largest component rather than by the length. `rectangle`
     // accepts half-extents from 1e-150 to 1e150 and judges only their product,
@@ -388,7 +497,12 @@ fn clip_half_plane(poly: &[Vector2<f64>], p: &Vector2<f64>, q: &Vector2<f64>) ->
     // direction whose components are at most one.
     let scale = dir.abs().max();
     if !scale.is_finite() || scale <= 0.0 {
-        return poly.to_vec(); // the edge is a point, so it bounds nothing
+        // The edge is a point, so it bounds nothing: pass the polygon through.
+        out.clear();
+        for x in poly {
+            out.push(*x);
+        }
+        return;
     }
     let unit = dir / scale;
     // Not a true distance — `unit` is only unit-ish — but linear in the point
@@ -407,7 +521,7 @@ fn clip_half_plane(poly: &[Vector2<f64>], p: &Vector2<f64>, q: &Vector2<f64>) ->
         ROUNDOFF * f64::EPSILON * (term(normal.x, d.x, x.x, p.x) + term(normal.y, d.y, x.y, p.y))
     };
 
-    let mut out = Vec::with_capacity(poly.len() + 1);
+    out.clear();
     for i in 0..poly.len() {
         let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
         let (da, db) = (dist(&a), dist(&b));
@@ -418,7 +532,6 @@ fn clip_half_plane(poly: &[Vector2<f64>], p: &Vector2<f64>, q: &Vector2<f64>) ->
             out.push(a + (b - a) * (da / (da - db)));
         }
     }
-    out
 }
 
 #[cfg(test)]
