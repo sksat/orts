@@ -263,5 +263,9 @@ test("a central-body view draws no arrows", async ({ page }) => {
 
   await page.locator('[data-testid="frame-selector-select"]').selectOption("central_body");
   const vectors = await drawnVectors(page, SAT_ENTITY_PATH, { expectSome: false });
-  expect(vectors ?? [], "no arrows should be registered for a central-body view").toHaveLength(0);
+  // `null` is the expected state, not merely an acceptable one: with nothing to
+  // draw the scene does not mount `DirectionArrows` at all, so the hook is gone.
+  // Collapsing null and [] here would also accept a component still mounted and
+  // registering an empty list, which is a different scene.
+  expect(vectors, "the arrows' hook should be gone in a central-body view").toBeNull();
 });
