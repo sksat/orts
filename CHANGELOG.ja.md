@@ -145,6 +145,17 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   呼び出し元のなかった legacy alias `WasmPluginCache::build_controller` は削除した
   （天体を勝手に選ぶ入口を残さない）。([#431](https://github.com/sksat/orts/issues/431))
 
+- `PanelDrag` が、風下の面ではなく流れに向いた面に抵抗を出すようになった。`v_rel` は
+  大気に対する機体の速度なので、機体の系では気体は `+v_rel` の側から来る。判定式が
+  `cos θ = n̂·(-v̂_rel)` だったため機体の陰にある面を選んでいた (`PanelSrp` は太陽を
+  向いた面を選ぶ)。パネルの影の幾何は入射方向をモデルから受け取るので、
+  影も同じく風下側に落ちていた。法線が対になる形状 (`cube` など閉じた箱) では力の
+  大きさは変わらない。対になる 2 面の投影面積の和はどちらの面を選んでも同じだからである。
+  変わるのは力が通る `cp_offset` で、重心から離れた片面のパネルでは姿勢外乱の向きが
+  誤っていたし、流れに向けた片面のパネルには抵抗が付かなかった。面の選び方と cos θ の
+  法則は、Orekit の paneled drag model に対する fixture
+  (`tools/generate_orekit_panel_drag_fixtures.py`) で固定した。
+  ([#PR](https://github.com/sksat/orts/pull/PR))
 - `SurfacePanel::at_com` と `SurfacePanel::rectangle` が、magnitude を計算できない
   方向ベクトルを、無限大の normal を持つ panel にせず reject するようになった。
   正規化した後で結果の長さを検査していたので、`[1e-200, 1e-200, 1e-200]` が通って

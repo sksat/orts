@@ -183,6 +183,20 @@ section is subdivided by package.
   alias with no callers, is removed — an entry point that picks a body for you
   is what this fixes. ([#431](https://github.com/sksat/orts/issues/431))
 
+- `PanelDrag` applies drag to the face turned into the flow, not the sheltered
+  one. `v_rel` is the spacecraft's velocity through the atmosphere, so in the
+  body frame the gas arrives from `+v_rel`; the facing test read
+  `cos θ = n̂·(-v̂_rel)`, which selects the face behind the body, while `PanelSrp`
+  selects the face turned toward the Sun. The panel shadow geometry takes its
+  incoming direction from the model, so the shadow moved with the facing rule
+  and fell on the sheltered side too. A shape whose panels come in opposite pairs — `cube`,
+  or any closed box — is unaffected in magnitude, since the projected areas of a
+  pair sum to the same value whichever face is picked; what changes is which
+  `cp_offset` the force acts through, so the attitude disturbance of a
+  single-sided panel offset from the centre of mass had the wrong sign, and a
+  single-sided panel turned into the flow produced no drag at all. A new Orekit
+  fixture (`tools/generate_orekit_panel_drag_fixtures.py`) pins the face
+  selection and the cos θ law against Orekit's paneled drag model. ([#PR](https://github.com/sksat/orts/pull/PR))
 - `SurfacePanel::at_com` and `SurfacePanel::rectangle` reject a direction vector
   whose magnitude cannot be computed, instead of building a panel whose normal
   is infinite. They normalised first and then checked the result was long
