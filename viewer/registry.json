@@ -68,6 +68,11 @@
           "target": "@components/orbit-viewer/components/SatelliteModel.tsx"
         },
         {
+          "path": "src/components/SpacecraftVisual.tsx",
+          "type": "registry:component",
+          "target": "@components/orbit-viewer/components/SpacecraftVisual.tsx"
+        },
+        {
           "path": "src/components/SunLighting.tsx",
           "type": "registry:component",
           "target": "@components/orbit-viewer/components/SunLighting.tsx"
@@ -106,11 +111,6 @@
           "path": "src/frameResolve.ts",
           "type": "registry:lib",
           "target": "@components/orbit-viewer/frameResolve.ts"
-        },
-        {
-          "path": "src/frameTransform.ts",
-          "type": "registry:lib",
-          "target": "@components/orbit-viewer/frameTransform.ts"
         },
         {
           "path": "src/hooks/useTextureResolution.ts",

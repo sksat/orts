@@ -1,7 +1,7 @@
 import type { SatelliteInfo } from "../hooks/useWebSocket.js";
 import type { FrameCenter, FrameOrientation, ReferenceFrame } from "../referenceFrame.js";
-import controlStyles from "../styles/controls.module.css";
 import styles from "./FrameSelector.module.css";
+import { type OrientationOption, OrientationSelector } from "./OrientationSelector.js";
 
 interface FrameSelectorProps {
   referenceFrame: ReferenceFrame;
@@ -68,6 +68,22 @@ export function FrameSelector({
     onChange({ center: referenceFrame.center, orientation });
   }
 
+  // Which orientations this centre offers: a satellite centre offers the orbit
+  // frame, a central-body centre the body's rotating frame (which needs an
+  // epoch to know the rotation angle).
+  const orientationOptions: OrientationOption<FrameOrientation>[] = [
+    { value: "inertial", label: labels.inertial, testId: "frame-orientation-inertial" },
+    isSatCentered
+      ? { value: "local_orbital", label: "LVLH", testId: "frame-orientation-lvlh" }
+      : {
+          value: "body_fixed",
+          label: labels.body_fixed,
+          testId: "frame-orientation-body-fixed",
+          disabled: !hasEpoch,
+          title: !hasEpoch ? "Requires epoch" : undefined,
+        },
+  ];
+
   return (
     <div className={styles.frameSelector}>
       <div className={styles.row}>
@@ -87,37 +103,12 @@ export function FrameSelector({
         </select>
       </div>
 
-      <div className={controlStyles.modeToggle} style={{ marginTop: "4px" }}>
-        <button
-          type="button"
-          className={`${controlStyles.modeToggleBtn} ${referenceFrame.orientation === "inertial" ? controlStyles.active : ""}`}
-          data-testid="frame-orientation-inertial"
-          onClick={() => handleOrientationChange("inertial")}
-        >
-          {labels.inertial}
-        </button>
-        {isSatCentered ? (
-          <button
-            type="button"
-            className={`${controlStyles.modeToggleBtn} ${referenceFrame.orientation === "local_orbital" ? controlStyles.active : ""}`}
-            data-testid="frame-orientation-lvlh"
-            onClick={() => handleOrientationChange("local_orbital")}
-          >
-            LVLH
-          </button>
-        ) : (
-          <button
-            type="button"
-            className={`${controlStyles.modeToggleBtn} ${referenceFrame.orientation === "body_fixed" ? controlStyles.active : ""}`}
-            data-testid="frame-orientation-body-fixed"
-            onClick={() => handleOrientationChange("body_fixed")}
-            disabled={!hasEpoch}
-            title={!hasEpoch ? "Requires epoch" : ""}
-          >
-            {labels.body_fixed}
-          </button>
-        )}
-      </div>
+      <OrientationSelector
+        value={referenceFrame.orientation}
+        options={orientationOptions}
+        onChange={handleOrientationChange}
+        style={{ marginTop: "4px" }}
+      />
     </div>
   );
 }

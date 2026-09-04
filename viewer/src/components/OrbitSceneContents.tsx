@@ -459,16 +459,21 @@ export function OrbitSceneContents({
     return earth_rotation_angle(epochJd, simTime);
   }, [epochJd, simTime]);
 
+  // The scene's display frame, resolved once from the frame geometry above. Every
+  // direction the scene draws (the Sun below, and whatever else is added) goes
+  // through this one value rather than re-deriving the rotation from era/LVLH.
+  const sceneDisplayFrame = useMemo(
+    () => resolveDisplayFrame(referenceFrame, { era, originPosition, lvlhAxes }),
+    [referenceFrame, era, originPosition, lvlhAxes],
+  );
+
   // Sun direction + intensity (display frame). Shared by the lights and by the
   // lit bodies below, so the scene holds them and passes them down explicitly.
   const { sunDirection, sunIntensity, lightPosition } = useSunLighting({
     centralBody,
     epochJd,
     quantizedSimTime,
-    isEcef,
-    era,
-    lvlhActive,
-    lvlhAxes,
+    displayFrame: sceneDisplayFrame,
     sceneAmplification,
   });
 

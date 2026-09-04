@@ -2,18 +2,21 @@ import * as THREE from "three";
 import { describe, expect, it } from "vitest";
 import {
   type DisplayFrame,
+  type DisplayFrameInputs,
+  type DisplayOrientation,
+  displayDirection,
   displayPosition,
   displayQuaternion,
   displayRotation,
   needsFullRewrite,
   type Quat,
   resolveDisplayFrame,
+  resolveDisplayOrientation,
   trailTransformKey,
   type Vec3,
 } from "./displayFrame.js";
 import type { ReferenceFrame } from "./referenceFrame.js";
-import { computeLvlhAxes } from "./sceneFrame.js";
-import { sunDirectionInDisplayFrame } from "./sunLighting.js";
+import { computeLvlhAxes, type LvlhAxes } from "./sceneFrame.js";
 import { isArikaReady } from "./wasm/arikaInit.js";
 
 const EARTH_RADIUS = 6378.137;
@@ -264,40 +267,84 @@ describe("displayRotation", () => {
     expect(displayRotation({ kind: "bodyFixed", era: 0.5 }, out)).toBe(out);
   });
 
-  it("agrees with the sun-direction display transform", () => {
-    // sunDirectionInDisplayFrame rotates a direction into the same display
-    // frame through its own implementation. Pin the two against each other so
-    // the lighting and the geometry cannot drift apart.
+  it("agrees with displayDirection", () => {
+    // A direction can be rotated through the quaternion (what an attitude goes
+    // through) or through displayDirection (what the drawn Sun/nadir arrows go
+    // through). Pin the two paths against each other so the lighting, the
+    // arrows and the geometry cannot drift apart.
     const { r, v } = orbitState(7200, 3.3, 0.8);
     const axes = computeLvlhAxes(r, v);
     if (axes == null) throw new Error("degenerate orbit");
     const dir: Vec3 = [0.4, -0.7, 0.59];
-    const cases: [DisplayFrame, Vec3][] = [
-      [
-        { kind: "bodyFixed", era: 1.4 },
-        sunDirectionInDisplayFrame(dir, {
-          isEcef: true,
-          era: 1.4,
-          lvlhActive: false,
-          lvlhAxes: null,
-        }),
-      ],
-      [
-        { kind: "localOrbital", origin: [0, 0, 0], axes },
-        sunDirectionInDisplayFrame(dir, {
-          isEcef: false,
-          era: null,
-          lvlhActive: true,
-          lvlhAxes: axes,
-        }),
-      ],
+    const frames: DisplayFrame[] = [
+      { kind: "bodyFixed", era: 1.4 },
+      { kind: "localOrbital", origin: r, axes },
+      { kind: "inertial", origin: r },
     ];
-    for (const [frame, expected] of cases) {
+    for (const frame of frames) {
+      const expected = displayDirection(frame, dir);
       const got = new THREE.Vector3(...dir).applyQuaternion(displayRotation(frame));
       expect(got.x).toBeCloseTo(expected[0], 12);
       expect(got.y).toBeCloseTo(expected[1], 12);
       expect(got.z).toBeCloseTo(expected[2], 12);
     }
+  });
+});
+
+describe("displayDirection", () => {
+  const ECI_SUN: Vec3 = [0.6, 0, 0.8];
+  const mag = (v: Vec3): number => Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+
+  it("returns the inertial direction unchanged in the inertial frame", () => {
+    expect(displayDirection({ kind: "inertial", origin: null }, ECI_SUN)).toEqual(ECI_SUN);
+    // An origin offset moves positions, never directions.
+    expect(displayDirection({ kind: "inertial", origin: [7000, 0, 0] }, ECI_SUN)).toEqual(ECI_SUN);
+  });
+
+  it("rotates by -ERA about Z in the body-fixed frame", () => {
+    // ERA = +π/2: an inertial +X direction maps to -Y in the Earth-fixed frame.
+    const out = displayDirection({ kind: "bodyFixed", era: Math.PI / 2 }, [1, 0, 0]);
+    expect(out[0]).toBeCloseTo(0, 12);
+    expect(out[1]).toBeCloseTo(-1, 12);
+    expect(out[2]).toBeCloseTo(0, 12);
+  });
+
+  it("projects onto the LVLH basis [in-track, cross-track, radial]", () => {
+    // Permuted orthonormal basis: inertial +X lands on the radial (3rd) component.
+    const axes: LvlhAxes = { inTrack: [0, 1, 0], crossTrack: [0, 0, 1], radial: [1, 0, 0] };
+    const out = displayDirection({ kind: "localOrbital", origin: [7000, 0, 0], axes }, [1, 0, 0]);
+    expect(out[0]).toBeCloseTo(0, 12);
+    expect(out[1]).toBeCloseTo(0, 12);
+    expect(out[2]).toBeCloseTo(1, 12);
+  });
+
+  it("preserves magnitude under the orthonormal LVLH projection", () => {
+    const { r, v } = orbitState(7000, 1.1, 0.6);
+    const axes = computeLvlhAxes(r, v);
+    if (axes == null) throw new Error("degenerate orbit");
+    const out = displayDirection({ kind: "localOrbital", origin: r, axes }, ECI_SUN);
+    expect(mag(out)).toBeCloseTo(mag(ECI_SUN), 12);
+  });
+
+  it("does not mutate the input", () => {
+    const input: Vec3 = [0.6, 0, 0.8];
+    displayDirection({ kind: "bodyFixed", era: 0.9 }, input);
+    expect(input).toEqual([0.6, 0, 0.8]);
+  });
+
+  it("depends on the frame's rotation, not its origin", () => {
+    // The invariant behind keying the Sun direction's memo on the rotation
+    // alone: a satellite-centred origin moves with every sample, and moving it
+    // must not change a single direction.
+    const { r, v } = orbitState(7000, 2.4, 0.5);
+    const axes = computeLvlhAxes(r, v);
+    if (axes == null) throw new Error("degenerate orbit");
+    expect(displayDirection({ kind: "localOrbital", origin: r, axes }, ECI_SUN)).toEqual(
+      displayDirection({ kind: "localOrbital", origin: [0, 0, 0], axes }, ECI_SUN),
+    );
+    expect(displayDirection({ kind: "inertial", origin: r }, ECI_SUN)).toEqual(
+      displayDirection({ kind: "inertial", origin: null }, ECI_SUN),
+    );
   });
 });
 
@@ -322,6 +369,62 @@ describe("resolveDisplayFrame", () => {
     expect(resolveDisplayFrame(SAT_LVLH_FRAME, { originPosition: r, lvlhAxes: axes }).kind).toBe(
       "localOrbital",
     );
+  });
+
+  it("keeps the local-orbital transform when an ERA is also available", () => {
+    // A satellite-centred LVLH view re-bases the data; the central body's
+    // rotation must not also be applied on top of it.
+    const { r, v } = orbitState(7000, 2.1, 0.9);
+    const axes = computeLvlhAxes(r, v);
+    if (axes == null) throw new Error("degenerate orbit");
+    expect(
+      resolveDisplayFrame(SAT_LVLH_FRAME, { era: Math.PI / 3, originPosition: r, lvlhAxes: axes })
+        .kind,
+    ).toBe("localOrbital");
+  });
+
+  it("resolves through resolveDisplayOrientation for every frame", () => {
+    // resolveDisplayFrame derives the orientation from the reference frame and
+    // then defers to the shared kernel — the same kernel the attitude view calls
+    // with an orientation alone. Pin the two so the views cannot diverge.
+    const { r, v } = orbitState(7100, 0.7, 0.35);
+    const axes = computeLvlhAxes(r, v);
+    if (axes == null) throw new Error("degenerate orbit");
+    const cases: {
+      frame: ReferenceFrame;
+      orientation: DisplayOrientation;
+      inputs: DisplayFrameInputs;
+    }[] = [
+      { frame: ECEF_FRAME, orientation: "bodyFixed", inputs: { era: 1.4 } },
+      { frame: ECEF_FRAME, orientation: "bodyFixed", inputs: { era: null } },
+      // Non-finite ERA. The gate is `era != null`, so these reach the kernel as
+      // they did before the wrapper existed; a refactor of floating-point code
+      // has to say what it does with them rather than leave it to be discovered.
+      { frame: ECEF_FRAME, orientation: "bodyFixed", inputs: { era: Number.NaN } },
+      { frame: ECEF_FRAME, orientation: "bodyFixed", inputs: { era: Number.POSITIVE_INFINITY } },
+      { frame: ECEF_FRAME, orientation: "bodyFixed", inputs: { era: Number.NEGATIVE_INFINITY } },
+      { frame: ECI_FRAME, orientation: "inertial", inputs: { era: 1.4 } },
+      { frame: ECI_FRAME, orientation: "inertial", inputs: { originPosition: r } },
+      {
+        frame: SAT_LVLH_FRAME,
+        orientation: "localOrbital",
+        inputs: { originPosition: r, lvlhAxes: axes },
+      },
+      { frame: SAT_LVLH_FRAME, orientation: "inertial", inputs: { originPosition: r } },
+      // A body-fixed frame without an ERA cannot rotate, so the local-orbital
+      // geometry (if any) still decides — the ERA gate is part of choosing the
+      // orientation, not only of granting it.
+      {
+        frame: ECEF_FRAME,
+        orientation: "localOrbital",
+        inputs: { era: null, originPosition: r, lvlhAxes: axes },
+      },
+    ];
+    for (const { frame, orientation, inputs } of cases) {
+      expect(resolveDisplayFrame(frame, inputs)).toEqual(
+        resolveDisplayOrientation(orientation, inputs),
+      );
+    }
   });
 });
 
