@@ -98,11 +98,19 @@ export function AttitudeSceneContents({
     ? (spanNormalizedModelScale(modelConfig, span) ?? undefined)
     : undefined;
 
-  const shape = resolveMarkerShape({
-    override: markerShape,
-    globalDefault: defaultMarkerShape,
-    hasAttitude: quaternion != null,
-  });
+  // Without a usable attitude, nothing drawn may imply one. An explicit shape —
+  // or the app's default, which the `satShape` URL param persists — outranks
+  // `hasAttitude` in `resolveMarkerShape`, so the orientation-revealing cube
+  // would be drawn at identity and read as a measured attitude. The sphere is the
+  // one marker that looks the same from every side.
+  const shape: MarkerShape =
+    quaternion == null
+      ? "sphere"
+      : resolveMarkerShape({
+          override: markerShape,
+          globalDefault: defaultMarkerShape,
+          hasAttitude: true,
+        });
 
   return (
     <>
