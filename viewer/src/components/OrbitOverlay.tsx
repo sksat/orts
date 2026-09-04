@@ -43,6 +43,12 @@ export interface OrbitOverlayProps {
    * drops is lying.
    */
   drawableVectorKinds: readonly DirectionVectorKind[];
+  /**
+   * Why the Sun is unavailable, when it is. The app owns the wording because it
+   * knows which of the two reasons applies — no epoch, or a central body arika
+   * cannot place.
+   */
+  sunUnavailable?: string;
 }
 
 /**
@@ -71,6 +77,7 @@ export function OrbitOverlay({
   onDirectionVectorsChange,
   centredSatelliteId,
   drawableVectorKinds,
+  sunUnavailable,
 }: OrbitOverlayProps) {
   const noCentre = centredSatelliteId == null ? "Centre on a satellite to draw it" : undefined;
   return (
@@ -93,7 +100,7 @@ export function OrbitOverlay({
         value={directionVectors}
         onChange={onDirectionVectorsChange}
         unavailable={{
-          sun: noCentre ?? (drawableVectorKinds.includes("sun") ? undefined : "Requires epoch"),
+          sun: noCentre ?? (drawableVectorKinds.includes("sun") ? undefined : sunUnavailable),
           nadir:
             noCentre ??
             (drawableVectorKinds.includes("nadir") ? undefined : "Requires a non-zero position"),
