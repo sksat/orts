@@ -213,7 +213,10 @@ export interface OrbitSceneDataProps {
   atmosphereScale?: "visual" | "physical" | "auto";
   /**
    * Reference-direction arrows (Sun, nadir) to draw. Omitted — the default —
-   * draws none.
+   * draws none, and each field is opt-in: `{ sun: true }` draws the Sun alone.
+   * (The attitude view reads the same type the other way round, drawing every
+   * direction it can unless one is switched off, because arrows are what that
+   * view is for.)
    *
    * Drawn only when the reference frame is centred on a satellite, and only at
    * that satellite. This view can hold many satellites, and a pair of arrows on

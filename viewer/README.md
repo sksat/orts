@@ -99,7 +99,8 @@ draws, at the **centred satellite**:
 />;
 ```
 
-Omitting the prop — the default — draws none. A central-body view draws none
+Omitting the prop — the default — draws none, and each field is opt-in:
+`{ sun: true }` draws the Sun and not nadir. A central-body view draws none
 either way: the body itself is on screen, so a nadir arrow repeats what the
 picture already shows, and a pair of arrows on every satellite fills the screen.
 The Sun arrow needs `epochJd`; without it the arrow is dropped rather than
