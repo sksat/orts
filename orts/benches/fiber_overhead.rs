@@ -135,7 +135,12 @@ fn bench_async_update(c: &mut Criterion) {
 
     let mut cache = WasmPluginCache::new().expect("cache");
     let mut ctrl = cache
-        .build_async_controller(&path, "bench-async", PD_RW_CONFIG)
+        .build_async_controller(
+            &path,
+            "bench-async",
+            PD_RW_CONFIG,
+            arika::body::KnownBody::Earth,
+        )
         .expect("build_async_controller");
 
     let spacecraft = dummy_spacecraft();
