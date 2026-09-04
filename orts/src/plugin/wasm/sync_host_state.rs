@@ -17,7 +17,6 @@ use std::collections::VecDeque;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
-
 use super::stream_state::{
     DEFAULT_STREAM_CAPACITY, ReadOutcome, StreamDelivery, Streams, WriteOutcome,
 };
