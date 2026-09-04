@@ -861,6 +861,59 @@ mod tests {
         );
     }
 
+    /// `eval` drops a panel within the force cutoff of edge-on, and keeps one
+    /// just outside it.
+    ///
+    /// The cutoff lives in `eval`, so a test that only calls `lit_region`
+    /// cannot see it. It is a force cutoff rather than a facing test: the old
+    /// comparison was against zero, which every one of these panels passes.
+    #[test]
+    fn eval_drops_a_panel_inside_the_force_cutoff() {
+        let epoch = test_epoch();
+        let state = iss_state();
+        let s_body = sat_to_sun_unit(&epoch);
+        let optics = PanelOptics::new(0.1, 0.2);
+        let across = s_body.cross(&Vector3::new(0.0, 0.0, 1.0)).normalize();
+
+        // A panel tilted from edge-on by the given cosine, off the CoM so it
+        // would torque as well as push.
+        let tilted = |cos: f64| {
+            let normal = (across * (1.0 - cos * cos).sqrt() + s_body * cos).normalize();
+            SurfacePanel::rectangle(
+                [1.0, 1.0],
+                normal.cross(&s_body).normalize(),
+                normal,
+                2.2,
+                optics,
+            )
+            .with_cp_offset(across * 3.0)
+        };
+        let loads_of = |panel: SurfacePanel| {
+            PanelSrp::for_earth(SpacecraftShape::panels(vec![panel])).eval(
+                0.0,
+                &state,
+                Some(&epoch),
+            )
+        };
+
+        for cos in [0.0, MIN_FORCE_COSINE / 2.0] {
+            let loads = loads_of(tilted(cos));
+            assert_eq!(
+                loads.acceleration_inertial.into_inner(),
+                Vector3::zeros(),
+                "a panel at n·s = {cos} is inside the cutoff"
+            );
+            assert_eq!(loads.torque_body.into_inner(), Vector3::zeros());
+        }
+        // Ten times the cutoff still leaves a force, so the boundary is where
+        // it is stated to be and not a decade out.
+        let loads = loads_of(tilted(MIN_FORCE_COSINE * 10.0));
+        assert!(
+            loads.acceleration_inertial.magnitude() > 0.0,
+            "a panel outside the cutoff has to keep its force"
+        );
+    }
+
     /// The shaded panel is excluded by `PanelSrp::eval`, not just by
     /// `lit_region` called on its own.
     ///

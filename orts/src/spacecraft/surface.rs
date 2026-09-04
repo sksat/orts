@@ -89,19 +89,19 @@ impl PanelOptics {
 ///
 /// A panel needs none of this to produce a force: the flat-plate law uses the
 /// projected area, the normal and the optics, and never the boundary. It is
-/// here so that one panel can be found to cover another completely, seen from
-/// the Sun or the flow, which needs the boundary and nothing else.
+/// here so that the shadow one panel casts on another can be worked out, seen
+/// from the Sun or the flow, which needs the boundary and nothing else. How
+/// much of a panel is left lit and where that part is centred then follows
+/// from the outlines alone.
 ///
 /// An enum because the shapes will not stay one: a mesh read from CAD gives
 /// triangles. Three operations know the shapes — `SurfacePanel::corners_into`,
-/// which lists the corners, `SurfacePanel::outline_contains`, which answers
-/// whether a point is inside, and
+/// which lists the corners, `SurfacePanel::in_plane_axes`, which gives the axes
+/// the corners and the plane coordinates are built from, and
 /// `SpacecraftShape::assert_outlines_are_consistent`, which checks a shape's
 /// own invariants — so a new shape means a new arm in each of those and
 /// nothing else. Each of the three destructures this enum without a fallback
 /// arm, so a new variant that misses one of them does not compile.
-/// Containment cannot be derived from the corners: a triangle's three corners
-/// span a parallelogram larger than the triangle.
 ///
 /// `#[non_exhaustive]` so that adding a shape stays a minor change: without it
 /// a downstream `match` could be exhaustive today and stop compiling the day a
@@ -222,10 +222,16 @@ impl SurfacePanel {
     /// neither can be normalised. Panics too if the half-extents are not
     /// positive and finite, if their product underflows to zero or overflows to
     /// infinity, or if `in_plane_x` is not perpendicular to `normal` (to within
-    /// 1e-9 after normalisation). An axis off the plane
-    /// describes a rectangle that is not on the panel; projecting it onto the
-    /// plane would build a panel the caller did not ask for, so it is rejected
-    /// instead.
+    /// 1e-9 after normalisation). An axis further off the plane than that
+    /// describes a rectangle that is not on the panel, and turning it into one
+    /// that is would build a panel the caller did not ask for, so it is
+    /// rejected rather than corrected.
+    ///
+    /// Within that slack the axis is stored as given and projected onto the
+    /// plane where the geometry uses it ([`Self::in_plane_axes`]): the slack
+    /// exists for an axis a rounding off perpendicular, and 1e-9 of a
+    /// half-extent is enough to put the corners off the panel's own plane by
+    /// far more than the shadow arithmetic can tell from a real gap.
     pub fn rectangle(
         half_extent: [f64; 2],
         in_plane_x: Vector3<f64>,
@@ -1513,6 +1519,48 @@ mod tests {
         assert!(
             loads.acceleration_inertial.magnitude() > 0.0,
             "Panel facing flow should produce drag"
+        );
+    }
+
+    /// `eval` drops a panel within the force cutoff of edge-on, and keeps one
+    /// just outside it.
+    ///
+    /// Drag applies the cutoff itself, so this has to be checked here as well
+    /// as on the SRP side or the two can drift apart. The old test for an
+    /// edge-on panel uses an exact zero cosine, which the previous facing
+    /// comparison also rejected, so it cannot tell the two rules apart.
+    #[test]
+    fn eval_drops_a_panel_inside_the_force_cutoff() {
+        // `iss_state` puts the flow along -y, so a panel tilted from edge-on
+        // by `cos` has that as its `n · upstream`.
+        let tilted = |cos: f64| {
+            let normal = (Vector3::x() * (1.0 - cos * cos).sqrt() - Vector3::y() * cos).normalize();
+            SurfacePanel::rectangle(
+                [1.0, 1.0],
+                normal.cross(&Vector3::z()).normalize(),
+                normal,
+                2.2,
+                PanelOptics::absorber(),
+            )
+            .with_cp_offset(Vector3::x() * 3.0)
+        };
+        let loads_of = |panel: SurfacePanel| {
+            PanelDrag::for_earth(SpacecraftShape::panels(vec![panel])).eval(0.0, &iss_state(), None)
+        };
+
+        for cos in [0.0, MIN_FORCE_COSINE / 2.0] {
+            let loads = loads_of(tilted(cos));
+            assert_eq!(
+                loads.acceleration_inertial.into_inner(),
+                Vector3::zeros(),
+                "a panel at n·(-v̂) = {cos} is inside the cutoff"
+            );
+            assert_eq!(loads.torque_body.into_inner(), Vector3::zeros());
+        }
+        let loads = loads_of(tilted(MIN_FORCE_COSINE * 10.0));
+        assert!(
+            loads.acceleration_inertial.magnitude() > 0.0,
+            "a panel outside the cutoff has to keep its force"
         );
     }
 
