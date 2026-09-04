@@ -8,6 +8,8 @@ const arikaReady = initArika();
 import type { TimeRange } from "@sksat/uneri";
 import appStyles from "./App.module.css";
 import { AttitudeOverlay } from "./components/AttitudeOverlay.js";
+import { CameraViewProbe } from "./components/CameraViewProbe.js";
+import { FarPlaneBeyondScene } from "./components/FarPlaneBeyondScene.js";
 import { GraphPanel } from "./components/GraphPanel.js";
 import { InitialCameraFit } from "./components/InitialCameraFit.js";
 import { OrbitOverlay } from "./components/OrbitOverlay.js";
@@ -36,6 +38,7 @@ import { type MarkerShape, readSatShapeParam, writeSatShapeParam } from "./satel
 import { computeLvlhAxes, DEFAULT_CAMERA_POSITION, SCENE_UP } from "./sceneFrame.js";
 import { useSourceRuntime } from "./sources/useSourceRuntime.js";
 import { useWebSocketSource, WS_SOURCE_ID } from "./sources/useWebSocketSource.js";
+import { NOMINAL_SPACECRAFT_SPAN } from "./spacecraftScale.js";
 import { resolveTextureBaseUrl } from "./textureBaseUrl.js";
 import { resolveDefaultWsUrl } from "./utils/defaultWsUrl.js";
 import { finiteOrNull } from "./utils/finite.js";
@@ -773,10 +776,19 @@ export function App() {
           gl={{ logarithmicDepthBuffer: view !== "attitude" }}
           style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%" }}
         >
-          {/* The app asks for the viewer's framing: the constant above is the
+          {/* The app asks for the viewer's framing: the constants above are the
               viewing direction and a starting distance, and the fit settles the
-              distance and the far plane once the canvas has a size. */}
-          {view === "attitude" && <InitialCameraFit fov={ATTITUDE_FOV} reframe />}
+              distance once the canvas has a size. The far plane above is the
+              app's own, so keeping it beyond the spacecraft as the reader dollies
+              out is the app's job — `AttitudeViewer` does the same for the plane
+              it chooses, and neither touches a plane an embedder chose. */}
+          {view === "attitude" && (
+            <>
+              <InitialCameraFit fov={ATTITUDE_FOV} reframe />
+              <FarPlaneBeyondScene span={NOMINAL_SPACECRAFT_SPAN} />
+              <CameraViewProbe />
+            </>
+          )}
           {view === "orbit" ? (
             <OrbitScene
               centralBody={{ id: centralBody, radiusKm: centralBodyRadius }}
