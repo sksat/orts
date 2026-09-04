@@ -65,6 +65,19 @@ async function drawnArrows(page: Page): Promise<Drawn[]> {
 }
 
 /**
+ * Wait until the arika WASM has loaded.
+ *
+ * Before it does, a body-fixed frame falls back to inertial and no body has a
+ * Sun direction — the same picture the fallbacks produce on purpose. A test about
+ * either has to start from readiness, or it passes for the wrong reason.
+ */
+async function waitForArika(page: Page) {
+  await expect
+    .poll(() => page.evaluate(() => window.__fixture_arika_ready?.() ?? false), { timeout: 15000 })
+    .toBe(true);
+}
+
+/**
  * Wait until exactly these arrow kinds are drawn.
  *
  * The Sun's arrow appears only once the arika WASM has loaded — the scene asks
@@ -143,6 +156,11 @@ test("a body-fixed request for a body the viewer cannot rotate falls back", asyn
   // picture rather than a missing one. The fallback is inertial, where +90° about
   // Z still puts body +X on scene +Y.
   await open(page, `orientation=bodyFixed&body=mars&epoch=${EPOCH}`);
+  // Mars has an ephemeris, so its Sun arrow appearing says the module is loaded:
+  // without that wait this would read the pre-WASM inertial fallback and pass
+  // even if a loaded Mars were rotated by Earth's angle.
+  await waitForArika(page);
+  await expectArrows(page, ["sun"]);
   const bodyX = await bodyAxisInScene(page, 0);
   expect(bodyX[1]).toBeCloseTo(1, 2);
 });
@@ -151,9 +169,13 @@ test("a body with no Sun ephemeris draws no Sun arrow", async ({ page }) => {
   // Uranus has no elements in arika, and `sun_direction_from_body` answers +X
   // there — a guess the view must not draw.
   await open(page, `body=uranus&epoch=${EPOCH}&position=${POSITION}`);
+  // In *this* document: the module is loaded, and the Sun arrow is still absent.
+  // Checking Earth in a later document would prove nothing about this one, since
+  // every body lacks the arrow until arika arrives.
+  await waitForArika(page);
   await expectArrows(page, ["nadir"]);
-  // With Earth as the central body the same page draws the Sun, so the absence
-  // above is the ephemeris check and not a scene that failed to mount.
+
+  // Earth, for contrast: the same page does draw the Sun once loaded.
   await open(page, `body=earth&epoch=${EPOCH}&position=${POSITION}`);
   await expectArrows(page, ["nadir", "sun"]);
 });

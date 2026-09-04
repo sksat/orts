@@ -94,25 +94,51 @@ function InitialCameraFit({ fov }: { fov: number }) {
  * />
  * ```
  */
+/** The camera settings an embedder may pass through `canvas`. */
+type CameraProps = NonNullable<AttitudeViewerProps["canvas"]>["camera"];
+
+/** Near plane the default framing uses, in spacecraft spans. */
+const DEFAULT_NEAR = 0.01;
+
+/** Far plane; `InitialCameraFit` pushes it out when it moves the camera. */
+const DEFAULT_FAR = 100;
+
+/**
+ * The caller's projection settings, or the defaults where they name no frustum.
+ *
+ * Every one of these reaches `PerspectiveCamera` directly and degenerates its
+ * projection matrix on its own: a `zoom` of 0 or NaN, a `near` at or below zero,
+ * a `far` inside the near plane. The result is a blank canvas that no distance
+ * fitted for it can repair, so they are checked here rather than trusted.
+ */
+function usableProjection(camera: CameraProps) {
+  const positive = (value: number | undefined, fallback: number) =>
+    value != null && Number.isFinite(value) && value > 0 ? value : fallback;
+  const near = positive(camera?.near, DEFAULT_NEAR);
+  const far = positive(camera?.far, DEFAULT_FAR);
+  return {
+    fov: usableFovDegrees(camera?.fov),
+    zoom: positive(camera?.zoom, 1),
+    near,
+    // A far plane inside the near one has no volume between them to draw.
+    far: far > near ? far : Math.max(DEFAULT_FAR, near * 2),
+  };
+}
+
 export function AttitudeViewer({ className, style, canvas, ...sceneProps }: AttitudeViewerProps) {
-  // The camera and the distance fitted for it read the field of view through the
-  // same guard: a value no camera can project with would otherwise reach the
-  // `PerspectiveCamera` itself and blank the canvas, however sound the distance.
-  const fov = usableFovDegrees(canvas?.camera?.fov);
+  const projection = usableProjection(canvas?.camera);
   return (
     <div className={className} style={{ width: "100%", height: "100%", ...style }}>
       <Canvas
         camera={{
           position: DEFAULT_CAMERA_POSITION,
           up: SCENE_UP,
-          near: 0.01,
-          far: 100,
           ...canvas?.camera,
-          fov,
+          ...projection,
         }}
         gl={{ ...canvas?.gl }}
       >
-        {canvas?.camera?.position == null && <InitialCameraFit fov={fov} />}
+        {canvas?.camera?.position == null && <InitialCameraFit fov={projection.fov} />}
         <AttitudeScene {...sceneProps} />
       </Canvas>
     </div>

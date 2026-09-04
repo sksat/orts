@@ -23,9 +23,24 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import type { AttitudeFrame, MarkerShape, Quat, Vec3 } from "../src/lib/index.js";
-import { AttitudeViewer } from "../src/lib/index.js";
+import { AttitudeViewer, isArikaReady } from "../src/lib/index.js";
 
 const params = new URLSearchParams(window.location.search);
+
+/**
+ * Whether the arika WASM has loaded, for a test that has to tell "not yet" from
+ * "not available".
+ *
+ * Several fallbacks look alike before the module arrives: a body-fixed frame
+ * falls back to inertial, and no body has a Sun direction. A test asserting one
+ * of those has to wait for readiness first, or it passes on the wrong reason.
+ */
+declare global {
+  interface Window {
+    __fixture_arika_ready?: () => boolean;
+  }
+}
+window.__fixture_arika_ready = () => isArikaReady();
 
 function numbers(name: string): number[] | undefined {
   const raw = params.get(name);
