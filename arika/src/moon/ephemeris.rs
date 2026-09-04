@@ -280,20 +280,26 @@ pub(crate) fn moon_position_mean_of_date(epoch: &Epoch<Tdb>) -> Vec3<frame::Mean
 /// single source of truth.
 ///
 /// The default `velocity_eci` implementation uses a central finite difference
-/// (±1 second) over `position_eci`. Tabulated sources (e.g. Hermite-interpolated
-/// Horizons data) that can provide velocity more accurately should override it.
+/// (±1 SI second) over `position_eci`. Tabulated sources (e.g.
+/// Hermite-interpolated Horizons data) that can provide velocity more
+/// accurately should override it.
 pub trait MoonEphemeris: Send + Sync {
     /// Moon position in ECI [km] at the given epoch.
     fn position_eci(&self, epoch: &Epoch) -> Vec3<frame::Gcrs>;
 
     /// Moon velocity in ECI [km/s] at the given epoch.
     ///
-    /// Default: central finite difference over `position_eci` with a 1-second
-    /// step. Override for sources that can supply analytic velocity.
+    /// Default: central finite difference over `position_eci` with a 1 SI
+    /// second step. Override for sources that can supply analytic velocity.
     fn velocity_eci(&self, epoch: &Epoch) -> Vec3<frame::Gcrs> {
         let dt = 1.0;
-        let r_plus = self.position_eci(&epoch.add_seconds(dt));
-        let r_minus = self.position_eci(&epoch.add_seconds(-dt));
+        // `add_si_seconds` rather than `add_seconds`: the divisor below is the
+        // interval between the two samples, so that interval has to be SI
+        // seconds. UTC labels do not advance uniformly across a leap second, and
+        // the naive UTC-JD step puts the samples 3 s apart there while still
+        // dividing by 2.
+        let r_plus = self.position_eci(&epoch.add_si_seconds(dt));
+        let r_minus = self.position_eci(&epoch.add_si_seconds(-dt));
         (r_plus - r_minus) / (2.0 * dt)
     }
 
@@ -520,6 +526,43 @@ mod tests {
                 dist > 340_000.0 && dist < 420_000.0,
                 "Moon distance at JD {} should be 340k-420k km, got {dist:.0} km",
                 epoch.jd()
+            );
+        }
+    }
+
+    /// The default velocity keeps its physical magnitude across a leap second.
+    ///
+    /// `velocity_eci` is a central difference over `position_eci`, so the
+    /// interval between its two samples has to be 2 SI seconds wherever it is
+    /// evaluated. UTC labels do not advance uniformly across a leap second: at
+    /// the end of 2016-12-31 one extra second was inserted, so an epoch within
+    /// a second of that boundary has its two samples 3 SI seconds apart while
+    /// the difference is still divided by 2.
+    ///
+    /// The oracle is the Moon's own orbital speed, which does not depend on how
+    /// the velocity is computed. At the four epochs below it is 1.0075 km/s, and
+    /// over June 2024 — spanning apogee and perigee — it ran 0.9675 to 1.0626
+    /// km/s. The bound asserted below, 0.96 to 1.08 km/s, contains that measured
+    /// range with margin and sits far under what the UTC-JD step produced here:
+    /// 1.511 km/s, against 1.008 km/s a second either side, which is exactly the
+    /// 3/2 the mismatched interval predicts.
+    #[test]
+    fn moon_velocity_is_physical_across_a_leap_second() {
+        // 2016-12-31T23:59:60Z was a leap second. Both epochs below sit within
+        // one second of it, so the ±1 s samples straddle it.
+        for (y, mo, d, h, mi, s) in [
+            (2016, 12, 31, 23, 59, 59.0),
+            (2017, 1, 1, 0, 0, 0.0),
+            // A second further out, where no sample crosses the boundary.
+            (2016, 12, 31, 23, 58, 0.0),
+            (2017, 1, 1, 0, 1, 0.0),
+        ] {
+            let epoch = Epoch::from_gregorian(y, mo, d, h, mi, s);
+            let speed = MeeusMoonEphemeris.velocity_eci(&epoch).into_inner().norm();
+            assert!(
+                (0.96..1.08).contains(&speed),
+                "{y}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:04.1}Z: the Moon's speed is \
+                 0.96-1.08 km/s, got {speed:.6} km/s"
             );
         }
     }
@@ -783,9 +826,13 @@ $$EOE
             2,
             "default velocity_eci should call position_eci exactly twice"
         );
-        // The offsets must be ±1 second from the base epoch. The tolerance
-        // reflects the ~50 microsecond precision of `Epoch::add_seconds` at
-        // modern JDs (f64 ULP on ~2.46e6 JD ≈ 5e-10 days ≈ 50 µs).
+        // The offsets must be ±1 second from the base epoch, read here off the
+        // UTC JD. The tolerance reflects the ~50 microsecond resolution of that
+        // JD at modern epochs (f64 ULP on ~2.46e6 JD ≈ 5e-10 days ≈ 50 µs).
+        // 2024-03-20 has no leap second within a second of it, so the SI step
+        // `velocity_eci` takes and the UTC label agree to that resolution;
+        // `moon_velocity_is_physical_across_a_leap_second` covers where they
+        // do not.
         let mut offsets = ephem.last_offsets.lock().unwrap().clone();
         offsets.sort_by(|a, b| a.partial_cmp(b).unwrap());
         assert!(
