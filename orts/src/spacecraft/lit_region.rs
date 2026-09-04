@@ -882,7 +882,16 @@ mod tests {
         let mut worst_residue = 0.0f64;
         for i in 0..400 {
             let a = 0.017 * i as f64;
-            let normal = Vector3::new(a.cos(), (1.3 * a).sin(), (0.7 * a + 0.4).cos()).normalize();
+            // Every fourth orientation puts the normal on an axis, where the
+            // corner arithmetic cancels exactly and the tolerance goes to zero
+            // with it. Residue and tolerance both come from the normal's
+            // components, so they scale together and neither family is the
+            // dangerous one on its own.
+            let normal = if i % 4 == 0 {
+                Vector3::z()
+            } else {
+                Vector3::new(a.cos(), (1.3 * a).sin(), (0.7 * a + 0.4).cos()).normalize()
+            };
             let u = normal.cross(&Vector3::new(0.2, 0.8, -0.1)).normalize();
             let front = SurfacePanel::rectangle([1.0, 1.0], u, normal, 2.2, optics());
             let back = front.back_face(optics());
