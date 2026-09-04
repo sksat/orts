@@ -103,7 +103,9 @@ export function OrbitOverlay({
           sun: noCentre ?? (drawableVectorKinds.includes("sun") ? undefined : sunUnavailable),
           nadir:
             noCentre ??
-            (drawableVectorKinds.includes("nadir") ? undefined : "Requires a non-zero position"),
+            (drawableVectorKinds.includes("nadir")
+              ? undefined
+              : "Requires a finite, non-zero position"),
         }}
       />
       {orbitInfo && (
