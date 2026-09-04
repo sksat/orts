@@ -105,7 +105,11 @@ jobs:
         run: pnpm format:check
 
       - name: Lint
-        run: pnpm exec biome lint .
+        # `pnpm lint` is `biome check .`, which is what CLAUDE.md tells a
+        # contributor to run before committing. `biome lint` alone skips Biome's
+        # assists (import ordering among them), so the gate here was narrower
+        # than the one locally and let assist-only diagnostics through.
+        run: pnpm lint
 
   # Supply-chain gate for the Rust side. Renovate's `minimumReleaseAge` cooldown
   # keeps a freshly published version out of the lockfile; this job is the

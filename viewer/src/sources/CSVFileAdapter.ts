@@ -9,9 +9,9 @@
  */
 
 import type { CSVMetadata } from "../orbit.js";
-import type { CSVWorkerMessage } from "./csvParseLogic.js";
 import type { BodyCatalog } from "./bodyCatalog.js";
 import { type CentralBody, describeCentralBodyError, resolveCentralBody } from "./centralBody.js";
+import type { CSVWorkerMessage } from "./csvParseLogic.js";
 import { csvMetadataToSimInfo } from "./normalizeMetadata.js";
 import type { SourceAdapter, SourceEventHandler, SourceId } from "./types.js";
 
