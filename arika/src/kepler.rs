@@ -742,9 +742,12 @@ mod tests {
     /// The returned E solves the equation it is named for, over the whole
     /// eccentricity range the signature accepts.
     ///
-    /// The oracle is Kepler's equation itself — `E - e·sin(E) - M`, which the
-    /// solver does not compute a residual of — so this does not compare the
-    /// solver against itself the way a `ν → M → ν` round-trip does.
+    /// The oracle is Kepler's equation itself, written here as the plain
+    /// `E - e·sin(E) - M`. The solver evaluates the same quantity rearranged
+    /// as `(1-e)·E + e·(E - sin(E)) - M`, and stops on the size of its Newton
+    /// step rather than on that residual. Asserting the residual therefore
+    /// checks a quantity the iteration never checks against a threshold of its
+    /// own, which a `ν → M → ν` round-trip does not do.
     ///
     /// `test_kepler_equation_high_eccentricity` samples one point, `e = 0.99`
     /// with `M = 1.0`, which Newton reaches from `E₀ = M` in a few steps. The
