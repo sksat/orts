@@ -37,7 +37,13 @@ function letterTexture(letter: string, color: number): THREE.Texture {
     // Outline first: a letter over a bright 3D model needs its own contrast, and
     // the scene's background cannot be relied on behind it.
     ctx.lineWidth = TEXTURE_SIZE * 0.1;
-    ctx.strokeStyle = "rgba(0, 0, 0.85)";
+    // Hex with alpha rather than `rgba(0, 0, 0, 0.85)`: `shadcn add` rewrites
+    // colour functions, and it drops a component from this one, leaving
+    // `rgba(0, 0, 0.85)` in a consumer's copy. Canvas ignores an invalid
+    // `strokeStyle` and keeps the previous one, so the outline the installed
+    // registry item draws would not be the one written here. The registry item
+    // itself carries the source unchanged; the mangling is in the install step.
+    ctx.strokeStyle = "#000000d9";
     ctx.strokeText(letter, TEXTURE_SIZE / 2, TEXTURE_SIZE * 0.54);
     ctx.fillStyle = axisColorCss(color);
     ctx.fillText(letter, TEXTURE_SIZE / 2, TEXTURE_SIZE * 0.54);
