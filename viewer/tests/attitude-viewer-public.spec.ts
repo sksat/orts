@@ -267,6 +267,22 @@ test("a near plane the scene cannot be resolved against falls back to the defaul
   expect(view.near).toBeLessThan(distance - drawnExtentForSpan(NOMINAL_SPACECRAFT_SPAN));
 });
 
+test("an extreme zoom leaves the camera somewhere Three.js can measure", async ({ page }) => {
+  // `zoom: 1e200` builds a finite projection matrix, so the prop guard passes it
+  // — and it narrows the effective field of view to 5.3e-199°, which the fit
+  // would answer with a distance of 6.5e200 spans. Three.js measures a position
+  // by summing its squared components, so that distance overflows the length and
+  // the far plane derived from it becomes infinite. The view stays at the framing
+  // it was built with instead.
+  await open(page, `epoch=${EPOCH}&zoom=1e200&controls=0`);
+  const view = await cameraView(page);
+  const distance = Math.hypot(...view.position);
+  expect(Number.isFinite(distance), `camera at ${view.position}`).toBe(true);
+  expect(Number.isFinite(view.far), `far plane ${view.far}`).toBe(true);
+  expect(view.far).toBeGreaterThan(distance);
+  expect(distance).toBeGreaterThan(0);
+});
+
 test("a body with no Sun ephemeris draws no Sun arrow", async ({ page }) => {
   // Uranus has no elements in arika, and `sun_direction_from_body` answers +X
   // there — a guess the view must not draw.

@@ -60,7 +60,16 @@ function InitialCameraFit({ fov }: { fov: number }) {
       camera instanceof PerspectiveCamera ? camera.near : 0,
     );
     const current = camera.position.length();
-    if (current > 0 && needed > current) camera.position.multiplyScalar(needed / current);
+    // Applying the fit has to leave a position Three.js can still measure. It
+    // sums the squared components, so a distance past about 1.3e154 overflows the
+    // length — and the far plane derived from it just below would become
+    // infinite. A `zoom` of 1e200 asks for exactly that: an effective field of
+    // view of 5.3e-199° fits from 6.5e200 spans away. The camera keeps the
+    // framing it was built with instead, which is drawable at any zoom.
+    const placeable = Number.isFinite(needed * needed);
+    if (placeable && current > 0 && needed > current) {
+      camera.position.multiplyScalar(needed / current);
+    }
 
     // A narrow field of view fits from far away — 1° needs some 345 spans — and
     // the default far plane would then cut the scene off in front of the
