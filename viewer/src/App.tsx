@@ -46,6 +46,7 @@ import {
   writeTimeRangeParam,
   writeViewParam,
 } from "./utils/urlParams.js";
+import { has_sun_ephemeris } from "./wasm/arikaInit.js";
 
 const DEFAULT_WS_URL: string = resolveDefaultWsUrl({
   explicitWsUrl: import.meta.env.VITE_WS_URL,
@@ -390,6 +391,17 @@ export function App() {
   // arrow that nothing draws.
   const epoch = finiteOrNull(epochJd);
 
+  // The scenes draw the Sun only when arika can place this central body: for one
+  // it cannot, `sun_direction_from_body` answers +X — the vernal equinox — and
+  // that guess must not be drawn. Deciding here from the same predicate keeps the
+  // control and the legend agreeing with the picture.
+  const sunIsComputable = epoch != null && has_sun_ephemeris(centralBody);
+  const sunUnavailableReason = sunIsComputable
+    ? undefined
+    : epoch == null
+      ? "Requires epoch"
+      : "No Sun ephemeris for this central body";
+
   // Sim-declared marker shapes (from SatelliteInfo); the viewer can override these.
   const satelliteSimShapes = useMemo(() => {
     if (!simInfo) return undefined;
@@ -546,11 +558,11 @@ export function App() {
     ): readonly DirectionVectorKind[] =>
       resolveDirectionVectors({
         frame: LEGEND_FRAME,
-        sunEci: epoch != null ? SUN_PRESENT : null,
+        sunEci: sunIsComputable ? SUN_PRESENT : null,
         positionEci: position ?? null,
         options,
       }).map((v) => v.kind),
-    [epoch],
+    [sunIsComputable],
   );
 
   /** What the attitude view draws right now — the legend names exactly these. */
@@ -695,6 +707,7 @@ export function App() {
               onDirectionVectorsChange={setDirectionVectors}
               centredSatelliteId={centredSatelliteId}
               drawableVectorKinds={orbitDrawableKinds}
+              sunUnavailable={sunUnavailableReason}
             />
           ) : (
             <AttitudeOverlay
@@ -715,7 +728,7 @@ export function App() {
                     ? "Requires epoch"
                     : undefined
               }
-              sunUnavailable={epoch == null ? "Requires epoch" : undefined}
+              sunUnavailable={sunUnavailableReason}
               nadirUnavailable={
                 attitudeDrawableKinds.includes("nadir") ? undefined : "Requires a non-zero position"
               }
