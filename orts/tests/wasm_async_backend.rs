@@ -89,7 +89,7 @@ fn async_backend_single_satellite() {
 
     let config = r#"{"kp":1.0,"kd":2.0,"sample_period":0.1}"#;
     let mut ctrl = cache
-        .build_async_controller(&path, "sat0", config)
+        .build_async_controller(&path, "sat0", config, arika::body::KnownBody::Earth)
         .expect("build_async_controller must succeed");
 
     assert!(
@@ -137,7 +137,12 @@ fn run_multi_satellite(n_sats: usize, n_ticks: usize) {
         .map(|i| {
             let config = r#"{"kp":1.0,"kd":2.0,"sample_period":0.1}"#;
             cache
-                .build_async_controller(&path, &format!("sat{i}"), config)
+                .build_async_controller(
+                    &path,
+                    &format!("sat{i}"),
+                    config,
+                    arika::body::KnownBody::Earth,
+                )
                 .unwrap_or_else(|e| panic!("spawn sat{i}: {e}"))
         })
         .collect();
@@ -186,7 +191,7 @@ fn async_backend_drop_during_wait() {
 
     let config = r#"{"kp":1.0,"kd":2.0,"sample_period":0.1}"#;
     let ctrl = cache
-        .build_async_controller(&path, "droptest", config)
+        .build_async_controller(&path, "droptest", config, arika::body::KnownBody::Earth)
         .expect("build_async_controller");
     drop(ctrl);
     // If the drop signal did not propagate, the runtime thread would

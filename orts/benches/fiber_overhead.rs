@@ -87,7 +87,13 @@ fn bench_sync_update(c: &mut Criterion) {
     let component = Component::new(engine.inner(), &wasm_bytes).expect("Component compile");
     let pre = WasmController::prepare(&engine, &component).expect("prepare");
 
-    let mut ctrl = WasmController::new(&pre, "bench-sync", PD_RW_CONFIG).expect("new");
+    let mut ctrl = WasmController::new(
+        &pre,
+        "bench-sync",
+        PD_RW_CONFIG,
+        arika::body::KnownBody::Earth,
+    )
+    .expect("new");
 
     let spacecraft = dummy_spacecraft();
     let sensors = dummy_sensors();

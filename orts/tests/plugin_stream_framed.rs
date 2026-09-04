@@ -62,8 +62,14 @@ fn load() -> Option<WasmController> {
     let pre = WasmController::prepare(&engine, &component).expect("prepare must succeed");
     // The FSW is wired to a single "comlink" stream (declared at construction).
     Some(
-        WasmController::new_with_streams(&pre, "stream-test", "", vec![STREAM.to_string()])
-            .expect("new must succeed"),
+        WasmController::new_with_streams(
+            &pre,
+            "stream-test",
+            "",
+            vec![STREAM.to_string()],
+            arika::body::KnownBody::Earth,
+        )
+        .expect("new must succeed"),
     )
 }
 

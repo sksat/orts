@@ -22,6 +22,7 @@
 //!         "plugin-sdk/examples/bdot-finite-diff/target/wasm32-wasip1/release/guest.wasm".as_ref(),
 //!         &format!("sat{i}"),
 //!         "",
+//!         arika::body::KnownBody::Earth,
 //!     )?;
 //!     // use ctrl ...
 //! }

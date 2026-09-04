@@ -139,7 +139,8 @@ fn run_case<F: MagneticFieldModel + 'static>(
 
     let field_arc: Arc<dyn MagneticFieldModel> = Arc::new(make_field());
 
-    let mut ctrl = WasmController::new(pre, label, &config).expect("WasmController::new failed");
+    let mut ctrl = WasmController::new(pre, label, &config, arika::body::KnownBody::Earth)
+        .expect("WasmController::new failed");
     let mut bundle = ActuatorBundle::new();
 
     let mut sensor_bundle = SensorBundle {
