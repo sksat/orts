@@ -308,8 +308,8 @@ impl SurfacePanel {
             }) => {
                 let d = point - self.cp_offset;
                 let y = self.normal.cross(&in_plane_x);
-                d.dot(&in_plane_x).abs() <= hx + OUTLINE_EDGE_EPS
-                    && d.dot(&y).abs() <= hy + OUTLINE_EDGE_EPS
+                d.dot(&in_plane_x).abs() <= hx * (1.0 + OUTLINE_EDGE_TOLERANCE)
+                    && d.dot(&y).abs() <= hy * (1.0 + OUTLINE_EDGE_TOLERANCE)
             }
         }
     }
@@ -562,13 +562,22 @@ impl SpacecraftShape {
 /// plane, from shadowing each other.
 const OCCLUSION_DEPTH_EPS: f64 = 1e-9;
 
-/// How far outside an outline a corner may fall and still count as inside [m].
+/// How far outside an outline a corner may fall and still count as inside, as
+/// a fraction of the half-extent it is compared against.
 ///
-/// Absolute, so its size relative to the panel varies: 1 nm is 2e-7 of a 1 cm
-/// panel's half-extent and 1e-10 of a 10 m one. Either way it is a nanometre —
-/// far below any geometry a spacecraft model states on purpose — and it stops a
-/// shadow from flickering as a corner grazes an edge.
-const OUTLINE_EDGE_EPS: f64 = 1e-9;
+/// One part in a billion, which is a nanometre on a one-metre panel. A corner
+/// grazing an edge needs it: with an in-plane axis whose components are inexact,
+/// a third of the corners of an exactly-covering caster land outside by up to
+/// 4.8e-16 of the half-extent (measured over 3600 axis angles), so an exact
+/// comparison would report a shadow or no shadow depending on the angle.
+///
+/// A fraction rather than a length because `rectangle` accepts half-extents
+/// down to `1e-150`, and an absolute nanometre would describe such a panel as
+/// 141 orders of magnitude wider than it is, letting it swallow targets it
+/// could never cover. Scaling down instead makes a panel that small fail
+/// containment, which reports no shadow — the direction that keeps a real force
+/// rather than removing one.
+const OUTLINE_EDGE_TOLERANCE: f64 = 1e-9;
 
 /// Whether every corner of `panel` lies behind one other panel, seen from
 /// `upstream`.
@@ -2177,6 +2186,66 @@ mod tests {
             (panel.normal.magnitude() - 1.0).abs() < 1e-15,
             "a computable magnitude has to be accepted, got |n| = {}",
             panel.normal.magnitude()
+        );
+    }
+
+    /// An exactly-sized caster covers the panel even where the arithmetic
+    /// lands the corners a rounding outside its outline.
+    ///
+    /// This is what the edge tolerance is for, and the other cases here do not
+    /// need it: their in-plane axes are axis-aligned, so the dot products are
+    /// exact and the corners land exactly on the boundary. With the axis turned
+    /// to 108.2° the components are inexact, and a sweep of 3600 angles puts
+    /// 4780 of 14400 corners outside by up to 4.8e-16 of the half-extent —
+    /// which is a third of them, so without the tolerance an exactly-covering
+    /// caster would report a shadow or no shadow depending on its angle.
+    #[test]
+    fn an_exactly_sized_caster_covers_the_panel_at_an_inexact_axis() {
+        let normal = Vector3::new(1.0, 0.0, 0.0);
+        let axis = nalgebra::Rotation3::from_axis_angle(
+            &nalgebra::Unit::new_normalize(normal),
+            108.2_f64.to_radians(),
+        ) * Vector3::new(0.0, 1.0, 0.0);
+        let extent = [0.7, 1.3];
+
+        let target = SurfacePanel::rectangle(extent, axis, normal, 2.2, PanelOptics::absorber());
+        // The same plate, exactly, two metres upstream.
+        let caster = SurfacePanel::rectangle(extent, axis, normal, 2.2, PanelOptics::absorber())
+            .with_cp_offset(normal * 2.0);
+
+        let panels = vec![target, caster];
+        assert!(
+            is_fully_occluded(&panels[0], &panels, &normal),
+            "a caster the same size and directly upstream covers the panel"
+        );
+    }
+
+    /// A caster far smaller than the edge tolerance covers nothing.
+    ///
+    /// The tolerance absorbs floating-point error where a corner grazes an
+    /// edge. As an absolute length it was one nanometre whatever the panel, and
+    /// `rectangle` accepts half-extents down to `1e-150`, so a caster that size
+    /// counted as roughly two nanometres across and swallowed every target
+    /// below that — 141 orders of magnitude larger than the panel it described.
+    #[test]
+    fn a_caster_far_below_the_edge_tolerance_covers_nothing() {
+        let axis = Vector3::new(0.0, 1.0, 0.0);
+        let upstream = Vector3::new(1.0, 0.0, 0.0);
+        let target =
+            SurfacePanel::rectangle([5e-10, 5e-10], axis, upstream, 2.2, PanelOptics::absorber());
+        let caster = SurfacePanel::rectangle(
+            [1e-150, 1e-150],
+            axis,
+            upstream,
+            2.2,
+            PanelOptics::absorber(),
+        )
+        .with_cp_offset(upstream);
+
+        let panels = vec![target, caster];
+        assert!(
+            !is_fully_occluded(&panels[0], &panels, &upstream),
+            "a caster 1e-150 m across cannot cover a target 1e-9 m across"
         );
     }
 
