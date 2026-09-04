@@ -2,11 +2,16 @@ import { Canvas, useThree } from "@react-three/fiber";
 import { useEffect, useRef } from "react";
 import { PerspectiveCamera } from "three";
 import { SCENE_UP } from "../sceneFrame.js";
-import { cameraDistanceForSpan, NOMINAL_SPACECRAFT_SPAN } from "../spacecraftScale.js";
+import {
+  cameraDistanceForSpan,
+  DEFAULT_CAMERA_FOV_DEGREES,
+  NOMINAL_SPACECRAFT_SPAN,
+} from "../spacecraftScale.js";
 import { AttitudeScene } from "./AttitudeScene.js";
 import type { AttitudeViewerProps } from "./types.js";
 
-const DEFAULT_FOV = 50;
+/** The module that derives the framing owns the value. */
+const DEFAULT_FOV = DEFAULT_CAMERA_FOV_DEGREES;
 
 /** Viewing direction: off to one side and above, so all three axes are distinct. */
 const CAMERA_DIRECTION: [number, number, number] = [0.894, 0, 0.447];

@@ -4,6 +4,7 @@ import {
   arrowGeometryForSpan,
   axisLengthForSpan,
   cameraDistanceForSpan,
+  DEFAULT_CAMERA_FOV_DEGREES,
   drawnExtentForSpan,
   frameAxisLengthForSpan,
   NOMINAL_SPACECRAFT_SPAN,
@@ -132,6 +133,19 @@ describe("sizes derived from the span", () => {
     const square = cameraDistanceForSpan(1, 50, 1);
     expect(cameraDistanceForSpan(1, 50, 16 / 9)).toBeCloseTo(square, 12);
     expect(cameraDistanceForSpan(1, 50, 0.5)).toBeGreaterThan(square);
+  });
+
+  it("treats a field of view no camera could use as the default framing", () => {
+    // `fov` arrives from a public camera prop. At 0 or NaN the fit divides by a
+    // sine of 0 or NaN; past 180° the horizontal term goes negative and the fit
+    // inverts. Each case must land on the documented framing instead.
+    const fallback = cameraDistanceForSpan(1, DEFAULT_CAMERA_FOV_DEGREES, 1);
+    for (const fov of [0, -30, 180, 200, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(cameraDistanceForSpan(1, fov, 1)).toBeCloseTo(fallback, 12);
+    }
+    // A usable field of view is still honoured, in both directions.
+    expect(cameraDistanceForSpan(1, 30, 1)).not.toBeCloseTo(fallback, 6);
+    expect(cameraDistanceForSpan(1, 179, 1)).toBeLessThan(fallback);
   });
 
   it("pulls further back for a narrower field of view", () => {

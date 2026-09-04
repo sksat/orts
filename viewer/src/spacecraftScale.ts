@@ -152,6 +152,12 @@ export function frameAxisArrows(length: number, span: number): ArrowGeometry {
   };
 }
 
+/**
+ * Vertical field of view the attitude view frames with, and the fallback when a
+ * caller supplies one that no camera could use.
+ */
+export const DEFAULT_CAMERA_FOV_DEGREES = 50;
+
 /** Empty space kept between the outermost drawn thing and the viewport edge. */
 const VIEW_MARGIN = 1.15;
 
@@ -188,7 +194,16 @@ export function drawnExtentForSpan(span: number): number {
  * when the proportions above change.
  */
 export function cameraDistanceForSpan(span: number, fovDegrees: number, aspect = 1): number {
-  const halfVertical = (fovDegrees / 2) * (Math.PI / 180);
+  // A field of view outside (0°, 180°) is not a frustum anything can be fitted
+  // to: at 0 or NaN the sine below is 0 or NaN, so the distance comes back
+  // infinite or NaN and the camera lands nowhere; past 180° the tangent turns
+  // negative and the horizontal fit inverts. `fov` reaches here from a public
+  // camera prop, so fall back to the framing these ratios were chosen for.
+  const usableFov =
+    Number.isFinite(fovDegrees) && fovDegrees > 0 && fovDegrees < 180
+      ? fovDegrees
+      : DEFAULT_CAMERA_FOV_DEGREES;
+  const halfVertical = (usableFov / 2) * (Math.PI / 180);
   // A viewport with no width or height has no aspect to fit; treat it as square
   // rather than returning an infinite distance a caller would place a camera at.
   const usable = Number.isFinite(aspect) && aspect > 0 ? aspect : 1;
