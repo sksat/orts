@@ -55,6 +55,9 @@ importers:
       starlight-rustdoc:
         specifier: workspace:*
         version: link:../starlight-rustdoc
+      starlight-theme-next:
+        specifier: ^0.4.0
+        version: 0.4.0(@astrojs/starlight@0.41.7(astro@7.2.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.3)(tsx@4.22.4)(yaml@2.9.0))(supports-color@7.2.0)(typescript@6.0.3))
       starlight-typedoc:
         specifier: ^0.23.0
         version: 0.23.1(@astrojs/starlight@0.41.7(astro@7.2.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.3)(tsx@4.22.4)(yaml@2.9.0))(supports-color@7.2.0)(typescript@6.0.3))(astro@7.2.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.3)(tsx@4.22.4)(yaml@2.9.0))(typedoc-plugin-markdown@4.12.0(typedoc@0.28.20(typescript@6.0.3)))(typedoc@0.28.20(typescript@6.0.3))
@@ -4169,6 +4172,12 @@ packages:
       '@astrojs/starlight': '>=0.38.0'
       astro: ^6.0.0
 
+  starlight-theme-next@0.4.0:
+    resolution: {integrity: sha512-rIHrl9xZSITamEnBSqmTWdHWSp44Tx5zDpME3SBoONuD2diq0HxVKP4f9atq5QB01NIzulpFSkDRUkzl/L3Cow==}
+    engines: {node: '>=22.12.0'}
+    peerDependencies:
+      '@astrojs/starlight': '>=0.38'
+
   starlight-typedoc@0.23.1:
     resolution: {integrity: sha512-H45Mxv4mZ1xUMhUNjTR4CwKDgKKHZboQA5v5+vTVMdjlCX02Xo7veTB7+F/ivmMHPmQ7SV5auF2BTlU/EpQIoQ==}
     engines: {node: '>=22.12.0'}
@@ -4373,9 +4382,6 @@ packages:
 
   unified@11.0.5:
     resolution: {integrity: sha512-xKvGhPWw3k84Qjh8bI3ZeJjqnyadK+GEFtazSfZv/rKeTkTjOJho6mFqh2SM96iIcZokxiOpg78GazTSg8+KHA==}
-
-  unifont@0.7.4:
-    resolution: {integrity: sha512-oHeis4/xl42HUIeHuNZRGEvxj5AaIKR+bHPNegRq5LV1gdc3jundpONbjglKpihmJf+dswygdMJn3eftGIMemg==}
 
   unifont@0.7.5:
     resolution: {integrity: sha512-ULe/Cs+ZIsq+dcFofNkhqielCrUJnb5mr+Yc4EBM2VlL+6OZR6+cjtI2mT1bJvRBrVncqHAbLURxmPLcCXzWMg==}
@@ -7031,7 +7037,7 @@ snapshots:
       tinyexec: 1.3.0
       tinyglobby: 0.2.17
       ultrahtml: 1.7.0
-      unifont: 0.7.4
+      unifont: 0.7.5
       unist-util-visit: 5.1.0
       unstorage: 1.17.5
       vfile: 6.0.3
@@ -9593,6 +9599,10 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  starlight-theme-next@0.4.0(@astrojs/starlight@0.41.7(astro@7.2.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.3)(tsx@4.22.4)(yaml@2.9.0))(supports-color@7.2.0)(typescript@6.0.3)):
+    dependencies:
+      '@astrojs/starlight': 0.41.7(astro@7.2.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.3)(tsx@4.22.4)(yaml@2.9.0))(supports-color@7.2.0)(typescript@6.0.3)
+
   starlight-typedoc@0.23.1(@astrojs/starlight@0.41.7(astro@7.2.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.3)(tsx@4.22.4)(yaml@2.9.0))(supports-color@7.2.0)(typescript@6.0.3))(astro@7.2.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.3)(tsx@4.22.4)(yaml@2.9.0))(typedoc-plugin-markdown@4.12.0(typedoc@0.28.20(typescript@6.0.3)))(typedoc@0.28.20(typescript@6.0.3)):
     dependencies:
       '@astrojs/starlight': 0.41.7(astro@7.2.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.3)(tsx@4.22.4)(yaml@2.9.0))(supports-color@7.2.0)(typescript@6.0.3)
@@ -9790,12 +9800,6 @@ snapshots:
       is-plain-obj: 4.1.0
       trough: 2.2.0
       vfile: 6.0.3
-
-  unifont@0.7.4:
-    dependencies:
-      css-tree: 3.2.1
-      ofetch: 1.5.1
-      ohash: 2.0.11
 
   unifont@0.7.5:
     dependencies:
