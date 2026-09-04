@@ -28,6 +28,11 @@
           "target": "@components/orbit-viewer/bodies.ts"
         },
         {
+          "path": "src/cameraProps.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/cameraProps.ts"
+        },
+        {
           "path": "src/components/Arrow.tsx",
           "type": "registry:component",
           "target": "@components/orbit-viewer/components/Arrow.tsx"

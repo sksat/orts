@@ -1,6 +1,7 @@
 import { Canvas, useThree } from "@react-three/fiber";
 import { useEffect, useRef } from "react";
 import { PerspectiveCamera } from "three";
+import { usableProjection, usableVector } from "../cameraProps.js";
 import { CameraViewProbe } from "../components/CameraViewProbe.js";
 import { SCENE_UP } from "../sceneFrame.js";
 import {
@@ -73,76 +74,6 @@ function InitialCameraFit({ fov }: { fov: number }) {
   return null;
 }
 
-/** The camera settings an embedder may pass through `canvas`. */
-type CameraProps = NonNullable<AttitudeViewerProps["canvas"]>["camera"];
-
-/** Near plane the default framing uses, in spacecraft spans. */
-const DEFAULT_NEAR = 0.01;
-
-/** Far plane; `InitialCameraFit` pushes it out when it moves the camera. */
-const DEFAULT_FAR = 100;
-
-/**
- * A caller's vector if every component is a number and it has a direction, else
- * the default.
- *
- * A NaN in a camera position spreads through its matrices and the canvas goes
- * blank; a zero `up` leaves the orientation undefined, since it is one of the two
- * vectors that define it.
- */
-function usableVector(
-  value: readonly number[] | undefined,
-  fallback: [number, number, number],
-): [number, number, number] {
-  if (value?.length !== 3 || !value.every((c) => Number.isFinite(c))) return fallback;
-  const [x, y, z] = value;
-  // Finite components can still have an infinite length — `[MAX_VALUE,
-  // MAX_VALUE, 0]` — and Three.js normalises that to zeros, leaving the view
-  // matrix degenerate. The same check `computeLvlhAxes` applies to state.
-  const length = Math.hypot(x, y, z);
-  return Number.isFinite(length) && length > 0 ? [x, y, z] : fallback;
-}
-
-/**
- * The caller's projection settings, or the defaults where they name no frustum.
- *
- * Every one of these reaches `PerspectiveCamera` directly and degenerates its
- * projection matrix on its own: a `zoom` of 0 or NaN, a `near` at or below zero,
- * a `far` inside the near plane. The result is a blank canvas that no distance
- * fitted for it can repair, so they are checked here rather than trusted.
- */
-function usableProjection(camera: CameraProps) {
-  const positive = (value: number | undefined, fallback: number) =>
-    value != null && Number.isFinite(value) && value > 0 ? value : fallback;
-  const fov = usableFovDegrees(camera?.fov);
-  const zoom = positive(camera?.zoom, 1);
-  const near = positive(camera?.near, DEFAULT_NEAR);
-  const far = positive(camera?.far, DEFAULT_FAR);
-  // A far plane inside the near one has no volume between them to draw.
-  const depth = far > near ? far : Math.max(DEFAULT_FAR, near * 2);
-  // Positive and finite is not enough on its own: the projection is built from
-  // these, and `zoom: MAX_VALUE` or `near: MAX_VALUE` leaves the frustum's half
-  // height at the near plane zero or infinite — a matrix with no volume in it.
-  const halfHeight = (Math.tan((fov / 2) * (Math.PI / 180)) / zoom) * near;
-  // A near plane can also be too far out to describe *this* scene. From 1e17
-  // spans the drawn extent rounds away against it — `near + extent` is `near`
-  // again — so no distance leaves the spacecraft between the planes, and the
-  // position fitted for it squares to infinity when its length is taken, which
-  // sets the far plane to infinity. What the scene draws is the scale to judge
-  // that by; both checks read a derived quantity rather than guess at a bound
-  // for each input.
-  const extent = drawnExtentForSpan(NOMINAL_SPACECRAFT_SPAN);
-  const resolvesTheScene = near + extent - near > 0;
-  const representable =
-    Number.isFinite(halfHeight) &&
-    halfHeight > 0 &&
-    Number.isFinite(depth - near) &&
-    resolvesTheScene;
-  return representable
-    ? { fov, zoom, near, far: depth }
-    : { fov, zoom: 1, near: DEFAULT_NEAR, far: DEFAULT_FAR };
-}
-
 /**
  * Embeddable attitude viewer.
  *
@@ -170,7 +101,13 @@ function usableProjection(camera: CameraProps) {
  * ```
  */
 export function AttitudeViewer({ className, style, canvas, ...sceneProps }: AttitudeViewerProps) {
-  const projection = usableProjection(canvas?.camera);
+  // The default near plane is the scale the fit assumes; a caller's is checked
+  // against what this view draws around the origin.
+  const projection = usableProjection(
+    canvas?.camera,
+    usableFovDegrees(canvas?.camera?.fov),
+    drawnExtentForSpan(NOMINAL_SPACECRAFT_SPAN),
+  );
   const position = usableVector(
     canvas?.camera?.position as readonly number[] | undefined,
     DEFAULT_CAMERA_POSITION,
