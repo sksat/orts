@@ -10,7 +10,6 @@
 
 use std::collections::VecDeque;
 
-use tobari::magnetic::TiltedDipole;
 use tokio::sync::mpsc;
 
 use super::async_bindings::orts::plugin::host_env;
@@ -54,7 +53,7 @@ pub(super) enum GuestResponse {
 /// Per-satellite host state for the async backend.
 pub(super) struct AsyncHostState {
     pub(super) label: String,
-    pub(super) field: TiltedDipole,
+    pub(super) field: std::sync::Arc<dyn tobari::magnetic::MagneticFieldModel>,
     pub(super) wasi: wasmtime_wasi::WasiCtx,
     pub(super) table: wasmtime_wasi::ResourceTable,
 
@@ -109,7 +108,7 @@ impl host_env::Host for AsyncHostState {
             position_eci_km.z,
         );
         let ep = arika::epoch::Epoch::from_jd(epoch.julian_date);
-        let b = crate::magnetic::field_eci(&self.field, &pos, &ep);
+        let b = crate::magnetic::field_eci(self.field.as_ref(), &pos, &ep);
         wit::Vec3 {
             x: b.x(),
             y: b.y(),

@@ -90,6 +90,18 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   20-40% 改善する。([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- WASM host の `magnetic-field-eci` が中心天体の磁場を返すようになった。sync と async の
+  両 backend が host state を `TiltedDipole::earth()` 固定で作り、中心天体を見ていなかった
+  ので、Mars の run でも plugin には Earth の磁場が返っていた。#372 が残した唯一の経路で、
+  guest は config に磁気デバイスを書かなくてもこの import を呼べる。host も中心天体を受け取り、
+  モデルがない天体では `tobari::magnetic::NoField` を使う（CLI のデバイスと同じ規則、
+  `orts::magnetic::field_is_modelled`）。WIT の変更は不要で、戻り値の `vec3` にゼロを載せる。
+
+  **BREAKING**: `WasmController::new`、`AsyncWasmController::new`、それぞれの
+  `new_with_streams`、`WasmPluginCache::build_*_controller*` が `KnownBody` を取る。
+  呼び出し元のなかった legacy alias `WasmPluginCache::build_controller` は削除した
+  （天体を勝手に選ぶ入口を残さない）。([#431](https://github.com/sksat/orts/issues/431))
+
 - `SurfacePanel::at_com` と `SurfacePanel::rectangle` が、magnitude を計算できない
   方向ベクトルを、無限大の normal を持つ panel にせず reject するようになった。
   正規化した後で結果の長さを検査していたので、`[1e-200, 1e-200, 1e-200]` が通って

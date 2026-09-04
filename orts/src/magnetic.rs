@@ -16,6 +16,17 @@ use tobari::magnetic::{MagneticFieldInput, MagneticFieldModel};
 
 use arika::earth::{EarthFixedTransform, EarthOrientation};
 
+/// Whether this crate has a magnetic field model for `body`.
+///
+/// [`tobari::magnetic::Igrf`] and [`tobari::magnetic::TiltedDipole`] are
+/// Earth's, and they are the only models there are — which is not the same as
+/// another body having no field. Callers that need a model for a body without
+/// one use [`tobari::magnetic::NoField`], so a magnetometer reads zero and a
+/// magnetorquer's `m × B` is zero instead of both taking Earth's field.
+pub fn field_is_modelled(body: arika::body::KnownBody) -> bool {
+    body == arika::body::KnownBody::Earth
+}
+
 /// Evaluate a magnetic field model and return the result in the
 /// propagation frame `F`.
 ///

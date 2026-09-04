@@ -103,8 +103,9 @@ impl WasmController {
         pre: &PluginPre<HostState>,
         label: impl Into<String>,
         config: &str,
+        body: arika::body::KnownBody,
     ) -> Result<Self, PluginError> {
-        Self::new_with_streams(pre, label, config, Vec::new())
+        Self::new_with_streams(pre, label, config, Vec::new(), body)
     }
 
     /// Instantiate a WASM guest controller wired to the given `stream-io`
@@ -119,6 +120,7 @@ impl WasmController {
         label: impl Into<String>,
         config: &str,
         stream_names: Vec<String>,
+        body: arika::body::KnownBody,
     ) -> Result<Self, PluginError> {
         let label = label.into();
         let config = config.to_string();
@@ -149,6 +151,7 @@ impl WasmController {
                     metadata_tx,
                     worker_current_mode,
                     worker_streams,
+                    body,
                 );
             })
             .map_err(|e| PluginError::Init(format!("failed to spawn worker thread: {e}")))?;
@@ -358,6 +361,7 @@ fn worker_main(
     metadata_tx: mpsc::SyncSender<Result<f64, String>>,
     current_mode: Arc<Mutex<Option<String>>>,
     stream_names: Vec<String>,
+    body: arika::body::KnownBody,
 ) {
     let engine = pre.engine();
     let host_state = HostState::new(
@@ -366,6 +370,7 @@ fn worker_main(
         output_tx.clone(),
         current_mode,
         stream_names,
+        body,
     );
     let mut store = Store::new(engine, host_state);
 

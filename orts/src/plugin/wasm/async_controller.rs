@@ -169,8 +169,9 @@ impl AsyncWasmController {
         built: &AsyncPluginPreBuilt,
         label: impl Into<String>,
         config: &str,
+        body: arika::body::KnownBody,
     ) -> Result<Self, PluginError> {
-        Self::new_with_streams(built, label, config, Vec::new())
+        Self::new_with_streams(built, label, config, Vec::new(), body)
     }
 
     /// As [`new`](Self::new) but wired to the given `stream-io` streams
@@ -180,6 +181,7 @@ impl AsyncWasmController {
         label: impl Into<String>,
         config: &str,
         stream_names: Vec<String>,
+        body: arika::body::KnownBody,
     ) -> Result<Self, PluginError> {
         let label = label.into();
         let config = config.to_string();
@@ -200,7 +202,11 @@ impl AsyncWasmController {
         runtime.handle().spawn(async move {
             let host_state = AsyncHostState {
                 label: label_for_task,
-                field: tobari::magnetic::TiltedDipole::earth(),
+                field: if crate::magnetic::field_is_modelled(body) {
+                    std::sync::Arc::new(tobari::magnetic::TiltedDipole::earth())
+                } else {
+                    std::sync::Arc::new(tobari::magnetic::NoField)
+                },
                 wasi: wasmtime_wasi::WasiCtxBuilder::new().build(),
                 table: wasmtime_wasi::ResourceTable::new(),
                 input_rx,

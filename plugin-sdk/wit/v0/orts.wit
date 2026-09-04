@@ -400,15 +400,18 @@ interface host-env {
     /// ゲストからログレコードを出力する。
     log: func(level: log-level, message: string);
 
-    /// 指定 ECI 位置・エポックでの地磁気ベクトルを ECI 座標系で返す \[T\]。
+    /// 指定 ECI 位置・エポックでの中心天体の磁場ベクトルを ECI 座標系で返す \[T\]。
+    ///
+    /// 磁場モデルがあるのは Earth だけなので、それ以外の中心天体では
+    /// ゼロベクトルを返す（Earth の磁場を返すことはしない）。
     ///
     /// 宇宙機の現在位置・姿勢での機体座標系磁場が欲しい場合は
     /// `sensors.magnetometer` を使う方がオーバーヘッドがない。
     /// このインポートは任意位置/エポックの磁場が必要な場合
     /// （予測・計画等）の "escape hatch"。
     ///
-    /// Phase P1 では `tobari::magnetic::TiltedDipole` に接続。
-    /// Phase D-5 で IGRF 球面調和モデルへ移行予定。
+    /// Earth では `tobari::magnetic::TiltedDipole` に接続（Phase D-5 で IGRF
+    /// 球面調和モデルへ移行予定）。他の中心天体は `tobari::magnetic::NoField`。
     magnetic-field-eci: func(
         position-eci-km: vec3,
         e: epoch,

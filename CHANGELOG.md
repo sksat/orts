@@ -104,6 +104,23 @@ section is subdivided by package.
   0.33 m, and the three shorter Harris-Priester oracles by 20-40%. ([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- The WASM host's `magnetic-field-eci` answers with the central body's field
+  instead of Earth's. Both backends built their host state with a fixed
+  `TiltedDipole::earth()` and never saw the body, so a plugin on a Mars run got
+  Earth's field — the one path #372 left behind, because a guest can call this
+  import whether or not its config declares a magnetic device. The host now
+  takes the body and uses `tobari::magnetic::NoField` where there is no model,
+  the same rule the CLI's devices follow
+  (`orts::magnetic::field_is_modelled`), so the reading is zero rather than a
+  field measured one body away. No WIT change: the signature already returns a
+  bare `vec3`, and zero is a value it can carry.
+
+  **BREAKING**: `WasmController::new`, `AsyncWasmController::new`, their
+  `new_with_streams` forms and the `WasmPluginCache::build_*_controller*`
+  builders take a `KnownBody`. `WasmPluginCache::build_controller`, a legacy
+  alias with no callers, is removed — an entry point that picks a body for you
+  is what this fixes. ([#431](https://github.com/sksat/orts/issues/431))
+
 - `SurfacePanel::at_com` and `SurfacePanel::rectangle` reject a direction vector
   whose magnitude cannot be computed, instead of building a panel whose normal
   is infinite. They normalised first and then checked the result was long
