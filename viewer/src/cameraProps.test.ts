@@ -4,8 +4,9 @@ import {
   type CameraPropsInput,
   DEFAULT_FAR,
   DEFAULT_NEAR,
+  usableDirection,
+  usablePosition,
   usableProjection,
-  usableVector,
 } from "./cameraProps.js";
 import { drawnExtentForSpan, NOMINAL_SPACECRAFT_SPAN } from "./spacecraftScale.js";
 
@@ -14,7 +15,12 @@ const EXTENT = drawnExtentForSpan(NOMINAL_SPACECRAFT_SPAN);
 const FOV = 50;
 const FALLBACK: [number, number, number] = [3, 0, 1.5];
 
-/** Whether Three.js can build a projection matrix from these settings. */
+/**
+ * Whether the renderer can use a projection built from these settings.
+ *
+ * Read as a `Float32Array`, the precision WebGL receives the matrix in: a
+ * coefficient can be a perfectly good double and an infinite uniform.
+ */
 function projectionIsFinite({
   fov,
   zoom,
@@ -24,18 +30,21 @@ function projectionIsFinite({
   const camera = new PerspectiveCamera(fov, 1, near, far);
   camera.zoom = zoom;
   camera.updateProjectionMatrix();
-  return camera.projectionMatrix.elements.every(Number.isFinite);
+  const uploaded = new Float32Array(camera.projectionMatrix.elements);
+  return Array.from(uploaded).every(Number.isFinite);
 }
 
-describe("usableVector", () => {
+describe("usableDirection", () => {
   it("keeps a direction Three.js can normalise", () => {
+    // `up` only names a direction, so its magnitude is free: `lookAt` normalises
+    // it, and these all come back as unit vectors.
     for (const v of [
       [1, 2, 3],
       [0, 0, -1],
       [1e100, 0, 0],
       [1e-100, 0, 0],
     ] as number[][]) {
-      const out = usableVector(v, FALLBACK);
+      const out = usableDirection(v, FALLBACK);
       expect(out, `${v} names a direction`).not.toBe(FALLBACK);
       // The oracle: Three.js has to get a unit vector out of whatever we accept.
       expect(new Vector3(...out).normalize().length()).toBeCloseTo(1, 6);
@@ -57,12 +66,44 @@ describe("usableVector", () => {
       [1e200, 1e200, 0],
       [1e-200, 0, 0],
     ] as (number[] | undefined)[]) {
-      expect(usableVector(v, FALLBACK), `${v} is no direction`).toBe(FALLBACK);
+      expect(usableDirection(v, FALLBACK), `${v} is no direction`).toBe(FALLBACK);
     }
   });
 
   it("keeps a signed zero component, which is a direction like any other", () => {
-    expect(usableVector([1, -0, 0], FALLBACK)).toEqual([1, -0, 0]);
+    expect(usableDirection([1, -0, 0], FALLBACK)).toEqual([1, -0, 0]);
+  });
+});
+
+describe("usablePosition", () => {
+  it("keeps a place the renderer can put a camera", () => {
+    for (const v of [
+      [3, 0, 1.5],
+      [200, 0, 0],
+      [1e30, 0, 0],
+      [1e-100, 0, 0],
+    ] as number[][]) {
+      const out = usablePosition(v, FALLBACK);
+      expect(out, `${v} is a position`).not.toBe(FALLBACK);
+      // The oracle: the view matrix carries this as a float32 translation.
+      expect(Array.from(new Float32Array(out)).every(Number.isFinite)).toBe(true);
+    }
+  });
+
+  it("replaces a position that cannot survive the float32 the GPU receives", () => {
+    // The view matrix reaches WebGL as float32, where anything past 3.4e38 is
+    // `Infinity` and blanks the scene — `[1e100, 0, 0]` is a fine double and no
+    // place to put a camera. It is still a usable *direction*, which is why the
+    // two are checked apart.
+    for (const v of [
+      [1e100, 0, 0],
+      [1e39, 1e39, 0],
+      [0, 0, 0],
+      [Number.NaN, 1, 1],
+    ] as number[][]) {
+      expect(usablePosition(v, FALLBACK), `${v} is no camera position`).toBe(FALLBACK);
+    }
+    expect(usableDirection([1e100, 0, 0], FALLBACK)).toEqual([1e100, 0, 0]);
   });
 });
 
@@ -109,9 +150,16 @@ describe("usableProjection", () => {
     // `zoom: MAX_VALUE` leaves the half height at the near plane positive, finite
     // and subnormal — and `near / halfHeight`, the coefficient Three.js scales y
     // by, infinite. Checking the half height alone accepts it.
-    const projection = usableProjection({ zoom: Number.MAX_VALUE }, FOV, EXTENT);
-    expect(projection.zoom).toBe(1);
-    expect(projection.near).toBe(DEFAULT_NEAR);
+    //
+    // `zoom: 1e200` is the same failure one precision down: the coefficient comes
+    // out at 2.1e200, a fine double that is `Infinity` in the float32 uniform.
+    for (const zoom of [Number.MAX_VALUE, 1e200]) {
+      const projection = usableProjection({ zoom }, FOV, EXTENT);
+      expect(projection.zoom, `zoom: ${zoom} cannot be built`).toBe(1);
+      expect(projection.near).toBe(DEFAULT_NEAR);
+    }
+    // And one that can: 1e30 leaves the coefficient at 2.1e30, inside float32.
+    expect(usableProjection({ zoom: 1e30 }, FOV, EXTENT).zoom).toBe(1e30);
   });
 
   it("replaces a near plane the scene's own size vanishes against", () => {

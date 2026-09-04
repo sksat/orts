@@ -1,7 +1,7 @@
 import { Canvas, useThree } from "@react-three/fiber";
 import { useEffect, useRef } from "react";
 import { PerspectiveCamera } from "three";
-import { usableProjection, usableVector } from "../cameraProps.js";
+import { usableDirection, usablePosition, usableProjection } from "../cameraProps.js";
 import { CameraViewProbe } from "../components/CameraViewProbe.js";
 import { SCENE_UP } from "../sceneFrame.js";
 import {
@@ -119,7 +119,7 @@ export function AttitudeViewer({ className, style, canvas, ...sceneProps }: Atti
     usableFovDegrees(canvas?.camera?.fov),
     drawnExtentForSpan(NOMINAL_SPACECRAFT_SPAN),
   );
-  const position = usableVector(
+  const position = usablePosition(
     canvas?.camera?.position as readonly number[] | undefined,
     DEFAULT_CAMERA_POSITION,
   );
@@ -136,7 +136,7 @@ export function AttitudeViewer({ className, style, canvas, ...sceneProps }: Atti
         camera={{
           ...canvas?.camera,
           position,
-          up: usableVector(canvas?.camera?.up as readonly number[] | undefined, SCENE_UP),
+          up: usableDirection(canvas?.camera?.up as readonly number[] | undefined, SCENE_UP),
           ...projection,
         }}
         gl={{ ...canvas?.gl }}
