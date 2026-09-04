@@ -179,6 +179,9 @@ export function frameAxisArrows(length: number, span: number): ArrowGeometry {
  */
 export const DEFAULT_CAMERA_FOV_DEGREES = 50;
 
+/** Narrowest field of view the camera fit still returns a usable distance for. */
+const MIN_CAMERA_FOV_DEGREES = 0.1;
+
 /**
  * A vertical field of view a perspective camera can actually project with, or the
  * default framing when the caller's value is not one.
@@ -191,9 +194,15 @@ export const DEFAULT_CAMERA_FOV_DEGREES = 50;
  * distance that looks right.
  */
 export function usableFovDegrees(fovDegrees: number | undefined): number {
-  return fovDegrees != null && Number.isFinite(fovDegrees) && fovDegrees > 0 && fovDegrees < 180
-    ? fovDegrees
-    : DEFAULT_CAMERA_FOV_DEGREES;
+  if (fovDegrees == null || !Number.isFinite(fovDegrees) || fovDegrees <= 0 || fovDegrees >= 180) {
+    return DEFAULT_CAMERA_FOV_DEGREES;
+  }
+  // A narrow view is a legitimate request — a telescope framing of the same
+  // spacecraft — so it is clamped rather than replaced. The floor is where the
+  // fit stops meaning anything: the distance goes as 1/sin(fov/2), so 1e-300
+  // degrees asks for 3e302 spans (a finite number, and no use to a depth
+  // buffer), while a tenth of a degree asks for some 3000.
+  return Math.max(fovDegrees, MIN_CAMERA_FOV_DEGREES);
 }
 
 /** Empty space kept between the outermost drawn thing and the viewport edge. */
@@ -233,11 +242,21 @@ export function drawnExtentForSpan(span: number): number {
  * when the proportions above change.
  */
 export function cameraDistanceForSpan(span: number, fovDegrees: number, aspect = 1): number {
-  const halfVertical = (usableFovDegrees(fovDegrees) / 2) * (Math.PI / 180);
   // A viewport with no width or height has no aspect to fit; treat it as square
   // rather than returning an infinite distance a caller would place a camera at.
   const usable = Number.isFinite(aspect) && aspect > 0 ? aspect : 1;
-  const halfHorizontal = Math.atan(Math.tan(halfVertical) * usable);
+  const distance = fittedDistance(span, usableFovDegrees(fovDegrees), usable);
+  // The clamp above keeps the quotient finite for every field of view; this is
+  // the belt for an aspect or an extent that still produces nothing usable.
+  return Number.isFinite(distance) && distance > 0
+    ? distance
+    : fittedDistance(span, DEFAULT_CAMERA_FOV_DEGREES, 1);
+}
+
+/** Distance that fits the drawn sphere at this field of view and aspect. */
+function fittedDistance(span: number, fovDegrees: number, aspect: number): number {
+  const halfVertical = (fovDegrees / 2) * (Math.PI / 180);
+  const halfHorizontal = Math.atan(Math.tan(halfVertical) * aspect);
   const half = Math.min(halfVertical, halfHorizontal);
   return (drawnExtentForSpan(span) * VIEW_MARGIN) / Math.sin(half);
 }

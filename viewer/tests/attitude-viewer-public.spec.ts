@@ -127,12 +127,13 @@ test("an unusable attitude draws no orientation at all", async ({ page }) => {
   // orientation-revealing cube must not be honoured either.
   await page.goto(
     `/fixtures/attitude-viewer.html?epoch=${EPOCH}&attitude=0,0,0,0&shape=axes-cube`,
-    {
-      waitUntil: "load",
-    },
+    { waitUntil: "load" },
   );
   await expect(page.locator("canvas")).toBeVisible();
-  await page.waitForTimeout(2000);
+  // The epoch means this scene draws the Sun. Waiting for that arrow establishes
+  // that the subtree mounted, so the absence below is the attitude being refused
+  // and not a scene that never arrived.
+  await expectArrows(page, ["sun"]);
   const quat = await page.evaluate((id) => window.__debug_get_sat_world_quat?.(id) ?? null, SAT);
   expect(quat, "no body axes are registered without an attitude").toBeNull();
 });

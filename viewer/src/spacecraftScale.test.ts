@@ -171,6 +171,22 @@ describe("sizes derived from the span", () => {
     expect(cameraDistanceForSpan(1, 179, 1)).toBeLessThan(fallback);
   });
 
+  it("clamps a field of view too narrow for the fit to mean anything", () => {
+    // Finite and positive, so the range check admits them, and the fit divides by
+    // sin(fov/2): 1e-300 degrees asks for 3e302 spans, which is a number and no
+    // use to a depth buffer. The floor is 0.1°, and it is a clamp rather than the
+    // default because a narrow view is a request worth respecting.
+    const floor = cameraDistanceForSpan(1, 0.1, 1);
+    for (const fov of [1e-300, Number.MIN_VALUE, 0.01]) {
+      expect(cameraDistanceForSpan(1, fov, 1)).toBeCloseTo(floor, 6);
+    }
+    // Above the floor the request stands: far away, and finite.
+    const narrow = cameraDistanceForSpan(1, 0.5, 1);
+    expect(Number.isFinite(narrow)).toBe(true);
+    expect(narrow).toBeLessThan(floor);
+    expect(narrow).toBeGreaterThan(cameraDistanceForSpan(1, DEFAULT_CAMERA_FOV_DEGREES, 1) * 50);
+  });
+
   it("pulls further back for a narrower field of view", () => {
     expect(cameraDistanceForSpan(1, 30, 1)).toBeGreaterThan(cameraDistanceForSpan(1, 50, 1));
     expect(cameraDistanceForSpan(1, 50, 1)).toBeGreaterThan(cameraDistanceForSpan(1, 75, 1));
