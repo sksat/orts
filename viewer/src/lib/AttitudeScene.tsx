@@ -5,6 +5,7 @@ import { type DirectionVectorOptions, resolveDirectionVectors } from "../directi
 import {
   type DisplayOrientation,
   displayQuaternion,
+  type Quat,
   resolveDisplayOrientation,
   type Vec3,
 } from "../displayFrame.js";
@@ -80,9 +81,20 @@ export function AttitudeScene({
   // memoisation on these copies. Keying on the caller's array would key on its
   // *identity*: an embedder feeding a high-rate stream may reuse one array and
   // write the new sample into it — this framework hands out a mutable
-  // `TrailBuffer` for exactly that shape of feed — and the local-orbital basis
-  // and the nadir arrow would then stay frozen at the first sample while the
-  // attitude kept moving. A wrong picture, drawn confidently.
+  // `TrailBuffer` for exactly that shape of feed — and what is drawn would then
+  // stay frozen at the first sample. A wrong picture, drawn confidently.
+  //
+  // The attitude needs this most. In the inertial frame `displayQuaternion`
+  // returns the caller's tuple unchanged, and `BodyAxes`, `SatelliteModel` and
+  // `PrimitiveMarker` all apply a quaternion from an effect keyed on its
+  // identity — so a mutated attitude would leave the spacecraft's orientation,
+  // the subject of this whole view, standing still.
+  const [qw, qx, qy, qz] = body.attitude ?? [];
+  const attitude = useMemo<Quat | undefined>(
+    () => (qw != null && qx != null && qy != null && qz != null ? [qw, qx, qy, qz] : undefined),
+    [qw, qx, qy, qz],
+  );
+
   const [px, py, pz] = body.position ?? [];
   const [vx, vy, vz] = body.velocity ?? [];
   const position = useMemo<Vec3 | null>(
@@ -147,7 +159,7 @@ export function AttitudeScene({
     [frame, effectiveEpochJd, sunDirectionEci, position, vectorOptions],
   );
 
-  const displayQuat = displayQuaternion(frame, body.attitude);
+  const displayQuat = useMemo(() => displayQuaternion(frame, attitude), [frame, attitude]);
 
   // The light always gets a direction (a fixed one with no epoch, so a 3D model
   // is not left black); it is the *arrow* that is dropped when the Sun is unknown.
