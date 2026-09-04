@@ -1,0 +1,52 @@
+name: Free disk space if low
+description: >-
+  Removes preinstalled runtimes, but only when the runner is actually short on
+  disk. The cleanup itself takes 53-113 s per job (measured), so it is worth
+  paying when a build would otherwise run out of space and worth skipping when
+  it would not.
+
+inputs:
+  threshold-gib:
+    description: >-
+      Run the cleanup when the root filesystem has fewer than this many GiB
+      available. The orts workspace builds well under 20 GiB of target and
+      registry data, so this leaves a wide margin. Measured 2026-09-02: x64
+      ubuntu-latest starts with 87 GiB available, and the cleanup reclaimed
+      22 GiB nobody needed.
+    default: "45"
+
+runs:
+  using: composite
+  steps:
+    - name: Measure disk headroom
+      id: headroom
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Compared in bytes: `df --block-size=1G` rounds up, so 44.1 GiB
+        # available would report as 45 and skip a cleanup the threshold asks for.
+        avail_bytes=$(df --block-size=1 --output=avail / | tail -1 | tr -d ' ')
+        threshold_bytes=$(( ${{ inputs.threshold-gib }} * 1024 * 1024 * 1024 ))
+        echo "available: $((avail_bytes / 1024 / 1024)) MiB" \
+             "(cleanup threshold ${{ inputs.threshold-gib }} GiB)"
+        if [ "$avail_bytes" -lt "$threshold_bytes" ]; then
+          echo "low=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "low=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    # large-packages stays off because it would also remove LLVM/clang, which
+    # `.cargo/config.toml` names as the linker driver for wild. tool-cache stays
+    # so setup-rust and setup-node stay hot, and swap stays because the linker
+    # occasionally peaks memory.
+    - name: Free disk space
+      if: steps.headroom.outputs.low == 'true'
+      uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+      with:
+        tool-cache: false
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: false
+        docker-images: true
+        swap-storage: false
