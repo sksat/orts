@@ -165,6 +165,40 @@ test("a body-fixed request for a body the viewer cannot rotate falls back", asyn
   expect(bodyX[1]).toBeCloseTo(1, 2);
 });
 
+test("with controls disabled the camera still faces the spacecraft", async ({ page }) => {
+  // Reported twice as a defect: with no `OrbitControls` mounted, the offset
+  // default camera was said to keep its −Z view direction and leave the origin
+  // outside the frustum. Measured here instead of argued: R3F applies
+  // `lookAt(0, 0, 0)` to a camera it builds from props, and the initial fit only
+  // scales the position along that same ray.
+  await open(page, `epoch=${EPOCH}&controls=0`);
+  const view = await page.evaluate(() => {
+    const w = window as unknown as {
+      __debug_get_camera_view?: () => {
+        position: [number, number, number];
+        forward: [number, number, number];
+        near: number;
+        far: number;
+      } | null;
+    };
+    return w.__debug_get_camera_view?.() ?? null;
+  });
+  expect(view, "the camera hook should be registered").not.toBeNull();
+  if (view == null) return;
+
+  const distance = Math.hypot(...view.position);
+  expect(distance, "the camera sits away from the spacecraft").toBeGreaterThan(1);
+  // The camera looks along the ray from its position to the origin.
+  const toOrigin = view.position.map((c) => -c / distance);
+  const dot =
+    toOrigin[0] * view.forward[0] + toOrigin[1] * view.forward[1] + toOrigin[2] * view.forward[2];
+  expect(dot).toBeCloseTo(1, 3);
+  // And the frustum reaches the spacecraft: a far plane short of the camera's own
+  // distance would clip the origin however well the camera is aimed.
+  expect(view.far).toBeGreaterThan(distance);
+  expect(view.near).toBeLessThan(distance);
+});
+
 test("a body with no Sun ephemeris draws no Sun arrow", async ({ page }) => {
   // Uranus has no elements in arika, and `sun_direction_from_body` answers +X
   // there — a guess the view must not draw.

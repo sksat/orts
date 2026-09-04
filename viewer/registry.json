@@ -53,6 +53,11 @@
           "target": "@components/orbit-viewer/components/BodyAxes.tsx"
         },
         {
+          "path": "src/components/CameraViewProbe.tsx",
+          "type": "registry:component",
+          "target": "@components/orbit-viewer/components/CameraViewProbe.tsx"
+        },
+        {
           "path": "src/components/CelestialBody.tsx",
           "type": "registry:component",
           "target": "@components/orbit-viewer/components/CelestialBody.tsx"
@@ -116,6 +121,11 @@
           "path": "src/coordTransform.ts",
           "type": "registry:lib",
           "target": "@components/orbit-viewer/coordTransform.ts"
+        },
+        {
+          "path": "src/debug/cameraView.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/debug/cameraView.ts"
         },
         {
           "path": "src/debug/directionVectors.ts",

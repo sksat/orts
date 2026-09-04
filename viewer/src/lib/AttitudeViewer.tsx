@@ -1,6 +1,7 @@
 import { Canvas, useThree } from "@react-three/fiber";
 import { useEffect, useRef } from "react";
 import { PerspectiveCamera } from "three";
+import { CameraViewProbe } from "../components/CameraViewProbe.js";
 import { SCENE_UP } from "../sceneFrame.js";
 import {
   cameraDistanceForSpan,
@@ -111,6 +112,23 @@ const DEFAULT_FAR = 100;
  * a `far` inside the near plane. The result is a blank canvas that no distance
  * fitted for it can repair, so they are checked here rather than trusted.
  */
+/**
+ * A caller's vector if every component is a number and it has a direction, else
+ * the default.
+ *
+ * A NaN in a camera position spreads through its matrices and the canvas goes
+ * blank; a zero `up` leaves the orientation undefined, since it is one of the two
+ * vectors that define it.
+ */
+function usableVector(
+  value: readonly number[] | undefined,
+  fallback: [number, number, number],
+): [number, number, number] {
+  if (value?.length !== 3 || !value.every((c) => Number.isFinite(c))) return fallback;
+  const [x, y, z] = value;
+  return Math.hypot(x, y, z) > 0 ? [x, y, z] : fallback;
+}
+
 function usableProjection(camera: CameraProps) {
   const positive = (value: number | undefined, fallback: number) =>
     value != null && Number.isFinite(value) && value > 0 ? value : fallback;
@@ -131,13 +149,17 @@ export function AttitudeViewer({ className, style, canvas, ...sceneProps }: Atti
     <div className={className} style={{ width: "100%", height: "100%", ...style }}>
       <Canvas
         camera={{
-          position: DEFAULT_CAMERA_POSITION,
-          up: SCENE_UP,
           ...canvas?.camera,
+          position: usableVector(
+            canvas?.camera?.position as readonly number[] | undefined,
+            DEFAULT_CAMERA_POSITION,
+          ),
+          up: usableVector(canvas?.camera?.up as readonly number[] | undefined, SCENE_UP),
           ...projection,
         }}
         gl={{ ...canvas?.gl }}
       >
+        <CameraViewProbe />
         {canvas?.camera?.position == null && <InitialCameraFit fov={projection.fov} />}
         <AttitudeScene {...sceneProps} />
       </Canvas>
