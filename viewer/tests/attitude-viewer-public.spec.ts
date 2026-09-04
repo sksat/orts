@@ -151,6 +151,33 @@ test("an unusable attitude draws no orientation at all", async ({ page }) => {
   expect(quat, "no body axes are registered without an attitude").toBeNull();
 });
 
+test("body-fixed rotates the spacecraft about the scene's polar axis", async ({ page }) => {
+  // The advertised body-fixed frame co-rotates with Earth: R_z(−ERA). Reading the
+  // rendered body +X in both frames pins that without the test having to know the
+  // angle — a rotation about Z leaves the z component and the length of the xy
+  // part alone, and turns the xy part by something other than nothing. Skipping
+  // the rotation, or applying it about the wrong axis, breaks one of the three.
+  await open(page, `epoch=${EPOCH}`);
+  await waitForArika(page);
+  await expectArrows(page, ["sun"]);
+  const inertial = await bodyAxisInScene(page, 0);
+
+  await open(page, `orientation=bodyFixed&epoch=${EPOCH}`);
+  await waitForArika(page);
+  await expectArrows(page, ["sun"]);
+  const bodyFixed = await bodyAxisInScene(page, 0);
+
+  expect(bodyFixed[2], "a rotation about Z leaves the polar component").toBeCloseTo(inertial[2], 6);
+  expect(
+    Math.hypot(bodyFixed[0], bodyFixed[1]),
+    "and the length of the equatorial part",
+  ).toBeCloseTo(Math.hypot(inertial[0], inertial[1]), 6);
+  const turned = Math.hypot(bodyFixed[0] - inertial[0], bodyFixed[1] - inertial[1]);
+  expect(turned, "but turns it: an unrotated body-fixed frame is just inertial").toBeGreaterThan(
+    0.01,
+  );
+});
+
 test("a body-fixed request for a body the viewer cannot rotate falls back", async ({ page }) => {
   // `earth_rotation_angle` is Earth's angle; using it for Mars would be a wrong
   // picture rather than a missing one. The fallback is inertial, where +90° about

@@ -328,6 +328,12 @@ export interface AttitudeSceneDataProps {
    * Julian Date of the simulation epoch, **in UTC** — `arika`'s `Epoch::from_jd`
    * reads it as a UTC JD before deriving the Sun direction and Earth's rotation,
    * so a TT or TDB value shifts both. Without an epoch there is no Sun direction.
+   *
+   * The body-fixed frame this feeds is visualization-grade. Earth's rotation
+   * angle is defined on UT1, and the angle used here comes from arika's legacy
+   * `Epoch<Utc>::gmst`, which takes UTC for UT1 and ignores dUT1 — up to 0.9 s,
+   * or some 13 arcseconds of rotation. Treat the drawn Earth-fixed orientation
+   * as a picture, not as an EOP-correct frame.
    */
   epochJd?: number;
   /** Seconds since the epoch, when `body.time` is not given. Default 0. */

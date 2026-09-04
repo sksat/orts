@@ -69,6 +69,65 @@ function InitialCameraFit({ fov }: { fov: number }) {
   return null;
 }
 
+/** The camera settings an embedder may pass through `canvas`. */
+type CameraProps = NonNullable<AttitudeViewerProps["canvas"]>["camera"];
+
+/** Near plane the default framing uses, in spacecraft spans. */
+const DEFAULT_NEAR = 0.01;
+
+/** Far plane; `InitialCameraFit` pushes it out when it moves the camera. */
+const DEFAULT_FAR = 100;
+
+/**
+ * A caller's vector if every component is a number and it has a direction, else
+ * the default.
+ *
+ * A NaN in a camera position spreads through its matrices and the canvas goes
+ * blank; a zero `up` leaves the orientation undefined, since it is one of the two
+ * vectors that define it.
+ */
+function usableVector(
+  value: readonly number[] | undefined,
+  fallback: [number, number, number],
+): [number, number, number] {
+  if (value?.length !== 3 || !value.every((c) => Number.isFinite(c))) return fallback;
+  const [x, y, z] = value;
+  // Finite components can still have an infinite length — `[MAX_VALUE,
+  // MAX_VALUE, 0]` — and Three.js normalises that to zeros, leaving the view
+  // matrix degenerate. The same check `computeLvlhAxes` applies to state.
+  const length = Math.hypot(x, y, z);
+  return Number.isFinite(length) && length > 0 ? [x, y, z] : fallback;
+}
+
+/**
+ * The caller's projection settings, or the defaults where they name no frustum.
+ *
+ * Every one of these reaches `PerspectiveCamera` directly and degenerates its
+ * projection matrix on its own: a `zoom` of 0 or NaN, a `near` at or below zero,
+ * a `far` inside the near plane. The result is a blank canvas that no distance
+ * fitted for it can repair, so they are checked here rather than trusted.
+ */
+function usableProjection(camera: CameraProps) {
+  const positive = (value: number | undefined, fallback: number) =>
+    value != null && Number.isFinite(value) && value > 0 ? value : fallback;
+  const fov = usableFovDegrees(camera?.fov);
+  const zoom = positive(camera?.zoom, 1);
+  const near = positive(camera?.near, DEFAULT_NEAR);
+  const far = positive(camera?.far, DEFAULT_FAR);
+  // A far plane inside the near one has no volume between them to draw.
+  const depth = far > near ? far : Math.max(DEFAULT_FAR, near * 2);
+  // Positive and finite is not enough on its own: the projection is built from
+  // these, and `zoom: MAX_VALUE` or `near: MAX_VALUE` leaves the frustum's half
+  // height at the near plane zero or infinite — a matrix with no volume in it.
+  // Checking the derived quantity beats guessing at bounds for each input.
+  const halfHeight = (Math.tan((fov / 2) * (Math.PI / 180)) / zoom) * near;
+  const representable =
+    Number.isFinite(halfHeight) && halfHeight > 0 && Number.isFinite(depth - near);
+  return representable
+    ? { fov, zoom, near, far: depth }
+    : { fov, zoom: 1, near: DEFAULT_NEAR, far: DEFAULT_FAR };
+}
+
 /**
  * Embeddable attitude viewer.
  *
@@ -95,54 +154,6 @@ function InitialCameraFit({ fov }: { fov: number }) {
  * />
  * ```
  */
-/** The camera settings an embedder may pass through `canvas`. */
-type CameraProps = NonNullable<AttitudeViewerProps["canvas"]>["camera"];
-
-/** Near plane the default framing uses, in spacecraft spans. */
-const DEFAULT_NEAR = 0.01;
-
-/** Far plane; `InitialCameraFit` pushes it out when it moves the camera. */
-const DEFAULT_FAR = 100;
-
-/**
- * The caller's projection settings, or the defaults where they name no frustum.
- *
- * Every one of these reaches `PerspectiveCamera` directly and degenerates its
- * projection matrix on its own: a `zoom` of 0 or NaN, a `near` at or below zero,
- * a `far` inside the near plane. The result is a blank canvas that no distance
- * fitted for it can repair, so they are checked here rather than trusted.
- */
-/**
- * A caller's vector if every component is a number and it has a direction, else
- * the default.
- *
- * A NaN in a camera position spreads through its matrices and the canvas goes
- * blank; a zero `up` leaves the orientation undefined, since it is one of the two
- * vectors that define it.
- */
-function usableVector(
-  value: readonly number[] | undefined,
-  fallback: [number, number, number],
-): [number, number, number] {
-  if (value?.length !== 3 || !value.every((c) => Number.isFinite(c))) return fallback;
-  const [x, y, z] = value;
-  return Math.hypot(x, y, z) > 0 ? [x, y, z] : fallback;
-}
-
-function usableProjection(camera: CameraProps) {
-  const positive = (value: number | undefined, fallback: number) =>
-    value != null && Number.isFinite(value) && value > 0 ? value : fallback;
-  const near = positive(camera?.near, DEFAULT_NEAR);
-  const far = positive(camera?.far, DEFAULT_FAR);
-  return {
-    fov: usableFovDegrees(camera?.fov),
-    zoom: positive(camera?.zoom, 1),
-    near,
-    // A far plane inside the near one has no volume between them to draw.
-    far: far > near ? far : Math.max(DEFAULT_FAR, near * 2),
-  };
-}
-
 export function AttitudeViewer({ className, style, canvas, ...sceneProps }: AttitudeViewerProps) {
   const projection = usableProjection(canvas?.camera);
   const position = usableVector(
