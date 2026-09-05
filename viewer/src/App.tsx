@@ -22,8 +22,8 @@ import {
   drawableAtCentre,
   resolveDirectionVectors,
 } from "./directionVectors.js";
-import { centrePositionIsUsable } from "./frameResolve.js";
 import type { DisplayFrame, Vec3 as DisplayVec3 } from "./displayFrame.js";
+import { centrePositionIsUsable } from "./frameResolve.js";
 import { toViewerReferenceFrame } from "./frameToViewer.js";
 import { CSV_SOURCE_ID, RRD_SOURCE_ID, useFileSource } from "./hooks/useFileSource.js";
 import { useRealtimePlayback } from "./hooks/useRealtimePlayback.js";
