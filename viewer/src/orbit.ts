@@ -139,6 +139,19 @@ export function updateOrbitTrail(line: THREE.Line, visibleCount: number, totalCo
   line.geometry.setDrawRange(0, clamped);
 }
 
+/**
+ * A point's quaternion at unit norm, or its components unchanged when they do not
+ * describe a length that can be divided by (zero, or non-finite).
+ *
+ * Callers must have checked {@link hasQuaternion} first.
+ */
+function unitOrAsGiven(p: OrbitPoint): THREE.Quaternion {
+  const [w, x, y, z] = [p.qw as number, p.qx as number, p.qy as number, p.qz as number];
+  const n = Math.hypot(w, x, y, z);
+  if (!(Number.isFinite(n) && n > 0)) return new THREE.Quaternion(x, y, z, w);
+  return new THREE.Quaternion(x / n, y / n, z / n, w / n);
+}
+
 /** Whether a point carries a complete quaternion (all of qw/qx/qy/qz). */
 function hasQuaternion(p: OrbitPoint): boolean {
   return p.qw != null && p.qx != null && p.qy != null && p.qz != null;
@@ -170,8 +183,19 @@ export function lerpPoint(a: OrbitPoint, b: OrbitPoint, frac: number): OrbitPoin
   // on both points — guarding on qw alone would let a partial one (missing
   // qx/qy/qz, which Three defaults to 0) build an un-normalized rotation.
   if (hasQuaternion(a) && hasQuaternion(b)) {
-    const qa = new THREE.Quaternion(a.qx, a.qy, a.qz, a.qw);
-    const qb = new THREE.Quaternion(b.qx, b.qy, b.qz, b.qw);
+    // Slerp assumes unit quaternions, and a simulator's attitude drifts off unit
+    // norm as it integrates. Equal norms cancel — scaling both endpoints by 2
+    // reproduces the unit result to 1e-16 — but unequal ones bend the path: norms
+    // of 1 and 2 put the halfway rotation 1.2e-1 off in each component, and a
+    // drift of a thousandth 1.9e-4 off. Normalising afterwards cannot recover it,
+    // because the error is in which rotation was chosen, not in its length.
+    //
+    // What cannot be normalised is passed through as it came, so the display
+    // frame still sees an attitude to refuse rather than one this function
+    // invented: `THREE.Quaternion.normalize` turns a zero quaternion into the
+    // identity, which would be exactly that invention.
+    const qa = unitOrAsGiven(a);
+    const qb = unitOrAsGiven(b);
     // Ensure shortest-path interpolation
     if (qa.dot(qb) < 0) {
       qb.set(-qb.x, -qb.y, -qb.z, -qb.w);
