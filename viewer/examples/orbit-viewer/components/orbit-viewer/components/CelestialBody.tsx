@@ -52,7 +52,7 @@ interface CelestialBodyProps {
   /** When true, atmosphere uses physical scale. Default false (amplified). */
   physicalScale?: boolean;
   /** Bumped when server notifies high-res textures are available. Triggers re-upgrade. */
-  textureRevision?: number;
+  textureRevision?: number | string;
   /** Base URL for fetching high-res textures. */
   textureBaseUrl?: string;
   /** Body definitions to resolve `bodyId` against. Defaults to the built-in bodies. */
@@ -94,7 +94,7 @@ function TexturedBody({
   renderInfo: RenderInfo;
   radius: number;
   targetResolution?: TextureResolution;
-  textureRevision?: number;
+  textureRevision?: number | string;
   textureBaseUrl?: string;
 }) {
   const [texture, setTexture] = useState<THREE.Texture | null>(null);

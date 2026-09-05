@@ -12,18 +12,8 @@ type SunDirectionFromBody = (body: string, epoch_jd: number, t: number) => Float
 type SunDistanceFromBody = (body: string, epoch_jd: number, t: number) => number;
 type JdToUtcString = (epoch_jd: number, t: number) => string;
 type BodyOrientation = (body: string, epoch_jd: number, t: number) => Float64Array;
-type BodyQuatToRsw = (
-  pos_x: number,
-  pos_y: number,
-  pos_z: number,
-  vel_x: number,
-  vel_y: number,
-  vel_z: number,
-  qw: number,
-  qx: number,
-  qy: number,
-  qz: number,
-) => Float64Array;
+type OrbitDerivedBatch = (states: Float64Array, mu: number, body_radius: number) => Float64Array;
+type HasSunEphemeris = (body: string) => boolean;
 
 let initialized = false;
 let initPromise: Promise<void> | undefined;
@@ -33,9 +23,10 @@ let wasmEra: EarthRotationAngle | undefined;
 let wasmSunDir: SunDirectionEci | undefined;
 let wasmSunDirFromBody: SunDirectionFromBody | undefined;
 let wasmSunDistFromBody: SunDistanceFromBody | undefined;
+let wasmHasSunEphemeris: HasSunEphemeris | undefined;
 let wasmJdToUtc: JdToUtcString | undefined;
 let wasmBodyOrientation: BodyOrientation | undefined;
-let wasmBodyQuatToRsw: BodyQuatToRsw | undefined;
+let wasmOrbitDerived: OrbitDerivedBatch | undefined;
 
 /** Options for {@link initArika}. */
 export interface InitArikaOptions {
@@ -67,10 +58,11 @@ export function initArika(options?: InitArikaOptions): Promise<void> {
     wasmEra = mod.earth_rotation_angle;
     wasmSunDir = mod.sun_direction_eci;
     wasmSunDirFromBody = mod.sun_direction_from_body;
+    wasmHasSunEphemeris = mod.has_sun_ephemeris;
     wasmSunDistFromBody = mod.sun_distance_from_body;
     wasmJdToUtc = mod.jd_to_utc_string;
     wasmBodyOrientation = mod.body_orientation;
-    wasmBodyQuatToRsw = mod.body_quat_to_rsw;
+    wasmOrbitDerived = mod.orbit_derived_batch;
     initialized = true;
   });
   initPromise = p;
@@ -89,6 +81,22 @@ export function eci_to_ecef_batch(
   epoch_jd: number,
 ): Float32Array {
   return wasmBatch!(positions, times, epoch_jd);
+}
+
+/**
+ * Keplerian elements and chart scalars for a batch of state vectors, via WASM.
+ *
+ * `states` is `[x,y,z,vx,vy,vz, ...]`; the result is 10 values per state,
+ * `[a, e, inc, raan, omega, nu, altitude, specific_energy, angular_momentum,
+ * velocity]`, with angles in radians. A state with no orbital plane comes back
+ * as ten `NaN`s.
+ */
+export function orbit_derived_batch(
+  states: Float64Array,
+  mu: number,
+  body_radius: number,
+): Float64Array {
+  return wasmOrbitDerived!(states, mu, body_radius);
 }
 
 /** Single-point ECI→ECEF transform via WASM. Returns [ex, ey, ez]. */
@@ -117,6 +125,18 @@ export function sun_direction_from_body(body: string, epoch_jd: number, t: numbe
   return wasmSunDirFromBody!(body, epoch_jd, t);
 }
 
+/**
+ * Whether the Sun direction for this body is computed rather than guessed.
+ *
+ * `sun_direction_from_body` answers +X (the vernal equinox) for a body arika
+ * cannot place, and a caller drawing the Sun as an arrow has to tell the two
+ * apart: a fixed direction lights a model honestly and reads as a measurement
+ * when drawn. False before the module is ready, like the other accessors.
+ */
+export function has_sun_ephemeris(body: string): boolean {
+  return wasmHasSunEphemeris?.(body) ?? false;
+}
+
 /** Sun distance [km] from a given body via WASM. */
 export function sun_distance_from_body(body: string, epoch_jd: number, t: number): number {
   return wasmSunDistFromBody!(body, epoch_jd, t);
@@ -138,30 +158,6 @@ export function body_orientation(
   t: number,
 ): [number, number, number, number] | undefined {
   const result = wasmBodyOrientation!(body, epoch_jd, t);
-  if (result.length === 0) return undefined;
-  return [result[0], result[1], result[2], result[3]];
-}
-
-/**
- * Transform body-to-ECI quaternion to body-to-RSW frame via WASM.
- *
- * RSW axis order: [Radial, Along-track, Cross-track] (standard Vallado).
- *
- * Returns [w, x, y, z] (Hamilton scalar-first) or undefined if degenerate.
- */
-export function body_quat_to_rsw(
-  pos_x: number,
-  pos_y: number,
-  pos_z: number,
-  vel_x: number,
-  vel_y: number,
-  vel_z: number,
-  qw: number,
-  qx: number,
-  qy: number,
-  qz: number,
-): [number, number, number, number] | undefined {
-  const result = wasmBodyQuatToRsw!(pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, qw, qx, qy, qz);
   if (result.length === 0) return undefined;
   return [result[0], result[1], result[2], result[3]];
 }

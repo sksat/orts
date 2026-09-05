@@ -219,6 +219,18 @@ pub fn sun_direction_from_body(body: &str, epoch_jd: f64, t: f64) -> Vec<f32> {
     vec![dir.x() as f32, dir.y() as f32, dir.z() as f32]
 }
 
+/// Whether the Sun direction for this body is computed rather than guessed.
+///
+/// [`sun_direction_from_body`] answers `+X` (the vernal equinox) for a body it
+/// cannot place. A caller that draws the Sun as an arrow asks here first: a
+/// fixed direction is fine for lighting and reads as a measurement when drawn.
+///
+/// `body`: body identifier string (e.g., "earth", "mars")
+#[wasm_bindgen]
+pub fn has_sun_ephemeris(body: &str) -> bool {
+    sun::has_sun_ephemeris(body)
+}
+
 /// Sun distance [km] from a given central body.
 ///
 /// `body`: body identifier string (e.g., "earth", "mars")

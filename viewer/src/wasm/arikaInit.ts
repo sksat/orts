@@ -13,6 +13,7 @@ type SunDistanceFromBody = (body: string, epoch_jd: number, t: number) => number
 type JdToUtcString = (epoch_jd: number, t: number) => string;
 type BodyOrientation = (body: string, epoch_jd: number, t: number) => Float64Array;
 type OrbitDerivedBatch = (states: Float64Array, mu: number, body_radius: number) => Float64Array;
+type HasSunEphemeris = (body: string) => boolean;
 
 let initialized = false;
 let initPromise: Promise<void> | undefined;
@@ -22,6 +23,7 @@ let wasmEra: EarthRotationAngle | undefined;
 let wasmSunDir: SunDirectionEci | undefined;
 let wasmSunDirFromBody: SunDirectionFromBody | undefined;
 let wasmSunDistFromBody: SunDistanceFromBody | undefined;
+let wasmHasSunEphemeris: HasSunEphemeris | undefined;
 let wasmJdToUtc: JdToUtcString | undefined;
 let wasmBodyOrientation: BodyOrientation | undefined;
 let wasmOrbitDerived: OrbitDerivedBatch | undefined;
@@ -56,6 +58,7 @@ export function initArika(options?: InitArikaOptions): Promise<void> {
     wasmEra = mod.earth_rotation_angle;
     wasmSunDir = mod.sun_direction_eci;
     wasmSunDirFromBody = mod.sun_direction_from_body;
+    wasmHasSunEphemeris = mod.has_sun_ephemeris;
     wasmSunDistFromBody = mod.sun_distance_from_body;
     wasmJdToUtc = mod.jd_to_utc_string;
     wasmBodyOrientation = mod.body_orientation;
@@ -120,6 +123,18 @@ export function sun_direction_eci(epoch_jd: number, t: number): Float32Array {
 /** Sun direction (unit vector) as seen from a given body, in J2000 equatorial frame via WASM. Returns [x, y, z]. */
 export function sun_direction_from_body(body: string, epoch_jd: number, t: number): Float32Array {
   return wasmSunDirFromBody!(body, epoch_jd, t);
+}
+
+/**
+ * Whether the Sun direction for this body is computed rather than guessed.
+ *
+ * `sun_direction_from_body` answers +X (the vernal equinox) for a body arika
+ * cannot place, and a caller drawing the Sun as an arrow has to tell the two
+ * apart: a fixed direction lights a model honestly and reads as a measurement
+ * when drawn. False before the module is ready, like the other accessors.
+ */
+export function has_sun_ephemeris(body: string): boolean {
+  return wasmHasSunEphemeris?.(body) ?? false;
 }
 
 /** Sun distance [km] from a given body via WASM. */

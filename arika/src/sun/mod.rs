@@ -13,8 +13,9 @@ mod ephemeris;
 mod rotation;
 
 pub use ephemeris::{
-    SunPositionError, equation_of_time, sun_direction_eci, sun_direction_from_body,
-    sun_distance_from_body, sun_distance_km, sun_position_eci, sun_position_from_body,
+    SunPositionError, equation_of_time, has_sun_ephemeris, sun_direction_eci,
+    sun_direction_from_body, sun_distance_from_body, sun_distance_km, sun_position_eci,
+    sun_position_from_body,
 };
 pub use rotation::SUN;
 

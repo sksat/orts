@@ -193,6 +193,27 @@ pub fn ecliptic_to_equatorial(v: &Vector3<f64>, epsilon: f64) -> Vector3<f64> {
     )
 }
 
+/// Standish elements for a body, by the id the rest of the crate uses.
+fn elements_for(body: &str) -> Option<&'static OrbitalElements> {
+    match body {
+        "mercury" => Some(&MERCURY_ELEMENTS),
+        "venus" => Some(&VENUS_ELEMENTS),
+        "earth" => Some(&EARTH_ELEMENTS),
+        "mars" => Some(&MARS_ELEMENTS),
+        "jupiter" => Some(&JUPITER_ELEMENTS),
+        "saturn" => Some(&SATURN_ELEMENTS),
+        _ => None,
+    }
+}
+
+/// Whether [`heliocentric_position_ecliptic`] can place this body.
+///
+/// Lets a caller tell "no ephemeris here" from a computed answer without asking
+/// for a position it has no epoch for.
+pub fn has_heliocentric_elements(body: &str) -> bool {
+    elements_for(body).is_some()
+}
+
 /// Compute heliocentric position of a planet in the ecliptic frame [km].
 ///
 /// Returns `None` if the body is not a recognized planet.
@@ -204,15 +225,7 @@ pub fn ecliptic_to_equatorial(v: &Vector3<f64>, epsilon: f64) -> Vector3<f64> {
 /// requires `&Epoch<Tdb>` — the caller converts at the boundary
 /// (`utc.to_tdb()`).
 pub fn heliocentric_position_ecliptic(body: &str, epoch: &Epoch<Tdb>) -> Option<Vector3<f64>> {
-    let elements = match body {
-        "mercury" => &MERCURY_ELEMENTS,
-        "venus" => &VENUS_ELEMENTS,
-        "earth" => &EARTH_ELEMENTS,
-        "mars" => &MARS_ELEMENTS,
-        "jupiter" => &JUPITER_ELEMENTS,
-        "saturn" => &SATURN_ELEMENTS,
-        _ => return None,
-    };
+    let elements = elements_for(body)?;
 
     let t = epoch.centuries_since_j2000();
 

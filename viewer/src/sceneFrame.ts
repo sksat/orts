@@ -36,7 +36,9 @@ export const DEFAULT_CAMERA_POSITION: [number, number, number] = [5, 0, 2];
  *
  * When centered on a satellite, the up vector is the radial outward direction
  * (from central body through satellite), so the central body always appears
- * "below" in the viewport. Returns SCENE_UP for non-satellite-centered views.
+ * "below" in the viewport. Returns SCENE_UP for non-satellite-centered views, and
+ * for a zero or non-finite position — a NaN `camera.up` blanks the whole canvas,
+ * so a fallback that is merely wrong beats one that is not a number.
  */
 export function computeCameraUp(
   originPosition: [number, number, number] | null,
@@ -44,7 +46,7 @@ export function computeCameraUp(
   if (originPosition == null) return SCENE_UP;
   const [x, y, z] = originPosition;
   const len = Math.sqrt(x * x + y * y + z * z);
-  if (len < 1e-10) return SCENE_UP;
+  if (!(Number.isFinite(len) && len > 1e-10)) return SCENE_UP;
   return [x / len, y / len, z / len];
 }
 
@@ -65,7 +67,12 @@ export interface LvlhAxes {
  * - Cross-track (C) = normalize(r × v)  (orbit normal)
  * - In-track (I) = C × R  (in orbit plane, roughly along velocity)
  *
- * Returns null if position or velocity is null/zero.
+ * Returns null when the axes cannot be built: a null, zero or non-finite
+ * position or velocity, or a position parallel to the velocity. A comparison
+ * against a threshold is false for NaN, so each length is checked for being
+ * finite as well — otherwise a non-finite input passes the degeneracy test and
+ * leaves NaN in every axis, and a caller that treats non-null axes as "the
+ * local-orbital frame is available" then draws the whole scene at NaN.
  */
 export function computeLvlhAxes(
   position: [number, number, number] | null,
@@ -75,11 +82,11 @@ export function computeLvlhAxes(
 
   const [rx, ry, rz] = position;
   const rLen = Math.sqrt(rx * rx + ry * ry + rz * rz);
-  if (rLen < 1e-10) return null;
+  if (!(Number.isFinite(rLen) && rLen > 1e-10)) return null;
 
   const [vx, vy, vz] = velocity;
   const vLen = Math.sqrt(vx * vx + vy * vy + vz * vz);
-  if (vLen < 1e-10) return null;
+  if (!(Number.isFinite(vLen) && vLen > 1e-10)) return null;
 
   // Radial = normalize(r)
   const radial: [number, number, number] = [rx / rLen, ry / rLen, rz / rLen];
@@ -89,7 +96,8 @@ export function computeLvlhAxes(
   const cy = rz * vx - rx * vz;
   const cz = rx * vy - ry * vx;
   const cLen = Math.sqrt(cx * cx + cy * cy + cz * cz);
-  if (cLen < 1e-10) return null; // degenerate: r parallel to v
+  // Degenerate (r parallel to v), or non-finite from a large-magnitude input.
+  if (!(Number.isFinite(cLen) && cLen > 1e-10)) return null;
   const crossTrack: [number, number, number] = [cx / cLen, cy / cLen, cz / cLen];
 
   // In-track = crossTrack × radial

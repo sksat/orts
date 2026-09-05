@@ -1,4 +1,4 @@
-import { OrbitControls } from "@react-three/drei";
+import { OrbitControls, type OrbitControlsProps } from "@react-three/drei";
 import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
@@ -8,7 +8,7 @@ import {
   entityPathToBodyId,
   getBodyRadius,
 } from "../bodies.js";
-import { transformToLvlh } from "../coordTransform.js";
+import { displayPosition, displayRotation, resolveDisplayFrame } from "../displayFrame.js";
 import {
   computeSceneAmplification,
   type DisplayScaleProfile,
@@ -21,8 +21,8 @@ import { DEFAULT_FRAME, isLegacyEcef, type ReferenceFrame } from "../referenceFr
 import { getSatelliteModelConfig } from "../satelliteModels.js";
 import { type MarkerShape, resolveMarkerShape } from "../satelliteShapes.js";
 import { computeCameraUp, computeLvlhAxes, type LvlhAxes, SCENE_UP } from "../sceneFrame.js";
-import type { TrailBuffer } from "../utils/TrailBuffer.js";
-import { body_orientation, earth_rotation_angle, eci_to_ecef } from "../wasm/arikaInit.js";
+import type { TrailBufferLike } from "../utils/TrailBuffer.js";
+import { body_orientation, earth_rotation_angle } from "../wasm/arikaInit.js";
 import { CelestialBody } from "./CelestialBody.js";
 import { OrbitTrail } from "./OrbitTrail.js";
 import { buildRenderEntries } from "./renderEntries.js";
@@ -254,58 +254,35 @@ function SecondaryBody({
   epochJd?: number | null;
   originPosition?: [number, number, number] | null;
   lvlhAxes?: LvlhAxes | null;
-  textureRevision?: number;
+  textureRevision?: number | string;
   textureBaseUrl?: string;
   bodyDefinitions: BodyDefinitions;
 }) {
   const bodyRadiusKm = getBodyRadius(bodyId, bodyDefinitions);
   const radius = bodyRadiusKm != null ? bodyRadiusKm / scaleRadius : 0.01;
 
-  // Position transform: same pipeline as Satellite (ECI → ECEF → LVLH)
-  let scenePos: [number, number, number];
-  if (isLegacyEcef(referenceFrame) && epochJd != null) {
-    const ecef = eci_to_ecef(position.x, position.y, position.z, epochJd, position.t);
-    scenePos = [ecef[0] / scaleRadius, ecef[1] / scaleRadius, ecef[2] / scaleRadius];
-  } else if (originPosition != null && lvlhAxes != null) {
-    scenePos = transformToLvlh(
-      position.x,
-      position.y,
-      position.z,
-      originPosition,
-      lvlhAxes,
-      scaleRadius,
-    );
-  } else if (originPosition != null) {
-    scenePos = [
-      (position.x - originPosition[0]) / scaleRadius,
-      (position.y - originPosition[1]) / scaleRadius,
-      (position.z - originPosition[2]) / scaleRadius,
-    ];
-  } else {
-    scenePos = [position.x / scaleRadius, position.y / scaleRadius, position.z / scaleRadius];
-  }
+  // Position and orientation share one display frame (see displayFrame.ts), so
+  // the mesh can never be placed in one basis and oriented in another.
+  const era =
+    isLegacyEcef(referenceFrame) && epochJd != null
+      ? earth_rotation_angle(epochJd, position.t)
+      : null;
+  const frame = resolveDisplayFrame(referenceFrame, { era, originPosition, lvlhAxes });
+  const scenePos = displayPosition(frame, position.x, position.y, position.z, scaleRadius);
 
-  // Body orientation via IAU rotation model (arika WASM).
-  // IAU quaternion is body-fixed → ECI. For non-inertial display frames
-  // (ECEF, LVLH), we must apply the same frame rotation as positions get.
-  const orientation = useMemo(() => {
+  // Body-fixed → inertial orientation via the IAU rotation model (arika WASM),
+  // including the Three.js +Y-pole → IAU +Z-pole alignment.
+  const bodyToInertial = useMemo(() => {
     if (epochJd == null) return undefined;
     const q = body_orientation(bodyId, epochJd, position.t);
     if (!q) return undefined;
-    // IAU body-fixed → ECI: q = [w, x, y, z]
-    const iauQuat = new THREE.Quaternion(q[1], q[2], q[3], q[0]); // THREE uses (x,y,z,w)
-    // Pole alignment: rotate +Y (Three.js pole) → +Z (IAU pole)
+    // IAU body-fixed → ECI: q = [w, x, y, z]; THREE uses (x, y, z, w)
+    const iauQuat = new THREE.Quaternion(q[1], q[2], q[3], q[0]);
     const poleAlign = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0));
-    // body-fixed → ECI → (optional frame rotation)
-    let combined = iauQuat.multiply(poleAlign);
-    // ECEF: apply inverse Earth rotation (same as position transform)
-    if (isLegacyEcef(referenceFrame) && epochJd != null) {
-      const era = earth_rotation_angle(epochJd, position.t);
-      const ecefRot = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, -era));
-      combined = ecefRot.multiply(combined);
-    }
-    return combined;
-  }, [bodyId, epochJd, position.t, referenceFrame]);
+    return iauQuat.multiply(poleAlign);
+  }, [bodyId, epochJd, position.t]);
+
+  const orientation = bodyToInertial ? displayRotation(frame).multiply(bodyToInertial) : undefined;
 
   return (
     <group position={scenePos} quaternion={orientation ?? undefined}>
@@ -322,8 +299,8 @@ function SecondaryBody({
 }
 
 export interface OrbitSceneContentsProps {
-  /** Per-satellite TrailBuffers (all source types). */
-  trailBuffers?: Map<string, TrailBuffer>;
+  /** Per-satellite trail buffers (all source types). */
+  trailBuffers?: Map<string, TrailBufferLike>;
   /** Per-satellite positions. */
   satellitePositions?: Map<string, OrbitPoint | null>;
   /** Per-satellite visible counts (when not live). */
@@ -351,9 +328,19 @@ export interface OrbitSceneContentsProps {
   /** When true, atmosphere uses physical scale. Default: auto (true for satellite-centered). */
   physicalScale?: boolean;
   /** Bumped when server notifies high-res textures are available. */
-  textureRevision?: number;
+  textureRevision?: number | string;
   /** Base URL for fetching high-res textures (e.g., "http://localhost:9001/textures/"). */
   textureBaseUrl?: string;
+  /**
+   * Default orbit camera package: OrbitControls plus the frame-aware camera rig
+   * (near/far configurator, distance transitions, LVLH tracking). `true`
+   * (default) renders it; `false` hands the camera entirely to the caller; an
+   * object enables it and is spread onto OrbitControls. Disabling it means the
+   * caller is responsible for camera placement, near/far, and `camera.up`.
+   */
+  controls?: boolean | Partial<OrbitControlsProps>;
+  /** Render the reference axes helper. Default `true`. */
+  axes?: boolean;
 }
 
 /**
@@ -380,7 +367,14 @@ export function OrbitSceneContents({
   physicalScale,
   textureRevision,
   textureBaseUrl,
+  controls = true,
+  axes = true,
 }: OrbitSceneContentsProps) {
+  // Default camera package (controls + frame-aware rig). `false` opts out
+  // entirely; an object enables it and is spread onto OrbitControls.
+  const controlsEnabled = controls !== false;
+  const controlsProps = typeof controls === "object" ? controls : undefined;
+
   const isEcef = isLegacyEcef(referenceFrame);
   const isSatCentered = referenceFrame.center.type === "satellite";
   const centeredSatId =
@@ -465,16 +459,21 @@ export function OrbitSceneContents({
     return earth_rotation_angle(epochJd, simTime);
   }, [epochJd, simTime]);
 
+  // The scene's display frame, resolved once from the frame geometry above. Every
+  // direction the scene draws (the Sun below, and whatever else is added) goes
+  // through this one value rather than re-deriving the rotation from era/LVLH.
+  const sceneDisplayFrame = useMemo(
+    () => resolveDisplayFrame(referenceFrame, { era, originPosition, lvlhAxes }),
+    [referenceFrame, era, originPosition, lvlhAxes],
+  );
+
   // Sun direction + intensity (display frame). Shared by the lights and by the
   // lit bodies below, so the scene holds them and passes them down explicitly.
   const { sunDirection, sunIntensity, lightPosition } = useSunLighting({
     centralBody,
     epochJd,
     quantizedSimTime,
-    isEcef,
-    era,
-    lvlhActive,
-    lvlhAxes,
+    displayFrame: sceneDisplayFrame,
     sceneAmplification,
   });
 
@@ -484,18 +483,17 @@ export function OrbitSceneContents({
   // Central body position and orientation in LVLH frame
   const bodyLvlhPosition = useMemo<[number, number, number] | null>(() => {
     if (!lvlhActive || originPosition == null || lvlhAxes == null) return null;
-    return transformToLvlh(0, 0, 0, originPosition, lvlhAxes, effectiveScaleRadius);
+    return displayPosition(
+      { kind: "localOrbital", origin: originPosition, axes: lvlhAxes },
+      0,
+      0,
+      0,
+      effectiveScaleRadius,
+    );
   }, [lvlhActive, originPosition, lvlhAxes, effectiveScaleRadius]);
 
   const bodyLvlhQuaternion = useMemo<[number, number, number, number] | null>(() => {
-    if (!lvlhActive || lvlhAxes == null) return null;
-    // R_lvlh: basis matrix [inTrack, crossTrack, radial] maps LVLH→ECI
-    const lvlhMat = new THREE.Matrix4().makeBasis(
-      new THREE.Vector3(...lvlhAxes.inTrack),
-      new THREE.Vector3(...lvlhAxes.crossTrack),
-      new THREE.Vector3(...lvlhAxes.radial),
-    );
-    const lvlhQuat = new THREE.Quaternion().setFromRotationMatrix(lvlhMat);
+    if (!lvlhActive || lvlhAxes == null || originPosition == null) return null;
     let bodyToInertialQuat: THREE.Quaternion;
     if (centralBody === "earth") {
       // Keep Earth in the same simple ERA frame as position/geodetic transforms.
@@ -514,10 +512,15 @@ export function OrbitSceneContents({
       );
     }
 
-    // Body orientation in LVLH: R_lvlh^T * R_body_to_inertial.
-    const bodyQuat = lvlhQuat.clone().conjugate().multiply(bodyToInertialQuat);
+    // Body orientation in the display frame: R_inertial→lvlh * R_body→inertial,
+    // with the rotation taken from the same basis the positions use.
+    const bodyQuat = displayRotation({
+      kind: "localOrbital",
+      origin: originPosition,
+      axes: lvlhAxes,
+    }).multiply(bodyToInertialQuat);
     return [bodyQuat.x, bodyQuat.y, bodyQuat.z, bodyQuat.w];
-  }, [lvlhActive, lvlhAxes, epochJd, centralBody, simTime, era]);
+  }, [lvlhActive, lvlhAxes, originPosition, epochJd, centralBody, simTime, era]);
 
   // Target offset for SmoothOriginGroup (non-LVLH satellite-centered fallback)
   const originOffset = useMemo<[number, number, number]>(() => {
@@ -537,24 +540,31 @@ export function OrbitSceneContents({
 
   return (
     <>
-      <CameraConfigurator profile={displayProfile} />
-      <CameraDistanceTransition
-        profile={displayProfile}
-        overrideDistance={cameraDistanceOverride}
-      />
-      <OrbitControls
-        enableDamping
-        dampingFactor={0.1}
-        minDistance={displayProfile.minDistance}
-        maxDistance={displayProfile.maxDistance}
-      />
-      {/* Camera co-rotation only when the kernel asked for it (local-orbital
-          approximated by the camera); an inertial centre keeps star-fixed axes. */}
-      <CameraLvlhTracker
-        originPosition={cameraTracking ? originPosition : null}
-        originVelocity={originVelocity}
-        lvlhActive={lvlhActive}
-      />
+      {/* Default camera package: render only when `controls` is not false, so a
+          bring-your-own-Canvas caller can take over the camera entirely. */}
+      {controlsEnabled && (
+        <>
+          <CameraConfigurator profile={displayProfile} />
+          <CameraDistanceTransition
+            profile={displayProfile}
+            overrideDistance={cameraDistanceOverride}
+          />
+          <OrbitControls
+            enableDamping
+            dampingFactor={0.1}
+            minDistance={displayProfile.minDistance}
+            maxDistance={displayProfile.maxDistance}
+            {...controlsProps}
+          />
+          {/* Camera co-rotation only when the kernel asked for it (local-orbital
+              approximated by the camera); an inertial centre keeps star-fixed axes. */}
+          <CameraLvlhTracker
+            originPosition={cameraTracking ? originPosition : null}
+            originVelocity={originVelocity}
+            lvlhActive={lvlhActive}
+          />
+        </>
+      )}
 
       <SunLighting intensity={sunIntensity} position={lightPosition} />
 
@@ -698,7 +708,7 @@ export function OrbitSceneContents({
       </SmoothOriginGroup>
 
       {/* Reference axes: full ECI axes for body-centered, small LVLH reference for satellite-centered */}
-      <axesHelper args={[isSatCentered ? 0.015 : 2]} />
+      {axes && <axesHelper args={[isSatCentered ? 0.015 : 2]} />}
     </>
   );
 }

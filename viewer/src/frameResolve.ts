@@ -66,7 +66,13 @@ export function resolveSceneFrame(
 
   const id = frame.center.id;
   const state = getEntity(id);
-  if (state == null) return { ...inert, centeredSatId: id };
+  // A non-finite position is no position: it cannot centre the scene, and passing
+  // it on would put the origin offset and the camera's up vector at NaN, which
+  // blanks the canvas. Treated like a state that has not arrived — the entity is
+  // still the centre, so the camera stays put until a usable sample lands.
+  if (state == null || !state.position.every(Number.isFinite)) {
+    return { ...inert, centeredSatId: id };
+  }
 
   // Snapshot the caller-owned tuples: the context is returned from public API
   // surfaces, and an embedder mutating its position array in place must not

@@ -2,7 +2,11 @@ import { useMemo } from "react";
 import * as THREE from "three";
 import { type DisplayFrame, type DisplayRotationFrame, displayDirection } from "../displayFrame.js";
 import { inverseSquareIntensity } from "../sunLighting.js";
-import { sun_direction_from_body, sun_distance_from_body } from "../wasm/arikaInit.js";
+import {
+  has_sun_ephemeris,
+  sun_direction_from_body,
+  sun_distance_from_body,
+} from "../wasm/arikaInit.js";
 
 // Default sun direction when no epoch is provided: ECI +X (vernal equinox).
 const DEFAULT_SUN_DIRECTION_ECI: [number, number, number] = [1, 0, 0];
@@ -34,6 +38,16 @@ export interface SunLightingParams {
 export interface SunLightingState {
   /** Sun direction in the active display frame. */
   sunDirection: THREE.Vector3;
+  /**
+   * Whether `sunDirection` came out of an ephemeris.
+   *
+   * False without an epoch, and false for a central body arika cannot place:
+   * `sun_direction_from_body` answers +X — the vernal equinox — in that case, and
+   * the value is indistinguishable from a computed one. A consumer that *draws*
+   * the Sun has to check this; the light does not, since a fixed direction lights
+   * a model without claiming anything.
+   */
+  sunDirectionIsComputed: boolean;
   /** Inverse-square intensity scale relative to 1 AU. */
   sunIntensity: number;
   /** Directional light position (sun direction scaled out by the light distance). */
@@ -61,6 +75,11 @@ export function useSunLighting({
     const dir = sun_direction_from_body(centralBody, epochJd, quantizedSimTime);
     return [dir[0], dir[1], dir[2]];
   }, [centralBody, epochJd, quantizedSimTime]);
+
+  const sunDirectionIsComputed = useMemo(
+    () => epochJd != null && has_sun_ephemeris(centralBody),
+    [centralBody, epochJd],
+  );
 
   // Sun intensity: inverse-square law based on the body-Sun distance.
   const sunIntensity = useMemo(() => {
@@ -95,7 +114,7 @@ export function useSunLighting({
     [sunDirection, lightDistance],
   );
 
-  return { sunDirection, sunIntensity, lightPosition };
+  return { sunDirection, sunDirectionIsComputed, sunIntensity, lightPosition };
 }
 
 /**

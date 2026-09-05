@@ -6,11 +6,16 @@ import {
   batchEncodeEciHighLow,
   encodeFloat64ToHighLow,
 } from "../coordTransform.js";
+import {
+  type TrailTransformKey,
+  needsFullRewrite as trailTransformChanged,
+  trailTransformKey,
+} from "../displayFrame.js";
 import type { OrbitPoint } from "../orbit.js";
-import { frameCenterEquals, isLegacyEcef, type ReferenceFrame } from "../referenceFrame.js";
+import type { ReferenceFrame } from "../referenceFrame.js";
 import type { LvlhAxes } from "../sceneFrame.js";
 import { orbitTrailFrag, orbitTrailVert } from "../shaders/orbitTrail.js";
-import type { TrailBuffer } from "../utils/TrailBuffer.js";
+import type { TrailBufferLike } from "../utils/TrailBuffer.js";
 
 /** Initial capacity for the streaming vertex buffer. Grows as needed. */
 const INITIAL_CAPACITY = 2048;
@@ -18,8 +23,8 @@ const INITIAL_CAPACITY = 2048;
 interface OrbitTrailProps {
   /** Number of vertices to render. */
   visibleCount?: number;
-  /** TrailBuffer (bounded, generation-based invalidation). */
-  trailBuffer: TrailBuffer;
+  /** Trail source (bounded, generation-based invalidation). */
+  trailBuffer: TrailBufferLike;
   /** Central body radius in km, used as the scale factor. */
   scaleRadius: number;
   /** Trail color (default: 0x00ff88). */
@@ -70,7 +75,7 @@ export function OrbitTrail({
   const positionHighRef = useRef(new Float32Array(INITIAL_CAPACITY * 3));
   const positionLowRef = useRef(new Float32Array(INITIAL_CAPACITY * 3));
   const generationRef = useRef(-1);
-  const prevFrameRef = useRef<ReferenceFrame>(referenceFrame);
+  const prevTransformRef = useRef<TrailTransformKey>(trailTransformKey(referenceFrame, epochJd));
 
   // Geometry with dual high/low attributes
   const geometry = useMemo(() => {
@@ -145,14 +150,22 @@ export function OrbitTrail({
   const lvlhAxesRef = useRef(lvlhAxes);
   lvlhAxesRef.current = lvlhAxes;
 
-  // Unified writePoints: encode source coordinates into high/low buffers
-  function writePoints(src: OrbitPoint[], from: number, to: number): void {
-    if (isLegacyEcef(referenceFrame) && epochJd != null) {
+  // Unified writePoints: encode source coordinates into high/low buffers.
+  // The branch is taken from the same transform key that drives invalidation
+  // below, so vertices can never be baked with a transform the key does not
+  // record (a late-arriving epoch used to switch the branch mid-buffer).
+  function writePoints(
+    key: TrailTransformKey,
+    src: readonly OrbitPoint[],
+    from: number,
+    to: number,
+  ): void {
+    if (key.ecefEpochJd != null) {
       batchEncodeEcefHighLow(
         src,
         from,
         to,
-        epochJd,
+        key.ecefEpochJd,
         positionHighRef.current,
         positionLowRef.current,
         from,
@@ -163,10 +176,15 @@ export function OrbitTrail({
   }
 
   useFrame(() => {
+    // One key decides everything about the transform: which branch bakes the
+    // vertices, whether the per-frame uniforms apply, and when already-written
+    // vertices must be re-encoded.
+    const transformKey = trailTransformKey(referenceFrame, epochJd);
+    const isEcef = transformKey.ecefEpochJd != null;
+
     // Update per-frame uniforms (origin + rotation) before rendering.
     // In ECEF mode, vertices are in body-fixed frame — origin/rotation uniforms
     // must be identity to avoid mixing coordinate frames.
-    const isEcef = isLegacyEcef(referenceFrame);
     const curOrigin = !isEcef ? originPositionRef.current : null;
     if (curOrigin != null) {
       const [xh, xl] = encodeFloat64ToHighLow(curOrigin[0]);
@@ -197,12 +215,10 @@ export function OrbitTrail({
       (material.uniforms.uFrameRotation.value as THREE.Matrix3).copy(IDENTITY_MAT3);
     }
 
-    // Detect reference frame change (ECI ↔ ECEF) → force full rewrite
-    const frameChanged =
-      referenceFrame.orientation !== prevFrameRef.current.orientation ||
-      !frameCenterEquals(referenceFrame.center, prevFrameRef.current.center);
-    if (frameChanged) {
-      prevFrameRef.current = referenceFrame;
+    // Detect a change in the transform the vertices were baked with (frame
+    // centre/orientation, or the ECEF epoch) → force a full rewrite.
+    if (trailTransformChanged(prevTransformRef.current, transformKey)) {
+      prevTransformRef.current = transformKey;
       writtenCountRef.current = 0;
     }
 
@@ -227,11 +243,11 @@ export function OrbitTrail({
     if (needsFullRewrite) {
       generationRef.current = currentGen;
       ensureCapacity(totalPoints);
-      writePoints(allPoints, 0, totalPoints);
+      writePoints(transformKey, allPoints, 0, totalPoints);
       writtenCountRef.current = totalPoints;
       markAttrsNeedUpdate();
     } else if (totalPoints > writtenCountRef.current) {
-      appendPoints(allPoints, writtenCountRef.current, totalPoints);
+      appendPoints(transformKey, allPoints, writtenCountRef.current, totalPoints);
     }
 
     const vc = visibleCount != null ? Math.min(visibleCount, totalPoints) : totalPoints;
@@ -264,9 +280,14 @@ export function OrbitTrail({
   }
 
   /** Append points[from..to) to the GPU buffers. */
-  function appendPoints(src: OrbitPoint[], from: number, to: number): void {
+  function appendPoints(
+    key: TrailTransformKey,
+    src: readonly OrbitPoint[],
+    from: number,
+    to: number,
+  ): void {
     ensureCapacity(to);
-    writePoints(src, from, to);
+    writePoints(key, src, from, to);
     writtenCountRef.current = to;
     markAttrsNeedUpdate();
   }

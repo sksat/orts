@@ -19,6 +19,7 @@ import type { OrbitControlsProps } from "@react-three/drei";
 import type { CSSProperties } from "react";
 import type { WebGLRendererParameters } from "three";
 import type { BodyDefinitions } from "../bodies.js";
+import type { DirectionVectorOptions } from "../directionVectors.js";
 import type { MarkerShape } from "../satelliteShapes.js";
 import type { TrailBufferLike } from "../utils/TrailBuffer.js";
 
@@ -149,8 +150,9 @@ export interface CentralBody {
  * - `{ satelliteId }` + `inertial` — that satellite at the origin with the axes
  *   star-fixed: the central body appears to move around the satellite as it
  *   orbits, and the camera does not co-rotate.
- * - `{ satelliteId }` + `localOrbital` — that satellite at the origin, LVLH axes
- *   (radial / along-track / cross-track): the central body stays "below" as the
+ * - `{ satelliteId }` + `localOrbital` — that satellite at the origin in the
+ *   orbit frame {@link AttitudeFrame} spells out (scene +X in-track, +Y
+ *   cross-track, +Z radially outward), so the central body stays "below" as the
  *   satellite orbits. Requires the satellite's velocity; without it the view
  *   falls back to a radial-up camera follow.
  */
@@ -273,3 +275,137 @@ export const DEFAULT_VIEWER_FRAME: ViewerReferenceFrame = {
   center: "centralBody",
   orientation: "inertial",
 };
+
+/**
+ * Display orientation for the attitude view.
+ *
+ * There is no centre to choose: the spacecraft is at the origin, which is what
+ * makes it the attitude view. `bodyFixed` needs an epoch (and an Earth central
+ * body, whose rotation angle is the one the viewer models); `localOrbital` needs
+ * the spacecraft's position and velocity. A requested orientation whose inputs
+ * are absent falls back to `inertial`.
+ *
+ * `localOrbital` is an orbit frame, and its name does not pin the axes down —
+ * LVLH and RSW conventions differ in both order and sign, and the view draws
+ * letters on these axes for a reader to interpret. This renderer maps
+ *
+ * - scene **+X** to in-track, `crossTrack × radial`, which is the velocity
+ *   direction for a circular orbit;
+ * - scene **+Y** to cross-track, `normalize(r × v)`, the orbit normal;
+ * - scene **+Z** to radial *outward*, `normalize(r)`, so nadir points along
+ *   scene −Z.
+ *
+ * Read against the convention that puts +Z at nadir, the labelled axes would
+ * come out inverted.
+ */
+export type AttitudeFrame = "inertial" | "bodyFixed" | "localOrbital";
+
+/**
+ * One spacecraft's attitude, for {@link AttitudeScene}.
+ *
+ * The required and optional fields are the mirror of {@link SatelliteState}'s:
+ * the attitude is what this view exists to show, and the position is needed only
+ * by the things that reference the orbit — the nadir arrow, and the
+ * `localOrbital` frame (which also needs the velocity).
+ */
+export interface AttitudeBodyState {
+  id: string;
+  /** Body→inertial rotation, Hamilton scalar-first `[w, x, y, z]`. */
+  attitude: Quat;
+  /** Position in km, central-body-centred inertial frame. */
+  position?: Vec3;
+  /** Velocity in km/s, central-body-centred inertial frame. */
+  velocity?: Vec3;
+  /** Seconds since the epoch, for the Sun direction and the body-fixed rotation. */
+  time?: number;
+  /** Display name, also used to look up a 3D model. */
+  name?: string;
+  /** Marker colour as a hex number (e.g. `0x00ff88`). */
+  color?: number;
+  /** Marker shape override for a spacecraft with no 3D model. */
+  markerShape?: MarkerShape | null;
+}
+
+/** Data props shared by {@link AttitudeScene} and {@link AttitudeViewer}. */
+export interface AttitudeSceneDataProps {
+  /**
+   * The central body the spacecraft orbits. Only its `id` is read — for the Sun
+   * direction, and to decide whether the body-fixed frame is available. No radius
+   * is needed: this view has no physical length scale.
+   */
+  centralBody: CentralBody;
+  /** The spacecraft whose attitude is shown. */
+  body: AttitudeBodyState;
+  /** Display orientation. Default `"inertial"`. */
+  orientation?: AttitudeFrame;
+  /**
+   * Julian Date of the simulation epoch, **in UTC** — `arika`'s `Epoch::from_jd`
+   * reads it as a UTC JD before deriving the Sun direction and Earth's rotation,
+   * so a TT or TDB value shifts both. Without an epoch there is no Sun direction.
+   *
+   * The body-fixed frame this feeds is visualization-grade. Earth's rotation
+   * angle is defined on UT1, and the angle used here comes from arika's legacy
+   * `Epoch<Utc>::gmst`, which takes UTC for UT1 and ignores dUT1 — up to 0.9 s,
+   * or some 13 arcseconds of rotation. Treat the drawn Earth-fixed orientation
+   * as a picture, not as an EOP-correct frame.
+   */
+  epochJd?: number;
+  /**
+   * Seconds since the epoch, when `body.time` is not given. Default 0.
+   *
+   * Added to the epoch by arika's `Epoch<Utc>::add_seconds`, which is naive
+   * UTC-JD arithmetic: across a leap second the instant it names is one second
+   * away from the elapsed-SI-time answer, another 15 arcseconds of Earth
+   * rotation on top of the dUT1 approximation above. Every wasm time binding
+   * shares that arithmetic, so this is a property of the module rather than of
+   * this view.
+   */
+  time?: number;
+  /** Marker shape default for a spacecraft with no 3D model. */
+  defaultMarkerShape?: MarkerShape | null;
+  /** Which reference-direction arrows to draw. Default: all of them. */
+  directionVectors?: DirectionVectorOptions;
+}
+
+/**
+ * Props for {@link AttitudeScene}: the attitude scene graph rendered inside a
+ * caller-supplied @react-three/fiber `<Canvas>`.
+ *
+ * The spacecraft is drawn one scene unit across, at the origin, so a camera a
+ * few units out frames it whatever the real spacecraft's size.
+ */
+export interface AttitudeSceneProps extends AttitudeSceneDataProps {
+  /** Default camera controls. `true` (default) | `false` | an OrbitControls config. */
+  controls?: ControlsProp;
+  /** Render the reference-frame axes. Default `true`. */
+  axes?: boolean;
+}
+
+/** Props for the {@link AttitudeViewer} component. */
+export interface AttitudeViewerProps extends AttitudeSceneDataProps {
+  /** Class applied to the wrapping element. */
+  className?: string;
+  /** Inline style applied to the wrapping element. */
+  style?: CSSProperties;
+  /** Overrides merged onto the internal `<Canvas>` setup. */
+  canvas?: {
+    /**
+     * Perspective camera overrides. `position`/`up` are in scene units, where the
+     * spacecraft is one unit across.
+     */
+    camera?: {
+      position?: [number, number, number];
+      up?: [number, number, number];
+      fov?: number;
+      near?: number;
+      far?: number;
+      zoom?: number;
+    };
+    /** WebGL renderer flags merged onto the defaults. */
+    gl?: Partial<WebGLRendererParameters>;
+  };
+  /** See {@link AttitudeSceneProps.controls}. */
+  controls?: ControlsProp;
+  /** See {@link AttitudeSceneProps.axes}. */
+  axes?: boolean;
+}

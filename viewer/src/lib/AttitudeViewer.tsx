@@ -1,0 +1,155 @@
+import { Canvas, useThree } from "@react-three/fiber";
+import { useEffect, useRef } from "react";
+import { PerspectiveCamera } from "three";
+import { usableDirection, usablePosition, usableProjection } from "../cameraProps.js";
+import { CameraViewProbe } from "../components/CameraViewProbe.js";
+import { FarPlaneBeyondScene } from "../components/FarPlaneBeyondScene.js";
+import { SCENE_UP } from "../sceneFrame.js";
+import {
+  cameraDistanceForSpan,
+  DEFAULT_CAMERA_FOV_DEGREES,
+  drawnExtentForSpan,
+  initialCameraDistance,
+  NOMINAL_SPACECRAFT_SPAN,
+  usableFovDegrees,
+} from "../spacecraftScale.js";
+import { AttitudeScene } from "./AttitudeScene.js";
+import type { AttitudeViewerProps } from "./types.js";
+
+/** The module that derives the framing owns the value. */
+const DEFAULT_FOV = DEFAULT_CAMERA_FOV_DEGREES;
+
+/** Viewing direction: off to one side and above, so all three axes are distinct. */
+const CAMERA_DIRECTION: [number, number, number] = [0.894, 0, 0.447];
+
+/**
+ * Default camera framing, derived from what the scene draws rather than picked by
+ * eye: the reference axes and the arrow tips both reach twice the spacecraft's
+ * apparent size, and a closer camera clips them. Assumes a square viewport; a
+ * narrower one is handled by {@link InitialCameraFit} once the size is known.
+ */
+const DEFAULT_CAMERA_POSITION: [number, number, number] = (() => {
+  const d = cameraDistanceForSpan(NOMINAL_SPACECRAFT_SPAN, DEFAULT_FOV);
+  return [CAMERA_DIRECTION[0] * d, CAMERA_DIRECTION[1] * d, CAMERA_DIRECTION[2] * d];
+})();
+
+/**
+ * Choose the camera's distance once the canvas has a size, pulling it back if the
+ * viewport is narrower than the default framing assumed.
+ *
+ * The `camera` prop is read at mount, before the canvas has a size, so a portrait
+ * embedding would otherwise clip the axes sideways. Applied on the first sizing
+ * only: reframing on every resize would undo a zoom the viewer had chosen, and
+ * this is a starting view, not a constraint.
+ *
+ * `reframe` says whether that distance is ours to choose at all. The depth range
+ * is not this component's: a caller's position of `[200, 0, 0]` with the default
+ * `far` of 100, and a viewer dollying out past it, are the same problem — the
+ * scene at the origin falls behind the far plane and the canvas goes blank — and
+ * `FarPlaneBeyondScene`, in the scene itself, holds that invariant for as long as
+ * the scene is mounted.
+ */
+function InitialCameraFit({ fov, reframe }: { fov: number; reframe: boolean }) {
+  const camera = useThree((s) => s.camera);
+  const size = useThree((s) => s.size);
+  const applied = useRef(false);
+  useEffect(() => {
+    if (applied.current || size.width === 0 || size.height === 0) return;
+    applied.current = true;
+    // A `zoom` narrows the field of view, so fit the *effective* one — a camera
+    // framed for 50° and zoomed 2× sees half as much and would clip.
+    const effectiveFov = camera instanceof PerspectiveCamera ? camera.getEffectiveFOV() : fov;
+    // A `near` from the camera prop can also sit past the scene, which frames it
+    // correctly and draws none of it, so the distance clears that plane too.
+    const needed = initialCameraDistance(
+      NOMINAL_SPACECRAFT_SPAN,
+      effectiveFov,
+      size.width / size.height,
+      camera instanceof PerspectiveCamera ? camera.near : 0,
+    );
+    const current = camera.position.length();
+    // The distance the fit asks for goes through the same check a caller's
+    // position does, in the same precision: the view matrix carries it to WebGL
+    // as float32, so past 3.4e38 the camera is somewhere the renderer cannot
+    // place it and the canvas is blank. A narrow effective field of view asks for
+    // exactly that — a `zoom` of 1e38 leaves 5.3e-37° and fits from 6.5e38 spans
+    // away. The camera keeps the framing it was built with instead, which is
+    // drawable at any zoom.
+    const placeable = Number.isFinite(Math.fround(needed));
+    if (reframe && placeable && current > 0 && needed > current) {
+      camera.position.multiplyScalar(needed / current);
+    }
+    // The far plane is not settled here. A narrow field of view fits from far
+    // away — 1° needs some 345 spans — and so does a viewer dollying out, so the
+    // scene keeps the plane beyond itself for as long as it is mounted rather
+    // than once at this moment. See `FarPlaneBeyondScene`.
+  }, [camera, size, fov, reframe]);
+  return null;
+}
+
+/**
+ * Embeddable attitude viewer.
+ *
+ * Shows one spacecraft's orientation: the spacecraft at the origin with its body
+ * axes, the reference frame's axes around it, and the reference directions (Sun,
+ * nadir) as arrows. Choose the display frame via `orientation`. Supply `epochJd`
+ * (and advance `time`) for the Sun direction and the body-fixed frame, both of
+ * which come from the bundled arika WASM.
+ *
+ * This is the batteries-included wrapper: a sized `<div>` and a configured
+ * `<Canvas>` around {@link AttitudeScene}. Drop {@link AttitudeScene} into your
+ * own Canvas instead when you need your own camera, lights or extra meshes.
+ *
+ * For a spacecraft in its orbit, with the central body and its trail, use
+ * {@link OrbitViewer}. To compare two spacecraft's attitudes, place two of these
+ * side by side: this view puts its spacecraft at the origin, and two spacecraft
+ * cannot both be there.
+ *
+ * @example
+ * ```tsx
+ * <AttitudeViewer
+ *   centralBody={{ id: "earth" }}
+ *   body={{ id: "sat-1", attitude: [1, 0, 0, 0] }}
+ * />
+ * ```
+ */
+export function AttitudeViewer({ className, style, canvas, ...sceneProps }: AttitudeViewerProps) {
+  // The default near plane is the scale the fit assumes; a caller's is checked
+  // against what this view draws around the origin.
+  const projection = usableProjection(
+    canvas?.camera,
+    usableFovDegrees(canvas?.camera?.fov),
+    drawnExtentForSpan(NOMINAL_SPACECRAFT_SPAN),
+  );
+  const position = usablePosition(
+    canvas?.camera?.position as readonly number[] | undefined,
+    DEFAULT_CAMERA_POSITION,
+  );
+  // Whether the camera's *distance* is still ours to choose. `usablePosition`
+  // hands back the fallback itself when the caller's position is no place to put
+  // a camera, so a
+  // position that was supplied but unusable belongs to us as much as an absent
+  // one — and checking the raw prop instead would leave the square default fit
+  // standing on a portrait canvas. The far plane is settled either way, so the
+  // helper always mounts.
+  const framingIsOurs = position === DEFAULT_CAMERA_POSITION;
+  return (
+    <div className={className} style={{ width: "100%", height: "100%", ...style }}>
+      <Canvas
+        camera={{
+          ...canvas?.camera,
+          position,
+          up: usableDirection(canvas?.camera?.up as readonly number[] | undefined, SCENE_UP),
+          ...projection,
+        }}
+        gl={{ ...canvas?.gl }}
+      >
+        <CameraViewProbe />
+        <InitialCameraFit fov={projection.fov} reframe={framingIsOurs} />
+        {/* Only for a plane this component chose. A caller's `far` is theirs. */}
+        {projection.farIsDefault && <FarPlaneBeyondScene span={NOMINAL_SPACECRAFT_SPAN} />}
+        <AttitudeScene {...sceneProps} />
+      </Canvas>
+    </div>
+  );
+}

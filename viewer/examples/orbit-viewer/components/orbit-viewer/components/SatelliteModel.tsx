@@ -11,9 +11,19 @@ interface SatelliteModelProps {
   config: SatelliteModelConfig;
   /** Body-to-inertial quaternion [w, x, y, z] (Hamilton scalar-first). */
   quaternion?: [number, number, number, number];
+  /**
+   * Scale in scene units per model unit, overriding `config.scale`. A view whose
+   * scene units are not central-body radii (the attitude view) sets its own.
+   */
+  scale?: number;
 }
 
-export function SatelliteModel({ position, config, quaternion }: SatelliteModelProps) {
+export function SatelliteModel({
+  position,
+  config,
+  quaternion,
+  scale = config.scale,
+}: SatelliteModelProps) {
   const { scene } = useGLTF(config.modelUrl);
   const cloned = useMemo(() => scene.clone(true), [scene]);
   const groupRef = useRef<THREE.Group>(null);
@@ -43,7 +53,7 @@ export function SatelliteModel({ position, config, quaternion }: SatelliteModelP
 
   return (
     <group position={position} ref={quaternion ? groupRef : undefined}>
-      <primitive object={cloned} scale={config.scale} rotation={config.rotation} />
+      <primitive object={cloned} scale={scale} rotation={config.rotation} />
     </group>
   );
 }

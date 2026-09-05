@@ -18,9 +18,39 @@
       ],
       "files": [
         {
+          "path": "src/axisTriad.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/axisTriad.ts"
+        },
+        {
           "path": "src/bodies.ts",
           "type": "registry:lib",
           "target": "@components/orbit-viewer/bodies.ts"
+        },
+        {
+          "path": "src/cameraProps.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/cameraProps.ts"
+        },
+        {
+          "path": "src/components/Arrow.tsx",
+          "type": "registry:component",
+          "target": "@components/orbit-viewer/components/Arrow.tsx"
+        },
+        {
+          "path": "src/components/AttitudeSceneContents.tsx",
+          "type": "registry:component",
+          "target": "@components/orbit-viewer/components/AttitudeSceneContents.tsx"
+        },
+        {
+          "path": "src/components/AxisLabels.tsx",
+          "type": "registry:component",
+          "target": "@components/orbit-viewer/components/AxisLabels.tsx"
+        },
+        {
+          "path": "src/components/AxisTriad.tsx",
+          "type": "registry:component",
+          "target": "@components/orbit-viewer/components/AxisTriad.tsx"
         },
         {
           "path": "src/components/BodyAxes.tsx",
@@ -28,9 +58,19 @@
           "target": "@components/orbit-viewer/components/BodyAxes.tsx"
         },
         {
+          "path": "src/components/CameraViewProbe.tsx",
+          "type": "registry:component",
+          "target": "@components/orbit-viewer/components/CameraViewProbe.tsx"
+        },
+        {
           "path": "src/components/CelestialBody.tsx",
           "type": "registry:component",
           "target": "@components/orbit-viewer/components/CelestialBody.tsx"
+        },
+        {
+          "path": "src/components/DirectionArrows.tsx",
+          "type": "registry:component",
+          "target": "@components/orbit-viewer/components/DirectionArrows.tsx"
         },
         {
           "path": "src/components/EarthAtmosphere.tsx",
@@ -41,6 +81,11 @@
           "path": "src/components/EarthBody.tsx",
           "type": "registry:component",
           "target": "@components/orbit-viewer/components/EarthBody.tsx"
+        },
+        {
+          "path": "src/components/FarPlaneBeyondScene.tsx",
+          "type": "registry:component",
+          "target": "@components/orbit-viewer/components/FarPlaneBeyondScene.tsx"
         },
         {
           "path": "src/components/OrbitSceneContents.tsx",
@@ -88,9 +133,24 @@
           "target": "@components/orbit-viewer/coordTransform.ts"
         },
         {
+          "path": "src/debug/cameraView.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/debug/cameraView.ts"
+        },
+        {
+          "path": "src/debug/directionVectors.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/debug/directionVectors.ts"
+        },
+        {
           "path": "src/debug/satWorldQuat.ts",
           "type": "registry:lib",
           "target": "@components/orbit-viewer/debug/satWorldQuat.ts"
+        },
+        {
+          "path": "src/directionVectors.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/directionVectors.ts"
         },
         {
           "path": "src/displayFrame.ts",
@@ -116,6 +176,16 @@
           "path": "src/hooks/useTextureResolution.ts",
           "type": "registry:lib",
           "target": "@components/orbit-viewer/hooks/useTextureResolution.ts"
+        },
+        {
+          "path": "src/lib/AttitudeScene.tsx",
+          "type": "registry:component",
+          "target": "@components/orbit-viewer/lib/AttitudeScene.tsx"
+        },
+        {
+          "path": "src/lib/AttitudeViewer.tsx",
+          "type": "registry:component",
+          "target": "@components/orbit-viewer/lib/AttitudeViewer.tsx"
         },
         {
           "path": "src/lib/OrbitScene.tsx",
@@ -203,6 +273,11 @@
           "target": "@components/orbit-viewer/shaders/orbitTrail.ts"
         },
         {
+          "path": "src/spacecraftScale.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/spacecraftScale.ts"
+        },
+        {
           "path": "src/sunLighting.ts",
           "type": "registry:lib",
           "target": "@components/orbit-viewer/sunLighting.ts"
@@ -213,9 +288,19 @@
           "target": "@components/orbit-viewer/utils/TrailBuffer.ts"
         },
         {
+          "path": "src/utils/finite.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/utils/finite.ts"
+        },
+        {
           "path": "src/wasm/arikaInit.ts",
           "type": "registry:lib",
           "target": "@components/orbit-viewer/wasm/arikaInit.ts"
+        },
+        {
+          "path": "src/wasm/useArikaReady.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/wasm/useArikaReady.ts"
         }
       ]
     }

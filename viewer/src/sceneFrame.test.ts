@@ -19,6 +19,17 @@ describe("computeCameraUp", () => {
     expect(computeCameraUp([1e-15, 0, 0])).toEqual(SCENE_UP);
   });
 
+  it("returns SCENE_UP for a non-finite position", () => {
+    // A NaN `camera.up` blanks the canvas, so a wrong fallback beats a
+    // not-a-number one.
+    for (const n of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      expect(computeCameraUp([n, 0, 0])).toEqual(SCENE_UP);
+      expect(computeCameraUp([7000, n, 0])).toEqual(SCENE_UP);
+    }
+    // Finite components whose squares overflow: the length is infinite.
+    expect(computeCameraUp([1e200, 1e200, 1e200])).toEqual(SCENE_UP);
+  });
+
   it("returns normalized radial direction for +X position", () => {
     const up = computeCameraUp([7000, 0, 0]);
     expect(up[0]).toBeCloseTo(1, 10);
@@ -69,6 +80,28 @@ describe("computeLvlhAxes", () => {
 
   it("returns null when velocity is near-zero", () => {
     expect(computeLvlhAxes([7000, 0, 0], [0, 0, 0])).toBeNull();
+  });
+
+  it("returns null for a non-finite position or velocity", () => {
+    // A threshold comparison is false for NaN, so a length check alone lets a
+    // non-finite input through and every axis comes out NaN. Callers read
+    // non-null axes as "the local-orbital frame is available" and would then
+    // place the whole scene at NaN.
+    const bad = [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY];
+    for (const n of bad) {
+      expect(computeLvlhAxes([n, 0, 0], [0, 7.5, 0])).toBeNull();
+      expect(computeLvlhAxes([7000, n, 0], [0, 7.5, 0])).toBeNull();
+      expect(computeLvlhAxes([7000, 0, 0], [n, 7.5, 0])).toBeNull();
+      expect(computeLvlhAxes([7000, 0, 0], [0, 0, n])).toBeNull();
+    }
+  });
+
+  it("returns null when the cross product overflows to infinity", () => {
+    // Measured: both lengths come out finite (1e100) while the cross product's
+    // magnitude does not, which is the only way to reach the cross-product guard —
+    // larger components overflow at the length first and are rejected there.
+    expect(Number.isFinite(Math.sqrt(1e100 * 1e100))).toBe(true);
+    expect(computeLvlhAxes([1e100, 0, 0], [0, 1e100, 0])).toBeNull();
   });
 
   // Circular equatorial orbit: r = +X, v = +Y

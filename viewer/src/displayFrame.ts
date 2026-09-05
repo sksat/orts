@@ -97,7 +97,11 @@ export function resolveDisplayOrientation(
   orientation: DisplayOrientation,
   { era = null, originPosition = null, lvlhAxes = null }: DisplayFrameInputs,
 ): DisplayFrame {
-  if (orientation === "bodyFixed" && era != null) {
+  // A non-finite ERA is treated as no ERA. It would otherwise put NaN into every
+  // rotation derived from this frame — the spacecraft's quaternion, each
+  // direction, the camera — and the scene would come out blank rather than fall
+  // back to inertial. Same reason `computeLvlhAxes` refuses non-finite state.
+  if (orientation === "bodyFixed" && era != null && Number.isFinite(era)) {
     return { kind: "bodyFixed", era };
   }
   if (orientation === "localOrbital" && originPosition != null && lvlhAxes != null) {
@@ -126,6 +130,44 @@ export function resolveDisplayFrame(
         ? "localOrbital"
         : "inertial";
   return resolveDisplayOrientation(orientation, inputs);
+}
+
+/**
+ * How far from unit a normalised quaternion may land and still be used.
+ *
+ * Above where the division lands for any magnitude a double represents normally —
+ * a few multiples of the machine epsilon, 4.4e-16 across the four-component cases
+ * measured — and far below the 1.3e-4 of the nearest case it has to reject.
+ */
+const UNIT_QUATERNION_TOLERANCE = 1e-9;
+
+/**
+ * A caller's attitude as a unit quaternion, or undefined when it does not name a
+ * rotation.
+ *
+ * Three.js applies the components with `Quaternion.set`, which does not
+ * normalise: a non-unit quaternion scales and skews the very spacecraft it is
+ * meant to orient, and a non-finite component spreads through the scene
+ * matrices. A simulator's attitude drifts off unit norm as it integrates, so the
+ * fix is to normalise what can be normalised and reject the rest — an unusable
+ * attitude then reads as *no* attitude, which the views already draw (no body
+ * axes, and the marker that looks the same from every side).
+ */
+export function unitAttitude(attitude: Quat | undefined): Quat | undefined {
+  if (attitude == null) return undefined;
+  const [w, x, y, z] = attitude;
+  const n = Math.hypot(w, x, y, z);
+  if (!(Number.isFinite(n) && n > 0)) return undefined;
+  const unit: Quat = [w / n, x / n, y / n, z / n];
+  // The division has to land on the unit sphere, and at subnormal magnitudes it
+  // does not: `Math.hypot` answers 5e-324 for `[5e-324, 5e-324, 0, 0]`, the
+  // smallest number there is, so both components divide to 1 and the result has
+  // a norm of 1.414 — which Three.js would apply as written, scaling the
+  // spacecraft by 41%. In the normal range the same division lands a few
+  // multiples of the machine epsilon from unit, so reading the result tells the
+  // two apart without a rule about the input's scale: `[1e-300, 0, 0, 0]` is the
+  // identity rotation written small, and it normalises exactly.
+  return Math.abs(Math.hypot(...unit) - 1) < UNIT_QUATERNION_TOLERANCE ? unit : undefined;
 }
 
 /**

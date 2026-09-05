@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
 import type * as THREE from "three";
 import { registerSatWorldQuat } from "../debug/satWorldQuat.js";
+import { bodyAxisArrows } from "../spacecraftScale.js";
+import { AxisTriad } from "./AxisTriad.js";
 
 interface BodyAxesProps {
   /** Position in scene units (already divided by scaleRadius). */
@@ -16,6 +18,16 @@ interface BodyAxesProps {
    * equals the rendered body orientation in every display variant.
    */
   debugId?: string;
+  /**
+   * The spacecraft's apparent size in scene units. When given, the axes are drawn
+   * as arrows of a thickness derived from it, with X / Y / Z at the tips; without
+   * it they are `AxesHelper`'s one-pixel lines.
+   *
+   * A view whose subject is the orientation passes it. The orbit view does not:
+   * there the axes are a small cue on each of many satellites, where three meshes
+   * per spacecraft buy nothing, and it has no spacecraft-relative scale to give.
+   */
+  visualSpan?: number;
 }
 
 /**
@@ -23,7 +35,13 @@ interface BodyAxesProps {
  *
  * Uses the same quaternion-application pattern as SatelliteModel.tsx.
  */
-export function BodyAxes({ position, quaternion, axisLength = 0.03, debugId }: BodyAxesProps) {
+export function BodyAxes({
+  position,
+  quaternion,
+  axisLength = 0.03,
+  debugId,
+  visualSpan,
+}: BodyAxesProps) {
   const groupRef = useRef<THREE.Group>(null);
 
   useEffect(() => {
@@ -40,7 +58,11 @@ export function BodyAxes({ position, quaternion, axisLength = 0.03, debugId }: B
 
   return (
     <group position={position} ref={groupRef}>
-      <axesHelper args={[axisLength]} />
+      {visualSpan != null ? (
+        <AxisTriad geometry={bodyAxisArrows(axisLength, visualSpan)} labels />
+      ) : (
+        <axesHelper args={[axisLength]} />
+      )}
     </group>
   );
 }
