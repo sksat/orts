@@ -813,11 +813,22 @@ export function App() {
           )}
         </Canvas>
 
-        {view === "attitude" && attitudeBody == null && (
-          <div className="scene-placeholder" data-testid="attitude-no-data">
-            No attitude data for this spacecraft.
-          </div>
-        )}
+        {/* Two states reach an empty attitude view, and they call for different
+            words: no spacecraft has arrived to look at, or the one being looked
+            at carries no attitude. Naming the second for the first would tell a
+            reader watching a stream connect that their spacecraft has no
+            attitude. */}
+        {view === "attitude" &&
+          attitudeBody == null &&
+          (attitudeSubjectId == null ? (
+            <div className="scene-placeholder" data-testid="attitude-no-spacecraft">
+              Waiting for spacecraft data.
+            </div>
+          ) : (
+            <div className="scene-placeholder" data-testid="attitude-no-data">
+              No attitude data for this spacecraft.
+            </div>
+          ))}
       </div>
 
       {/* Graph panel (row 2, column 2). The charts are orbital; the attitude view
