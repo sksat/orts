@@ -261,6 +261,15 @@ test("a satellite with no usable time stays in the scene's frame", async ({ page
   // The inertial frame leaves the attitude as supplied, which is what the wait
   // above rules out for the two body-fixed reads.
   await open(page, `sats=0:${SAT_A}&frame=inertial&epoch=${EPOCH}&att=${attitude}&arrows=none`);
+  // `open()` waits for the canvas and for arika, not for the effect that registers
+  // this hook, so the read has to wait for the hook itself — as the body-fixed
+  // reads above do for their own reason.
+  await expect
+    .poll(
+      () => page.evaluate((id) => window.__debug_get_sat_world_quat?.(id) != null, "fixture-sat-0"),
+      { timeout: 15000 },
+    )
+    .toBe(true);
   const inertial = await page.evaluate(
     (id) => window.__debug_get_sat_world_quat?.(id) ?? null,
     "fixture-sat-0",

@@ -155,8 +155,14 @@ export function sampleAttitude(sample: {
   qy?: number | null;
   qz?: number | null;
 }): Quat | undefined {
-  if (sample.qw == null) return undefined;
-  return unitAttitude([sample.qw, sample.qx ?? 0, sample.qy ?? 0, sample.qz ?? 0]);
+  // All four components or none. Filling the missing ones with zero turns a
+  // sample such as `{ qw: 0.5 }` into the identity once normalised, which draws an
+  // orientation nobody supplied — and `hasQuaternion` in `orbit.ts`, which decides
+  // whether two samples can be slerped, already requires the complete tuple.
+  if (sample.qw == null || sample.qx == null || sample.qy == null || sample.qz == null) {
+    return undefined;
+  }
+  return unitAttitude([sample.qw, sample.qx, sample.qy, sample.qz]);
 }
 
 /**
