@@ -390,3 +390,15 @@ test("the app's own far plane follows the camera out of the attitude view", asyn
     distance(after.position),
   );
 });
+
+test("an attitude view with no spacecraft yet says so, rather than blaming one", async ({
+  page,
+}) => {
+  // Nothing is connected on this path, so no spacecraft has arrived at all. That
+  // is a different state from a spacecraft whose sample carries no attitude, and
+  // conflating them tells a reader watching a stream connect that the spacecraft
+  // they are waiting for has no attitude.
+  await page.goto("/?noAutoConnect=1&view=attitude");
+  await expect(page.locator('[data-testid="attitude-no-spacecraft"]')).toBeVisible();
+  await expect(page.locator('[data-testid="attitude-no-data"]')).toHaveCount(0);
+});
