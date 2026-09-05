@@ -583,13 +583,18 @@ export function App() {
     [resolvedVectorKinds, attitudeBody],
   );
 
-  const orbitDrawableKinds = useMemo<readonly DirectionVectorKind[]>(
-    () =>
-      centredSatellite == null
-        ? []
-        : resolvedVectorKinds(centredSatellite.position, DEFAULT_DIRECTION_VECTORS),
-    [resolvedVectorKinds, centredSatellite],
-  );
+  const orbitDrawableKinds = useMemo<readonly DirectionVectorKind[]>(() => {
+    if (centredSatellite == null) return [];
+    // The orbit view draws nothing at all at a centre its frame cannot place, so
+    // offering the Sun there would offer an arrow the scene then drops — the Sun
+    // needs no position of its own, which is why this has to be asked
+    // separately. A position the frame can place is exactly one nadir resolves
+    // from, so the question goes to the resolver rather than repeating the rule.
+    const placeable = resolvedVectorKinds(centredSatellite.position, { nadir: true }).length > 0;
+    return placeable
+      ? resolvedVectorKinds(centredSatellite.position, DEFAULT_DIRECTION_VECTORS)
+      : [];
+  }, [resolvedVectorKinds, centredSatellite]);
 
   /**
    * The display orientation the attitude view actually renders in.
