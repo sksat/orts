@@ -51,16 +51,27 @@ export interface SceneFrameContext {
 /**
  * Whether a spacecraft's position can centre the scene on it.
  *
- * A non-finite component is no position: it would put the origin offset and the
- * camera's up vector at NaN, which blanks the canvas. Everything finite is
- * usable, zero included — the centred spacecraft is drawn at the origin whatever
- * its coordinates, and only the directions that need a *bearing* from it drop
- * out. The UI asks this so a control cannot be disabled over a scene that draws.
+ * Two ways to fail, and both blank the canvas rather than draw something wrong. A
+ * non-finite component puts the origin offset and the camera's up vector at NaN.
+ * And the offset reaches the renderer as float32, where anything past 3.4e38 is
+ * `Infinity`: `[1e100, 0, 0]` is a perfectly good double and no place to put a
+ * spacecraft. What the matrix carries is the distance rather than the components,
+ * so that is what is measured — `[3e38, 3e38, 0]` has both components inside
+ * float32 and a length of 4.24e38 that is not, and a per-component check passes
+ * it. The same test guards the camera in `usablePosition`.
+ *
+ * Zero is usable, which is where this parts company with the camera's version: a
+ * spacecraft at the body's centre is drawn at the origin like any other centre,
+ * and only the directions needing a *bearing* from it drop out. The UI asks this
+ * so a control cannot be disabled over a scene that draws.
  */
 export function centrePositionIsUsable(
   position: readonly number[] | null | undefined,
 ): position is readonly number[] {
-  return position != null && position.length === 3 && position.every(Number.isFinite);
+  if (position == null || position.length !== 3) return false;
+  const [x, y, z] = position;
+  if (!(Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z))) return false;
+  return Number.isFinite(Math.fround(Math.hypot(x, y, z)));
 }
 
 export function resolveSceneFrame(
