@@ -215,7 +215,7 @@ describe("resolveDirectionVectors", () => {
 });
 
 describe("drawableAtCentre", () => {
-  it("offers both arrows at an ordinary centre, and neither without a Sun", () => {
+  it("offers both arrows at an ordinary centre, and nadir alone without a Sun", () => {
     expect(drawableAtCentre({ positionEci: [7000, 0, 0], sunIsComputable: true })).toEqual([
       "sun",
       "nadir",
