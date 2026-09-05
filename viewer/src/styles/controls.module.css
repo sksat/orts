@@ -40,8 +40,20 @@
   cursor: not-allowed;
 }
 
-/* The hover styling would otherwise suggest the button can be pressed. */
+/*
+ * Hover leaves an unavailable segment looking exactly as it did: the hover
+ * styling would otherwise suggest the button can be pressed. Each state restores
+ * its own resting colours, because a selected-but-unavailable segment — a
+ * direction switched on whose scene cannot draw it, which is the app's default
+ * state for the Sun before a satellite is centred — would otherwise read as
+ * unselected for as long as the pointer sat on it.
+ */
 .modeToggleBtn[aria-disabled="true"]:hover {
   background: var(--orts-toggle-inactive-bg);
   color: var(--orts-text-secondary);
+}
+
+.modeToggleBtn.active[aria-disabled="true"]:hover {
+  background: var(--orts-toggle-active-bg);
+  color: #fff;
 }
