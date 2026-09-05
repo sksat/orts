@@ -29,7 +29,19 @@
   color: #fff;
 }
 
-.modeToggleBtn:disabled {
+/*
+ * Unavailable, by either spelling. `aria-disabled` is what the toggles use, so
+ * that the button still takes hover and focus and can explain itself; `:disabled`
+ * stays for anything that has no explanation to give.
+ */
+.modeToggleBtn:disabled,
+.modeToggleBtn[aria-disabled="true"] {
   opacity: 0.35;
   cursor: not-allowed;
+}
+
+/* The hover styling would otherwise suggest the button can be pressed. */
+.modeToggleBtn[aria-disabled="true"]:hover {
+  background: var(--orts-toggle-inactive-bg);
+  color: var(--orts-text-secondary);
 }
