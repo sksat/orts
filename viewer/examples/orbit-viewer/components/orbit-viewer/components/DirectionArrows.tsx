@@ -1,10 +1,16 @@
 import { useEffect, useMemo, useRef } from "react";
 import type * as THREE from "three";
 import { type DrawnArrow, registerDirectionVectors } from "../debug/directionVectors.js";
-import type { DirectionVector } from "../directionVectors.js";
+import { DIRECTION_VECTOR_LABELS, type DirectionVector } from "../directionVectors.js";
 import type { Vec3 } from "../displayFrame.js";
-import { arrowGeometryForSpan } from "../spacecraftScale.js";
+import {
+  type ArrowGeometry,
+  arrowGeometryForSpan,
+  arrowLabelDistance,
+  arrowLabelHeight,
+} from "../spacecraftScale.js";
 import { Arrow } from "./Arrow.js";
+import { LABEL_RENDER_ORDER, labelTexture } from "./labelTexture.js";
 
 interface DirectionArrowsProps {
   /** Spacecraft position in scene units — where the arrows start. */
@@ -82,6 +88,66 @@ export function DirectionArrows({
           {...geometry}
         />
       ))}
+      <ArrowLabels vectors={vectors} geometry={geometry} span={visualSpan} />
     </group>
+  );
+}
+
+/**
+ * Each arrow's name, at its tip.
+ *
+ * The alternative is a legend in the overlay, which asks the reader to hold a
+ * colour in mind and match it against the picture — and leaves a still image
+ * with nothing to go on. The axis triads name themselves for the same reason,
+ * and these read the same way: a sprite past the tip, coloured like the arrow it
+ * belongs to, drawn last and without a depth test so a name on an arrow pointing
+ * away stays legible.
+ */
+function ArrowLabels({
+  vectors,
+  geometry,
+  span,
+}: {
+  vectors: readonly DirectionVector[];
+  geometry: ArrowGeometry;
+  span: number;
+}) {
+  const labels = useMemo(() => {
+    const distance = arrowLabelDistance(geometry);
+    const height = arrowLabelHeight(span);
+    return vectors.map((v) => {
+      const label = labelTexture(DIRECTION_VECTOR_LABELS[v.kind], v.color);
+      return {
+        kind: v.kind,
+        texture: label.texture,
+        position: [
+          v.direction[0] * distance,
+          v.direction[1] * distance,
+          v.direction[2] * distance,
+        ] as [number, number, number],
+        scale: [height * label.aspect, height, height] as [number, number, number],
+      };
+    });
+  }, [vectors, geometry, span]);
+
+  return (
+    <>
+      {labels.map((label) => (
+        <sprite
+          key={label.kind}
+          position={label.position}
+          scale={label.scale}
+          renderOrder={LABEL_RENDER_ORDER}
+        >
+          <spriteMaterial
+            map={label.texture}
+            transparent
+            depthTest={false}
+            depthWrite={false}
+            toneMapped={false}
+          />
+        </sprite>
+      ))}
+    </>
   );
 }

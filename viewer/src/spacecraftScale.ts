@@ -246,6 +246,25 @@ export function usableFovDegrees(fovDegrees: number | undefined): number {
 const VIEW_MARGIN = 1.15;
 
 /**
+ * How far past an arrow's tip its name sits, as a fraction of the arrow's length.
+ * On the tip the text overlaps the head it names.
+ */
+const ARROW_LABEL_OVERSHOOT = 0.14;
+
+/** Name height as a fraction of the spacecraft's apparent size. */
+const ARROW_LABEL_SCALE = 0.22;
+
+/** Distance from the arrow's tail group to where its name is drawn. */
+export function arrowLabelDistance(geometry: ArrowGeometry): number {
+  return geometry.startOffset + geometry.length * (1 + ARROW_LABEL_OVERSHOOT);
+}
+
+/** Name height in scene units for a spacecraft of this apparent size. */
+export function arrowLabelHeight(span: number): number {
+  return span * ARROW_LABEL_SCALE;
+}
+
+/**
  * Distance from the origin to the furthest thing drawn around the spacecraft:
  * whichever reaches further, the reference-frame triad or a direction arrow's tip.
  *
@@ -255,7 +274,9 @@ const VIEW_MARGIN = 1.15;
 export function drawnExtentForSpan(span: number): number {
   // The widest marker decides, so the framing holds whichever shape is drawn.
   const arrow = arrowGeometryForSpan(span, markerBoundingRadius("axes-cube", span));
-  return Math.max(axisLabelExtent(frameAxisLengthForSpan(span)), arrow.startOffset + arrow.length);
+  // Each arrow's name sits past its tip, as each axis letter sits past its own.
+  const arrowReach = arrowLabelDistance(arrow) + arrowLabelHeight(span) / 2;
+  return Math.max(axisLabelExtent(frameAxisLengthForSpan(span)), arrowReach);
 }
 
 /**
