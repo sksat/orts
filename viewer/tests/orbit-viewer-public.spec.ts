@@ -253,3 +253,36 @@ test("the Sun arrow is left out where the direction would be a guess", async ({ 
   await open(page, `sats=0:${SAT_A}&centre=0&frame=localOrbital&epoch=${EPOCH}&arrows=sun,nadir`);
   await arrowsAt(page, 0, ["nadir", "sun"]);
 });
+
+test("no arrows are drawn at a centred spacecraft that has no position", async ({ page }) => {
+  // A position that cannot be used — non-finite from a source — leaves the frame
+  // without an origin for this spacecraft, and the marker is not drawn either.
+  // Nadir needs that position and drops itself, but the Sun's direction does not,
+  // so without the gate an arrow points out the Sun beside nothing at all.
+  await open(page, `sats=0:nan,0,0:0,7.546,0&centre=0&epoch=${EPOCH}&att=1,0,0,0&arrows=sun,nadir`);
+
+  // The scene is up: this satellite registers its attitude hook whether or not
+  // its position can be used.
+  await expect
+    .poll(
+      () => page.evaluate((id) => window.__debug_get_sat_world_quat?.(id) != null, "fixture-sat-0"),
+      { timeout: 15000 },
+    )
+    .toBe(true);
+
+  const drawn = await page.evaluate(
+    (satId) =>
+      (
+        window as unknown as {
+          __debug_get_direction_vectors?: (id: string) => unknown[] | null;
+        }
+      ).__debug_get_direction_vectors?.(satId) ?? null,
+    "fixture-sat-0",
+  );
+  expect(drawn, "an unplaceable spacecraft gets no arrows").toBeNull();
+
+  // The same scene with a usable position draws both, so the assertion above is
+  // not passing for want of arrows anywhere.
+  await open(page, `sats=0:${SAT_A}&centre=0&epoch=${EPOCH}&att=1,0,0,0&arrows=sun,nadir`);
+  await arrowsAt(page, 0, ["nadir", "sun"]);
+});

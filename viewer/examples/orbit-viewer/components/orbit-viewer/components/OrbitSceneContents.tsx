@@ -652,25 +652,37 @@ export function OrbitSceneContents({
           // The centred satellite is drawn exactly at the world origin, so the
           // arrows start there too. Its display frame is the scene's: a satellite
           // centre is never body-fixed, so the scene-level ERA plays no part.
-          const arrows = resolveDirectionVectors({
-            frame: sceneDisplayFrame,
-            // The direction the lights are placed along, reused rather than
-            // computed again, so the arrow and the lighting cannot disagree. The
-            // hook falls back to a fixed direction when it cannot compute one —
-            // no epoch, or a central body arika cannot place. Fine for the
-            // lights; an arrow drawn from it would claim to be a measurement.
-            sunDisplay: sunDirectionIsComputed
-              ? [sunDirection.x, sunDirection.y, sunDirection.z]
-              : null,
-            positionEci: originPosition,
-            // Here this prop is an *enable* list: the orbit view draws no arrows
-            // unless asked, so an option left out means off. `resolveDirectionVectors`
-            // reads a missing field as on, which is the attitude view's default.
-            options: {
-              sun: directionVectors?.sun === true,
-              nadir: directionVectors?.nadir === true,
-            },
-          });
+          //
+          // Nothing is drawn at all unless the frame found an origin for this
+          // spacecraft. `resolveSceneFrame` leaves that null for a position it
+          // cannot use — zero, or non-finite from a source — and the marker is
+          // then absent too, so an arrow would be pointing out the Sun beside a
+          // spacecraft that is not on screen. Nadir already needs the position;
+          // the Sun does not, which is why it has to be said here.
+          const arrows =
+            originPosition == null
+              ? []
+              : resolveDirectionVectors({
+                  frame: sceneDisplayFrame,
+                  // The direction the lights are placed along, reused rather than
+                  // computed again, so the arrow and the lighting cannot
+                  // disagree. The hook falls back to a fixed direction when it
+                  // cannot compute one — no epoch, or a central body arika cannot
+                  // place. Fine for the lights; an arrow drawn from it would
+                  // claim to be a measurement.
+                  sunDisplay: sunDirectionIsComputed
+                    ? [sunDirection.x, sunDirection.y, sunDirection.z]
+                    : null,
+                  positionEci: originPosition,
+                  // Here this prop is an *enable* list: the orbit view draws no
+                  // arrows unless asked, so an option left out means off.
+                  // `resolveDirectionVectors` reads a missing field as on, which
+                  // is the attitude view's default.
+                  options: {
+                    sun: directionVectors?.sun === true,
+                    nadir: directionVectors?.nadir === true,
+                  },
+                });
           const centredModel = getSatelliteModelConfig(centeredSatId, satName);
           const visualSpan = resolveVisualSpan({
             modelConfig: centredModel,
