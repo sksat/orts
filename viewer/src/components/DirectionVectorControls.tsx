@@ -50,6 +50,12 @@ export function DirectionVectorControls({
             // leaves the tab order, so a keyboard user cannot reach it either.
             // The reason is the whole point of the state here.
             aria-disabled={reason != null}
+            // `title` renders as a tooltip, which needs a pointer to hover and
+            // which screen readers treat as an optional description. Folding the
+            // reason into the accessible name puts it where a name is always
+            // announced. The visible label leads it, so speech input still
+            // matches what is on screen.
+            aria-label={reason == null ? undefined : `${DIRECTION_VECTOR_LABELS[kind]}: ${reason}`}
             title={reason ?? `Draw the ${DIRECTION_VECTOR_LABELS[kind]} direction`}
             onClick={() => {
               if (reason != null) return;

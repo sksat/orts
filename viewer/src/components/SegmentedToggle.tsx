@@ -49,6 +49,13 @@ export function SegmentedToggle<T extends string>({
           // and takes no focus, and an unavailable option here carries the reason
           // it is unavailable.
           aria-disabled={option.disabled}
+          // See `DirectionVectorControls`: the reason belongs in the accessible
+          // name, not only in a tooltip. Only when the option is unavailable —
+          // `title` on an available one is an ordinary hint, and repeating it as
+          // the name would announce it on every pass.
+          aria-label={
+            option.disabled && option.title != null ? `${option.label}: ${option.title}` : undefined
+          }
           title={option.title}
           onClick={() => {
             if (option.disabled) return;
