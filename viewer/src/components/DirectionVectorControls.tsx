@@ -56,7 +56,12 @@ export function DirectionVectorControls({
             // announced. The visible label leads it, so speech input still
             // matches what is on screen.
             aria-label={reason == null ? undefined : `${DIRECTION_VECTOR_LABELS[kind]}: ${reason}`}
-            title={reason ?? `Draw the ${DIRECTION_VECTOR_LABELS[kind]} direction`}
+            // What the click will do, which is the opposite of the state the
+            // button is in. A fixed "Draw the …" reads as the current state and
+            // contradicts the arrow already on screen.
+            title={
+              reason ?? `${on ? "Hide" : "Draw"} the ${DIRECTION_VECTOR_LABELS[kind]} direction`
+            }
             onClick={() => {
               if (reason != null) return;
               onChange({ ...value, [kind]: !on });
