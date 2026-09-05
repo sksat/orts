@@ -123,6 +123,19 @@ test("a run with no epoch offers no Sun, and says why in the control's name", as
   const sun = page.locator('[data-testid="direction-vector-sun"]');
   await expect(sun).toHaveAttribute("aria-disabled", "true");
   await expect(sun).toHaveAttribute("aria-label", "Sun: Requires epoch");
+
+  // The toggle is switched on and cannot be drawn, which is the app's state for
+  // the Sun on a run with no epoch — so it is selected *and* unavailable. Hovering
+  // has to leave it looking selected: a segment that reads as unselected under the
+  // pointer says the choice changed, and this control keeps its choice while it
+  // waits for the data that would draw it.
+  const background = () => sun.evaluate((el) => getComputedStyle(el).backgroundColor);
+  const atRest = await background();
+  await sun.hover();
+  // Past the colour transition, so this compares resting states rather than a
+  // frame part-way through one.
+  await page.waitForTimeout(400);
+  expect(await background(), "hover should not restyle a selected segment").toBe(atRest);
   await expect(page.locator('[data-testid="direction-vector-nadir"]')).not.toHaveAttribute(
     "aria-disabled",
     "true",
