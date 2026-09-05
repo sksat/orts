@@ -476,17 +476,19 @@ export function OrbitSceneContents({
     };
   }, [lvlhActive, cameraTracking, originPosition]);
 
-  // Sim time for the Sun direction and the body rotation. The centred satellite
-  // owns it when there is one: satellites carry their own times (a terminated one
-  // stays frozen), and the Sun drawn *at* the centred satellite has to be the Sun
-  // at that satellite's time, not at whichever time the Map happens to yield
-  // first. Falls back to the first available position for a central-body view.
+  // The epoch the Sun direction and the body rotation are evaluated at.
+  //
+  // The centred satellite owns it when there is one: satellites carry their own
+  // times (a terminated one stays frozen), and the Sun drawn *at* that satellite
+  // has to be the Sun at its time. With no satellite centred the epoch is the
+  // scene's own `time`, which is what it is documented to be — reading whichever
+  // satellite the position Map yielded first is the behaviour this replaced.
+  //
+  // Each candidate goes through a finite check because `??` falls through only on
+  // null and undefined: a NaN `t` on the centred satellite would otherwise win
+  // over the scene's time and reach the Earth rotation angle and the quantised
+  // Sun time below, both of which are WASM calls.
   const centeredPosition = centeredSatId != null ? satellitePositions?.get(centeredSatId) : null;
-  // The centred satellite's own time, else the scene's. Each candidate goes
-  // through a finite check because `??` falls through only on null and undefined:
-  // a NaN `t` on the centred satellite would otherwise win over the scene's time
-  // and reach the Earth rotation angle and the quantised Sun time below, both of
-  // which are WASM calls.
   const simTime = finiteOrNull(centeredPosition?.t) ?? finiteOrNull(time) ?? 0;
   const quantizedSimTime = Math.floor(simTime / 60) * 60;
 

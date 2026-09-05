@@ -104,7 +104,7 @@ test("a satellite whose time is not a number still leaves a drawable scene", asy
   // upstream looks like. It decides the epoch of the Earth rotation angle and of
   // the body orientations, and a NaN there renders nothing at all — a group
   // carrying a NaN quaternion disappears.
-  await open(page, `sats=nan:${SAT_A}&centre=0&frame=localOrbital&epoch=${EPOCH}`);
+  await open(page, `sats=nan:${SAT_A}&centre=0&frame=localOrbital&epoch=${EPOCH}&arrows=sun,nadir`);
   const arrows = await arrowsAt(page, 0, ["nadir", "sun"]);
   for (const arrow of arrows) {
     expect(
@@ -188,4 +188,36 @@ test("a central-body view is drawn at the scene's time, not a satellite's", asyn
   const sceneLater = await earthQuat();
   const same = [0, 1, 2, 3].every((i) => Math.abs(sceneLater[i] - sceneAtZero[i]) < 1e-6);
   expect(same, "ninety days of rotation should not leave the body where it was").toBe(false);
+});
+
+test("an embedder who says nothing about the arrows gets none", async ({ page }) => {
+  // `directionVectors` is opt-in: the prop is omitted here, which is what every
+  // embedder written before it existed passes. The centred satellite is the one
+  // case that *would* draw them, so this is where the default has to hold.
+  // The attitude is here to make the spacecraft register its own hook, which is
+  // the only way to know the subtree mounted before reading an absence.
+  await open(page, `sats=0:${SAT_A}&centre=0&frame=localOrbital&epoch=${EPOCH}&att=1,0,0,0`);
+
+  // The scene has to be up before absence means anything: the spacecraft's own
+  // hook says so, and it is registered by the same subtree that would carry the
+  // arrows.
+  await expect
+    .poll(
+      () => page.evaluate((id) => window.__debug_get_sat_world_quat?.(id) != null, "fixture-sat-0"),
+      { timeout: 15000 },
+    )
+    .toBe(true);
+
+  const drawn = await page.evaluate(
+    (satId) =>
+      (
+        window as unknown as {
+          __debug_get_direction_vectors?: (id: string) => unknown[] | null;
+        }
+      ).__debug_get_direction_vectors?.(satId) ?? null,
+    "fixture-sat-0",
+  );
+  // Null rather than an empty list: with nothing to draw the component is not
+  // mounted, so it registers no hook at all.
+  expect(drawn, "no arrows are registered when the prop is left out").toBeNull();
 });

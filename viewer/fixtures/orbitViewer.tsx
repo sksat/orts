@@ -17,7 +17,8 @@
  * | centre  | index into `sats` to centre on; omitted centres the central body |
  * | frame   | `inertial` (default) / `localOrbital` / `bodyFixed`             |
  * | epoch   | epoch JD (UTC); omitted means no epoch                         |
- * | arrows  | `sun` / `nadir` / `sun,nadir` (default) / `none`               |
+ * | arrows  | `sun` / `nadir` / `sun,nadir`; omitted leaves the prop out, which |
+ * |         | is the documented default of drawing none                        |
  * | att     | attitude `w,x,y,z` given to every satellite; makes the display   |
  * |         | frame readable through the rendered world quaternion            |
  * | t       | the scene's elapsed seconds — the epoch a central-body view uses |
@@ -76,7 +77,7 @@ const referenceFrame: ViewerReferenceFrame =
         orientation: orientation === "localOrbital" ? "localOrbital" : "inertial",
       };
 
-const arrows = params.get("arrows") ?? "sun,nadir";
+const arrows = params.get("arrows");
 const epoch = params.get("epoch");
 const sceneTime = params.get("t");
 
@@ -88,10 +89,11 @@ createRoot(document.getElementById("root") as HTMLElement).render(
       referenceFrame={referenceFrame}
       epochJd={epoch == null ? undefined : Number(epoch)}
       time={sceneTime == null ? undefined : Number(sceneTime)}
-      directionVectors={{
-        sun: arrows.includes("sun"),
-        nadir: arrows.includes("nadir"),
-      }}
+      directionVectors={
+        arrows == null
+          ? undefined
+          : { sun: arrows.includes("sun"), nadir: arrows.includes("nadir") }
+      }
     />
   </StrictMode>,
 );
