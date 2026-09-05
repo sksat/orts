@@ -29,14 +29,20 @@ export interface SceneFrameContext {
 /**
  * Whether a spacecraft's position can centre the scene on it.
  *
- * Two ways to fail, and both blank the canvas rather than draw something wrong. A
- * non-finite component puts the origin offset and the camera's up vector at NaN.
- * And the offset reaches the renderer as float32, where anything past 3.4e38 is
- * `Infinity`: `[1e100, 0, 0]` is a perfectly good double and no place to put a
- * spacecraft. What the matrix carries is the distance rather than the components,
- * so that is what is measured — `[3e38, 3e38, 0]` has both components inside
- * float32 and a length of 4.24e38 that is not, and a per-component check passes
- * it. The same test guards the camera in `usablePosition`.
+ * Two ways to fail, and either would blank the canvas if the position were
+ * applied. A non-finite component puts the origin offset and the camera's up
+ * vector at NaN. And the offset reaches the renderer as float32, where anything
+ * past 3.4e38 is `Infinity`: `[1e100, 0, 0]` is a perfectly good double and no
+ * place to put a spacecraft. What the matrix carries is the distance rather than
+ * the components, so that is what is measured — `[3e38, 3e38, 0]` has both
+ * components inside float32 and a length of 4.24e38 that is not, and a
+ * per-component check passes it. The same test guards the camera in
+ * `usablePosition`.
+ *
+ * Answering false is how the blanking is avoided rather than a report of it:
+ * `resolveSceneFrame` then keeps the entity as the centre with no origin, which
+ * is how it holds a state that has not arrived, and the camera stays where it is
+ * until a usable sample lands.
  *
  * Zero is usable, which is where this parts company with the camera's version: a
  * spacecraft at the body's centre is drawn at the origin like any other centre,
