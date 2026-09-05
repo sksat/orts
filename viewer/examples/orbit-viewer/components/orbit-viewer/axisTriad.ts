@@ -43,8 +43,10 @@ export function axisLabelScale(length: number): number {
  *
  * The letters sit *past* the tips, so a camera fitted to the axes alone clips
  * them. A sprite is a quad facing the camera, so it reaches half its diagonal in
- * whichever direction the view happens to put that — and a letter's texture is
- * square, which makes the diagonal `sqrt(2)` times its side.
+ * whichever direction the view happens to put that. A letter's texture is
+ * narrower than it is tall — a bold "X" measures about 0.76 of the height, "Z"
+ * about 0.70 — so `sqrt(2)` times the height bounds the diagonal from above,
+ * which is the side a camera fit should err on.
  */
 export function axisLabelExtent(length: number): number {
   return length * TIP_OVERSHOOT + (axisLabelScale(length) * Math.SQRT2) / 2;
