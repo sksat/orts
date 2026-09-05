@@ -88,7 +88,16 @@ export function OrbitOverlay({
   sunUnavailable,
   centreIsPlaceable = true,
 }: OrbitOverlayProps) {
-  const noCentre = centredSatelliteId == null ? "Centre on a satellite to draw it" : undefined;
+  // Three states, all of which draw nothing, and each with its own reason. The
+  // frame may name no satellite at all; it may name one the viewer holds no sample
+  // for, before the first arrives or after a source change took it away; or the
+  // sample it holds may be one the frame cannot use.
+  const noCentre =
+    referenceFrame.center.type === "satellite" ? undefined : "Centre on a satellite to draw it";
+  const awaitingCentre =
+    noCentre == null && centredSatelliteId == null
+      ? "Waiting for this spacecraft's data"
+      : undefined;
   /**
    * Why nothing can be drawn at the centre, when that is the reason.
    *
@@ -127,10 +136,12 @@ export function OrbitOverlay({
         unavailable={{
           sun:
             noCentre ??
+            awaitingCentre ??
             unplaceableCentre ??
             (drawableVectorKinds.includes("sun") ? undefined : sunUnavailable),
           nadir:
             noCentre ??
+            awaitingCentre ??
             unplaceableCentre ??
             (drawableVectorKinds.includes("nadir") ? undefined : noBearing),
         }}

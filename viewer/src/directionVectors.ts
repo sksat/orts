@@ -14,13 +14,13 @@
  * no position means no nadir.
  */
 
-import { centrePositionIsUsable } from "./frameResolve.js";
 import {
   type DisplayFrame,
   type DisplayRotationFrame,
   displayDirection,
   type Vec3,
 } from "./displayFrame.js";
+import { centrePositionIsUsable } from "./frameResolve.js";
 
 /** Which reference direction an arrow shows. */
 export type DirectionVectorKind = "sun" | "nadir";
