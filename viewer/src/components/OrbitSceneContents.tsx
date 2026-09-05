@@ -692,11 +692,15 @@ export function OrbitSceneContents({
           // centre is never body-fixed, so the scene-level ERA plays no part.
           //
           // Nothing is drawn at all unless the frame found an origin for this
-          // spacecraft. `resolveSceneFrame` leaves that null for a position it
-          // cannot use — zero, or non-finite from a source — and the marker is
-          // then absent too, so an arrow would be pointing out the Sun beside a
-          // spacecraft that is not on screen. Nadir already needs the position;
-          // the Sun does not, which is why it has to be said here.
+          // spacecraft. `resolveSceneFrame` leaves that null for a non-finite
+          // position, and the marker is then absent too, so an arrow would be
+          // pointing out the Sun beside a spacecraft that is not on screen. Nadir
+          // already needs the position; the Sun does not, which is why it has to
+          // be said here.
+          //
+          // A finite position is placeable, the coordinate origin included: the
+          // spacecraft is drawn there and the Sun with it, and nadir alone drops
+          // out for want of a bearing.
           const arrows =
             originPosition == null
               ? []
