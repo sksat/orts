@@ -24,6 +24,7 @@
  * | t       | the scene's elapsed seconds — the epoch a central-body view uses |
  * | body    | central body id (default `earth`)                                |
  * | radius  | central body radius in km (default Earth's)                      |
+ * | shape   | marker shape forced on every satellite (`axes-cube` / `sphere`)  |
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -65,6 +66,7 @@ const satellites: SatelliteState[] = (params.get("sats") ?? "0:7000,0,0:0,7.546,
       position: vec3(position ?? "7000,0,0"),
       velocity: velocity == null ? undefined : vec3(velocity),
       attitude,
+      markerShape: (params.get("shape") as SatelliteState["markerShape"]) ?? undefined,
       time: time === "nan" ? Number.NaN : Number(time ?? 0),
     };
   });

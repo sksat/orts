@@ -73,8 +73,17 @@ async function sceneInventory(page: Page) {
   return await page.evaluate((id) => {
     const w = window as unknown as {
       __debug_sat_quat_registry?: Map<string, () => { parent: unknown } | null>;
+      __debug_direction_vector_registry?: Map<
+        string,
+        () => { origin: { parent: unknown } | null }[]
+      >;
     };
-    const start = w.__debug_sat_quat_registry?.get(id)?.();
+    // The arrows' registry is the way in when the attitude was refused: no
+    // attitude hook is registered then, and walking `.parent` from either
+    // reaches the same scene root.
+    const start =
+      w.__debug_sat_quat_registry?.get(id)?.() ??
+      w.__debug_direction_vector_registry?.get(id)?.()?.[0]?.origin;
     if (start == null) return null;
     type Node = {
       type: string;
@@ -212,6 +221,21 @@ test("an unusable attitude draws no orientation at all", async ({ page }) => {
   await expectArrows(page, ["sun"]);
   const quat = await page.evaluate((id) => window.__debug_get_sat_world_quat?.(id) ?? null, SAT);
   expect(quat, "no body axes are registered without an attitude").toBeNull();
+
+  // The cube was asked for by name, so declining to choose it is not enough: the
+  // request has to be refused. Here the sphere can be named as well as the cube
+  // denied — the attitude scene holds no central body, so a sphere in it is the
+  // marker.
+  const inventory = await sceneInventory(page);
+  expect(inventory, "the scene graph should be reachable").not.toBeNull();
+  expect(
+    inventory?.meshGeometries,
+    "a requested cube is refused with no attitude to show",
+  ).not.toContain("BoxGeometry");
+  expect(
+    inventory?.meshGeometries,
+    "the marker that looks the same from every side stands in",
+  ).toContain("SphereGeometry");
 });
 
 test("body-fixed rotates the spacecraft about the scene's polar axis", async ({ page }) => {

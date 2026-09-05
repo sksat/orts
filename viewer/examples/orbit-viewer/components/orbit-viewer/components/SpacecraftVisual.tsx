@@ -44,7 +44,8 @@ interface SpacecraftVisualProps {
   /**
    * Resolved marker shape for spacecraft without a 3D model. When omitted, falls
    * back to automatic (orientation-revealing cube when an attitude is present,
-   * else a sphere). A GLTF model, when available, always takes precedence.
+   * else a sphere). A GLTF model, when available, stands in for the marker —
+   * except for a refused attitude, which suppresses both.
    */
   markerShape?: MarkerShape;
   /** Sphere radius / cube half-extent in scene units. */
@@ -59,21 +60,23 @@ interface SpacecraftVisualProps {
    */
   visualSpan?: number;
   /**
-   * Whether a registered 3D model may stand in for the marker (default true).
+   * Whether this spacecraft claimed an orientation that could not be used
+   * (default false) — a quaternion that named no rotation, or one carrying a
+   * non-finite component.
    *
-   * A model drawn without a quaternion sits at its own default orientation, which
-   * in the orbit view is honest — the model is a position marker there, and a
-   * satellite may arrive with no attitude at all. A view whose subject *is* the
-   * orientation passes false when the attitude is unusable, so the reader gets
-   * the marker that looks the same from every side instead of a model that
-   * appears to point somewhere.
+   * Nothing drawn for such a sample may imply an orientation, so this suppresses
+   * both the registered 3D model, which would sit at its own default orientation,
+   * and the cube marker, whose faces would read as measured axes. A spacecraft
+   * that arrived with no attitude at all is a different case: there a model is a
+   * position marker and reads as one, which is the orbit view's documented
+   * behaviour.
    */
-  model?: boolean;
+  attitudeRefused?: boolean;
 }
 
 /**
  * One spacecraft as it is drawn: a 3D model when the registry knows this
- * satellite, else an orientation-revealing marker, plus its body axes.
+ * satellite and its attitude was not refused, else a marker, plus its body axes.
  *
  * Takes only display-frame values — a scene position and a body-to-display
  * quaternion — so it carries no frame semantics of its own and both the orbit
@@ -96,9 +99,9 @@ export function SpacecraftVisual({
   axisLength,
   modelScale,
   visualSpan,
-  model = true,
+  attitudeRefused = false,
 }: SpacecraftVisualProps) {
-  const modelConfig = model && satId ? getSatelliteModelConfig(satId, satName) : null;
+  const modelConfig = !attitudeRefused && satId ? getSatelliteModelConfig(satId, satName) : null;
   // The default axis length follows the scale the model is *drawn* at, not the
   // registry's: overriding one without the other would silently change the ratio
   // between a spacecraft and its axes.
@@ -136,7 +139,11 @@ export function SpacecraftVisual({
   // Pick the marker shape: caller-resolved override/default, else automatic
   // (orientation-revealing cube when attitude is present — a sphere looks identical
   // at every orientation — sphere otherwise).
-  const shape = resolveMarkerShape({ override: markerShape, hasAttitude: quaternion != null });
+  const shape = resolveMarkerShape({
+    override: markerShape,
+    hasAttitude: quaternion != null,
+    attitudeRefused,
+  });
   const fallbackMarker =
     shape === "sphere" ? (
       <SphereMarker position={position} color={color} radius={markerSize} />

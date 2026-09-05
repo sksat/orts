@@ -99,25 +99,20 @@ export function AttitudeSceneContents({
     ? (spanNormalizedModelScale(modelConfig, span) ?? undefined)
     : undefined;
 
-  // Whether the model is the thing on screen. Without a usable attitude a model
-  // would be drawn at its own default orientation, which reads as a measured one
-  // in a view about orientation, so a marker stands in — and one value decides
-  // both what is drawn and what the arrows have to start outside of.
-  const modelIsDrawn = modelConfig != null && quaternion != null;
+  // The attitude is this view's subject, so a missing quaternion here is always
+  // one that was refused: `AttitudeBodyState.attitude` is required, and the scene
+  // drops what it cannot use.
+  const attitudeRefused = quaternion == null;
+  // What the arrows have to start outside of, which is the model only when the
+  // model is the thing on screen.
+  const modelIsDrawn = modelConfig != null && !attitudeRefused;
 
-  // Without a usable attitude, nothing drawn may imply one. An explicit shape —
-  // or the app's default, which the `satShape` URL param persists — outranks
-  // `hasAttitude` in `resolveMarkerShape`, so the orientation-revealing cube
-  // would be drawn at identity and read as a measured attitude. The sphere is the
-  // one marker that looks the same from every side.
-  const shape: MarkerShape =
-    quaternion == null
-      ? "sphere"
-      : resolveMarkerShape({
-          override: markerShape,
-          globalDefault: defaultMarkerShape,
-          hasAttitude: true,
-        });
+  const shape: MarkerShape = resolveMarkerShape({
+    override: markerShape,
+    globalDefault: defaultMarkerShape,
+    hasAttitude: !attitudeRefused,
+    attitudeRefused,
+  });
 
   return (
     <>
@@ -144,7 +139,7 @@ export function AttitudeSceneContents({
         axisLength={axisLengthForSpan(span)}
         modelScale={modelScale}
         visualSpan={span}
-        model={modelIsDrawn}
+        attitudeRefused={attitudeRefused}
       />
 
       <DirectionArrows

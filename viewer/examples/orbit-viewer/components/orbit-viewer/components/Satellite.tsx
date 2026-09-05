@@ -107,7 +107,7 @@ export function Satellite({
     <SpacecraftVisual
       position={scenePos}
       quaternion={displayQuaternion(frame, rawQuaternion)}
-      model={!attitudeRefused}
+      attitudeRefused={attitudeRefused}
       satId={satId}
       satName={satName}
       color={color}

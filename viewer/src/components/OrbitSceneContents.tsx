@@ -647,10 +647,14 @@ export function OrbitSceneContents({
               </group>
             );
           }
+          // The sample's attitude decides two things here: which marker stands
+          // in for it, and whether its registered model is drawn at all.
+          const attitudeRefused = pos.qw != null && sampleAttitude(pos) == null;
           const shape = resolveMarkerShape({
             override: satelliteShapes?.get(centeredSatId),
             simShape: satelliteSimShapes?.get(centeredSatId),
             globalDefault: defaultMarkerShape,
+            attitudeRefused,
             // The same judgement the rotation makes: a sample whose quaternion
             // names no rotation gets the sphere, not the cube that would show an
             // orientation nobody measured.
@@ -691,7 +695,13 @@ export function OrbitSceneContents({
                     nadir: directionVectors?.nadir === true,
                   },
                 });
-          const centredModel = getSatelliteModelConfig(centeredSatId, satName);
+          // Not asked for when the attitude was refused: `Satellite` draws the
+          // marker instead in that case, and arrows sized from a model that is
+          // not there float outside the sphere that is — for a spacecraft the
+          // size of the ISS, well outside it.
+          const centredModel = attitudeRefused
+            ? null
+            : getSatelliteModelConfig(centeredSatId, satName);
           const visualSpan = resolveVisualSpan({
             modelConfig: centredModel,
             markerSize: defaultMarkerSize(shape),
@@ -810,8 +820,10 @@ export function OrbitSceneContents({
                     override: satelliteShapes?.get(satId),
                     simShape: satelliteSimShapes?.get(satId),
                     globalDefault: defaultMarkerShape,
-                    // See above: the shape follows the usable attitude.
+                    // See above: the shape follows the usable attitude, and a
+                    // refused one takes the sphere whatever was requested.
                     hasAttitude: sampleAttitude(pos) != null,
+                    attitudeRefused: pos.qw != null && sampleAttitude(pos) == null,
                   })}
                 />
               )}

@@ -402,7 +402,12 @@ test("an unusable attitude gets the marker that shows no orientation", async ({ 
   // faces show which way the body points, and a sphere when it has none. That
   // choice has to follow the *usable* attitude: a zero quaternion drawn as a cube
   // shows an orientation nobody measured.
-  await open(page, `sats=0:${SAT_A}&centre=0&epoch=${EPOCH}&att=0,0,0,0&arrows=sun,nadir`);
+  // The cube is *asked for* here, which is the harder half: the resolver has to
+  // refuse a request, not merely decline to choose the cube on its own.
+  await open(
+    page,
+    `sats=0:${SAT_A}&centre=0&epoch=${EPOCH}&att=0,0,0,0&shape=axes-cube&arrows=sun,nadir`,
+  );
   await arrowsAt(page, 0, ["nadir", "sun"]);
   const refused = await meshGeometries(page, "fixture-sat-0");
   expect(refused, "the scene graph should be reachable").not.toBeNull();
