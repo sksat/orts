@@ -9,6 +9,7 @@ import type { TimeRange } from "@sksat/uneri";
 import appStyles from "./App.module.css";
 import { AttitudeOverlay } from "./components/AttitudeOverlay.js";
 import { CameraViewProbe } from "./components/CameraViewProbe.js";
+import { NADIR_NEEDS_LENGTH } from "./components/DirectionVectorControls.js";
 import { FarPlaneBeyondScene } from "./components/FarPlaneBeyondScene.js";
 import { GraphPanel } from "./components/GraphPanel.js";
 import { InitialCameraFit } from "./components/InitialCameraFit.js";
@@ -747,9 +748,7 @@ export function App() {
               }
               sunUnavailable={sunUnavailableReason}
               nadirUnavailable={
-                attitudeDrawableKinds.includes("nadir")
-                  ? undefined
-                  : "Requires a finite, non-zero position"
+                attitudeDrawableKinds.includes("nadir") ? undefined : NADIR_NEEDS_LENGTH
               }
               directionVectors={directionVectors}
               onDirectionVectorsChange={setDirectionVectors}

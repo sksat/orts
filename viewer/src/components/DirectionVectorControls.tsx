@@ -9,6 +9,16 @@ import controlStyles from "../styles/controls.module.css";
 /** Order the toggles appear in. */
 const DIRECTION_VECTOR_KINDS: readonly DirectionVectorKind[] = ["sun", "nadir"];
 
+/**
+ * Why nadir cannot be drawn from a spacecraft's own position.
+ *
+ * Its direction is that position reversed, so the resolver needs a length it can
+ * divide by: the coordinate origin has none, and neither does a position whose
+ * components are each finite while their squares overflow. Both views state it the
+ * same way, from here, because it is the same condition in both.
+ */
+export const NADIR_NEEDS_LENGTH = "Requires a position of finite, non-zero length";
+
 interface DirectionVectorControlsProps {
   value: DirectionVectorOptions;
   onChange: (value: DirectionVectorOptions) => void;
