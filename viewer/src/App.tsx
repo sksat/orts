@@ -18,10 +18,11 @@ import { SimConfigModal } from "./components/SimConfigModal.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { type ViewMode, ViewSelector } from "./components/ViewSelector.js";
 import {
-  centreIsPlaceable,
   type DirectionVectorKind,
+  drawableAtCentre,
   resolveDirectionVectors,
 } from "./directionVectors.js";
+import { centrePositionIsUsable } from "./frameResolve.js";
 import type { DisplayFrame, Vec3 as DisplayVec3 } from "./displayFrame.js";
 import { toViewerReferenceFrame } from "./frameToViewer.js";
 import { CSV_SOURCE_ID, RRD_SOURCE_ID, useFileSource } from "./hooks/useFileSource.js";
@@ -587,13 +588,13 @@ export function App() {
     [resolvedVectorKinds, attitudeBody],
   );
 
-  const orbitDrawableKinds = useMemo<readonly DirectionVectorKind[]>(() => {
-    if (centredSatellite == null) return [];
-    // Nothing is on offer at a centre the scene cannot place, the Sun included.
-    return centreIsPlaceable(centredSatellite.position)
-      ? resolvedVectorKinds(centredSatellite.position, DEFAULT_DIRECTION_VECTORS)
-      : [];
-  }, [resolvedVectorKinds, centredSatellite]);
+  const orbitDrawableKinds = useMemo<readonly DirectionVectorKind[]>(
+    () =>
+      centredSatellite == null
+        ? []
+        : drawableAtCentre({ positionEci: centredSatellite.position, sunIsComputable }),
+    [centredSatellite, sunIsComputable],
+  );
 
   /**
    * The display orientation the attitude view actually renders in.
@@ -721,6 +722,9 @@ export function App() {
               centredSatelliteId={centredSatelliteId}
               drawableVectorKinds={orbitDrawableKinds}
               sunUnavailable={sunUnavailableReason}
+              centreIsPlaceable={
+                centredSatellite != null && centrePositionIsUsable(centredSatellite.position)
+              }
             />
           ) : (
             <AttitudeOverlay
