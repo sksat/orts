@@ -377,14 +377,11 @@ export function App() {
         time: pos.t,
         // All four components or none, matching `hasQuaternion` in `orbit.ts`.
         //
-        // No source sets some components and not others: the rrd decoder yields
-        // four or none, and the WS payload carries the tuple as one value. What
-        // this cannot pass on is a *refusal* — `SatelliteState.attitude` is
-        // `Quat | undefined`, so an unusable attitude arrives here as a complete
-        // non-finite tuple and leaves as `undefined`, and a satellite read as
-        // having no attitude keeps its registered model as a position marker
-        // where a refused one is replaced. Tracked in #451 with the other places
-        // that judgement is re-derived.
+        // A complete tuple passes through whatever it holds, zero and non-finite
+        // included, and the scene reads the refusal back off it — so an unusable
+        // attitude does reach the scene as one. What cannot arrive is a *partly*
+        // decoded tuple, and no source produces one: the rrd decoder yields four
+        // components or none, and the WS payload carries the tuple as one value.
         attitude:
           pos.qw != null && pos.qx != null && pos.qy != null && pos.qz != null
             ? [pos.qw, pos.qx, pos.qy, pos.qz]

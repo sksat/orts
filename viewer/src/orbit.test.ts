@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { sampleAttitude } from "./displayFrame.js";
 import { lerpPoint, type OrbitPoint } from "./orbit.js";
 
 /** A minimal OrbitPoint with all required fields zeroed; override as needed. */
@@ -93,27 +94,46 @@ describe("lerpPoint quaternion handling", () => {
     }
   });
 
-  it("hands a quaternion it cannot normalise on unchanged", () => {
-    // Zero and non-finite quaternions are attitudes the display frame refuses.
-    // Normalising here would have to invent one — `THREE.Quaternion.normalize`
-    // answers the identity for a zero input — and the refusal would be lost.
-    const zero = lerpPoint(
+  it("keeps a refused endpoint refused at every fraction between the samples", () => {
+    // The interior is the case that matters, and testing only the endpoint hid
+    // this: slerp from a zero quaternion returns a multiple of the *other*
+    // endpoint, so a quarter of the way along the result normalised to that
+    // endpoint's rotation exactly — a refused sample presented as a measurement
+    // taken next door. Normalising the zero endpoint instead is no answer:
+    // `THREE.Quaternion.normalize` answers the identity for it, which invents a
+    // rotation of its own.
+    const valid = pt({ qw: S, qx: 0, qy: 0, qz: S });
+    for (const refused of [
       pt({ qw: 0, qx: 0, qy: 0, qz: 0 }),
-      pt({ qw: S, qx: 0, qy: 0, qz: S }),
-      0,
-    );
-    expect(Math.hypot(zero.qw as number, zero.qx as number, zero.qy as number, zero.qz as number)) //
-      .toBeCloseTo(0, 9);
-
-    const nonFinite = lerpPoint(
       pt({ qw: Number.NaN, qx: 0, qy: 0, qz: 0 }),
-      pt({ qw: S, qx: 0, qy: 0, qz: S }),
-      0.5,
-    );
-    expect(
-      [nonFinite.qw, nonFinite.qx, nonFinite.qy, nonFinite.qz].some((c) => !Number.isFinite(c)),
-      "a non-finite endpoint stays non-finite rather than becoming a rotation",
-    ).toBe(true);
+      pt({ qw: Number.POSITIVE_INFINITY, qx: 0, qy: 0, qz: 0 }),
+    ]) {
+      for (const frac of [0, 0.25, 0.5, 0.75]) {
+        const r = lerpPoint(refused, valid, frac);
+        expect(
+          sampleAttitude(r),
+          `frac ${frac} should carry no usable attitude away from a refused sample`,
+        ).toBeUndefined();
+      }
+      // The far endpoint is exact, which is what a reader at that sample's own
+      // timestamp should see. Compared componentwise: normalising a unit
+      // quaternion moves its last bit (measured 0.7071067811865475 for `S`).
+      const atFar = sampleAttitude(lerpPoint(refused, valid, 1));
+      expect(atFar, "the valid endpoint keeps its own attitude").not.toBeUndefined();
+      for (const [i, want] of [S, 0, 0, S].entries()) {
+        expect((atFar as number[])[i]).toBeCloseTo(want, 12);
+      }
+      // And in the other order, so the refusal is not tied to being first.
+      for (const frac of [0.25, 0.5, 0.75, 1]) {
+        expect(sampleAttitude(lerpPoint(valid, refused, frac)), `reversed frac ${frac}`) //
+          .toBeUndefined();
+      }
+      const atNear = sampleAttitude(lerpPoint(valid, refused, 0));
+      expect(atNear, "and in the other order").not.toBeUndefined();
+      for (const [i, want] of [S, 0, 0, S].entries()) {
+        expect((atNear as number[])[i]).toBeCloseTo(want, 12);
+      }
+    }
   });
 
   it("interpolates the non-quaternion fields regardless", () => {

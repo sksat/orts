@@ -140,15 +140,15 @@ export function updateOrbitTrail(line: THREE.Line, visibleCount: number, totalCo
 }
 
 /**
- * A point's quaternion at unit norm, or its components unchanged when they do not
- * describe a length that can be divided by (zero, or non-finite).
+ * A point's quaternion at unit norm, or null when its components do not describe
+ * a length that can be divided by (zero, or non-finite).
  *
  * Callers must have checked {@link hasQuaternion} first.
  */
-function unitOrAsGiven(p: OrbitPoint): THREE.Quaternion {
+function unitQuaternion(p: OrbitPoint): THREE.Quaternion | null {
   const [w, x, y, z] = [p.qw as number, p.qx as number, p.qy as number, p.qz as number];
   const n = Math.hypot(w, x, y, z);
-  if (!(Number.isFinite(n) && n > 0)) return new THREE.Quaternion(x, y, z, w);
+  if (!(Number.isFinite(n) && n > 0)) return null;
   return new THREE.Quaternion(x / n, y / n, z / n, w / n);
 }
 
@@ -194,17 +194,32 @@ export function lerpPoint(a: OrbitPoint, b: OrbitPoint, frac: number): OrbitPoin
     // frame still sees an attitude to refuse rather than one this function
     // invented: `THREE.Quaternion.normalize` turns a zero quaternion into the
     // identity, which would be exactly that invention.
-    const qa = unitOrAsGiven(a);
-    const qb = unitOrAsGiven(b);
-    // Ensure shortest-path interpolation
-    if (qa.dot(qb) < 0) {
-      qb.set(-qb.x, -qb.y, -qb.z, -qb.w);
+    const qa = unitQuaternion(a);
+    const qb = unitQuaternion(b);
+    if (qa != null && qb != null) {
+      // Ensure shortest-path interpolation
+      if (qa.dot(qb) < 0) {
+        qb.set(-qb.x, -qb.y, -qb.z, -qb.w);
+      }
+      qa.slerp(qb, frac);
+      result.qw = qa.w;
+      result.qx = qa.x;
+      result.qy = qa.y;
+      result.qz = qa.z;
+    } else {
+      // An endpoint the display frame refuses cannot be interpolated through.
+      // Slerp from a zero quaternion returns a multiple of the *other* endpoint —
+      // measured at a quarter of the way along, the result normalises to that
+      // endpoint's rotation exactly — so the refused sample would be presented as
+      // a measurement taken next door. The refusal is carried instead, and the
+      // exact endpoints keep their own values, which is what a reader at a
+      // sample's own timestamp should see.
+      const source = frac <= 0 ? a : frac >= 1 ? b : qa == null ? a : b;
+      result.qw = source.qw;
+      result.qx = source.qx;
+      result.qy = source.qy;
+      result.qz = source.qz;
     }
-    qa.slerp(qb, frac);
-    result.qw = qa.w;
-    result.qx = qa.x;
-    result.qy = qa.y;
-    result.qz = qa.z;
     // Angular velocity: linear interpolation
     result.wx = (a.wx ?? 0) * inv + (b.wx ?? 0) * frac;
     result.wy = (a.wy ?? 0) * inv + (b.wy ?? 0) * frac;
