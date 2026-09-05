@@ -3,7 +3,7 @@ import {
   displayQuaternion,
   type Quat,
   resolveDisplayFrame,
-  unitAttitude,
+  sampleAttitude,
 } from "../displayFrame.js";
 import type { OrbitPoint } from "../orbit.js";
 import { isLegacyEcef, type ReferenceFrame } from "../referenceFrame.js";
@@ -95,11 +95,7 @@ export function Satellite({
   // back as the identity, so the scene would report an orientation nobody
   // measured. What cannot be normalised is reported as no attitude, which draws
   // the marker unrotated — the answer a satellite without attitude already gets.
-  const rawQuaternion: Quat | undefined = unitAttitude(
-    position.qw != null
-      ? [position.qw, position.qx ?? 0, position.qy ?? 0, position.qz ?? 0]
-      : undefined,
-  );
+  const rawQuaternion: Quat | undefined = sampleAttitude(position);
 
   return (
     <SpacecraftVisual

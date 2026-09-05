@@ -132,6 +132,24 @@ const UNIT_QUATERNION_TOLERANCE = 1e-9;
  * attitude then reads as *no* attitude, which the views already draw (no body
  * axes, and the marker that looks the same from every side).
  */
+/**
+ * The attitude carried by an orbit sample, brought to unit norm, or undefined.
+ *
+ * Samples arrive as loose components rather than a tuple, and two decisions read
+ * them: the rotation applied to the marker, and whether the marker is the shape
+ * that reveals an orientation. Both go through here so they cannot disagree —
+ * a sample the rotation refuses must not be drawn as an oriented cube.
+ */
+export function sampleAttitude(sample: {
+  qw?: number | null;
+  qx?: number | null;
+  qy?: number | null;
+  qz?: number | null;
+}): Quat | undefined {
+  if (sample.qw == null) return undefined;
+  return unitAttitude([sample.qw, sample.qx ?? 0, sample.qy ?? 0, sample.qz ?? 0]);
+}
+
 export function unitAttitude(attitude: Quat | undefined): Quat | undefined {
   if (attitude == null) return undefined;
   const [w, x, y, z] = attitude;

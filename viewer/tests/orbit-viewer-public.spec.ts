@@ -74,6 +74,45 @@ async function arrowsAt(page: Page, index: number, kinds: string[]): Promise<Dra
   );
 }
 
+/**
+ * Mesh geometries in the scene, from the live graph.
+ *
+ * Entered through the arrows' own registry rather than the attitude one: a
+ * spacecraft whose attitude was refused registers no attitude hook, which is the
+ * case this is here to read. Walking `.parent` from either reaches the scene
+ * root — `canvas.__r3f` is null. See .claude/skills/playwright-viewer-testing.
+ */
+async function meshGeometries(page: Page, id: string): Promise<string[] | null> {
+  return await page.evaluate((satId) => {
+    const w = window as unknown as {
+      __debug_direction_vector_registry?: Map<
+        string,
+        () => { origin: { parent: unknown } | null }[]
+      >;
+      __debug_sat_quat_registry?: Map<string, () => { parent: unknown } | null>;
+    };
+    const start =
+      w.__debug_direction_vector_registry?.get(satId)?.()?.[0]?.origin ??
+      w.__debug_sat_quat_registry?.get(satId)?.();
+    if (start == null) return null;
+    type Node = {
+      type: string;
+      parent: Node | null;
+      children: Node[];
+      geometry?: { type?: string };
+    };
+    let root = start as unknown as Node;
+    while (root.parent != null) root = root.parent;
+    const out: string[] = [];
+    const walk = (node: Node) => {
+      if (node.type === "Mesh") out.push(node.geometry?.type ?? "?");
+      for (const child of node.children) walk(child);
+    };
+    walk(root);
+    return out;
+  }, id);
+}
+
 function sunDirection(arrows: Drawn[]): [number, number, number] {
   const sun = arrows.find((a) => a.kind === "sun");
   if (sun == null) throw new Error("no Sun arrow was drawn");
@@ -122,40 +161,74 @@ test("a satellite whose time is not a number still leaves a drawable scene", asy
   }
 });
 
+/**
+ * The rendered attitude of `id`, once a frame rotation has been applied to it.
+ *
+ * A body-fixed frame turns the scene by the Earth rotation angle, and that angle
+ * comes from the WASM: for a render or two after the module is ready the frame is
+ * still the inertial fallback, and the quaternion read then is the attitude as
+ * supplied. Waiting for it to differ from `supplied` is what makes the two
+ * documents comparable — reading straight after readiness catches whichever
+ * render happened to be current.
+ */
+async function rotatedQuat(
+  page: Page,
+  id: string,
+  supplied: [number, number, number, number],
+): Promise<[number, number, number, number]> {
+  await expect
+    .poll(
+      async () => {
+        const q = await page.evaluate(
+          (satId) => window.__debug_get_sat_world_quat?.(satId) ?? null,
+          id,
+        );
+        if (q == null) return false;
+        return [0, 1, 2, 3].some((i) => Math.abs(q[i] - supplied[i]) > 1e-6);
+      },
+      { timeout: 15000 },
+    )
+    .toBe(true);
+  const q = await page.evaluate((satId) => window.__debug_get_sat_world_quat?.(satId) ?? null, id);
+  if (q == null) throw new Error("no rendered attitude");
+  return q;
+}
+
 test("a satellite with no usable time stays in the scene's frame", async ({ page }) => {
   // A body-fixed view rotates everything by the Earth rotation angle at the
   // scene's time. A satellite whose own `time` is `NaN` has to be rotated the
   // same way — dropping the rotation for it would leave that one marker in the
   // inertial frame while the body, the trails and every other satellite are
   // body-fixed, which is a picture of two conventions at once.
+  // +90° about Z, as [w, x, y, z] for the fixture and as Three's [x, y, z, w] for
+  // the comparison below.
   const attitude = "0.7071067811865476,0,0,0.7071067811865476";
-  const worldQuat = async () => {
-    const q = await page.evaluate(
-      (id) => window.__debug_get_sat_world_quat?.(id) ?? null,
-      "fixture-sat-0",
-    );
-    if (q == null) throw new Error("no rendered attitude");
-    return q;
-  };
+  const supplied: [number, number, number, number] = [0, 0, Math.SQRT1_2, Math.SQRT1_2];
 
   await open(page, `sats=nan:${SAT_A}&frame=bodyFixed&epoch=${EPOCH}&att=${attitude}&arrows=none`);
-  await expect.poll(async () => (await worldQuat()) != null, { timeout: 15000 }).toBe(true);
-  const withoutTime = await worldQuat();
+  const withoutTime = await rotatedQuat(page, "fixture-sat-0", supplied);
 
   // The scene's own time is what it falls back to, and with this one satellite
   // carrying no usable time that is 0 — so a satellite explicitly at 0 has to
   // come out identical.
   await open(page, `sats=0:${SAT_A}&frame=bodyFixed&epoch=${EPOCH}&att=${attitude}&arrows=none`);
-  const atZero = await worldQuat();
+  const atZero = await rotatedQuat(page, "fixture-sat-0", supplied);
   for (const i of [0, 1, 2, 3]) {
     expect(withoutTime[i], `quaternion component ${i}`).toBeCloseTo(atZero[i], 6);
   }
 
-  // And the inertial frame gives a different quaternion, so the comparison above
-  // is not satisfied by any rotation at all.
+  // The inertial frame leaves the attitude as supplied, which is what the wait
+  // above rules out for the two body-fixed reads.
   await open(page, `sats=0:${SAT_A}&frame=inertial&epoch=${EPOCH}&att=${attitude}&arrows=none`);
-  const inertial = await worldQuat();
-  const same = [0, 1, 2, 3].every((i) => Math.abs(inertial[i] - atZero[i]) < 1e-6);
+  const inertial = await page.evaluate(
+    (id) => window.__debug_get_sat_world_quat?.(id) ?? null,
+    "fixture-sat-0",
+  );
+  expect(inertial, "the inertial frame renders the attitude as given").not.toBeNull();
+  for (const i of [0, 1, 2, 3]) {
+    expect(inertial?.[i], `inertial component ${i}`).toBeCloseTo(supplied[i], 6);
+  }
+  const same = [0, 1, 2, 3].every((i) => Math.abs((inertial?.[i] ?? 0) - atZero[i]) < 1e-6);
   expect(same, "the body-fixed frame should not equal the inertial one").toBe(false);
 });
 
@@ -313,4 +386,29 @@ test("an attitude that names no rotation is refused, not applied", async ({ page
       { timeout: 15000 },
     )
     .toBe(true);
+});
+
+test("an unusable attitude gets the marker that shows no orientation", async ({ page }) => {
+  // The automatic marker is a cube when a satellite has attitude, because its
+  // faces show which way the body points, and a sphere when it has none. That
+  // choice has to follow the *usable* attitude: a zero quaternion drawn as a cube
+  // shows an orientation nobody measured.
+  await open(page, `sats=0:${SAT_A}&centre=0&epoch=${EPOCH}&att=0,0,0,0&arrows=sun,nadir`);
+  await arrowsAt(page, 0, ["nadir", "sun"]);
+  const refused = await meshGeometries(page, "fixture-sat-0");
+  expect(refused, "the scene graph should be reachable").not.toBeNull();
+  // The cube is the discriminator. A sphere would be the other half of the
+  // statement, but the central body draws spheres too and this inventory cannot
+  // tell them apart from a marker's — so the absence of the cube is what is
+  // asserted, and the presence of one below.
+  expect(refused, "an unusable attitude draws no orientation-revealing cube").not.toContain(
+    "BoxGeometry",
+  );
+
+  // A usable one does get the cube, so the check above is not describing every
+  // scene.
+  await open(page, `sats=0:${SAT_A}&centre=0&epoch=${EPOCH}&att=1,0,0,0&arrows=sun,nadir`);
+  await arrowsAt(page, 0, ["nadir", "sun"]);
+  const usable = await meshGeometries(page, "fixture-sat-0");
+  expect(usable, "a usable attitude draws the cube").toContain("BoxGeometry");
 });

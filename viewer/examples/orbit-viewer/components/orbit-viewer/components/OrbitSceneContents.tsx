@@ -9,7 +9,12 @@ import {
   getBodyRadius,
 } from "../bodies.js";
 import { type DirectionVectorOptions, resolveDirectionVectors } from "../directionVectors.js";
-import { displayPosition, displayRotation, resolveDisplayFrame } from "../displayFrame.js";
+import {
+  displayPosition,
+  displayRotation,
+  resolveDisplayFrame,
+  sampleAttitude,
+} from "../displayFrame.js";
 import {
   computeSceneAmplification,
   type DisplayScaleProfile,
@@ -646,7 +651,10 @@ export function OrbitSceneContents({
             override: satelliteShapes?.get(centeredSatId),
             simShape: satelliteSimShapes?.get(centeredSatId),
             globalDefault: defaultMarkerShape,
-            hasAttitude: pos.qw != null,
+            // The same judgement the rotation makes: a sample whose quaternion
+            // names no rotation gets the sphere, not the cube that would show an
+            // orientation nobody measured.
+            hasAttitude: sampleAttitude(pos) != null,
           });
           const satName = satelliteNames?.get(centeredSatId);
           // The centred satellite is drawn exactly at the world origin, so the
@@ -802,7 +810,8 @@ export function OrbitSceneContents({
                     override: satelliteShapes?.get(satId),
                     simShape: satelliteSimShapes?.get(satId),
                     globalDefault: defaultMarkerShape,
-                    hasAttitude: pos.qw != null,
+                    // See above: the shape follows the usable attitude.
+                    hasAttitude: sampleAttitude(pos) != null,
                   })}
                 />
               )}
