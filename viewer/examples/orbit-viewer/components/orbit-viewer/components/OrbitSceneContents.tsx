@@ -334,10 +334,17 @@ export interface OrbitSceneContentsProps {
   /**
    * The scene's elapsed seconds since the epoch — `OrbitSceneDataProps.time`.
    *
-   * The epoch the scene itself is drawn at: the lighting, the central body's
-   * rotation, and any entity whose own sample carries no usable time. A centred
-   * satellite overrides it for its own view, because the Sun drawn *at* that
-   * satellite has to be the Sun at that satellite's time.
+   * Where the view has no instant of its own, this is it: the lighting, the
+   * central body's rotation, and any entity whose own sample carries no usable
+   * time are all drawn here.
+   *
+   * Centring on a satellite gives the view an instant of its own — that
+   * satellite's timestamp — and everything without a time of its own follows it
+   * rather than this, including a secondary body whose sample time is unusable.
+   * The alternative reads better in isolation and worse on screen: the Sun would
+   * be placed at the centred satellite's instant while the Moon beside it was
+   * oriented for the scene's, so one view would show two moments. One instant per
+   * view is the rule, and a sample that names its own time still wins over both.
    */
   time?: number;
   /** Per-satellite visible counts (when not live). */
@@ -521,6 +528,9 @@ export function OrbitSceneContents({
   // over the scene's time and reach the Earth rotation angle and the quantised
   // Sun time below, both of which are WASM calls.
   const centeredPosition = centeredSatId != null ? satellitePositions?.get(centeredSatId) : null;
+  // The instant this view depicts, which every entity without a usable time of
+  // its own is drawn at — see the `time` prop for why they follow the centred
+  // satellite rather than the scene's declared time.
   const simTime = finiteOrNull(centeredPosition?.t) ?? finiteOrNull(time) ?? 0;
   const quantizedSimTime = Math.floor(simTime / 60) * 60;
 
