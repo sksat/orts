@@ -44,6 +44,14 @@ export interface OrbitOverlayProps {
    */
   drawableVectorKinds: readonly DirectionVectorKind[];
   /**
+   * Whether the scene can place the centred spacecraft at all (default true).
+   *
+   * False takes the whole scene with it — no arrow is drawn at an unplaceable
+   * centre, the Sun included — so both toggles then give that one reason. Comes
+   * from the app because only it holds the centred spacecraft's position.
+   */
+  centreIsPlaceable?: boolean;
+  /**
    * Why the Sun is unavailable, when it is. The app owns the wording because it
    * knows which of the two reasons applies — no epoch, or a central body arika
    * cannot place.
@@ -78,17 +86,25 @@ export function OrbitOverlay({
   centredSatelliteId,
   drawableVectorKinds,
   sunUnavailable,
+  centreIsPlaceable = true,
 }: OrbitOverlayProps) {
   const noCentre = centredSatelliteId == null ? "Centre on a satellite to draw it" : undefined;
   /**
    * Why nothing can be drawn at the centre, when that is the reason.
    *
-   * The scene drops every arrow at a centre its frame cannot place, so a
-   * direction that is otherwise available — the Sun needs no position of its own
-   * — still cannot be drawn there. Both toggles give this reason, so neither can
-   * be left enabled over a scene that draws nothing.
+   * A centre the frame cannot place takes the whole scene with it: no arrow is
+   * drawn there, the Sun included, though it needs no position of its own. So
+   * both toggles give this reason and neither is left enabled over a scene that
+   * draws nothing. Asked of the frame's own predicate, which refuses a non-finite
+   * position and accepts every other — the coordinate origin among them.
    */
-  const unplaceableCentre = "Requires a finite, non-zero position";
+  const unplaceableCentre = centreIsPlaceable ? undefined : "Requires a finite position";
+  /**
+   * Nadir's own condition. It is the bearing from the spacecraft to the body,
+   * which a spacecraft at the body's centre does not have — and the scene draws
+   * everything else there, so this reason belongs to nadir alone.
+   */
+  const noBearing = "Requires a non-zero position";
   return (
     <>
       <FrameSelector
@@ -111,11 +127,12 @@ export function OrbitOverlay({
         unavailable={{
           sun:
             noCentre ??
-            (drawableVectorKinds.includes("sun")
-              ? undefined
-              : (sunUnavailable ?? unplaceableCentre)),
+            unplaceableCentre ??
+            (drawableVectorKinds.includes("sun") ? undefined : sunUnavailable),
           nadir:
-            noCentre ?? (drawableVectorKinds.includes("nadir") ? undefined : unplaceableCentre),
+            noCentre ??
+            unplaceableCentre ??
+            (drawableVectorKinds.includes("nadir") ? undefined : noBearing),
         }}
       />
       {orbitInfo && (

@@ -1,3 +1,4 @@
+import { centrePositionIsUsable } from "./frameResolve.js";
 import {
   type DisplayFrame,
   type DisplayRotationFrame,
@@ -114,26 +115,33 @@ export function resolveDirectionVectors({
 }
 
 /**
- * Whether a scene centred on this spacecraft can place it at all.
+ * Which arrows the orbit view would draw at a spacecraft it is centred on.
  *
- * The orbit view drops every arrow at a centre whose position its frame cannot
- * use, so a control that offers one there offers an arrow the scene then drops.
- * The Sun is the case that needs saying: it has no position of its own, and would
- * otherwise stay on offer beside a spacecraft that is not on screen.
+ * Two conditions in order, because they fail differently. The scene draws nothing
+ * at all at a centre it cannot place, and the Sun is why that has to be said
+ * first: it needs no position of its own, so it would otherwise stay on offer
+ * beside a spacecraft that is not on screen. Placing a centre asks
+ * {@link centrePositionIsUsable} — the renderer's own condition, so this cannot
+ * answer more strictly than the scene draws. A centre at the coordinate origin is
+ * placeable: the spacecraft is drawn there and the Sun with it, and only nadir
+ * drops out, having no bearing to take.
  *
- * Asked of the resolver rather than derived from "a position is present": a
- * position can be there and still yield no direction — zero, or non-finite from a
- * file source. Nadir is the arrow that needs the position, so whether it resolves
- * is the whole question, and this takes no Sun input so the answer cannot come
- * from one. The frame decides where a direction points, not whether it resolves,
- * so the inertial one stands in.
+ * Then the arrows themselves, from the resolver both scenes use, so a control
+ * cannot offer one the scene goes on to drop. The frame decides where a direction
+ * points rather than whether it resolves, so the inertial one stands in.
  */
-export function centreIsPlaceable(positionEci: Vec3 | null | undefined): boolean {
-  return (
-    resolveDirectionVectors({
-      frame: { kind: "inertial", origin: null },
-      positionEci,
-      options: { nadir: true },
-    }).length > 0
-  );
+export function drawableAtCentre(inputs: {
+  positionEci: Vec3 | null | undefined;
+  /** Whether the scene can compute a Sun direction at all — an epoch, and a body arika can place. */
+  sunIsComputable: boolean;
+}): readonly DirectionVectorKind[] {
+  if (!centrePositionIsUsable(inputs.positionEci)) return [];
+  return resolveDirectionVectors({
+    frame: { kind: "inertial", origin: null },
+    // A stand-in: only whether a Sun direction exists changes the answer, never
+    // which way it points.
+    sunDisplay: inputs.sunIsComputable ? [1, 0, 0] : null,
+    positionEci: inputs.positionEci,
+    options: { sun: true, nadir: true },
+  }).map((v) => v.kind);
 }
