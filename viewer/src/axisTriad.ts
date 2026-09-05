@@ -50,10 +50,12 @@ export function axisLabelScale(length: number): number {
  * Outermost point the labels of a triad reach, from the origin.
  *
  * The letters sit *past* the tips, so a camera fitted to the axes alone clips
- * them.
+ * them. A sprite is a quad facing the camera, so it reaches half its diagonal in
+ * whichever direction the view happens to put that — and a letter's texture is
+ * square, which makes the diagonal `sqrt(2)` times its side.
  */
 export function axisLabelExtent(length: number): number {
-  return length * TIP_OVERSHOOT + axisLabelScale(length) / 2;
+  return length * TIP_OVERSHOOT + (axisLabelScale(length) * Math.SQRT2) / 2;
 }
 
 /** CSS colour for a canvas context, from one of `AXIS_COLORS`. */
