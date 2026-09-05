@@ -80,6 +80,15 @@ export function OrbitOverlay({
   sunUnavailable,
 }: OrbitOverlayProps) {
   const noCentre = centredSatelliteId == null ? "Centre on a satellite to draw it" : undefined;
+  /**
+   * Why nothing can be drawn at the centre, when that is the reason.
+   *
+   * The scene drops every arrow at a centre its frame cannot place, so a
+   * direction that is otherwise available — the Sun needs no position of its own
+   * — still cannot be drawn there. Both toggles give this reason, so neither can
+   * be left enabled over a scene that draws nothing.
+   */
+  const unplaceableCentre = "Requires a finite, non-zero position";
   return (
     <>
       <FrameSelector
@@ -100,12 +109,13 @@ export function OrbitOverlay({
         value={directionVectors}
         onChange={onDirectionVectorsChange}
         unavailable={{
-          sun: noCentre ?? (drawableVectorKinds.includes("sun") ? undefined : sunUnavailable),
-          nadir:
+          sun:
             noCentre ??
-            (drawableVectorKinds.includes("nadir")
+            (drawableVectorKinds.includes("sun")
               ? undefined
-              : "Requires a finite, non-zero position"),
+              : (sunUnavailable ?? unplaceableCentre)),
+          nadir:
+            noCentre ?? (drawableVectorKinds.includes("nadir") ? undefined : unplaceableCentre),
         }}
       />
       {orbitInfo && (
