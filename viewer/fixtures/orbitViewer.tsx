@@ -27,7 +27,7 @@
  * | shape   | marker shape forced on every satellite (`axes-cube` / `sphere`)  |
  * | name    | display name of every satellite — `ISS` resolves a model config   |
  */
-import { StrictMode } from "react";
+import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { Quat, SatelliteState, Vec3, ViewerReferenceFrame } from "../src/lib/index.js";
 import { isArikaReady, OrbitViewer } from "../src/lib/index.js";
@@ -37,6 +37,16 @@ const params = new URLSearchParams(window.location.search);
 declare global {
   interface Window {
     __fixture_arika_ready?: () => boolean;
+    /**
+     * Replace every satellite's attitude after mount, or withdraw it with `null`.
+     *
+     * The one prop this fixture does not take from the URL alone. Some behaviour
+     * is reachable only by *losing* a usable attitude: a group that keeps the
+     * rotation its last good sample gave it renders identically to a correct one
+     * until the sample stops carrying it, so a scene mounted in its final state
+     * cannot tell the two apart.
+     */
+    __fixture_set_attitude?: (attitude: Quat | null) => void;
   }
 }
 window.__fixture_arika_ready = () => isArikaReady();
@@ -87,8 +97,23 @@ const arrows = params.get("arrows");
 const epoch = params.get("epoch");
 const sceneTime = params.get("t");
 
-createRoot(document.getElementById("root") as HTMLElement).render(
-  <StrictMode>
+/** The scene, plus the one prop a test can change after mount. */
+function Fixture() {
+  // `undefined` means "as the URL gave it"; a value or `null` means a test has
+  // taken over, `null` withdrawing the attitude entirely.
+  const [override, setOverride] = useState<Quat | null | undefined>(undefined);
+  useEffect(() => {
+    window.__fixture_set_attitude = (attitude) => setOverride(attitude);
+    return () => {
+      window.__fixture_set_attitude = undefined;
+    };
+  }, []);
+  const shown =
+    override === undefined
+      ? satellites
+      : satellites.map((sat) => ({ ...sat, attitude: override ?? undefined }));
+
+  return (
     <OrbitViewer
       centralBody={{
         id: params.get("body") ?? "earth",
@@ -96,7 +121,7 @@ createRoot(document.getElementById("root") as HTMLElement).render(
         // and the scene needs one to scale itself by.
         radiusKm: Number(params.get("radius") ?? 6378.137),
       }}
-      satellites={satellites}
+      satellites={shown}
       referenceFrame={referenceFrame}
       epochJd={epoch == null ? undefined : Number(epoch)}
       time={sceneTime == null ? undefined : Number(sceneTime)}
@@ -106,5 +131,11 @@ createRoot(document.getElementById("root") as HTMLElement).render(
           : { sun: arrows.includes("sun"), nadir: arrows.includes("nadir") }
       }
     />
+  );
+}
+
+createRoot(document.getElementById("root") as HTMLElement).render(
+  <StrictMode>
+    <Fixture />
   </StrictMode>,
 );

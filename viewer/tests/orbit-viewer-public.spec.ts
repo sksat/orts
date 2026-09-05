@@ -154,6 +154,44 @@ async function centralBodyDistance(page: Page, id: string): Promise<number | nul
   }, id);
 }
 
+/**
+ * Rotation of the group holding the cube marker, read from the live graph.
+ *
+ * Not through the attitude hook: that is registered by the body axes, which are
+ * gone the moment the attitude is, and this is about what remains on screen
+ * afterwards.
+ */
+async function cubeGroupRotation(page: Page, id: string): Promise<number[] | null> {
+  return await page.evaluate((satId) => {
+    const w = window as unknown as {
+      __debug_direction_vector_registry?: Map<
+        string,
+        () => { origin: { parent: unknown } | null }[]
+      >;
+    };
+    const start = w.__debug_direction_vector_registry?.get(satId)?.()?.[0]?.origin;
+    if (start == null) return null;
+    type Node = {
+      type: string;
+      parent: Node | null;
+      children: Node[];
+      quaternion: { x: number; y: number; z: number; w: number };
+      geometry?: { type?: string };
+    };
+    let root = start as unknown as Node;
+    while (root.parent != null) root = root.parent;
+    let found: Node | null = null;
+    const walk = (node: Node) => {
+      if (node.geometry?.type === "BoxGeometry" && node.parent != null) found = node.parent;
+      for (const child of node.children) walk(child);
+    };
+    walk(root);
+    if (found == null) return null;
+    const q = (found as Node).quaternion;
+    return [q.w, q.x, q.y, q.z];
+  }, id);
+}
+
 function sunDirection(arrows: Drawn[]): [number, number, number] {
   const sun = arrows.find((a) => a.kind === "sun");
   if (sun == null) throw new Error("no Sun arrow was drawn");
@@ -514,4 +552,42 @@ test("the environment is scaled for the spacecraft that is drawn", async ({ page
     (refused as number) / (marker as number),
     "a refused attitude scales the scene for the marker it draws",
   ).toBeCloseTo(1, 6);
+});
+
+test("a marker that keeps its cube gives up its rotation with the attitude", async ({ page }) => {
+  // The reset that runs when an attitude stops being usable is only observable
+  // where the same object stays on screen across the change. An explicit
+  // `axes-cube` is that case: the request outranks the automatic choice, so the
+  // cube is still drawn once the attitude is gone, and it must not go on showing
+  // the orientation the last usable sample gave it.
+  await open(
+    page,
+    `sats=0:${SAT_A}&centre=0&shape=axes-cube&att=${Math.SQRT1_2},0,0,${Math.SQRT1_2}&arrows=nadir`,
+  );
+  await arrowsAt(page, 0, ["nadir"]);
+
+  const rotated = await cubeGroupRotation(page, "fixture-sat-0");
+  expect(rotated, "the cube should be in the scene").not.toBeNull();
+  // 90° about Z, as supplied.
+  expect(rotated?.[0] ?? 0, "w").toBeCloseTo(Math.SQRT1_2, 6);
+  expect(rotated?.[3] ?? 0, "z").toBeCloseTo(Math.SQRT1_2, 6);
+
+  await page.evaluate(() => window.__fixture_set_attitude?.(null));
+
+  await expect
+    .poll(
+      async () => {
+        const q = await cubeGroupRotation(page, "fixture-sat-0");
+        return q == null ? null : Math.abs(q[0] - 1) < 1e-6 && Math.abs(q[3]) < 1e-6;
+      },
+      { timeout: 15000 },
+    )
+    .toBe(true);
+
+  // Still the cube: the shape follows the request, and it is the rotation alone
+  // that the withdrawal took away.
+  const geometries = await meshGeometries(page, "fixture-sat-0");
+  expect(geometries, "an explicitly requested cube stays without an attitude").toContain(
+    "BoxGeometry",
+  );
 });

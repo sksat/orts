@@ -375,6 +375,16 @@ export function App() {
         // The interpolated point's own time — clamped for terminated/out-of-span
         // satellites — so its body-fixed marker transform uses the right epoch.
         time: pos.t,
+        // All four components or none, matching `hasQuaternion` in `orbit.ts`.
+        //
+        // A partly decoded sample is passed on as *no* attitude, which is the one
+        // thing `SatelliteState.attitude` can say: being `Quat | undefined`, it
+        // has no way to carry "an attitude arrived and could not be used". The
+        // scene's own classifier draws that distinction, and the difference shows
+        // for a satellite with a registered model — no attitude leaves the model
+        // standing as a position marker, where a refused one would replace it. To
+        // pass the distinction through, the public type would have to gain a way
+        // to express it; that is an API question rather than a fix here.
         attitude:
           pos.qw != null && pos.qx != null && pos.qy != null && pos.qz != null
             ? [pos.qw, pos.qx, pos.qy, pos.qz]
