@@ -385,6 +385,10 @@ export function App() {
         // standing as a position marker, where a refused one would replace it. To
         // pass the distinction through, the public type would have to gain a way
         // to express it; that is an API question rather than a fix here.
+        //
+        // Reaching it takes a corrupt file: the only source that assigns these
+        // components one by one is the rrd parser, from a `quaternion` column it
+        // expects to be four long, and the WS payload carries the tuple whole.
         attitude:
           pos.qw != null && pos.qx != null && pos.qy != null && pos.qz != null
             ? [pos.qw, pos.qx, pos.qy, pos.qz]
