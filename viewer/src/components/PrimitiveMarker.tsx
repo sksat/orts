@@ -47,9 +47,17 @@ export function PrimitiveMarker({
   // Apply the body-to-display quaternion imperatively (Hamilton [w,x,y,z] →
   // Three.js (x,y,z,w)), matching SatelliteModel.tsx / BodyAxes.tsx.
   useEffect(() => {
-    if (groupRef.current && quaternion) {
+    if (!groupRef.current) return;
+    if (quaternion) {
       const [w, x, y, z] = quaternion;
       groupRef.current.quaternion.set(x, y, z, w);
+    } else {
+      // A stream can stop carrying a usable attitude — a sample whose quaternion
+      // names no rotation, or none at all after one that did. Leaving the group
+      // where the last good sample put it would show that orientation as the
+      // current one, so it goes back to unrotated, which is what "no attitude"
+      // draws from the start.
+      groupRef.current.quaternion.identity();
     }
   }, [quaternion]);
 

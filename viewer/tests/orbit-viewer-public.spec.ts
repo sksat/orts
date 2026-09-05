@@ -241,11 +241,20 @@ test("a central-body view is drawn at the scene's time, not a satellite's", asyn
   // The central body's rendered rotation is what reports the epoch the scene
   // chose — a satellite's own rotation would not, since each marker turns by its
   // own sample time.
+  // The body's hook is installed before the WASM is ready, and until it is the
+  // body is drawn unrotated. Reading then would compare the fallback against the
+  // fallback, so each read waits for a rotation to have been applied — the same
+  // reason `rotatedQuat` above waits.
+  const identity: [number, number, number, number] = [0, 0, 0, 1];
   const earthQuat = async () => {
     await expect
-      .poll(() => page.evaluate(() => window.__debug_get_earth_world_quat?.() != null), {
-        timeout: 15000,
-      })
+      .poll(
+        async () => {
+          const q = await page.evaluate(() => window.__debug_get_earth_world_quat?.() ?? null);
+          return q != null && [0, 1, 2, 3].some((i) => Math.abs(q[i] - identity[i]) > 1e-6);
+        },
+        { timeout: 15000 },
+      )
       .toBe(true);
     const q = await page.evaluate(() => window.__debug_get_earth_world_quat?.() ?? null);
     if (q == null) throw new Error("no rendered central body");
