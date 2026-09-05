@@ -3,7 +3,7 @@ import type { DirectionVectorKind, DirectionVectorOptions } from "../directionVe
 import type { SatelliteInfo, SimInfo } from "../hooks/useWebSocket.js";
 import type { ReferenceFrame } from "../referenceFrame.js";
 import type { MarkerShape } from "../satelliteShapes.js";
-import { DirectionVectorControls } from "./DirectionVectorControls.js";
+import { DirectionVectorControls, NADIR_NEEDS_LENGTH } from "./DirectionVectorControls.js";
 import { FrameSelector } from "./FrameSelector.js";
 import { MarkerShapeSelector } from "./MarkerShapeSelector.js";
 import { SimInfoBar } from "./SimInfoBar.js";
@@ -104,20 +104,16 @@ export function OrbitOverlay({
    * A centre the frame cannot place takes the whole scene with it: no arrow is
    * drawn there, the Sun included, though it needs no position of its own. So
    * both toggles give this reason and neither is left enabled over a scene that
-   * draws nothing. Asked of the frame's own predicate, which refuses a non-finite
-   * position and accepts every other — the coordinate origin among them.
+   * draws nothing. Asked of the frame's own predicate, which refuses a position it
+   * cannot put in the renderer's float32 origin offset — a non-finite component,
+   * or a length past what that offset holds — and accepts every other, the
+   * coordinate origin among them.
    */
   const unplaceableCentre = centreIsPlaceable ? undefined : "Requires a finite position";
-  /**
-   * Nadir's own condition. It is the bearing from the spacecraft to the body, and
-   * what the resolver needs to compute one is a length it can divide by. Two
-   * positions the frame accepts fail that: the coordinate origin, whose length is
-   * zero, and one whose components are each finite while their squares overflow,
-   * whose length is infinite. The scene draws everything else at both, so this
-   * reason belongs to nadir alone — and it names the length rather than the
-   * position, which is the part that has to work.
-   */
-  const noBearing = "Requires a position of finite, non-zero length";
+  // Nadir's own condition, which the scene draws everything else at: the frame
+  // accepts the coordinate origin and the spacecraft is drawn there, and it is the
+  // bearing alone that cannot be taken.
+  const noBearing = NADIR_NEEDS_LENGTH;
   return (
     <>
       <FrameSelector
