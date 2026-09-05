@@ -461,15 +461,15 @@ export function OrbitSceneContents({
   // stays frozen), and the Sun drawn *at* the centred satellite has to be the Sun
   // at that satellite's time, not at whichever time the Map happens to yield
   // first. Falls back to the first available position for a central-body view.
-  // The Map's values are iterated directly rather than materialized into an array
-  // every render just to find one entry.
-  const fallbackTime = firstFiniteTime(satellitePositions?.values());
   const centeredPosition = centeredSatId != null ? satellitePositions?.get(centeredSatId) : null;
   // Each candidate goes through a finite check, because `??` falls through only
   // on null and undefined: a NaN `t` on the centred satellite would otherwise win
   // over a usable fallback and reach the Earth rotation angle and the quantised
-  // Sun time below, both of which are WASM calls.
-  const simTime = finiteOrNull(centeredPosition?.t) ?? fallbackTime ?? 0;
+  // Sun time below, both of which are WASM calls. The same `??` keeps the search
+  // for a fallback from running at all while the centred satellite has a time,
+  // which is every frame of a satellite-centred view.
+  const simTime =
+    finiteOrNull(centeredPosition?.t) ?? firstFiniteTime(satellitePositions?.values()) ?? 0;
   const quantizedSimTime = Math.floor(simTime / 60) * 60;
 
   // Earth rotation angle (ERA) via WASM — updates every frame via simTime (not quantized)
