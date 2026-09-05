@@ -85,6 +85,20 @@ export function AttitudeOverlay({
     },
   ];
 
+  /**
+   * Why no direction can be drawn, when the view is drawing no spacecraft.
+   *
+   * The arrows are drawn at the spacecraft, so an absent one takes both with it,
+   * whatever the epoch says about the Sun. Two states reach here and the
+   * placeholder in the scene names the same two: no spacecraft has arrived, or the
+   * one selected carries no attitude.
+   */
+  const noBody = hasBody
+    ? undefined
+    : satellites.length === 0
+      ? "Waiting for spacecraft data"
+      : "This spacecraft has no attitude";
+
   return (
     <>
       <div className={selectorStyles.frameSelector}>
@@ -117,7 +131,7 @@ export function AttitudeOverlay({
       <DirectionVectorControls
         value={directionVectors}
         onChange={onDirectionVectorsChange}
-        unavailable={{ sun: sunUnavailable, nadir: nadirUnavailable }}
+        unavailable={{ sun: noBody ?? sunUnavailable, nadir: noBody ?? nadirUnavailable }}
       />
 
       {hasBody && <SceneLegend />}
