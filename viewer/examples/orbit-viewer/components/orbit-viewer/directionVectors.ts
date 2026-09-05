@@ -112,3 +112,28 @@ export function resolveDirectionVectors({
 
   return vectors;
 }
+
+/**
+ * Whether a scene centred on this spacecraft can place it at all.
+ *
+ * The orbit view drops every arrow at a centre whose position its frame cannot
+ * use, so a control that offers one there offers an arrow the scene then drops.
+ * The Sun is the case that needs saying: it has no position of its own, and would
+ * otherwise stay on offer beside a spacecraft that is not on screen.
+ *
+ * Asked of the resolver rather than derived from "a position is present": a
+ * position can be there and still yield no direction — zero, or non-finite from a
+ * file source. Nadir is the arrow that needs the position, so whether it resolves
+ * is the whole question, and this takes no Sun input so the answer cannot come
+ * from one. The frame decides where a direction points, not whether it resolves,
+ * so the inertial one stands in.
+ */
+export function centreIsPlaceable(positionEci: Vec3 | null | undefined): boolean {
+  return (
+    resolveDirectionVectors({
+      frame: { kind: "inertial", origin: null },
+      positionEci,
+      options: { nadir: true },
+    }).length > 0
+  );
+}

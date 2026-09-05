@@ -17,7 +17,11 @@ import { PlaybackBar } from "./components/PlaybackBar.js";
 import { SimConfigModal } from "./components/SimConfigModal.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { type ViewMode, ViewSelector } from "./components/ViewSelector.js";
-import { type DirectionVectorKind, resolveDirectionVectors } from "./directionVectors.js";
+import {
+  centreIsPlaceable,
+  type DirectionVectorKind,
+  resolveDirectionVectors,
+} from "./directionVectors.js";
 import type { DisplayFrame, Vec3 as DisplayVec3 } from "./displayFrame.js";
 import { toViewerReferenceFrame } from "./frameToViewer.js";
 import { CSV_SOURCE_ID, RRD_SOURCE_ID, useFileSource } from "./hooks/useFileSource.js";
@@ -585,13 +589,8 @@ export function App() {
 
   const orbitDrawableKinds = useMemo<readonly DirectionVectorKind[]>(() => {
     if (centredSatellite == null) return [];
-    // The orbit view draws nothing at all at a centre its frame cannot place, so
-    // offering the Sun there would offer an arrow the scene then drops — the Sun
-    // needs no position of its own, which is why this has to be asked
-    // separately. A position the frame can place is exactly one nadir resolves
-    // from, so the question goes to the resolver rather than repeating the rule.
-    const placeable = resolvedVectorKinds(centredSatellite.position, { nadir: true }).length > 0;
-    return placeable
+    // Nothing is on offer at a centre the scene cannot place, the Sun included.
+    return centreIsPlaceable(centredSatellite.position)
       ? resolvedVectorKinds(centredSatellite.position, DEFAULT_DIRECTION_VECTORS)
       : [];
   }, [resolvedVectorKinds, centredSatellite]);

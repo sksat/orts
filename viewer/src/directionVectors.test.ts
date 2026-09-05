@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
 import {
+  centreIsPlaceable,
   DIRECTION_VECTOR_COLORS,
   type DirectionVector,
   type DirectionVectorKind,
@@ -209,5 +210,36 @@ describe("resolveDirectionVectors", () => {
     });
     expect(find(vectors, "sun").color).toBe(DIRECTION_VECTOR_COLORS.sun);
     expect(find(vectors, "nadir").color).toBe(DIRECTION_VECTOR_COLORS.nadir);
+  });
+});
+
+describe("centreIsPlaceable", () => {
+  it("answers for the position, and says no to the ones that carry no direction", () => {
+    expect(centreIsPlaceable([7000, 0, 0])).toBe(true);
+    expect(centreIsPlaceable(null)).toBe(false);
+    expect(centreIsPlaceable(undefined)).toBe(false);
+    expect(centreIsPlaceable([0, 0, 0])).toBe(false);
+    expect(centreIsPlaceable([Number.NaN, 0, 0])).toBe(false);
+    expect(centreIsPlaceable([Number.POSITIVE_INFINITY, 0, 0])).toBe(false);
+    // Each component is finite while the sum of their squares is not, so a length
+    // check that only rejected non-finite components would let this through.
+    expect(centreIsPlaceable([1e200, 1e200, 1e200])).toBe(false);
+  });
+
+  it("cannot be answered by the Sun, which needs no position", () => {
+    // The question the caller asks is whether the *scene* will draw anything at
+    // this centre, and the scene drops every arrow at one it cannot place. Asking
+    // `resolveDirectionVectors` for the drawable set instead answers yes here, on
+    // the strength of an arrow that never needed the position — so a control would
+    // stay on offer over a scene that draws nothing.
+    const unusable: Vec3 = [0, 0, 0];
+    const withSun = resolveDirectionVectors({
+      frame: { kind: "inertial", origin: null },
+      sunDisplay: [1, 0, 0],
+      positionEci: unusable,
+      options: { nadir: true },
+    });
+    expect(withSun.map((v) => v.kind)).toEqual(["sun"]);
+    expect(centreIsPlaceable(unusable)).toBe(false);
   });
 });
