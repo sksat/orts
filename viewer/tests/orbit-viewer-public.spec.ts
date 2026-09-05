@@ -10,6 +10,8 @@
  * Assertions read the rendered scene through the dev hooks rather than pixels.
  * See .claude/skills/playwright-viewer-testing.
  */
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, type Page, test } from "@playwright/test";
 
 /** Epoch used wherever the Sun has to be computable (UTC JD). */
@@ -590,4 +592,90 @@ test("a marker that keeps its cube gives up its rotation with the attitude", asy
   expect(geometries, "an explicitly requested cube stays without an attitude").toContain(
     "BoxGeometry",
   );
+});
+
+/**
+ * A glTF served in place of the registry's model.
+ *
+ * The registry points at a GLB on an external host, which does load under test —
+ * but a test that depends on someone else's server fails for reasons that have
+ * nothing to do with the viewer. This one triangle stands in: `GLTFLoader` reads
+ * JSON as readily as the binary container, and what the test needs from a model
+ * is that it be a loaded object with a group above it.
+ */
+const STAND_IN_MODEL = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../fixtures/test-spacecraft.gltf",
+);
+
+/** Every ancestor rotation above the loaded model, innermost first. */
+async function modelAncestorRotations(page: Page): Promise<number[][] | null> {
+  return await page.evaluate(() => {
+    const w = window as unknown as {
+      __debug_direction_vector_registry?: Map<
+        string,
+        () => { origin: { parent: unknown } | null }[]
+      >;
+    };
+    const start = w.__debug_direction_vector_registry?.get("fixture-sat-0")?.()?.[0]?.origin;
+    if (start == null) return null;
+    type Node = {
+      name?: string;
+      type: string;
+      parent: Node | null;
+      children: Node[];
+      quaternion: { x: number; y: number; z: number; w: number };
+    };
+    let root = start as unknown as Node;
+    while (root.parent != null) root = root.parent;
+    let mesh: Node | null = null;
+    const walk = (node: Node) => {
+      if (node.name === "test-spacecraft") mesh = node;
+      for (const child of node.children) walk(child);
+    };
+    walk(root);
+    if (mesh == null) return null;
+    const out: number[][] = [];
+    for (let n: Node | null = mesh; n != null; n = n.parent) {
+      out.push([n.quaternion.w, n.quaternion.x, n.quaternion.y, n.quaternion.z]);
+    }
+    return out;
+  });
+}
+
+test("a model gives up its rotation when the attitude stops being usable", async ({ page }) => {
+  // The registered-model path, which is where this matters most: the model is not
+  // replaced when its attitude goes — a spacecraft with no attitude is drawn as a
+  // position marker, which is the documented behaviour — so the same object stays
+  // on screen and would go on showing the orientation the last usable sample gave
+  // it. The marker case is covered above; this is the one whose ref used to be
+  // detached before the reset could run.
+  await page.route("**/*.glb", (route) =>
+    route.fulfill({ path: STAND_IN_MODEL, contentType: "model/gltf+json" }),
+  );
+
+  const supplied = [Math.SQRT1_2, 0, 0, Math.SQRT1_2];
+  await open(page, `sats=0:${SAT_A}&centre=0&name=ISS&att=${supplied.join(",")}&arrows=nadir`);
+  await arrowsAt(page, 0, ["nadir"]);
+
+  const carries = (rotations: number[][] | null) =>
+    rotations?.some((q) => q.every((c, i) => Math.abs(c - supplied[i]) < 1e-6)) ?? false;
+
+  // The model has to arrive before anything can be said about its rotation.
+  await expect
+    .poll(async () => carries(await modelAncestorRotations(page)), { timeout: 20000 })
+    .toBe(true);
+
+  await page.evaluate(() => window.__fixture_set_attitude?.(null));
+
+  await expect
+    .poll(
+      async () => {
+        const rotations = await modelAncestorRotations(page);
+        // Still loaded, and no ancestor carries the withdrawn rotation any more.
+        return rotations != null && !carries(rotations);
+      },
+      { timeout: 15000 },
+    )
+    .toBe(true);
 });
