@@ -107,6 +107,10 @@ describe("lerpPoint quaternion handling", () => {
       pt({ qw: 0, qx: 0, qy: 0, qz: 0 }),
       pt({ qw: Number.NaN, qx: 0, qy: 0, qz: 0 }),
       pt({ qw: Number.POSITIVE_INFINITY, qx: 0, qy: 0, qz: 0 }),
+      // Subnormal components: the norm is finite and positive, so dividing by it
+      // looks safe, but `Math.hypot` answers the smallest number there is and the
+      // components divide to 1 apiece — norm 1.414, refused at the display.
+      pt({ qw: Number.MIN_VALUE, qx: Number.MIN_VALUE, qy: 0, qz: 0 }),
     ]) {
       for (const frac of [0, 0.25, 0.5, 0.75]) {
         const r = lerpPoint(refused, valid, frac);

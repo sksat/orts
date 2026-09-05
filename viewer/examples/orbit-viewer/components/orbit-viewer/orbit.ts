@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { sampleAttitude } from "./displayFrame.js";
 
 /**
  * Earth radius in km -- used as the scene scale factor.
@@ -140,16 +141,22 @@ export function updateOrbitTrail(line: THREE.Line, visibleCount: number, totalCo
 }
 
 /**
- * A point's quaternion at unit norm, or null when its components do not describe
- * a length that can be divided by (zero, or non-finite).
+ * A point's quaternion at unit norm, or null when the display frame would refuse
+ * it.
  *
- * Callers must have checked {@link hasQuaternion} first.
+ * Asked of `sampleAttitude`, which is what the marker's rotation goes through, so
+ * the interpolation and the drawing agree on which samples name a rotation.
+ * Dividing by a finite positive norm is not enough on its own: at subnormal
+ * magnitudes `Math.hypot` answers the smallest number there is, so
+ * `[5e-324, 5e-324, 0, 0]` divides to `[1, 1, 0, 0]` — norm 1.414, which slerp
+ * would carry as a rotation. `unitAttitude` checks the result rather than the
+ * input, and this now inherits that.
  */
 function unitQuaternion(p: OrbitPoint): THREE.Quaternion | null {
-  const [w, x, y, z] = [p.qw as number, p.qx as number, p.qy as number, p.qz as number];
-  const n = Math.hypot(w, x, y, z);
-  if (!(Number.isFinite(n) && n > 0)) return null;
-  return new THREE.Quaternion(x / n, y / n, z / n, w / n);
+  const unit = sampleAttitude(p);
+  if (unit == null) return null;
+  const [w, x, y, z] = unit;
+  return new THREE.Quaternion(x, y, z, w);
 }
 
 /** Whether a point carries a complete quaternion (all of qw/qx/qy/qz). */
