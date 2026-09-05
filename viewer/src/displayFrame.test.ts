@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
 import {
+  attitudeWasRefused,
   type DisplayFrame,
   type DisplayFrameInputs,
   type DisplayOrientation,
@@ -12,6 +13,7 @@ import {
   type Quat,
   resolveDisplayFrame,
   resolveDisplayOrientation,
+  sampleAttitude,
   trailTransformKey,
   unitAttitude,
   type Vec3,
@@ -574,5 +576,35 @@ describe("trail transform key", () => {
         ),
       ),
     ).toBe(true);
+  });
+});
+
+describe("sampleAttitude on an incomplete sample", () => {
+  it("refuses a quaternion that is missing components", () => {
+    // Zero-filling would make each of these the identity after normalisation, so
+    // a sample carrying one number would be drawn as a measured orientation.
+    expect(sampleAttitude({ qw: 0.5 })).toBeUndefined();
+    expect(sampleAttitude({ qw: 1, qx: 0 })).toBeUndefined();
+    expect(sampleAttitude({ qw: 1, qx: 0, qy: 0 })).toBeUndefined();
+    // A complete tuple still resolves, including one that needs normalising.
+    expect(sampleAttitude({ qw: 1, qx: 0, qy: 0, qz: 0 })).toEqual([1, 0, 0, 0]);
+    expect(sampleAttitude({ qw: 2, qx: 0, qy: 0, qz: 0 })).toEqual([1, 0, 0, 0]);
+  });
+
+  it("counts an incomplete quaternion as an attitude that was refused", () => {
+    // The sample claimed one — `qw` is there — and the viewer cannot use it, which
+    // is the state that suppresses the model and the orientation-revealing cube.
+    expect(attitudeWasRefused({ qw: 0.5 })).toBe(true);
+    // Any component is the claim, `qw` included but not required — a sample that
+    // carries one of the others is a partly decoded attitude, not an absent one,
+    // and reading it as absent would leave a registered model on screen at its own
+    // orientation with the scene amplified to match.
+    expect(attitudeWasRefused({ qx: 0.5 })).toBe(true);
+    expect(attitudeWasRefused({ qy: Number.NaN })).toBe(true);
+    expect(attitudeWasRefused({ qz: 0 })).toBe(true);
+    expect(attitudeWasRefused({ qx: 0, qy: 0, qz: 0 })).toBe(true);
+    // Nothing claimed, nothing refused.
+    expect(attitudeWasRefused({})).toBe(false);
+    expect(attitudeWasRefused({ qw: 1, qx: 0, qy: 0, qz: 0 })).toBe(false);
   });
 });

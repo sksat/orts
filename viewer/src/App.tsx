@@ -16,7 +16,7 @@ import { CSV_SOURCE_ID, RRD_SOURCE_ID, useFileSource } from "./hooks/useFileSour
 import { useRealtimePlayback } from "./hooks/useRealtimePlayback.js";
 import { useSimInfoDerived } from "./hooks/useSimInfoDerived.js";
 import { useSimulationData } from "./hooks/useSimulationData.js";
-import { OrbitScene, type SatelliteState } from "./lib/index.js";
+import { type DirectionVectorOptions, OrbitScene, type SatelliteState } from "./lib/index.js";
 import type { ClientMessage } from "./protocol/generated/ClientMessage.js";
 import { DEFAULT_FRAME, type ReferenceFrame } from "./referenceFrame.js";
 import { type MarkerShape, readSatShapeParam, writeSatShapeParam } from "./satelliteShapes.js";
@@ -37,6 +37,13 @@ const DEFAULT_WS_URL: string = resolveDefaultWsUrl({
 
 // Build-time texture base URL — present when VITE_TEXTURE_BASE_URL is set at Vite startup.
 const VITE_TEXTURE_BASE_URL = import.meta.env.VITE_TEXTURE_BASE_URL;
+
+/**
+ * Reference-direction arrows the app asks for. The scene draws them only at a
+ * centred satellite, so a central-body view is unaffected. Module-level so the
+ * prop keeps one identity across renders.
+ */
+const DIRECTION_VECTORS: DirectionVectorOptions = { sun: true, nadir: true };
 
 export function App() {
   // WASM initialization (must complete before rendering ECEF transforms)
@@ -368,6 +375,13 @@ export function App() {
         // The interpolated point's own time — clamped for terminated/out-of-span
         // satellites — so its body-fixed marker transform uses the right epoch.
         time: pos.t,
+        // All four components or none, matching `hasQuaternion` in `orbit.ts`.
+        //
+        // A complete tuple passes through whatever it holds, zero and non-finite
+        // included, and the scene reads the refusal back off it — so an unusable
+        // attitude does reach the scene as one. What cannot arrive is a *partly*
+        // decoded tuple, and no source produces one: the rrd decoder yields four
+        // components or none, and the WS payload carries the tuple as one value.
         attitude:
           pos.qw != null && pos.qx != null && pos.qy != null && pos.qz != null
             ? [pos.qw, pos.qx, pos.qy, pos.qz]
@@ -487,6 +501,7 @@ export function App() {
             epochJd={epochJd ?? undefined}
             time={snapshot.currentTime}
             defaultMarkerShape={defaultMarkerShape}
+            directionVectors={DIRECTION_VECTORS}
             atmosphereScale="visual"
             textureVersion={textureRevision}
             textureBaseUrl={textureBaseUrl}

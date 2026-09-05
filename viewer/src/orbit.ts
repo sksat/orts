@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { sampleAttitude } from "./displayFrame.js";
 
 /**
  * Earth radius in km -- used as the scene scale factor.
@@ -139,6 +140,25 @@ export function updateOrbitTrail(line: THREE.Line, visibleCount: number, totalCo
   line.geometry.setDrawRange(0, clamped);
 }
 
+/**
+ * A point's quaternion at unit norm, or null when the display frame would refuse
+ * it.
+ *
+ * Asked of `sampleAttitude`, which is what the marker's rotation goes through, so
+ * the interpolation and the drawing agree on which samples name a rotation.
+ * Dividing by a finite positive norm is not enough on its own: at subnormal
+ * magnitudes `Math.hypot` answers the smallest number there is, so
+ * `[5e-324, 5e-324, 0, 0]` divides to `[1, 1, 0, 0]` — norm 1.414, which slerp
+ * would carry as a rotation. `unitAttitude` checks the result rather than the
+ * input, and this now inherits that.
+ */
+function unitQuaternion(p: OrbitPoint): THREE.Quaternion | null {
+  const unit = sampleAttitude(p);
+  if (unit == null) return null;
+  const [w, x, y, z] = unit;
+  return new THREE.Quaternion(x, y, z, w);
+}
+
 /** Whether a point carries a complete quaternion (all of qw/qx/qy/qz). */
 function hasQuaternion(p: OrbitPoint): boolean {
   return p.qw != null && p.qx != null && p.qy != null && p.qz != null;
@@ -170,17 +190,43 @@ export function lerpPoint(a: OrbitPoint, b: OrbitPoint, frac: number): OrbitPoin
   // on both points — guarding on qw alone would let a partial one (missing
   // qx/qy/qz, which Three defaults to 0) build an un-normalized rotation.
   if (hasQuaternion(a) && hasQuaternion(b)) {
-    const qa = new THREE.Quaternion(a.qx, a.qy, a.qz, a.qw);
-    const qb = new THREE.Quaternion(b.qx, b.qy, b.qz, b.qw);
-    // Ensure shortest-path interpolation
-    if (qa.dot(qb) < 0) {
-      qb.set(-qb.x, -qb.y, -qb.z, -qb.w);
+    // Slerp assumes unit quaternions, and a simulator's attitude drifts off unit
+    // norm as it integrates. Equal norms cancel — scaling both endpoints by 2
+    // reproduces the unit result to 1e-16 — but unequal ones bend the path: norms
+    // of 1 and 2 put the halfway rotation 1.2e-1 off in each component, and a
+    // drift of a thousandth 1.9e-4 off. Normalising afterwards cannot recover it,
+    // because the error is in which rotation was chosen, not in its length.
+    //
+    // What cannot be normalised is passed through as it came, so the display
+    // frame still sees an attitude to refuse rather than one this function
+    // invented: `THREE.Quaternion.normalize` turns a zero quaternion into the
+    // identity, which would be exactly that invention.
+    const qa = unitQuaternion(a);
+    const qb = unitQuaternion(b);
+    if (qa != null && qb != null) {
+      // Ensure shortest-path interpolation
+      if (qa.dot(qb) < 0) {
+        qb.set(-qb.x, -qb.y, -qb.z, -qb.w);
+      }
+      qa.slerp(qb, frac);
+      result.qw = qa.w;
+      result.qx = qa.x;
+      result.qy = qa.y;
+      result.qz = qa.z;
+    } else {
+      // An endpoint the display frame refuses cannot be interpolated through.
+      // Slerp from a zero quaternion returns a multiple of the *other* endpoint —
+      // measured at a quarter of the way along, the result normalises to that
+      // endpoint's rotation exactly — so the refused sample would be presented as
+      // a measurement taken next door. The refusal is carried instead, and the
+      // exact endpoints keep their own values, which is what a reader at a
+      // sample's own timestamp should see.
+      const source = frac <= 0 ? a : frac >= 1 ? b : qa == null ? a : b;
+      result.qw = source.qw;
+      result.qx = source.qx;
+      result.qy = source.qy;
+      result.qz = source.qz;
     }
-    qa.slerp(qb, frac);
-    result.qw = qa.w;
-    result.qx = qa.x;
-    result.qy = qa.y;
-    result.qz = qa.z;
     // Angular velocity: linear interpolation
     result.wx = (a.wx ?? 0) * inv + (b.wx ?? 0) * frac;
     result.wy = (a.wy ?? 0) * inv + (b.wy ?? 0) * frac;

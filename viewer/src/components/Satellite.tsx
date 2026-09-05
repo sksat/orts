@@ -1,13 +1,16 @@
 import {
+  attitudeWasRefused,
   displayPosition,
   displayQuaternion,
   type Quat,
   resolveDisplayFrame,
+  sampleAttitude,
 } from "../displayFrame.js";
 import type { OrbitPoint } from "../orbit.js";
 import { isLegacyEcef, type ReferenceFrame } from "../referenceFrame.js";
 import type { MarkerShape } from "../satelliteShapes.js";
 import type { LvlhAxes } from "../sceneFrame.js";
+import { finiteOrNull } from "../utils/finite.js";
 import { earth_rotation_angle } from "../wasm/arikaInit.js";
 import { SpacecraftVisual } from "./SpacecraftVisual.js";
 
@@ -22,6 +25,16 @@ interface SatelliteProps {
   referenceFrame?: ReferenceFrame;
   /** Julian Date of the simulation epoch (needed for ECEF transform). */
   epochJd?: number;
+  /**
+   * The scene's own elapsed time, used when this satellite's sample carries none.
+   *
+   * `SatelliteState.time` is per satellite and documented to default to the
+   * scene's, so a sample time that is not a number is treated as absent rather
+   * than as a reason to drop the rotation: without it this marker would sit in
+   * the inertial frame while the body, the trails and every other satellite use
+   * body-fixed axes.
+   */
+  sceneTime?: number;
   /** Satellite identifier for model lookup. */
   satId?: string;
   /** Satellite display name for model lookup fallback. */
@@ -53,6 +66,7 @@ export function Satellite({
   color,
   referenceFrame = DEFAULT_REF_FRAME,
   epochJd,
+  sceneTime,
   satId,
   satName,
   originPosition = null,
@@ -62,24 +76,39 @@ export function Satellite({
   // One display frame drives both the position and the attitude, so they can
   // never end up in different bases (the LVLH axis order and the ECEF rotation
   // used to be derived independently, and disagreed).
+  // This satellite's own sample time when it has one, else the scene's. A `NaN`
+  // would make the angle `NaN`, which `resolveDisplayOrientation` refuses — and
+  // the frame it fell back to would be inertial while the rest of the scene is
+  // body-fixed, so the marker would be drawn in a basis of its own.
+  const sampleTime = finiteOrNull(position.t) ?? finiteOrNull(sceneTime) ?? 0;
   const era =
     isLegacyEcef(referenceFrame) && epochJd != null
-      ? earth_rotation_angle(epochJd, position.t)
+      ? earth_rotation_angle(epochJd, sampleTime)
       : null;
   const frame = resolveDisplayFrame(referenceFrame, { era, originPosition, lvlhAxes });
 
   const scenePos = displayPosition(frame, position.x, position.y, position.z, scaleRadius);
 
-  // Attitude quaternion as delivered: body-to-inertial, Hamilton [w, x, y, z].
-  const rawQuaternion: Quat | undefined =
-    position.qw != null
-      ? [position.qw, position.qx ?? 0, position.qy ?? 0, position.qz ?? 0]
-      : undefined;
+  // Attitude as delivered — body-to-inertial, Hamilton [w, x, y, z] — brought to
+  // unit norm. Three.js applies the components with `Quaternion.set`, which does
+  // not normalise: a simulator's drifting quaternion scales and skews the very
+  // marker it is meant to orient, and one that names no rotation at all is read
+  // back as the identity, so the scene would report an orientation nobody
+  // measured. What cannot be normalised is reported as no attitude, which draws
+  // the marker unrotated — the answer a satellite without attitude already gets.
+  const rawQuaternion: Quat | undefined = sampleAttitude(position);
+  // Whether this sample claimed an orientation the viewer could not use. A model
+  // drawn for a satellite with no attitude at all is a position marker and reads
+  // as one; the same model drawn after an attitude was refused would sit at its
+  // own default orientation and be read as the measurement that was refused. That
+  // case gets the marker instead, which looks the same from every side.
+  const attitudeRefused = attitudeWasRefused(position);
 
   return (
     <SpacecraftVisual
       position={scenePos}
       quaternion={displayQuaternion(frame, rawQuaternion)}
+      attitudeRefused={attitudeRefused}
       satId={satId}
       satName={satName}
       color={color}

@@ -142,6 +142,54 @@ export function resolveDisplayFrame(
 const UNIT_QUATERNION_TOLERANCE = 1e-9;
 
 /**
+ * The attitude carried by an orbit sample, brought to unit norm, or undefined.
+ *
+ * Samples arrive as loose components rather than a tuple, and two decisions read
+ * them: the rotation applied to the marker, and whether the marker is the shape
+ * that reveals an orientation. Both go through here so they cannot disagree —
+ * a sample the rotation refuses must not be drawn as an oriented cube.
+ */
+export function sampleAttitude(sample: {
+  qw?: number | null;
+  qx?: number | null;
+  qy?: number | null;
+  qz?: number | null;
+}): Quat | undefined {
+  // All four components or none. Filling the missing ones with zero turns a
+  // sample such as `{ qw: 0.5 }` into the identity once normalised, which draws an
+  // orientation nobody supplied — and `hasQuaternion` in `orbit.ts`, which decides
+  // whether two samples can be slerped, already requires the complete tuple.
+  if (sample.qw == null || sample.qx == null || sample.qy == null || sample.qz == null) {
+    return undefined;
+  }
+  return unitAttitude([sample.qw, sample.qx, sample.qy, sample.qz]);
+}
+
+/**
+ * Whether a sample claimed an orientation the viewer could not use.
+ *
+ * The distinction this draws is between a spacecraft that carries no attitude —
+ * ordinary in the orbit view, where the marker is a position marker — and one
+ * whose quaternion named no rotation or arrived non-finite. Three consequences
+ * follow from the second, and they have to agree: the registered model is not
+ * drawn, the marker takes the shape that shows no orientation, and the
+ * environment is amplified for whichever of the two is on screen.
+ */
+export function attitudeWasRefused(sample: {
+  qw?: number | null;
+  qx?: number | null;
+  qy?: number | null;
+  qz?: number | null;
+}): boolean {
+  // Any component is the claim, not `qw` alone. Now that a rotation needs the
+  // complete tuple, a sample carrying only `qx` is rejected as a rotation — and
+  // keying the refusal on `qw` would call that "no attitude at all", which draws
+  // the registered model at its own orientation and amplifies the scene for it.
+  const claimed = sample.qw != null || sample.qx != null || sample.qy != null || sample.qz != null;
+  return claimed && sampleAttitude(sample) == null;
+}
+
+/**
  * A caller's attitude as a unit quaternion, or undefined when it does not name a
  * rotation.
  *

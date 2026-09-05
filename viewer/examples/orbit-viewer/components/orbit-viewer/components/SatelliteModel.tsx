@@ -45,14 +45,26 @@ export function SatelliteModel({
 
   // Apply body-to-inertial quaternion to the parent group
   useEffect(() => {
-    if (groupRef.current && quaternion) {
+    if (!groupRef.current) return;
+    if (quaternion) {
       const [w, x, y, z] = quaternion;
-      groupRef.current.quaternion.set(x, y, z, w); // Three.js: (x, y, z, w)
+      groupRef.current.quaternion.set(x, y, z, w);
+    } else {
+      // A stream can stop carrying a usable attitude — a sample whose quaternion
+      // names no rotation, or none at all after one that did. Leaving the group
+      // where the last good sample put it would show that orientation as the
+      // current one, so it goes back to unrotated, which is what "no attitude"
+      // draws from the start.
+      groupRef.current.quaternion.identity(); // Three.js: (x, y, z, w)
     }
   }, [quaternion]);
 
   return (
-    <group position={position} ref={quaternion ? groupRef : undefined}>
+    // The ref is attached whether or not there is an attitude, because losing one
+    // is the case the effect above exists for: a conditional ref is detached
+    // during the commit that drops the quaternion, so the effect would find no
+    // group and the model would keep the rotation the last good sample gave it.
+    <group position={position} ref={groupRef}>
       <primitive object={cloned} scale={scale} rotation={config.rotation} />
     </group>
   );

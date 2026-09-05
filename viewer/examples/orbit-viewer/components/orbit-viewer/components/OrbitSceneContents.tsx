@@ -8,7 +8,14 @@ import {
   entityPathToBodyId,
   getBodyRadius,
 } from "../bodies.js";
-import { displayPosition, displayRotation, resolveDisplayFrame } from "../displayFrame.js";
+import { type DirectionVectorOptions, resolveDirectionVectors } from "../directionVectors.js";
+import {
+  attitudeWasRefused,
+  displayPosition,
+  displayRotation,
+  resolveDisplayFrame,
+  sampleAttitude,
+} from "../displayFrame.js";
 import {
   computeSceneAmplification,
   type DisplayScaleProfile,
@@ -21,13 +28,24 @@ import { DEFAULT_FRAME, isLegacyEcef, type ReferenceFrame } from "../referenceFr
 import { getSatelliteModelConfig } from "../satelliteModels.js";
 import { type MarkerShape, resolveMarkerShape } from "../satelliteShapes.js";
 import { computeCameraUp, computeLvlhAxes, type LvlhAxes, SCENE_UP } from "../sceneFrame.js";
+import {
+  defaultMarkerSize,
+  markerBoundingRadius,
+  modelBoundingRadius,
+  resolveVisualSpan,
+} from "../spacecraftScale.js";
+import { finiteOrNull } from "../utils/finite.js";
 import type { TrailBufferLike } from "../utils/TrailBuffer.js";
 import { body_orientation, earth_rotation_angle } from "../wasm/arikaInit.js";
 import { CelestialBody } from "./CelestialBody.js";
+import { DirectionArrows } from "./DirectionArrows.js";
 import { OrbitTrail } from "./OrbitTrail.js";
 import { buildRenderEntries } from "./renderEntries.js";
 import { Satellite } from "./Satellite.js";
 import { AMBIENT_INTENSITY, SunLighting, useSunLighting } from "./SunLighting.js";
+
+/** The centred satellite sits exactly at the world origin. */
+const ORIGIN: [number, number, number] = [0, 0, 0];
 
 /** Color palette for multiple satellites. */
 const SATELLITE_COLORS = [0x00ff88, 0xff4488, 0x44aaff, 0xffaa44, 0xaa44ff];
@@ -240,6 +258,7 @@ function SecondaryBody({
   sunDirection,
   referenceFrame = DEFAULT_FRAME,
   epochJd,
+  sceneTime,
   originPosition = null,
   lvlhAxes = null,
   textureRevision,
@@ -252,6 +271,8 @@ function SecondaryBody({
   sunDirection?: THREE.Vector3;
   referenceFrame?: ReferenceFrame;
   epochJd?: number | null;
+  /** The scene's elapsed time, used when this body's sample carries none. */
+  sceneTime?: number;
   originPosition?: [number, number, number] | null;
   lvlhAxes?: LvlhAxes | null;
   textureRevision?: number | string;
@@ -261,11 +282,16 @@ function SecondaryBody({
   const bodyRadiusKm = getBodyRadius(bodyId, bodyDefinitions);
   const radius = bodyRadiusKm != null ? bodyRadiusKm / scaleRadius : 0.01;
 
+  // This body's own sample time when it has one, else the scene's — the same rule
+  // the satellites follow, so one bad sample cannot leave this body in a basis of
+  // its own.
+  const sampleTime = finiteOrNull(position.t) ?? finiteOrNull(sceneTime) ?? 0;
+
   // Position and orientation share one display frame (see displayFrame.ts), so
   // the mesh can never be placed in one basis and oriented in another.
   const era =
     isLegacyEcef(referenceFrame) && epochJd != null
-      ? earth_rotation_angle(epochJd, position.t)
+      ? earth_rotation_angle(epochJd, sampleTime)
       : null;
   const frame = resolveDisplayFrame(referenceFrame, { era, originPosition, lvlhAxes });
   const scenePos = displayPosition(frame, position.x, position.y, position.z, scaleRadius);
@@ -273,14 +299,16 @@ function SecondaryBody({
   // Body-fixed → inertial orientation via the IAU rotation model (arika WASM),
   // including the Three.js +Y-pole → IAU +Z-pole alignment.
   const bodyToInertial = useMemo(() => {
+    // The same time the position used. A `NaN` would come back as a quaternion of
+    // NaNs, and the group carrying it renders nothing at all.
     if (epochJd == null) return undefined;
-    const q = body_orientation(bodyId, epochJd, position.t);
+    const q = body_orientation(bodyId, epochJd, sampleTime);
     if (!q) return undefined;
     // IAU body-fixed → ECI: q = [w, x, y, z]; THREE uses (x, y, z, w)
     const iauQuat = new THREE.Quaternion(q[1], q[2], q[3], q[0]);
     const poleAlign = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0));
     return iauQuat.multiply(poleAlign);
-  }, [bodyId, epochJd, position.t]);
+  }, [bodyId, epochJd, sampleTime]);
 
   const orientation = bodyToInertial ? displayRotation(frame).multiply(bodyToInertial) : undefined;
 
@@ -303,6 +331,22 @@ export interface OrbitSceneContentsProps {
   trailBuffers?: Map<string, TrailBufferLike>;
   /** Per-satellite positions. */
   satellitePositions?: Map<string, OrbitPoint | null>;
+  /**
+   * The scene's elapsed seconds since the epoch — `OrbitSceneDataProps.time`.
+   *
+   * Where the view has no instant of its own, this is it: the lighting, the
+   * central body's rotation, and any entity whose own sample carries no usable
+   * time are all drawn here.
+   *
+   * Centring on a satellite gives the view an instant of its own — that
+   * satellite's timestamp — and everything without a time of its own follows it
+   * rather than this, including a secondary body whose sample time is unusable.
+   * The alternative reads better in isolation and worse on screen: the Sun would
+   * be placed at the centred satellite's instant while the Moon beside it was
+   * oriented for the scene's, so one view would show two moments. One instant per
+   * view is the rule, and a sample that names its own time still wins over both.
+   */
+  time?: number;
   /** Per-satellite visible counts (when not live). */
   trailVisibleCounts?: Map<string, number>;
   /** Per-satellite draw start indices for time-range clipping. */
@@ -341,6 +385,11 @@ export interface OrbitSceneContentsProps {
   controls?: boolean | Partial<OrbitControlsProps>;
   /** Render the reference axes helper. Default `true`. */
   axes?: boolean;
+  /**
+   * Reference-direction arrows to draw at the centred satellite. Omitted draws
+   * none; a central-body view draws none either way.
+   */
+  directionVectors?: DirectionVectorOptions;
 }
 
 /**
@@ -352,6 +401,7 @@ export interface OrbitSceneContentsProps {
 export function OrbitSceneContents({
   trailBuffers,
   satellitePositions,
+  time = 0,
   trailVisibleCounts,
   trailDrawStarts,
   centralBody,
@@ -369,6 +419,7 @@ export function OrbitSceneContents({
   textureBaseUrl,
   controls = true,
   axes = true,
+  directionVectors,
 }: OrbitSceneContentsProps) {
   // Default camera package (controls + frame-aware rig). `false` opts out
   // entirely; an object enables it and is spread onto OrbitControls.
@@ -399,15 +450,41 @@ export function OrbitSceneContents({
     return (bodyRadiusKm / centralBodyRadius) * 3;
   }, [centeredBodyId, centralBodyRadius, bodyDefinitions]);
 
+  // Whether the centred satellite's own sample claimed an orientation that could
+  // not be used. Read here as well as where the spacecraft is drawn, because the
+  // environment's scale depends on which of the model and the marker is on
+  // screen. A boolean, so the memo below re-runs when the answer changes rather
+  // than on every sample.
+  const centredAttitudeRefused =
+    isSatCentered && centeredSatId != null
+      ? (() => {
+          const sample = satellitePositions?.get(centeredSatId);
+          return sample != null && attitudeWasRefused(sample);
+        })()
+      : false;
+
   // Scene amplification: scale up environment to show correct proportions
   // relative to the satellite's exaggerated model at origin.
   const sceneAmplification = useMemo(() => {
     if (!isSatCentered || centeredSatId == null) return 1;
     // Body entities (Moon, Sun, etc.) don't need satellite amplification
     if (centeredBodyId != null) return 1;
-    const modelConfig = getSatelliteModelConfig(centeredSatId, satelliteNames?.get(centeredSatId));
+    // Sized for what is drawn: a refused attitude leaves the marker standing in,
+    // and `computeSceneAmplification` amplifies by the marker's ratio rather than
+    // the model's. Amplifying for an absent model puts Earth and the trails at
+    // proportions belonging to a spacecraft that is not on screen.
+    const modelConfig = centredAttitudeRefused
+      ? null
+      : getSatelliteModelConfig(centeredSatId, satelliteNames?.get(centeredSatId));
     return computeSceneAmplification(modelConfig, centralBodyRadius);
-  }, [isSatCentered, centeredSatId, centeredBodyId, satelliteNames, centralBodyRadius]);
+  }, [
+    isSatCentered,
+    centeredSatId,
+    centeredBodyId,
+    satelliteNames,
+    centralBodyRadius,
+    centredAttitudeRefused,
+  ]);
 
   // Effective scale radius: smaller when amplified, so positions appear larger
   const effectiveScaleRadius = centralBodyRadius / sceneAmplification;
@@ -438,19 +515,23 @@ export function OrbitSceneContents({
     };
   }, [lvlhActive, cameraTracking, originPosition]);
 
-  // Determine sim time for sun direction from the first available satellite
-  // position. Iterate the Map's values directly rather than materializing an
-  // array every render just to find the first non-null entry.
-  let firstPosition: OrbitPoint | null = null;
-  if (satellitePositions) {
-    for (const p of satellitePositions.values()) {
-      if (p != null) {
-        firstPosition = p;
-        break;
-      }
-    }
-  }
-  const simTime = firstPosition?.t ?? 0;
+  // The epoch the Sun direction and the body rotation are evaluated at.
+  //
+  // The centred satellite owns it when there is one: satellites carry their own
+  // times (a terminated one stays frozen), and the Sun drawn *at* that satellite
+  // has to be the Sun at its time. With no satellite centred the epoch is the
+  // scene's own `time`, which is what it is documented to be — reading whichever
+  // satellite the position Map yielded first is the behaviour this replaced.
+  //
+  // Each candidate goes through a finite check because `??` falls through only on
+  // null and undefined: a NaN `t` on the centred satellite would otherwise win
+  // over the scene's time and reach the Earth rotation angle and the quantised
+  // Sun time below, both of which are WASM calls.
+  const centeredPosition = centeredSatId != null ? satellitePositions?.get(centeredSatId) : null;
+  // The instant this view depicts, which every entity without a usable time of
+  // its own is drawn at — see the `time` prop for why they follow the centred
+  // satellite rather than the scene's declared time.
+  const simTime = finiteOrNull(centeredPosition?.t) ?? finiteOrNull(time) ?? 0;
   const quantizedSimTime = Math.floor(simTime / 60) * 60;
 
   // Earth rotation angle (ERA) via WASM — updates every frame via simTime (not quantized)
@@ -469,7 +550,7 @@ export function OrbitSceneContents({
 
   // Sun direction + intensity (display frame). Shared by the lights and by the
   // lit bodies below, so the scene holds them and passes them down explicitly.
-  const { sunDirection, sunIntensity, lightPosition } = useSunLighting({
+  const { sunDirection, sunDirectionIsComputed, sunIntensity, lightPosition } = useSunLighting({
     centralBody,
     epochJd,
     quantizedSimTime,
@@ -582,8 +663,9 @@ export function OrbitSceneContents({
             // Render as CelestialBody at origin with physical radius + IAU orientation
             const bodyRadiusKm = getBodyRadius(centeredBodyId, bodyDefinitions);
             const bodyRadius = bodyRadiusKm != null ? bodyRadiusKm / centralBodyRadius : 0.01;
+            const centredTime = finiteOrNull(pos.t) ?? simTime;
             const q =
-              epochJd != null ? body_orientation(centeredBodyId, epochJd, pos.t) : undefined;
+              epochJd != null ? body_orientation(centeredBodyId, epochJd, centredTime) : undefined;
             const iauQuat = q
               ? new THREE.Quaternion(q[1], q[2], q[3], q[0]).multiply(
                   new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0)),
@@ -602,24 +684,102 @@ export function OrbitSceneContents({
               </group>
             );
           }
+          // Resolved above, where the environment's scale reads it too.
+          const attitudeRefused = centredAttitudeRefused;
+          const shape = resolveMarkerShape({
+            override: satelliteShapes?.get(centeredSatId),
+            simShape: satelliteSimShapes?.get(centeredSatId),
+            globalDefault: defaultMarkerShape,
+            attitudeRefused,
+            // The same judgement the rotation makes: a sample whose quaternion
+            // names no rotation gets the sphere, not the cube that would show an
+            // orientation nobody measured.
+            hasAttitude: sampleAttitude(pos) != null,
+          });
+          const satName = satelliteNames?.get(centeredSatId);
+          // The centred satellite is drawn exactly at the world origin, so the
+          // arrows start there too. Its display frame is the scene's: a satellite
+          // centre is never body-fixed, so the scene-level ERA plays no part.
+          //
+          // Nothing is drawn at all unless the frame found an origin for this
+          // spacecraft. `resolveSceneFrame` leaves that null for a non-finite
+          // position, and the marker is then absent too, so an arrow would be
+          // pointing out the Sun beside a spacecraft that is not on screen. Nadir
+          // already needs the position; the Sun does not, which is why it has to
+          // be said here.
+          //
+          // A finite position is placeable, the coordinate origin included: the
+          // spacecraft is drawn there and the Sun with it, and nadir alone drops
+          // out for want of a bearing.
+          const arrows =
+            originPosition == null
+              ? []
+              : resolveDirectionVectors({
+                  frame: sceneDisplayFrame,
+                  // The direction the lights are placed along, reused rather than
+                  // computed again, so the arrow and the lighting cannot
+                  // disagree. The hook falls back to a fixed direction when it
+                  // cannot compute one — no epoch, or a central body arika cannot
+                  // place. Fine for the lights; an arrow drawn from it would
+                  // claim to be a measurement.
+                  sunDisplay: sunDirectionIsComputed
+                    ? [sunDirection.x, sunDirection.y, sunDirection.z]
+                    : null,
+                  positionEci: originPosition,
+                  // Here this prop is an *enable* list: the orbit view draws no
+                  // arrows unless asked, so an option left out means off.
+                  // `resolveDirectionVectors` reads a missing field as on, which
+                  // is the attitude view's default.
+                  options: {
+                    sun: directionVectors?.sun === true,
+                    nadir: directionVectors?.nadir === true,
+                  },
+                });
+          // Not asked for when the attitude was refused: `Satellite` draws the
+          // marker instead in that case, and arrows sized from a model that is
+          // not there float outside the sphere that is — for a spacecraft the
+          // size of the ISS, well outside it.
+          const centredModel = attitudeRefused
+            ? null
+            : getSatelliteModelConfig(centeredSatId, satName);
+          const visualSpan = resolveVisualSpan({
+            modelConfig: centredModel,
+            markerSize: defaultMarkerSize(shape),
+          });
           return (
-            <Satellite
-              position={pos}
-              scaleRadius={centralBodyRadius}
-              color={color}
-              referenceFrame={referenceFrame}
-              epochJd={epochJd ?? undefined}
-              satId={centeredSatId}
-              satName={satelliteNames?.get(centeredSatId)}
-              originPosition={originPosition}
-              lvlhAxes={lvlhAxes}
-              markerShape={resolveMarkerShape({
-                override: satelliteShapes?.get(centeredSatId),
-                simShape: satelliteSimShapes?.get(centeredSatId),
-                globalDefault: defaultMarkerShape,
-                hasAttitude: pos.qw != null,
-              })}
-            />
+            <>
+              <Satellite
+                position={pos}
+                scaleRadius={centralBodyRadius}
+                color={color}
+                referenceFrame={referenceFrame}
+                epochJd={epochJd ?? undefined}
+                sceneTime={simTime}
+                satId={centeredSatId}
+                satName={satName}
+                originPosition={originPosition}
+                lvlhAxes={lvlhAxes}
+                markerShape={shape}
+              />
+              {arrows.length > 0 && (
+                <DirectionArrows
+                  position={ORIGIN}
+                  vectors={arrows}
+                  visualSpan={visualSpan}
+                  // Outside whatever is actually drawn: a cube marker's corners
+                  // stand further out than its faces, and a model is bounded by
+                  // the envelope of the cube its largest extent fits in. The
+                  // sphere's radius would leave the tail inside a model, which
+                  // reaches past half its span on a diagonal.
+                  startRadius={
+                    centredModel
+                      ? modelBoundingRadius(visualSpan)
+                      : markerBoundingRadius(shape, visualSpan)
+                  }
+                  debugId={centeredSatId}
+                />
+              )}
+            </>
           );
         })()}
 
@@ -676,6 +836,7 @@ export function OrbitSceneContents({
                   sunDirection={sunDirection}
                   referenceFrame={referenceFrame}
                   epochJd={epochJd}
+                  sceneTime={simTime}
                   originPosition={lvlhActive ? originPosition : null}
                   lvlhAxes={lvlhActive ? lvlhAxes : null}
                   textureRevision={textureRevision}
@@ -690,6 +851,7 @@ export function OrbitSceneContents({
                   color={color}
                   referenceFrame={referenceFrame}
                   epochJd={epochJd ?? undefined}
+                  sceneTime={simTime}
                   satId={satId}
                   satName={satelliteNames?.get(satId)}
                   originPosition={lvlhActive ? originPosition : null}
@@ -698,7 +860,10 @@ export function OrbitSceneContents({
                     override: satelliteShapes?.get(satId),
                     simShape: satelliteSimShapes?.get(satId),
                     globalDefault: defaultMarkerShape,
-                    hasAttitude: pos.qw != null,
+                    // See above: the shape follows the usable attitude, and a
+                    // refused one takes the sphere whatever was requested.
+                    hasAttitude: sampleAttitude(pos) != null,
+                    attitudeRefused: attitudeWasRefused(pos),
                   })}
                 />
               )}

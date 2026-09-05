@@ -5,6 +5,19 @@ import type { MarkerShape } from "./satelliteShapes.js";
 /** Apparent size of the spacecraft in a scene that has no other length scale. */
 export const NOMINAL_SPACECRAFT_SPAN = 1;
 
+/**
+ * Marker half-extents in the orbit view, whose scene unit is the central body's
+ * radius. Here rather than in the marker components because the *span* they
+ * imply is what the axes and arrows are sized from.
+ */
+export const DEFAULT_SPHERE_RADIUS = 0.005;
+export const DEFAULT_CUBE_HALF_EXTENT = 0.008;
+
+/** Marker half-extent for a shape, in the orbit view's scene units. */
+export function defaultMarkerSize(shape: MarkerShape): number {
+  return shape === "sphere" ? DEFAULT_SPHERE_RADIUS : DEFAULT_CUBE_HALF_EXTENT;
+}
+
 /** Body-axis length, as a ratio of the spacecraft's apparent size. */
 const AXIS_LENGTH_RATIO = 0.75;
 

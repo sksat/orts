@@ -4,6 +4,7 @@ import { OrbitSceneContents } from "../components/OrbitSceneContents.js";
 import { IS_DEV } from "../env.js";
 import type { OrbitPoint } from "../orbit.js";
 import type { MarkerShape } from "../satelliteShapes.js";
+import { finiteOrNull } from "../utils/finite.js";
 import { useArikaReady } from "../wasm/useArikaReady.js";
 import { toOrbitPoint } from "./adapt.js";
 import { resolveFrameContext } from "./frameContext.js";
@@ -50,11 +51,22 @@ export function OrbitScene({
   textureVersion,
   defaultMarkerShape,
   atmosphereScale,
+  directionVectors,
   controls = true,
   axes = true,
 }: OrbitSceneProps) {
+  // The epoch, brought to a number the WASM can be called with.
+  //
+  // `??` and `!= null` stop at null and undefined, so `NaN` counts as supplied:
+  // `Number()` on a broken CSV header gives one, and so does a JSON field that
+  // arrived as a string. It would load arika and then reach every call the scene
+  // makes with it — the Sun's direction, the Earth rotation angle, a body's
+  // orientation — where an invalid transform spreads through the scene matrices
+  // instead of the documented epoch-less fallback being used. `AttitudeScene`
+  // normalises at this same seam.
+  const epoch = finiteOrNull(epochJd);
   // Only load the arika WASM when an epoch is supplied (Sun/rotation features).
-  const arikaReady = useArikaReady(epochJd != null);
+  const arikaReady = useArikaReady(epoch != null);
 
   // Body definitions: consumer-supplied bodies merged over the built-in defaults.
   const bodyDefinitions = useMemo(() => resolveBodyDefinitions(bodies), [bodies]);
@@ -141,7 +153,7 @@ export function OrbitScene({
 
   // Only hand the scene an epoch once arika is loaded; otherwise its Sun/rotation
   // calls would run before the WASM is ready. Default lighting is used until then.
-  const effectiveEpochJd = arikaReady ? (epochJd ?? null) : null;
+  const effectiveEpochJd = arikaReady ? epoch : null;
 
   // Dev/E2E-only: expose per-satellite trail buffer state so E2E can prove that
   // advancing `time` (or appending points) does not rebuild the trail — a stable
@@ -162,6 +174,7 @@ export function OrbitScene({
 
   return (
     <OrbitSceneContents
+      time={time}
       trailBuffers={trailBuffers}
       satellitePositions={satellitePositions}
       satelliteNames={satelliteNames}
@@ -178,6 +191,7 @@ export function OrbitScene({
       physicalScale={physicalScale}
       textureBaseUrl={textureBaseUrl}
       textureRevision={textureVersion}
+      directionVectors={directionVectors}
       controls={controls}
       axes={axes}
     />

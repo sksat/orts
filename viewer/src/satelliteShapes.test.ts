@@ -76,3 +76,32 @@ describe("satShape URL param", () => {
     expect(readSatShapeParam()).toBeNull();
   });
 });
+
+describe("a refused attitude", () => {
+  it("takes the sphere over every request for a shape", () => {
+    // The cube's faces answer "which way is the body pointing", and a sample
+    // whose attitude the viewer could not use has no answer. So this outranks
+    // the per-satellite override, the simulation's declaration and the global
+    // default alike.
+    for (const requested of ["axes-cube", "sphere"] as const) {
+      expect(
+        resolveMarkerShape({ override: requested, hasAttitude: true, attitudeRefused: true }),
+      ).toBe("sphere");
+      expect(
+        resolveMarkerShape({ simShape: requested, hasAttitude: true, attitudeRefused: true }),
+      ).toBe("sphere");
+      expect(
+        resolveMarkerShape({ globalDefault: requested, hasAttitude: true, attitudeRefused: true }),
+      ).toBe("sphere");
+    }
+  });
+
+  it("leaves a satellite with no attitude alone", () => {
+    // Not the same case: nothing was claimed, so a requested cube still stands —
+    // in the orbit view the marker is a position marker and reads as one.
+    expect(
+      resolveMarkerShape({ override: "axes-cube", hasAttitude: false, attitudeRefused: false }),
+    ).toBe("axes-cube");
+    expect(resolveMarkerShape({ override: "axes-cube", hasAttitude: false })).toBe("axes-cube");
+  });
+});

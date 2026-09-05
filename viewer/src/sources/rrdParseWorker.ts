@@ -6,7 +6,12 @@
  */
 
 import { initRrdWasm, parseRrd } from "../wasm/rrdWasmInit.js";
-import type { RrdPointOut, RrdWorkerInput, RrdWorkerMessage } from "./rrdParseLogic.js";
+import {
+  type RrdPointOut,
+  type RrdWorkerInput,
+  type RrdWorkerMessage,
+  rowToPoint,
+} from "./rrdParseLogic.js";
 
 const CHUNK_SIZE = 5000;
 
@@ -30,31 +35,7 @@ self.onmessage = async (e: MessageEvent<RrdWorkerInput>) => {
     let chunk: RrdPointOut[] = [];
 
     for (const row of data.rows) {
-      const point: RrdPointOut = {
-        t: row.t,
-        x: row.x,
-        y: row.y,
-        z: row.z,
-        vx: row.vx,
-        vy: row.vy,
-        vz: row.vz,
-        entityPath: row.entity_path,
-      };
-
-      // Attitude data (optional)
-      if (row.quaternion) {
-        point.qw = row.quaternion[0];
-        point.qx = row.quaternion[1];
-        point.qy = row.quaternion[2];
-        point.qz = row.quaternion[3];
-      }
-      if (row.angular_velocity) {
-        point.wx = row.angular_velocity[0];
-        point.wy = row.angular_velocity[1];
-        point.wz = row.angular_velocity[2];
-      }
-
-      chunk.push(point);
+      chunk.push(rowToPoint(row));
 
       if (chunk.length >= CHUNK_SIZE) {
         post({ type: "chunk", points: chunk, done: false });

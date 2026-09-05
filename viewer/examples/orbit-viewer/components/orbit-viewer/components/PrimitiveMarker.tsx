@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import type * as THREE from "three";
+import { DEFAULT_CUBE_HALF_EXTENT } from "../spacecraftScale.js";
 
 interface PrimitiveMarkerProps {
   /** Position in scene units (already divided by scaleRadius). */
@@ -14,8 +15,12 @@ interface PrimitiveMarkerProps {
   size?: number;
 }
 
-/** Default half-extent, matching the legacy sphere marker's footprint. */
-const DEFAULT_SIZE = 0.008;
+/**
+ * Default half-extent. Larger than the sphere marker's radius: a cube read at an
+ * angle presents less silhouette than a sphere of the same radius, so matching
+ * radii would make the orientation cube look like the smaller marker.
+ */
+const DEFAULT_SIZE = DEFAULT_CUBE_HALF_EXTENT;
 
 /**
  * Per-face colors of the XYZ orientation cube, in Three.js BoxGeometry face order
@@ -42,9 +47,17 @@ export function PrimitiveMarker({
   // Apply the body-to-display quaternion imperatively (Hamilton [w,x,y,z] →
   // Three.js (x,y,z,w)), matching SatelliteModel.tsx / BodyAxes.tsx.
   useEffect(() => {
-    if (groupRef.current && quaternion) {
+    if (!groupRef.current) return;
+    if (quaternion) {
       const [w, x, y, z] = quaternion;
       groupRef.current.quaternion.set(x, y, z, w);
+    } else {
+      // A stream can stop carrying a usable attitude — a sample whose quaternion
+      // names no rotation, or none at all after one that did. Leaving the group
+      // where the last good sample put it would show that orientation as the
+      // current one, so it goes back to unrotated, which is what "no attitude"
+      // draws from the start.
+      groupRef.current.quaternion.identity();
     }
   }, [quaternion]);
 
