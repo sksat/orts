@@ -105,7 +105,10 @@ test("a spacecraft at the coordinate origin keeps the Sun, and loses only nadir"
   await expect(nadir).toHaveAttribute("aria-disabled", "true");
   // The reason reaches a reader who cannot hover, and names nadir's own condition
   // rather than the frame's — the position here is finite, and accepted.
-  await expect(nadir).toHaveAttribute("aria-label", "Nadir: Requires a non-zero position");
+  await expect(nadir).toHaveAttribute(
+    "aria-label",
+    "Nadir: Requires a position of finite, non-zero length",
+  );
 });
 
 test("a run with no epoch offers no Sun, and says why in the control's name", async ({ page }) => {

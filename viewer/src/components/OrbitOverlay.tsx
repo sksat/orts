@@ -109,11 +109,15 @@ export function OrbitOverlay({
    */
   const unplaceableCentre = centreIsPlaceable ? undefined : "Requires a finite position";
   /**
-   * Nadir's own condition. It is the bearing from the spacecraft to the body,
-   * which a spacecraft at the body's centre does not have — and the scene draws
-   * everything else there, so this reason belongs to nadir alone.
+   * Nadir's own condition. It is the bearing from the spacecraft to the body, and
+   * what the resolver needs to compute one is a length it can divide by. Two
+   * positions the frame accepts fail that: the coordinate origin, whose length is
+   * zero, and one whose components are each finite while their squares overflow,
+   * whose length is infinite. The scene draws everything else at both, so this
+   * reason belongs to nadir alone — and it names the length rather than the
+   * position, which is the part that has to work.
    */
-  const noBearing = "Requires a non-zero position";
+  const noBearing = "Requires a position of finite, non-zero length";
   return (
     <>
       <FrameSelector
