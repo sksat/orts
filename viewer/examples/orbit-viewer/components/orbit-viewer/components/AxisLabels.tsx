@@ -25,11 +25,10 @@ interface AxisLabelsProps {
 export function AxisLabels({ length, opacity = 1 }: AxisLabelsProps) {
   const labels = useMemo(() => {
     const positions = axisLabelPositions(length);
-    return AXIS_LETTERS.map((letter, i) => ({
-      letter,
-      texture: labelTexture(letter, AXIS_COLORS[i]).texture,
-      position: positions[i],
-    }));
+    return AXIS_LETTERS.map((letter, i) => {
+      const label = labelTexture(letter, AXIS_COLORS[i]);
+      return { letter, label, position: positions[i] };
+    });
   }, [length]);
   const scale = axisLabelScale(length);
 
@@ -39,7 +38,9 @@ export function AxisLabels({ length, opacity = 1 }: AxisLabelsProps) {
         <sprite
           key={label.letter}
           position={label.position}
-          scale={[scale, scale, scale]}
+          // The texture is as wide as the letter needs, so a square sprite would
+          // stretch it: a bold "X" measures narrower than the texture is tall.
+          scale={[scale * label.label.aspect, scale, scale]}
           // Drawn last and without a depth test, so a letter on an axis pointing
           // away from the camera stays readable instead of hiding inside the
           // spacecraft. The axis *arrow* is still depth-tested, so it disappearing
@@ -47,7 +48,7 @@ export function AxisLabels({ length, opacity = 1 }: AxisLabelsProps) {
           renderOrder={LABEL_RENDER_ORDER}
         >
           <spriteMaterial
-            map={label.texture}
+            map={label.label.texture}
             transparent
             opacity={opacity}
             depthTest={false}
