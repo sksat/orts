@@ -45,9 +45,15 @@ export function SegmentedToggle<T extends string>({
           data-testid={option.testId}
           // Which segment is selected is otherwise only in the styling.
           aria-pressed={value === option.value}
-          onClick={() => onChange(option.value)}
-          disabled={option.disabled}
+          // See `DirectionVectorControls`: a `disabled` button shows no tooltip
+          // and takes no focus, and an unavailable option here carries the reason
+          // it is unavailable.
+          aria-disabled={option.disabled}
           title={option.title}
+          onClick={() => {
+            if (option.disabled) return;
+            onChange(option.value);
+          }}
         >
           {option.label}
         </button>

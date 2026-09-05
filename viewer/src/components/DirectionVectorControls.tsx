@@ -45,9 +45,16 @@ export function DirectionVectorControls({
             // The on/off state is otherwise only in the styling, so a screen
             // reader would announce an identical button either way.
             aria-pressed={on}
-            disabled={reason != null}
+            // `aria-disabled` rather than `disabled`: a disabled button takes no
+            // mouse events, so the reason in its `title` is never shown, and it
+            // leaves the tab order, so a keyboard user cannot reach it either.
+            // The reason is the whole point of the state here.
+            aria-disabled={reason != null}
             title={reason ?? `Draw the ${DIRECTION_VECTOR_LABELS[kind]} direction`}
-            onClick={() => onChange({ ...value, [kind]: !on })}
+            onClick={() => {
+              if (reason != null) return;
+              onChange({ ...value, [kind]: !on });
+            }}
           >
             <span
               aria-hidden="true"
