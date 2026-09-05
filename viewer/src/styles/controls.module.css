@@ -47,12 +47,19 @@
  * direction switched on whose scene cannot draw it, which is the app's default
  * state for the Sun before a satellite is centred — would otherwise read as
  * unselected for as long as the pointer sat on it.
+ *
+ * Both spellings, matching the rule above. `:hover` still applies to a natively
+ * disabled button, so leaving it out would dim such a button and then recolour it
+ * under the pointer. No toggle uses the native attribute today; what this fixes is
+ * the two rules covering different sets.
  */
+.modeToggleBtn:disabled:hover,
 .modeToggleBtn[aria-disabled="true"]:hover {
   background: var(--orts-toggle-inactive-bg);
   color: var(--orts-text-secondary);
 }
 
+.modeToggleBtn.active:disabled:hover,
 .modeToggleBtn.active[aria-disabled="true"]:hover {
   background: var(--orts-toggle-active-bg);
   color: #fff;
