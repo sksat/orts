@@ -1,34 +1,21 @@
 import { AXIS_COLORS, axisColorCss } from "../axisTriad.js";
-import {
-  DIRECTION_VECTOR_COLORS,
-  DIRECTION_VECTOR_LABELS,
-  type DirectionVectorKind,
-} from "../directionVectors.js";
-import { DIRECTION_VECTOR_KINDS } from "./DirectionVectorControls.js";
 import styles from "./SceneLegend.module.css";
 
-function hex(color: number): string {
-  return `#${color.toString(16).padStart(6, "0")}`;
-}
-
-interface SceneLegendProps {
-  /** Kinds actually drawn right now; the rest are omitted from the legend. */
-  vectorKinds: readonly DirectionVectorKind[];
-  /** Whether the reference-frame triad is drawn (it can be turned off). */
-  showFrameAxes?: boolean;
-}
-
 /**
- * What the coloured lines in the scene mean.
+ * What the coloured axes in the scene mean.
  *
- * The body axes and the reference-frame axes are both RGB triads, so naming
- * "X / Y / Z" once would not tell them apart — the two are listed separately,
- * with the frame's row dimmed to match how it is drawn.
+ * The body axes and the reference-frame axes are both RGB triads and both carry
+ * the same X / Y / Z letters, so the letters alone do not say which triad a
+ * reader is looking at. The two are listed here, with the frame's row dimmed to
+ * match how it is drawn.
  *
- * The swatches read {@link AXIS_COLORS}, the palette the scene draws the axes
- * and their letters with, so the legend cannot drift from the picture.
+ * The direction arrows are not listed: each one carries its own name at its tip,
+ * which a reader can match without holding a colour in mind, and which survives
+ * a screenshot. The swatches read {@link AXIS_COLORS}, the palette the scene
+ * draws the axes and their letters with, so the legend cannot drift from the
+ * picture.
  */
-export function SceneLegend({ vectorKinds, showFrameAxes = true }: SceneLegendProps) {
+export function SceneLegend({ showFrameAxes = true }: { showFrameAxes?: boolean }) {
   return (
     <div className={styles.legend} data-testid="scene-legend">
       <div className={styles.row}>
@@ -49,17 +36,6 @@ export function SceneLegend({ vectorKinds, showFrameAxes = true }: SceneLegendPr
           <span className={styles.group}>Frame X / Y / Z</span>
         </div>
       )}
-      {DIRECTION_VECTOR_KINDS.filter((kind) => vectorKinds.includes(kind)).map((kind) => (
-        <div key={kind} className={styles.row}>
-          <span className={styles.swatches}>
-            <span
-              className={styles.swatch}
-              style={{ background: hex(DIRECTION_VECTOR_COLORS[kind]) }}
-            />
-          </span>
-          <span>{DIRECTION_VECTOR_LABELS[kind]}</span>
-        </div>
-      ))}
     </div>
   );
 }
