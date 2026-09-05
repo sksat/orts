@@ -3,6 +3,7 @@ import {
   displayQuaternion,
   type Quat,
   resolveDisplayFrame,
+  unitAttitude,
 } from "../displayFrame.js";
 import type { OrbitPoint } from "../orbit.js";
 import { isLegacyEcef, type ReferenceFrame } from "../referenceFrame.js";
@@ -87,11 +88,18 @@ export function Satellite({
 
   const scenePos = displayPosition(frame, position.x, position.y, position.z, scaleRadius);
 
-  // Attitude quaternion as delivered: body-to-inertial, Hamilton [w, x, y, z].
-  const rawQuaternion: Quat | undefined =
+  // Attitude as delivered — body-to-inertial, Hamilton [w, x, y, z] — brought to
+  // unit norm. Three.js applies the components with `Quaternion.set`, which does
+  // not normalise: a simulator's drifting quaternion scales and skews the very
+  // marker it is meant to orient, and one that names no rotation at all is read
+  // back as the identity, so the scene would report an orientation nobody
+  // measured. What cannot be normalised is reported as no attitude, which draws
+  // the marker unrotated — the answer a satellite without attitude already gets.
+  const rawQuaternion: Quat | undefined = unitAttitude(
     position.qw != null
       ? [position.qw, position.qx ?? 0, position.qy ?? 0, position.qz ?? 0]
-      : undefined;
+      : undefined,
+  );
 
   return (
     <SpacecraftVisual

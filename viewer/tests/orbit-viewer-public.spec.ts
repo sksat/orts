@@ -286,3 +286,31 @@ test("no arrows are drawn at a centred spacecraft that has no position", async (
   await open(page, `sats=0:${SAT_A}&centre=0&epoch=${EPOCH}&att=1,0,0,0&arrows=sun,nadir`);
   await arrowsAt(page, 0, ["nadir", "sun"]);
 });
+
+test("an attitude that names no rotation is refused, not applied", async ({ page }) => {
+  // `SatelliteState.attitude` reaches Three.js through `Quaternion.set`, which
+  // does not normalise: a zero quaternion names no rotation, and applying it
+  // collapses the marker it was meant to orient. The attitude view already
+  // refuses one; the orbit view handed it straight through.
+  await open(page, `sats=0:${SAT_A}&centre=0&epoch=${EPOCH}&att=0,0,0,0&arrows=sun,nadir`);
+
+  // The arrows are the proof of mount here: they depend on the position, not on
+  // the attitude, so they are drawn either way.
+  await arrowsAt(page, 0, ["nadir", "sun"]);
+
+  const quat = await page.evaluate(
+    (id) => window.__debug_get_sat_world_quat?.(id) ?? null,
+    "fixture-sat-0",
+  );
+  expect(quat, "no orientation is registered for an attitude that names none").toBeNull();
+
+  // A usable attitude is still applied, so the check above is not refusing
+  // everything.
+  await open(page, `sats=0:${SAT_A}&centre=0&epoch=${EPOCH}&att=1,0,0,0&arrows=sun,nadir`);
+  await expect
+    .poll(
+      () => page.evaluate((id) => window.__debug_get_sat_world_quat?.(id) != null, "fixture-sat-0"),
+      { timeout: 15000 },
+    )
+    .toBe(true);
+});
