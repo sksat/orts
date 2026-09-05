@@ -595,6 +595,14 @@ describe("sampleAttitude on an incomplete sample", () => {
     // The sample claimed one — `qw` is there — and the viewer cannot use it, which
     // is the state that suppresses the model and the orientation-revealing cube.
     expect(attitudeWasRefused({ qw: 0.5 })).toBe(true);
+    // Any component is the claim, `qw` included but not required — a sample that
+    // carries one of the others is a partly decoded attitude, not an absent one,
+    // and reading it as absent would leave a registered model on screen at its own
+    // orientation with the scene amplified to match.
+    expect(attitudeWasRefused({ qx: 0.5 })).toBe(true);
+    expect(attitudeWasRefused({ qy: Number.NaN })).toBe(true);
+    expect(attitudeWasRefused({ qz: 0 })).toBe(true);
+    expect(attitudeWasRefused({ qx: 0, qy: 0, qz: 0 })).toBe(true);
     // Nothing claimed, nothing refused.
     expect(attitudeWasRefused({})).toBe(false);
     expect(attitudeWasRefused({ qw: 1, qx: 0, qy: 0, qz: 0 })).toBe(false);

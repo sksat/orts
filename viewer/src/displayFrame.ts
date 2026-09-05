@@ -193,7 +193,12 @@ export function attitudeWasRefused(sample: {
   qy?: number | null;
   qz?: number | null;
 }): boolean {
-  return sample.qw != null && sampleAttitude(sample) == null;
+  // Any component is the claim, not `qw` alone. Now that a rotation needs the
+  // complete tuple, a sample carrying only `qx` is rejected as a rotation — and
+  // keying the refusal on `qw` would call that "no attitude at all", which draws
+  // the registered model at its own orientation and amplifies the scene for it.
+  const claimed = sample.qw != null || sample.qx != null || sample.qy != null || sample.qz != null;
+  return claimed && sampleAttitude(sample) == null;
 }
 
 export function unitAttitude(attitude: Quat | undefined): Quat | undefined {
