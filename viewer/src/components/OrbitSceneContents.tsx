@@ -28,7 +28,7 @@ import {
   modelBoundingRadius,
   resolveVisualSpan,
 } from "../spacecraftScale.js";
-import { finiteOrNull, firstFiniteTime } from "../utils/finite.js";
+import { finiteOrNull } from "../utils/finite.js";
 import type { TrailBufferLike } from "../utils/TrailBuffer.js";
 import { body_orientation, earth_rotation_angle } from "../wasm/arikaInit.js";
 import { CelestialBody } from "./CelestialBody.js";
@@ -325,6 +325,15 @@ export interface OrbitSceneContentsProps {
   trailBuffers?: Map<string, TrailBufferLike>;
   /** Per-satellite positions. */
   satellitePositions?: Map<string, OrbitPoint | null>;
+  /**
+   * The scene's elapsed seconds since the epoch — `OrbitSceneDataProps.time`.
+   *
+   * The epoch the scene itself is drawn at: the lighting, the central body's
+   * rotation, and any entity whose own sample carries no usable time. A centred
+   * satellite overrides it for its own view, because the Sun drawn *at* that
+   * satellite has to be the Sun at that satellite's time.
+   */
+  time?: number;
   /** Per-satellite visible counts (when not live). */
   trailVisibleCounts?: Map<string, number>;
   /** Per-satellite draw start indices for time-range clipping. */
@@ -379,6 +388,7 @@ export interface OrbitSceneContentsProps {
 export function OrbitSceneContents({
   trailBuffers,
   satellitePositions,
+  time = 0,
   trailVisibleCounts,
   trailDrawStarts,
   centralBody,
@@ -472,14 +482,12 @@ export function OrbitSceneContents({
   // at that satellite's time, not at whichever time the Map happens to yield
   // first. Falls back to the first available position for a central-body view.
   const centeredPosition = centeredSatId != null ? satellitePositions?.get(centeredSatId) : null;
-  // Each candidate goes through a finite check, because `??` falls through only
-  // on null and undefined: a NaN `t` on the centred satellite would otherwise win
-  // over a usable fallback and reach the Earth rotation angle and the quantised
-  // Sun time below, both of which are WASM calls. The same `??` keeps the search
-  // for a fallback from running at all while the centred satellite has a time,
-  // which is every frame of a satellite-centred view.
-  const simTime =
-    finiteOrNull(centeredPosition?.t) ?? firstFiniteTime(satellitePositions?.values()) ?? 0;
+  // The centred satellite's own time, else the scene's. Each candidate goes
+  // through a finite check because `??` falls through only on null and undefined:
+  // a NaN `t` on the centred satellite would otherwise win over the scene's time
+  // and reach the Earth rotation angle and the quantised Sun time below, both of
+  // which are WASM calls.
+  const simTime = finiteOrNull(centeredPosition?.t) ?? finiteOrNull(time) ?? 0;
   const quantizedSimTime = Math.floor(simTime / 60) * 60;
 
   // Earth rotation angle (ERA) via WASM — updates every frame via simTime (not quantized)

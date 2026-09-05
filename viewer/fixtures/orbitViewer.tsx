@@ -20,6 +20,7 @@
  * | arrows  | `sun` / `nadir` / `sun,nadir` (default) / `none`               |
  * | att     | attitude `w,x,y,z` given to every satellite; makes the display   |
  * |         | frame readable through the rendered world quaternion            |
+ * | t       | the scene's elapsed seconds — the epoch a central-body view uses |
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -77,6 +78,7 @@ const referenceFrame: ViewerReferenceFrame =
 
 const arrows = params.get("arrows") ?? "sun,nadir";
 const epoch = params.get("epoch");
+const sceneTime = params.get("t");
 
 createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>
@@ -85,6 +87,7 @@ createRoot(document.getElementById("root") as HTMLElement).render(
       satellites={satellites}
       referenceFrame={referenceFrame}
       epochJd={epoch == null ? undefined : Number(epoch)}
+      time={sceneTime == null ? undefined : Number(sceneTime)}
       directionVectors={{
         sun: arrows.includes("sun"),
         nadir: arrows.includes("nadir"),

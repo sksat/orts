@@ -163,6 +163,7 @@ export function OrbitScene({
 
   return (
     <OrbitSceneContents
+      time={time}
       trailBuffers={trailBuffers}
       satellitePositions={satellitePositions}
       satelliteNames={satelliteNames}

@@ -151,3 +151,41 @@ test("a satellite with no usable time stays in the scene's frame", async ({ page
   const same = [0, 1, 2, 3].every((i) => Math.abs(inertial[i] - atZero[i]) < 1e-6);
   expect(same, "the body-fixed frame should not equal the inertial one").toBe(false);
 });
+
+test("a central-body view is drawn at the scene's time, not a satellite's", async ({ page }) => {
+  // With no satellite centred there is nothing for the Sun to be drawn *at*, so
+  // the epoch belongs to the scene: `OrbitSceneDataProps.time` drives the
+  // lighting and the central body's rotation. The scene used to take whichever
+  // time the position Map yielded first instead.
+  //
+  // The central body's rendered rotation is what reports the epoch the scene
+  // chose — a satellite's own rotation would not, since each marker turns by its
+  // own sample time.
+  const earthQuat = async () => {
+    await expect
+      .poll(() => page.evaluate(() => window.__debug_get_earth_world_quat?.() != null), {
+        timeout: 15000,
+      })
+      .toBe(true);
+    const q = await page.evaluate(() => window.__debug_get_earth_world_quat?.() ?? null);
+    if (q == null) throw new Error("no rendered central body");
+    return q;
+  };
+
+  await open(page, `sats=0:${SAT_A}&epoch=${EPOCH}&t=0&arrows=none`);
+  const sceneAtZero = await earthQuat();
+
+  // The satellites are ninety days along while the scene is still at zero. The
+  // central body has to be where the scene's time puts it.
+  await open(page, `sats=${LATER}:${SAT_A};${LATER}:${SAT_B}&epoch=${EPOCH}&t=0&arrows=none`);
+  const satellitesLater = await earthQuat();
+  for (const i of [0, 1, 2, 3]) {
+    expect(satellitesLater[i], `quaternion component ${i}`).toBeCloseTo(sceneAtZero[i], 6);
+  }
+
+  // And the scene's own time does move it, so the comparison could have failed.
+  await open(page, `sats=0:${SAT_A}&epoch=${EPOCH}&t=${LATER}&arrows=none`);
+  const sceneLater = await earthQuat();
+  const same = [0, 1, 2, 3].every((i) => Math.abs(sceneLater[i] - sceneAtZero[i]) < 1e-6);
+  expect(same, "ninety days of rotation should not leave the body where it was").toBe(false);
+});
