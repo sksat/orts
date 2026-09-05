@@ -136,4 +136,19 @@ test("a spacecraft with no attitude is named as that, not as one still arriving"
 
   await expect(page.locator('[data-testid="attitude-no-data"]')).toBeVisible();
   await expect(page.locator('[data-testid="attitude-no-spacecraft"]')).toHaveCount(0);
+
+  // The arrows are drawn at the spacecraft, so an absent one takes both with it —
+  // including the Sun, whose own inputs are all present here (this run has an
+  // epoch). The controls say the same thing the placeholder does.
+  for (const [kind, label] of [
+    ["sun", "Sun"],
+    ["nadir", "Nadir"],
+  ]) {
+    const toggle = page.locator(`[data-testid="direction-vector-${kind}"]`);
+    await expect(toggle, `${kind} is not drawable with no spacecraft drawn`).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    await expect(toggle).toHaveAttribute("aria-label", `${label}: This spacecraft has no attitude`);
+  }
 });
