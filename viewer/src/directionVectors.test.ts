@@ -1,13 +1,14 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
 import {
-  centreIsPlaceable,
   DIRECTION_VECTOR_COLORS,
   type DirectionVector,
   type DirectionVectorKind,
+  drawableAtCentre,
   resolveDirectionVectors,
 } from "./directionVectors.js";
 import { type DisplayFrame, displayDirection, type Vec3 } from "./displayFrame.js";
+import { centrePositionIsUsable } from "./frameResolve.js";
 import { computeLvlhAxes } from "./sceneFrame.js";
 
 const MU = 398600.4418;
@@ -213,33 +214,56 @@ describe("resolveDirectionVectors", () => {
   });
 });
 
-describe("centreIsPlaceable", () => {
-  it("answers for the position, and says no to the ones that carry no direction", () => {
-    expect(centreIsPlaceable([7000, 0, 0])).toBe(true);
-    expect(centreIsPlaceable(null)).toBe(false);
-    expect(centreIsPlaceable(undefined)).toBe(false);
-    expect(centreIsPlaceable([0, 0, 0])).toBe(false);
-    expect(centreIsPlaceable([Number.NaN, 0, 0])).toBe(false);
-    expect(centreIsPlaceable([Number.POSITIVE_INFINITY, 0, 0])).toBe(false);
-    // Each component is finite while the sum of their squares is not, so a length
-    // check that only rejected non-finite components would let this through.
-    expect(centreIsPlaceable([1e200, 1e200, 1e200])).toBe(false);
+describe("drawableAtCentre", () => {
+  it("offers both arrows at an ordinary centre, and neither without a Sun", () => {
+    expect(drawableAtCentre({ positionEci: [7000, 0, 0], sunIsComputable: true })).toEqual([
+      "sun",
+      "nadir",
+    ]);
+    expect(drawableAtCentre({ positionEci: [7000, 0, 0], sunIsComputable: false })).toEqual([
+      "nadir",
+    ]);
   });
 
-  it("cannot be answered by the Sun, which needs no position", () => {
-    // The question the caller asks is whether the *scene* will draw anything at
-    // this centre, and the scene drops every arrow at one it cannot place. Asking
-    // `resolveDirectionVectors` for the drawable set instead answers yes here, on
-    // the strength of an arrow that never needed the position — so a control would
-    // stay on offer over a scene that draws nothing.
-    const unusable: Vec3 = [0, 0, 0];
-    const withSun = resolveDirectionVectors({
-      frame: { kind: "inertial", origin: null },
-      sunDisplay: [1, 0, 0],
-      positionEci: unusable,
-      options: { nadir: true },
-    });
-    expect(withSun.map((v) => v.kind)).toEqual(["sun"]);
-    expect(centreIsPlaceable(unusable)).toBe(false);
+  it("keeps the Sun at a centre on the coordinate origin, and drops only nadir", () => {
+    // The scene places any finite centre, the origin included: the spacecraft is
+    // drawn there and lit from the Sun's direction, and it is nadir alone that has
+    // no bearing to take. Answering "nothing" here would disable a Sun toggle over
+    // a Sun that is on screen.
+    expect(drawableAtCentre({ positionEci: [0, 0, 0], sunIsComputable: true })).toEqual(["sun"]);
+    // Each component finite while the sum of their squares is not — normalising
+    // divides by an infinite length, so nadir goes the same way as at the origin.
+    expect(drawableAtCentre({ positionEci: [1e200, 1e200, 1e200], sunIsComputable: true })).toEqual(
+      ["sun"],
+    );
+  });
+
+  it("offers nothing at a centre the scene cannot place", () => {
+    // `resolveSceneFrame` refuses a non-finite position, and the scene then draws
+    // no arrow at all — not even the Sun, which needs no position of its own. That
+    // is why the placement question is asked before the resolver.
+    for (const positionEci of [
+      null,
+      undefined,
+      [Number.NaN, 0, 0],
+      [Number.POSITIVE_INFINITY, 0, 0],
+    ] as (Vec3 | null | undefined)[]) {
+      expect(drawableAtCentre({ positionEci, sunIsComputable: true })).toEqual([]);
+    }
+  });
+
+  it("agrees with the frame resolver about which centres are placeable", () => {
+    // The two must not drift: a UI stricter than the frame disables controls over a
+    // scene that draws, and a laxer one offers arrows the scene drops.
+    for (const position of [
+      [7000, 0, 0],
+      [0, 0, 0],
+      [1e200, 1e200, 1e200],
+      [Number.NaN, 0, 0],
+    ] as Vec3[]) {
+      const placeable = centrePositionIsUsable(position);
+      const kinds = drawableAtCentre({ positionEci: position, sunIsComputable: true });
+      expect(kinds.length > 0).toBe(placeable);
+    }
   });
 });

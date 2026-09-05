@@ -26,6 +26,21 @@ export interface SceneFrameContext {
   cameraTracking: boolean;
 }
 
+/**
+ * Whether a spacecraft's position can centre the scene on it.
+ *
+ * A non-finite component is no position: it would put the origin offset and the
+ * camera's up vector at NaN, which blanks the canvas. Everything finite is
+ * usable, zero included — the centred spacecraft is drawn at the origin whatever
+ * its coordinates, and only the directions that need a *bearing* from it drop
+ * out. The UI asks this so a control cannot be disabled over a scene that draws.
+ */
+export function centrePositionIsUsable(
+  position: readonly number[] | null | undefined,
+): position is readonly number[] {
+  return position != null && position.length === 3 && position.every(Number.isFinite);
+}
+
 export function resolveSceneFrame(
   frame: ReferenceFrame,
   getEntity: FrameEntityLookup,
@@ -44,11 +59,9 @@ export function resolveSceneFrame(
 
   const id = frame.center.id;
   const state = getEntity(id);
-  // A non-finite position is no position: it cannot centre the scene, and passing
-  // it on would put the origin offset and the camera's up vector at NaN, which
-  // blanks the canvas. Treated like a state that has not arrived — the entity is
-  // still the centre, so the camera stays put until a usable sample lands.
-  if (state == null || !state.position.every(Number.isFinite)) {
+  // Treated like a state that has not arrived — the entity is still the centre,
+  // so the camera stays put until a usable sample lands.
+  if (state == null || !centrePositionIsUsable(state.position)) {
     return { ...inert, centeredSatId: id };
   }
 
