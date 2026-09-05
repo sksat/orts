@@ -35,23 +35,15 @@ describe("rowToPoint", () => {
     expect(attitudeWasRefused(point)).toBe(false);
   });
 
-  it("turns a quaternion column of the wrong length into a refused attitude", () => {
-    // The distinction this keeps: a column that is present but malformed is an
-    // attitude the file *claimed*. Assigning the components it happens to have
-    // would leave a partial sample, which reads downstream as no attitude at all
-    // — and a satellite with no attitude keeps its registered 3D model, drawn at
-    // the model's own orientation with the scene scaled to it. So the claim has
-    // to survive the decode, and `NaN` is what these components are.
-    for (const quaternion of [[1], [1, 0], [1, 0, 0], [1, 0, 0, 0, 0]]) {
-      const point = rowToPoint(row({ quaternion }));
-      expect(
-        [point.qw, point.qx, point.qy, point.qz].every((c) => Number.isNaN(c)),
-        `all four components should be NaN for a column of length ${quaternion.length}`,
-      ).toBe(true);
-      // Which is what the display frame reads as a refusal rather than an absence.
-      expect(sampleAttitude(point)).toBeUndefined();
-      expect(attitudeWasRefused(point)).toBe(true);
-    }
+  it("carries a non-finite quaternion through as an attitude to refuse", () => {
+    // The reachable malformed case: the decoder yields four components or none, so
+    // a row cannot arrive partly decoded — but a complete tuple can hold `NaN`,
+    // which a diverged simulation writes. It has to stay a claim, because a
+    // satellite read as having no attitude keeps its registered 3D model, drawn at
+    // the model's own orientation with the scene scaled to it.
+    const point = rowToPoint(row({ quaternion: [Number.NaN, 0, 0, 0] }));
+    expect(sampleAttitude(point)).toBeUndefined();
+    expect(attitudeWasRefused(point)).toBe(true);
   });
 
   it("copies the angular velocity when the row carries one", () => {

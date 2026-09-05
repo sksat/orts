@@ -47,8 +47,9 @@ export interface RrdRowIn {
   vy: number;
   vz: number;
   entity_path: string | null;
-  quaternion?: ArrayLike<number> | null;
-  angular_velocity?: ArrayLike<number> | null;
+  /** Four components or nothing — see {@link rowToPoint}. */
+  quaternion?: readonly [number, number, number, number] | null;
+  angular_velocity?: readonly [number, number, number] | null;
 }
 
 /**
@@ -70,19 +71,16 @@ export function rowToPoint(row: RrdRowIn): RrdPointOut {
     entityPath: row.entity_path,
   };
 
-  // Attitude is optional, and arrives whole or not at all. A `quaternion` column
-  // that is present but not four long would otherwise leave the missing
-  // components undefined, and a sample carrying only some of them reads
-  // downstream as no attitude — which lets a registered model stand at its own
-  // orientation, with the scene scaled to that model. `NaN` is what those
-  // components are; the display frame refuses them, and the spacecraft gets the
-  // marker that shows no orientation.
+  // Attitude is optional, and arrives whole or not at all: the decoder builds
+  // `Some([qw?, qx?, qy?, qz?])`, so a row missing any one component yields
+  // `None` rather than a short list (`rrd-wasm/src/lib.rs`). A complete tuple can
+  // still carry `NaN` — a diverged simulation writes one — and that reaches the
+  // display frame as an attitude to refuse, which is the behaviour wanted.
   if (row.quaternion) {
-    const complete = row.quaternion.length === 4;
-    point.qw = complete ? row.quaternion[0] : Number.NaN;
-    point.qx = complete ? row.quaternion[1] : Number.NaN;
-    point.qy = complete ? row.quaternion[2] : Number.NaN;
-    point.qz = complete ? row.quaternion[3] : Number.NaN;
+    point.qw = row.quaternion[0];
+    point.qx = row.quaternion[1];
+    point.qy = row.quaternion[2];
+    point.qz = row.quaternion[3];
   }
   if (row.angular_velocity) {
     point.wx = row.angular_velocity[0];

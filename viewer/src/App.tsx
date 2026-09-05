@@ -377,15 +377,14 @@ export function App() {
         time: pos.t,
         // All four components or none, matching `hasQuaternion` in `orbit.ts`.
         //
-        // Reaching the partial case would need a source that sets some components
-        // and not others, and none does: the rrd parser turns a `quaternion`
-        // column of the wrong length into four `NaN`s, so the claim arrives whole
-        // and the scene refuses it, and the WS payload carries the tuple as one
-        // value. That matters because `SatelliteState.attitude` is
-        // `Quat | undefined` and could not pass a partial claim on — a sample
-        // reduced to "no attitude" leaves a registered model standing as a
-        // position marker, where a refused one replaces it with the marker that
-        // shows no orientation.
+        // No source sets some components and not others: the rrd decoder yields
+        // four or none, and the WS payload carries the tuple as one value. What
+        // this cannot pass on is a *refusal* — `SatelliteState.attitude` is
+        // `Quat | undefined`, so an unusable attitude arrives here as a complete
+        // non-finite tuple and leaves as `undefined`, and a satellite read as
+        // having no attitude keeps its registered model as a position marker
+        // where a refused one is replaced. Tracked in #451 with the other places
+        // that judgement is re-derived.
         attitude:
           pos.qw != null && pos.qx != null && pos.qy != null && pos.qz != null
             ? [pos.qw, pos.qx, pos.qy, pos.qz]
