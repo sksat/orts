@@ -1,0 +1,85 @@
+/**
+ * Mounts the published {@link OrbitViewer} with satellites taken from the URL,
+ * so a test can put the scene in a state a live `orts serve` run cannot produce.
+ *
+ * The app's own E2E covers the app against a real server, where every satellite
+ * shares one clock and every sample is a number. What that cannot reach is the
+ * state the public props allow: satellites at *different* times (a terminated one
+ * frozen at its last sample), or a `time` that arrived as `NaN` from a source.
+ * Both decide which epoch the Sun and the body rotations are evaluated at, so
+ * they need a fixture.
+ *
+ *   /fixtures/orbit-viewer.html?sats=0:7000,0,0:0,7.546,0&epoch=2460000.5
+ *
+ * | param   | meaning                                                        |
+ * |---------|----------------------------------------------------------------|
+ * | sats    | `;`-separated satellites, each `t:x,y,z:vx,vy,vz` (t may be `nan`) |
+ * | centre  | index into `sats` to centre on; omitted centres the central body |
+ * | frame   | `inertial` (default) / `localOrbital` / `bodyFixed`             |
+ * | epoch   | epoch JD (UTC); omitted means no epoch                         |
+ * | arrows  | `sun` / `nadir` / `sun,nadir` (default) / `none`               |
+ */
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import type { SatelliteState, Vec3, ViewerReferenceFrame } from "../src/lib/index.js";
+import { isArikaReady, OrbitViewer } from "../src/lib/index.js";
+
+const params = new URLSearchParams(window.location.search);
+
+declare global {
+  interface Window {
+    __fixture_arika_ready?: () => boolean;
+  }
+}
+window.__fixture_arika_ready = () => isArikaReady();
+
+function vec3(text: string): Vec3 {
+  const parts = text.split(",").map(Number);
+  return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0];
+}
+
+/**
+ * One satellite per `;`-separated group, as `t:position:velocity`.
+ *
+ * `nan` is spelled out rather than written as a literal, because a URL carrying
+ * `NaN` through `Number()` is exactly the shape a failed parse upstream has.
+ */
+const satellites: SatelliteState[] = (params.get("sats") ?? "0:7000,0,0:0,7.546,0")
+  .split(";")
+  .map((group, i) => {
+    const [time, position, velocity] = group.split(":");
+    return {
+      id: `fixture-sat-${i}`,
+      position: vec3(position ?? "7000,0,0"),
+      velocity: velocity == null ? undefined : vec3(velocity),
+      time: time === "nan" ? Number.NaN : Number(time ?? 0),
+    };
+  });
+
+const centre = params.get("centre");
+const orientation = params.get("frame") ?? "inertial";
+const referenceFrame: ViewerReferenceFrame =
+  centre == null
+    ? { center: "centralBody", orientation: orientation === "bodyFixed" ? "bodyFixed" : "inertial" }
+    : {
+        center: { satelliteId: satellites[Number(centre)]?.id ?? satellites[0].id },
+        orientation: orientation === "localOrbital" ? "localOrbital" : "inertial",
+      };
+
+const arrows = params.get("arrows") ?? "sun,nadir";
+const epoch = params.get("epoch");
+
+createRoot(document.getElementById("root") as HTMLElement).render(
+  <StrictMode>
+    <OrbitViewer
+      centralBody={{ id: "earth", radiusKm: 6378.137 }}
+      satellites={satellites}
+      referenceFrame={referenceFrame}
+      epochJd={epoch == null ? undefined : Number(epoch)}
+      directionVectors={{
+        sun: arrows.includes("sun"),
+        nadir: arrows.includes("nadir"),
+      }}
+    />
+  </StrictMode>,
+);

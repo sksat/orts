@@ -8,6 +8,7 @@ import type { OrbitPoint } from "../orbit.js";
 import { isLegacyEcef, type ReferenceFrame } from "../referenceFrame.js";
 import type { MarkerShape } from "../satelliteShapes.js";
 import type { LvlhAxes } from "../sceneFrame.js";
+import { finiteOrNull } from "../utils/finite.js";
 import { earth_rotation_angle } from "../wasm/arikaInit.js";
 import { SpacecraftVisual } from "./SpacecraftVisual.js";
 
@@ -62,9 +63,15 @@ export function Satellite({
   // One display frame drives both the position and the attitude, so they can
   // never end up in different bases (the LVLH axis order and the ECEF rotation
   // used to be derived independently, and disagreed).
+  // This satellite's own sample time, which is optional per satellite and can
+  // arrive as `NaN` from a source. A non-finite time is no time: the angle
+  // computed from it is `NaN`, and while `resolveDisplayOrientation` refuses that
+  // and falls back to inertial, the fallback would be silent and this satellite
+  // would sit in a different frame from the rest of the scene.
+  const sampleTime = finiteOrNull(position.t);
   const era =
-    isLegacyEcef(referenceFrame) && epochJd != null
-      ? earth_rotation_angle(epochJd, position.t)
+    isLegacyEcef(referenceFrame) && epochJd != null && sampleTime != null
+      ? earth_rotation_angle(epochJd, sampleTime)
       : null;
   const frame = resolveDisplayFrame(referenceFrame, { era, originPosition, lvlhAxes });
 

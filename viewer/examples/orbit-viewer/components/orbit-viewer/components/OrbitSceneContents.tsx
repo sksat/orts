@@ -285,8 +285,12 @@ function SecondaryBody({
   // Body-fixed → inertial orientation via the IAU rotation model (arika WASM),
   // including the Three.js +Y-pole → IAU +Z-pole alignment.
   const bodyToInertial = useMemo(() => {
-    if (epochJd == null) return undefined;
-    const q = body_orientation(bodyId, epochJd, position.t);
+    const sampleTime = finiteOrNull(position.t);
+    // A `NaN` sample time would come back as a quaternion of NaNs, and the group
+    // carrying it renders nothing at all. Without a time this body is drawn
+    // unrotated, which is what a missing epoch already gives.
+    if (epochJd == null || sampleTime == null) return undefined;
+    const q = body_orientation(bodyId, epochJd, sampleTime);
     if (!q) return undefined;
     // IAU body-fixed → ECI: q = [w, x, y, z]; THREE uses (x, y, z, w)
     const iauQuat = new THREE.Quaternion(q[1], q[2], q[3], q[0]);
@@ -601,8 +605,11 @@ export function OrbitSceneContents({
             // Render as CelestialBody at origin with physical radius + IAU orientation
             const bodyRadiusKm = getBodyRadius(centeredBodyId, bodyDefinitions);
             const bodyRadius = bodyRadiusKm != null ? bodyRadiusKm / centralBodyRadius : 0.01;
+            const centredTime = finiteOrNull(pos.t);
             const q =
-              epochJd != null ? body_orientation(centeredBodyId, epochJd, pos.t) : undefined;
+              epochJd != null && centredTime != null
+                ? body_orientation(centeredBodyId, epochJd, centredTime)
+                : undefined;
             const iauQuat = q
               ? new THREE.Quaternion(q[1], q[2], q[3], q[0]).multiply(
                   new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0)),
