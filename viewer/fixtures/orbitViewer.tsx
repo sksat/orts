@@ -22,6 +22,8 @@
  * | att     | attitude `w,x,y,z` given to every satellite; makes the display   |
  * |         | frame readable through the rendered world quaternion            |
  * | t       | the scene's elapsed seconds — the epoch a central-body view uses |
+ * | body    | central body id (default `earth`)                                |
+ * | radius  | central body radius in km (default Earth's)                      |
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -84,7 +86,12 @@ const sceneTime = params.get("t");
 createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>
     <OrbitViewer
-      centralBody={{ id: "earth", radiusKm: 6378.137 }}
+      centralBody={{
+        id: params.get("body") ?? "earth",
+        // Given explicitly: a body arika does not model has no radius to resolve,
+        // and the scene needs one to scale itself by.
+        radiusKm: Number(params.get("radius") ?? 6378.137),
+      }}
       satellites={satellites}
       referenceFrame={referenceFrame}
       epochJd={epoch == null ? undefined : Number(epoch)}

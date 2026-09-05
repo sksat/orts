@@ -31,9 +31,16 @@ type Drawn = { kind: string; direction: [number, number, number]; distance: numb
 async function open(page: Page, query: string) {
   await page.goto(`/fixtures/orbit-viewer.html?${query}`, { waitUntil: "load" });
   await expect(page.locator("canvas")).toBeVisible();
-  await expect
-    .poll(() => page.evaluate(() => window.__fixture_arika_ready?.() ?? false), { timeout: 15000 })
-    .toBe(true);
+  // Only where there is an epoch: the scene loads the arika WASM to evaluate one,
+  // and a scene without an epoch never asks for it — so waiting for readiness
+  // there waits for something that is not coming.
+  if (query.includes("epoch=")) {
+    await expect
+      .poll(() => page.evaluate(() => window.__fixture_arika_ready?.() ?? false), {
+        timeout: 15000,
+      })
+      .toBe(true);
+  }
 }
 
 /** The arrows drawn at satellite `index`, once the named kinds are all there. */
@@ -220,4 +227,29 @@ test("an embedder who says nothing about the arrows gets none", async ({ page })
   // Null rather than an empty list: with nothing to draw the component is not
   // mounted, so it registers no hook at all.
   expect(drawn, "no arrows are registered when the prop is left out").toBeNull();
+});
+
+test("the Sun arrow is left out where the direction would be a guess", async ({ page }) => {
+  // `sun_direction_from_body` answers +X — the vernal equinox — for a body it
+  // cannot place, and with no epoch there is nothing to evaluate at all. The
+  // lighting keeps that fallback so a 3D model is not left black; the *arrow*
+  // has to be dropped, or the picture shows a guess as a measurement.
+  //
+  // Nadir is the control: it needs only a position, so its presence says the
+  // arrows reached this scene and the Sun's absence is a decision.
+  await open(page, `sats=0:${SAT_A}&centre=0&frame=localOrbital&arrows=sun,nadir`);
+  await arrowsAt(page, 0, ["nadir"]);
+
+  // Uranus has no elements in arika, so the Sun cannot be placed relative to it
+  // even with an epoch. Its radius is given because the scene has none to look up.
+  await open(
+    page,
+    `sats=0:${SAT_A}&centre=0&frame=localOrbital&epoch=${EPOCH}&body=uranus&radius=25559&arrows=sun,nadir`,
+  );
+  await arrowsAt(page, 0, ["nadir"]);
+
+  // And Earth with the same epoch does draw it, so the two above are not passing
+  // for want of a Sun arrow anywhere.
+  await open(page, `sats=0:${SAT_A}&centre=0&frame=localOrbital&epoch=${EPOCH}&arrows=sun,nadir`);
+  await arrowsAt(page, 0, ["nadir", "sun"]);
 });
