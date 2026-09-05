@@ -10,6 +10,7 @@ import {
 } from "../bodies.js";
 import { type DirectionVectorOptions, resolveDirectionVectors } from "../directionVectors.js";
 import {
+  attitudeWasRefused,
   displayPosition,
   displayRotation,
   resolveDisplayFrame,
@@ -442,15 +443,41 @@ export function OrbitSceneContents({
     return (bodyRadiusKm / centralBodyRadius) * 3;
   }, [centeredBodyId, centralBodyRadius, bodyDefinitions]);
 
+  // Whether the centred satellite's own sample claimed an orientation that could
+  // not be used. Read here as well as where the spacecraft is drawn, because the
+  // environment's scale depends on which of the model and the marker is on
+  // screen. A boolean, so the memo below re-runs when the answer changes rather
+  // than on every sample.
+  const centredAttitudeRefused =
+    isSatCentered && centeredSatId != null
+      ? (() => {
+          const sample = satellitePositions?.get(centeredSatId);
+          return sample != null && attitudeWasRefused(sample);
+        })()
+      : false;
+
   // Scene amplification: scale up environment to show correct proportions
   // relative to the satellite's exaggerated model at origin.
   const sceneAmplification = useMemo(() => {
     if (!isSatCentered || centeredSatId == null) return 1;
     // Body entities (Moon, Sun, etc.) don't need satellite amplification
     if (centeredBodyId != null) return 1;
-    const modelConfig = getSatelliteModelConfig(centeredSatId, satelliteNames?.get(centeredSatId));
+    // Sized for what is drawn: a refused attitude leaves the marker standing in,
+    // and `computeSceneAmplification` amplifies by the marker's ratio rather than
+    // the model's. Amplifying for an absent model puts Earth and the trails at
+    // proportions belonging to a spacecraft that is not on screen.
+    const modelConfig = centredAttitudeRefused
+      ? null
+      : getSatelliteModelConfig(centeredSatId, satelliteNames?.get(centeredSatId));
     return computeSceneAmplification(modelConfig, centralBodyRadius);
-  }, [isSatCentered, centeredSatId, centeredBodyId, satelliteNames, centralBodyRadius]);
+  }, [
+    isSatCentered,
+    centeredSatId,
+    centeredBodyId,
+    satelliteNames,
+    centralBodyRadius,
+    centredAttitudeRefused,
+  ]);
 
   // Effective scale radius: smaller when amplified, so positions appear larger
   const effectiveScaleRadius = centralBodyRadius / sceneAmplification;
@@ -647,9 +674,8 @@ export function OrbitSceneContents({
               </group>
             );
           }
-          // The sample's attitude decides two things here: which marker stands
-          // in for it, and whether its registered model is drawn at all.
-          const attitudeRefused = pos.qw != null && sampleAttitude(pos) == null;
+          // Resolved above, where the environment's scale reads it too.
+          const attitudeRefused = centredAttitudeRefused;
           const shape = resolveMarkerShape({
             override: satelliteShapes?.get(centeredSatId),
             simShape: satelliteSimShapes?.get(centeredSatId),
@@ -823,7 +849,7 @@ export function OrbitSceneContents({
                     // See above: the shape follows the usable attitude, and a
                     // refused one takes the sphere whatever was requested.
                     hasAttitude: sampleAttitude(pos) != null,
-                    attitudeRefused: pos.qw != null && sampleAttitude(pos) == null,
+                    attitudeRefused: attitudeWasRefused(pos),
                   })}
                 />
               )}

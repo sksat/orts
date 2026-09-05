@@ -25,6 +25,7 @@
  * | body    | central body id (default `earth`)                                |
  * | radius  | central body radius in km (default Earth's)                      |
  * | shape   | marker shape forced on every satellite (`axes-cube` / `sphere`)  |
+ * | name    | display name of every satellite — `ISS` resolves a model config   |
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -67,6 +68,7 @@ const satellites: SatelliteState[] = (params.get("sats") ?? "0:7000,0,0:0,7.546,
       velocity: velocity == null ? undefined : vec3(velocity),
       attitude,
       markerShape: (params.get("shape") as SatelliteState["markerShape"]) ?? undefined,
+      name: params.get("name") ?? undefined,
       time: time === "nan" ? Number.NaN : Number(time ?? 0),
     };
   });

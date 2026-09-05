@@ -113,6 +113,47 @@ async function meshGeometries(page: Page, id: string): Promise<string[] | null> 
   }, id);
 }
 
+/**
+ * How far the central body sits from the centred spacecraft, in scene units.
+ *
+ * Centring converts positions with a radius the amplification divides, so this
+ * distance is where the chosen amplification shows up in the rendered graph. Read
+ * off the largest sphere, which is the body itself — the markers are far smaller.
+ */
+async function centralBodyDistance(page: Page, id: string): Promise<number | null> {
+  return await page.evaluate((satId) => {
+    const w = window as unknown as {
+      __debug_direction_vector_registry?: Map<
+        string,
+        () => { origin: { parent: unknown } | null }[]
+      >;
+    };
+    const start = w.__debug_direction_vector_registry?.get(satId)?.()?.[0]?.origin;
+    if (start == null) return null;
+    type Node = {
+      type: string;
+      parent: Node | null;
+      children: Node[];
+      matrixWorld: { elements: number[] };
+      geometry?: { type?: string; parameters?: { radius?: number } };
+    };
+    let root = start as unknown as Node;
+    while (root.parent != null) root = root.parent;
+    let largest: { radius: number; node: Node } | null = null;
+    const walk = (node: Node) => {
+      if (node.geometry?.type === "SphereGeometry") {
+        const r = node.geometry.parameters?.radius;
+        if (r != null && (largest == null || r > largest.radius)) largest = { radius: r, node };
+      }
+      for (const child of node.children) walk(child);
+    };
+    walk(root);
+    if (largest == null) return null;
+    const e = (largest as { node: Node }).node.matrixWorld.elements;
+    return Math.hypot(e[12], e[13], e[14]);
+  }, id);
+}
+
 function sunDirection(arrows: Drawn[]): [number, number, number] {
   const sun = arrows.find((a) => a.kind === "sun");
   if (sun == null) throw new Error("no Sun arrow was drawn");
@@ -425,4 +466,43 @@ test("an unusable attitude gets the marker that shows no orientation", async ({ 
   await arrowsAt(page, 0, ["nadir", "sun"]);
   const usable = await meshGeometries(page, "fixture-sat-0");
   expect(usable, "a usable attitude draws the cube").toContain("BoxGeometry");
+});
+
+test("the environment is scaled for the spacecraft that is drawn", async ({ page }) => {
+  // Centring on a satellite amplifies everything around it, because its model is
+  // drawn far larger than scale — the ratio keeps Earth and the trails at the
+  // right proportions *relative to that model*. A registered spacecraft whose
+  // attitude was refused is drawn as the marker instead, and the marker's ratio
+  // is a different number, so the amplification has to follow which of the two
+  // arrived.
+  // Local-orbital, because that is the frame in which the amplification reaches
+  // the graph: the scene applies it as the environment group's scale, and leaves
+  // that at 1 in the inertial frame (measured: the body sits at 1.0975 either way
+  // there, and at 2157.6 or 3500 here).
+  const centred = `centre=0&frame=localOrbital&epoch=${EPOCH}&arrows=sun,nadir`;
+
+  await open(page, `sats=0:${SAT_A}&${centred}&name=ISS&att=1,0,0,0`);
+  await arrowsAt(page, 0, ["nadir", "sun"]);
+  const model = await centralBodyDistance(page, "fixture-sat-0");
+  expect(model, "the central body should be in the scene").not.toBeNull();
+  expect(model, "and drawn away from the centred spacecraft").toBeGreaterThan(0);
+
+  // No registered name, so no model config resolves and the marker stands in.
+  // This is the amplification a refused attitude has to land on.
+  await open(page, `sats=0:${SAT_A}&${centred}&att=1,0,0,0`);
+  await arrowsAt(page, 0, ["nadir", "sun"]);
+  const marker = await centralBodyDistance(page, "fixture-sat-0");
+
+  // The two ratios differ, without which the assertion below would hold whatever
+  // the scene did.
+  expect((model as number) / (marker as number)).not.toBeCloseTo(1, 6);
+
+  await open(page, `sats=0:${SAT_A}&${centred}&name=ISS&att=0,0,0,0`);
+  await arrowsAt(page, 0, ["nadir", "sun"]);
+  const refused = await centralBodyDistance(page, "fixture-sat-0");
+  // A ratio, so compare relatively: the distances run to thousands of units.
+  expect(
+    (refused as number) / (marker as number),
+    "a refused attitude scales the scene for the marker it draws",
+  ).toBeCloseTo(1, 6);
 });

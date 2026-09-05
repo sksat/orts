@@ -121,18 +121,6 @@ export function resolveDisplayFrame(
 const UNIT_QUATERNION_TOLERANCE = 1e-9;
 
 /**
- * A caller's attitude as a unit quaternion, or undefined when it does not name a
- * rotation.
- *
- * Three.js applies the components with `Quaternion.set`, which does not
- * normalise: a non-unit quaternion scales and skews the very spacecraft it is
- * meant to orient, and a non-finite component spreads through the scene
- * matrices. A simulator's attitude drifts off unit norm as it integrates, so the
- * fix is to normalise what can be normalised and reject the rest — an unusable
- * attitude then reads as *no* attitude, which the views already draw (no body
- * axes, and the marker that looks the same from every side).
- */
-/**
  * The attitude carried by an orbit sample, brought to unit norm, or undefined.
  *
  * Samples arrive as loose components rather than a tuple, and two decisions read
@@ -148,6 +136,37 @@ export function sampleAttitude(sample: {
 }): Quat | undefined {
   if (sample.qw == null) return undefined;
   return unitAttitude([sample.qw, sample.qx ?? 0, sample.qy ?? 0, sample.qz ?? 0]);
+}
+
+/**
+ * A caller's attitude as a unit quaternion, or undefined when it does not name a
+ * rotation.
+ *
+ * Three.js applies the components with `Quaternion.set`, which does not
+ * normalise: a non-unit quaternion scales and skews the very spacecraft it is
+ * meant to orient, and a non-finite component spreads through the scene
+ * matrices. A simulator's attitude drifts off unit norm as it integrates, so the
+ * fix is to normalise what can be normalised and reject the rest — an unusable
+ * attitude then reads as *no* attitude, which the views already draw (no body
+ * axes, and the marker that looks the same from every side).
+ */
+/**
+ * Whether a sample claimed an orientation the viewer could not use.
+ *
+ * The distinction this draws is between a spacecraft that carries no attitude —
+ * ordinary in the orbit view, where the marker is a position marker — and one
+ * whose quaternion named no rotation or arrived non-finite. Three consequences
+ * follow from the second, and they have to agree: the registered model is not
+ * drawn, the marker takes the shape that shows no orientation, and the
+ * environment is amplified for whichever of the two is on screen.
+ */
+export function attitudeWasRefused(sample: {
+  qw?: number | null;
+  qx?: number | null;
+  qy?: number | null;
+  qz?: number | null;
+}): boolean {
+  return sample.qw != null && sampleAttitude(sample) == null;
 }
 
 export function unitAttitude(attitude: Quat | undefined): Quat | undefined {

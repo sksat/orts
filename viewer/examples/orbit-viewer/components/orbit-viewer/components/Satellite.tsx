@@ -1,4 +1,5 @@
 import {
+  attitudeWasRefused,
   displayPosition,
   displayQuaternion,
   type Quat,
@@ -101,7 +102,7 @@ export function Satellite({
   // as one; the same model drawn after an attitude was refused would sit at its
   // own default orientation and be read as the measurement that was refused. That
   // case gets the marker instead, which looks the same from every side.
-  const attitudeRefused = position.qw != null && rawQuaternion == null;
+  const attitudeRefused = attitudeWasRefused(position);
 
   return (
     <SpacecraftVisual
