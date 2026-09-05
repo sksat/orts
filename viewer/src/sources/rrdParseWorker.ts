@@ -41,12 +41,19 @@ self.onmessage = async (e: MessageEvent<RrdWorkerInput>) => {
         entityPath: row.entity_path,
       };
 
-      // Attitude data (optional)
+      // Attitude data (optional). A column that is present but not four long
+      // would leave the missing components undefined, and a sample carrying only
+      // some of them reads downstream as no attitude at all — which lets a
+      // registered model stand at its own orientation, and scales the scene to
+      // that model. The claim arrives whole instead: `NaN` is what those
+      // components are, the display frame refuses them, and the spacecraft gets
+      // the marker that shows no orientation.
       if (row.quaternion) {
-        point.qw = row.quaternion[0];
-        point.qx = row.quaternion[1];
-        point.qy = row.quaternion[2];
-        point.qz = row.quaternion[3];
+        const complete = row.quaternion.length === 4;
+        point.qw = complete ? row.quaternion[0] : Number.NaN;
+        point.qx = complete ? row.quaternion[1] : Number.NaN;
+        point.qy = complete ? row.quaternion[2] : Number.NaN;
+        point.qz = complete ? row.quaternion[3] : Number.NaN;
       }
       if (row.angular_velocity) {
         point.wx = row.angular_velocity[0];

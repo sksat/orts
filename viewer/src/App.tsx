@@ -377,18 +377,15 @@ export function App() {
         time: pos.t,
         // All four components or none, matching `hasQuaternion` in `orbit.ts`.
         //
-        // A partly decoded sample is passed on as *no* attitude, which is the one
-        // thing `SatelliteState.attitude` can say: being `Quat | undefined`, it
-        // has no way to carry "an attitude arrived and could not be used". The
-        // scene's own classifier draws that distinction, and the difference shows
-        // for a satellite with a registered model — no attitude leaves the model
-        // standing as a position marker, where a refused one would replace it. To
-        // pass the distinction through, the public type would have to gain a way
-        // to express it; that is an API question rather than a fix here.
-        //
-        // Reaching it takes a corrupt file: the only source that assigns these
-        // components one by one is the rrd parser, from a `quaternion` column it
-        // expects to be four long, and the WS payload carries the tuple whole.
+        // Reaching the partial case would need a source that sets some components
+        // and not others, and none does: the rrd parser turns a `quaternion`
+        // column of the wrong length into four `NaN`s, so the claim arrives whole
+        // and the scene refuses it, and the WS payload carries the tuple as one
+        // value. That matters because `SatelliteState.attitude` is
+        // `Quat | undefined` and could not pass a partial claim on — a sample
+        // reduced to "no attitude" leaves a registered model standing as a
+        // position marker, where a refused one replaces it with the marker that
+        // shows no orientation.
         attitude:
           pos.qw != null && pos.qx != null && pos.qy != null && pos.qz != null
             ? [pos.qw, pos.qx, pos.qy, pos.qz]
