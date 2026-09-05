@@ -1,5 +1,5 @@
 import styles from "../App.module.css";
-import type { DirectionVectorKind, DirectionVectorOptions } from "../directionVectors.js";
+import type { DirectionVectorOptions } from "../directionVectors.js";
 import type { AttitudeFrame } from "../lib/types.js";
 import { DirectionVectorControls } from "./DirectionVectorControls.js";
 import selectorStyles from "./FrameSelector.module.css";
@@ -36,8 +36,6 @@ export interface AttitudeOverlayProps {
   nadirUnavailable?: string;
   directionVectors: DirectionVectorOptions;
   onDirectionVectorsChange: (value: DirectionVectorOptions) => void;
-  /** Kinds actually drawn, for the legend. */
-  drawnVectorKinds: readonly DirectionVectorKind[];
   /**
    * Whether a spacecraft is being drawn at all. Without one the scene is empty,
    * so the legend would name lines that are not there.
@@ -67,7 +65,6 @@ export function AttitudeOverlay({
   nadirUnavailable,
   directionVectors,
   onDirectionVectorsChange,
-  drawnVectorKinds,
   hasBody,
 }: AttitudeOverlayProps) {
   const orientationOptions: SegmentedOption<AttitudeFrame>[] = [
@@ -123,7 +120,7 @@ export function AttitudeOverlay({
         unavailable={{ sun: sunUnavailable, nadir: nadirUnavailable }}
       />
 
-      {hasBody && <SceneLegend vectorKinds={drawnVectorKinds} />}
+      {hasBody && <SceneLegend />}
 
       <div className={styles.orbitInfo} data-testid="attitude-info">
         Attitude view — no central body or trails

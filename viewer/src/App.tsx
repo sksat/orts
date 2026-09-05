@@ -571,13 +571,6 @@ export function App() {
     [sunIsComputable],
   );
 
-  /** What the attitude view draws right now — the legend names exactly these. */
-  const attitudeVectorKinds = useMemo<readonly DirectionVectorKind[]>(
-    () =>
-      attitudeBody == null ? [] : resolvedVectorKinds(attitudeBody.position, directionVectors),
-    [resolvedVectorKinds, attitudeBody, directionVectors],
-  );
-
   /**
    * What each view *could* draw, which is the separate question a disabled
    * control answers: a direction switched off is not an unavailable one.
@@ -752,7 +745,6 @@ export function App() {
               }
               directionVectors={directionVectors}
               onDirectionVectorsChange={setDirectionVectors}
-              drawnVectorKinds={attitudeVectorKinds}
               hasBody={attitudeBody != null}
             />
           )}
