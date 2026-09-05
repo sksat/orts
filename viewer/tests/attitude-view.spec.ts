@@ -343,8 +343,14 @@ test("turning an arrow off stops it being drawn", async ({ page }) => {
   // waits on the WASM ephemeris, so reading once could catch nadir alone.
   await expect.poll(async () => await kinds(), { timeout: 15000 }).toEqual(["nadir", "sun"]);
 
-  await page.locator('[data-testid="direction-vector-sun"]').click();
+  // The tooltip names the click's effect, so it reads the other way round from
+  // the state: with the arrow drawn, the button hides it.
+  const sun = page.locator('[data-testid="direction-vector-sun"]');
+  await expect(sun).toHaveAttribute("title", "Hide the Sun direction");
+
+  await sun.click();
   await expect.poll(async () => await kinds(), { timeout: 10000 }).toEqual(["nadir"]);
+  await expect(sun).toHaveAttribute("title", "Draw the Sun direction");
 });
 
 test("the app's own far plane follows the camera out of the attitude view", async ({ page }) => {
