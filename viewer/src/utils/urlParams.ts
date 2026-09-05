@@ -13,6 +13,29 @@ export function readTimeRangeParam(): TimeRange {
   return n;
 }
 
+/** Read the `view` query parameter. Anything unrecognised means the orbit view. */
+export function readViewParam(): "orbit" | "attitude" {
+  const raw = new URLSearchParams(window.location.search).get("view");
+  return raw === "attitude" ? "attitude" : "orbit";
+}
+
+/**
+ * Write the `view` value into the URL query string, so a link or a reload keeps
+ * the presentation. Uses `history.replaceState`, like the other view params, so
+ * no browser history entry is created.
+ */
+export function writeViewParam(view: "orbit" | "attitude"): void {
+  const params = new URLSearchParams(window.location.search);
+  if (view === "orbit") params.delete("view");
+  else params.set("view", view);
+  const qs = params.toString();
+  history.replaceState(
+    null,
+    "",
+    qs ? `${window.location.pathname}?${qs}` : window.location.pathname,
+  );
+}
+
 /**
  * Write the `timeRange` value into the URL query string.
  * Uses `history.replaceState` so no browser history entry is created.

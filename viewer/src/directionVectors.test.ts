@@ -4,9 +4,11 @@ import {
   DIRECTION_VECTOR_COLORS,
   type DirectionVector,
   type DirectionVectorKind,
+  drawableAtCentre,
   resolveDirectionVectors,
 } from "./directionVectors.js";
 import { type DisplayFrame, displayDirection, type Vec3 } from "./displayFrame.js";
+import { centrePositionIsUsable } from "./frameResolve.js";
 import { computeLvlhAxes } from "./sceneFrame.js";
 
 const MU = 398600.4418;
@@ -209,5 +211,61 @@ describe("resolveDirectionVectors", () => {
     });
     expect(find(vectors, "sun").color).toBe(DIRECTION_VECTOR_COLORS.sun);
     expect(find(vectors, "nadir").color).toBe(DIRECTION_VECTOR_COLORS.nadir);
+  });
+});
+
+describe("drawableAtCentre", () => {
+  it("offers both arrows at an ordinary centre, and nadir alone without a Sun", () => {
+    expect(drawableAtCentre({ positionEci: [7000, 0, 0], sunIsComputable: true })).toEqual([
+      "sun",
+      "nadir",
+    ]);
+    expect(drawableAtCentre({ positionEci: [7000, 0, 0], sunIsComputable: false })).toEqual([
+      "nadir",
+    ]);
+  });
+
+  it("keeps the Sun at a centre on the coordinate origin, and drops only nadir", () => {
+    // The scene places a centre it can put at the origin, which the coordinate
+    // origin is: the spacecraft is drawn there and lit from the Sun's direction,
+    // and it is nadir alone that has no bearing to take. Answering "nothing" here
+    // would disable a Sun toggle over a Sun that is on screen.
+    expect(drawableAtCentre({ positionEci: [0, 0, 0], sunIsComputable: true })).toEqual(["sun"]);
+  });
+
+  it("offers nothing at a centre the scene cannot place", () => {
+    // `resolveSceneFrame` refuses a non-finite position, and the scene then draws
+    // no arrow at all — not even the Sun, which needs no position of its own. That
+    // is why the placement question is asked before the resolver.
+    for (const positionEci of [
+      null,
+      undefined,
+      [Number.NaN, 0, 0],
+      [Number.POSITIVE_INFINITY, 0, 0],
+      // Finite as doubles, and past what the renderer's float32 offset can hold —
+      // the scene cannot place the spacecraft, so nothing is drawn beside it.
+      [1e200, 1e200, 1e200],
+      [1e100, 0, 0],
+      // Each component inside float32 while the length is not.
+      [3e38, 3e38, 0],
+    ] as (Vec3 | null | undefined)[]) {
+      expect(drawableAtCentre({ positionEci, sunIsComputable: true })).toEqual([]);
+    }
+  });
+
+  it("agrees with the frame resolver about which centres are placeable", () => {
+    // The two must not drift: a UI stricter than the frame disables controls over a
+    // scene that draws, and a laxer one offers arrows the scene drops.
+    for (const position of [
+      [7000, 0, 0],
+      [0, 0, 0],
+      [1e200, 1e200, 1e200],
+      [3e38, 3e38, 0],
+      [Number.NaN, 0, 0],
+    ] as Vec3[]) {
+      const placeable = centrePositionIsUsable(position);
+      const kinds = drawableAtCentre({ positionEci: position, sunIsComputable: true });
+      expect(kinds.length > 0).toBe(placeable);
+    }
   });
 });

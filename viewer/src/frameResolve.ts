@@ -48,6 +48,38 @@ export interface SceneFrameContext {
   cameraTracking: boolean;
 }
 
+/**
+ * Whether a spacecraft's position can centre the scene on it.
+ *
+ * Two ways to fail, and either would blank the canvas if the position were
+ * applied. A non-finite component puts the origin offset and the camera's up
+ * vector at NaN. And the offset reaches the renderer as float32, where anything
+ * past 3.4e38 is `Infinity`: `[1e100, 0, 0]` is a perfectly good double and no
+ * place to put a spacecraft. What the matrix carries is the distance rather than
+ * the components, so that is what is measured — `[3e38, 3e38, 0]` has both
+ * components inside float32 and a length of 4.24e38 that is not, and a
+ * per-component check passes it. The same test guards the camera in
+ * `usablePosition`.
+ *
+ * Answering false is how the blanking is avoided rather than a report of it:
+ * `resolveSceneFrame` then keeps the entity as the centre with no origin, which
+ * is how it holds a state that has not arrived, and the camera stays where it is
+ * until a usable sample lands.
+ *
+ * Zero is usable, which is where this parts company with the camera's version: a
+ * spacecraft at the body's centre is drawn at the origin like any other centre,
+ * and only the directions needing a *bearing* from it drop out. The UI asks this
+ * so a control cannot be disabled over a scene that draws.
+ */
+export function centrePositionIsUsable(
+  position: readonly number[] | null | undefined,
+): position is readonly number[] {
+  if (position == null || position.length !== 3) return false;
+  const [x, y, z] = position;
+  if (!(Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z))) return false;
+  return Number.isFinite(Math.fround(Math.hypot(x, y, z)));
+}
+
 export function resolveSceneFrame(
   frame: ReferenceFrame,
   getEntity: FrameEntityLookup,
@@ -66,11 +98,9 @@ export function resolveSceneFrame(
 
   const id = frame.center.id;
   const state = getEntity(id);
-  // A non-finite position is no position: it cannot centre the scene, and passing
-  // it on would put the origin offset and the camera's up vector at NaN, which
-  // blanks the canvas. Treated like a state that has not arrived — the entity is
-  // still the centre, so the camera stays put until a usable sample lands.
-  if (state == null || !state.position.every(Number.isFinite)) {
+  // Treated like a state that has not arrived — the entity is still the centre,
+  // so the camera stays put until a usable sample lands.
+  if (state == null || !centrePositionIsUsable(state.position)) {
     return { ...inert, centeredSatId: id };
   }
 
