@@ -114,3 +114,40 @@ test("a satellite whose time is not a number still leaves a drawable scene", asy
     expect(arrow.distance, `${arrow.kind} arrow should have a length`).toBeGreaterThan(0);
   }
 });
+
+test("a satellite with no usable time stays in the scene's frame", async ({ page }) => {
+  // A body-fixed view rotates everything by the Earth rotation angle at the
+  // scene's time. A satellite whose own `time` is `NaN` has to be rotated the
+  // same way — dropping the rotation for it would leave that one marker in the
+  // inertial frame while the body, the trails and every other satellite are
+  // body-fixed, which is a picture of two conventions at once.
+  const attitude = "0.7071067811865476,0,0,0.7071067811865476";
+  const worldQuat = async () => {
+    const q = await page.evaluate(
+      (id) => window.__debug_get_sat_world_quat?.(id) ?? null,
+      "fixture-sat-0",
+    );
+    if (q == null) throw new Error("no rendered attitude");
+    return q;
+  };
+
+  await open(page, `sats=nan:${SAT_A}&frame=bodyFixed&epoch=${EPOCH}&att=${attitude}&arrows=none`);
+  await expect.poll(async () => (await worldQuat()) != null, { timeout: 15000 }).toBe(true);
+  const withoutTime = await worldQuat();
+
+  // The scene's own time is what it falls back to, and with this one satellite
+  // carrying no usable time that is 0 — so a satellite explicitly at 0 has to
+  // come out identical.
+  await open(page, `sats=0:${SAT_A}&frame=bodyFixed&epoch=${EPOCH}&att=${attitude}&arrows=none`);
+  const atZero = await worldQuat();
+  for (const i of [0, 1, 2, 3]) {
+    expect(withoutTime[i], `quaternion component ${i}`).toBeCloseTo(atZero[i], 6);
+  }
+
+  // And the inertial frame gives a different quaternion, so the comparison above
+  // is not satisfied by any rotation at all.
+  await open(page, `sats=0:${SAT_A}&frame=inertial&epoch=${EPOCH}&att=${attitude}&arrows=none`);
+  const inertial = await worldQuat();
+  const same = [0, 1, 2, 3].every((i) => Math.abs(inertial[i] - atZero[i]) < 1e-6);
+  expect(same, "the body-fixed frame should not equal the inertial one").toBe(false);
+});

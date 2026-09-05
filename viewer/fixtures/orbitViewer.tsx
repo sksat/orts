@@ -18,10 +18,12 @@
  * | frame   | `inertial` (default) / `localOrbital` / `bodyFixed`             |
  * | epoch   | epoch JD (UTC); omitted means no epoch                         |
  * | arrows  | `sun` / `nadir` / `sun,nadir` (default) / `none`               |
+ * | att     | attitude `w,x,y,z` given to every satellite; makes the display   |
+ * |         | frame readable through the rendered world quaternion            |
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import type { SatelliteState, Vec3, ViewerReferenceFrame } from "../src/lib/index.js";
+import type { Quat, SatelliteState, Vec3, ViewerReferenceFrame } from "../src/lib/index.js";
 import { isArikaReady, OrbitViewer } from "../src/lib/index.js";
 
 const params = new URLSearchParams(window.location.search);
@@ -44,6 +46,12 @@ function vec3(text: string): Vec3 {
  * `nan` is spelled out rather than written as a literal, because a URL carrying
  * `NaN` through `Number()` is exactly the shape a failed parse upstream has.
  */
+const attitudeParam = params.get("att")?.split(",").map(Number);
+const attitude: Quat | undefined =
+  attitudeParam?.length === 4
+    ? [attitudeParam[0], attitudeParam[1], attitudeParam[2], attitudeParam[3]]
+    : undefined;
+
 const satellites: SatelliteState[] = (params.get("sats") ?? "0:7000,0,0:0,7.546,0")
   .split(";")
   .map((group, i) => {
@@ -52,6 +60,7 @@ const satellites: SatelliteState[] = (params.get("sats") ?? "0:7000,0,0:0,7.546,
       id: `fixture-sat-${i}`,
       position: vec3(position ?? "7000,0,0"),
       velocity: velocity == null ? undefined : vec3(velocity),
+      attitude,
       time: time === "nan" ? Number.NaN : Number(time ?? 0),
     };
   });

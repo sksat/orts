@@ -252,6 +252,7 @@ function SecondaryBody({
   sunDirection,
   referenceFrame = DEFAULT_FRAME,
   epochJd,
+  sceneTime,
   originPosition = null,
   lvlhAxes = null,
   textureRevision,
@@ -264,6 +265,8 @@ function SecondaryBody({
   sunDirection?: THREE.Vector3;
   referenceFrame?: ReferenceFrame;
   epochJd?: number | null;
+  /** The scene's elapsed time, used when this body's sample carries none. */
+  sceneTime?: number;
   originPosition?: [number, number, number] | null;
   lvlhAxes?: LvlhAxes | null;
   textureRevision?: number | string;
@@ -273,11 +276,16 @@ function SecondaryBody({
   const bodyRadiusKm = getBodyRadius(bodyId, bodyDefinitions);
   const radius = bodyRadiusKm != null ? bodyRadiusKm / scaleRadius : 0.01;
 
+  // This body's own sample time when it has one, else the scene's — the same rule
+  // the satellites follow, so one bad sample cannot leave this body in a basis of
+  // its own.
+  const sampleTime = finiteOrNull(position.t) ?? finiteOrNull(sceneTime) ?? 0;
+
   // Position and orientation share one display frame (see displayFrame.ts), so
   // the mesh can never be placed in one basis and oriented in another.
   const era =
     isLegacyEcef(referenceFrame) && epochJd != null
-      ? earth_rotation_angle(epochJd, position.t)
+      ? earth_rotation_angle(epochJd, sampleTime)
       : null;
   const frame = resolveDisplayFrame(referenceFrame, { era, originPosition, lvlhAxes });
   const scenePos = displayPosition(frame, position.x, position.y, position.z, scaleRadius);
@@ -285,18 +293,16 @@ function SecondaryBody({
   // Body-fixed → inertial orientation via the IAU rotation model (arika WASM),
   // including the Three.js +Y-pole → IAU +Z-pole alignment.
   const bodyToInertial = useMemo(() => {
-    const sampleTime = finiteOrNull(position.t);
-    // A `NaN` sample time would come back as a quaternion of NaNs, and the group
-    // carrying it renders nothing at all. Without a time this body is drawn
-    // unrotated, which is what a missing epoch already gives.
-    if (epochJd == null || sampleTime == null) return undefined;
+    // The same time the position used. A `NaN` would come back as a quaternion of
+    // NaNs, and the group carrying it renders nothing at all.
+    if (epochJd == null) return undefined;
     const q = body_orientation(bodyId, epochJd, sampleTime);
     if (!q) return undefined;
     // IAU body-fixed → ECI: q = [w, x, y, z]; THREE uses (x, y, z, w)
     const iauQuat = new THREE.Quaternion(q[1], q[2], q[3], q[0]);
     const poleAlign = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0));
     return iauQuat.multiply(poleAlign);
-  }, [bodyId, epochJd, position.t]);
+  }, [bodyId, epochJd, sampleTime]);
 
   const orientation = bodyToInertial ? displayRotation(frame).multiply(bodyToInertial) : undefined;
 
@@ -605,11 +611,9 @@ export function OrbitSceneContents({
             // Render as CelestialBody at origin with physical radius + IAU orientation
             const bodyRadiusKm = getBodyRadius(centeredBodyId, bodyDefinitions);
             const bodyRadius = bodyRadiusKm != null ? bodyRadiusKm / centralBodyRadius : 0.01;
-            const centredTime = finiteOrNull(pos.t);
+            const centredTime = finiteOrNull(pos.t) ?? simTime;
             const q =
-              epochJd != null && centredTime != null
-                ? body_orientation(centeredBodyId, epochJd, centredTime)
-                : undefined;
+              epochJd != null ? body_orientation(centeredBodyId, epochJd, centredTime) : undefined;
             const iauQuat = q
               ? new THREE.Quaternion(q[1], q[2], q[3], q[0]).multiply(
                   new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0)),
@@ -670,6 +674,7 @@ export function OrbitSceneContents({
                 color={color}
                 referenceFrame={referenceFrame}
                 epochJd={epochJd ?? undefined}
+                sceneTime={simTime}
                 satId={centeredSatId}
                 satName={satName}
                 originPosition={originPosition}
@@ -751,6 +756,7 @@ export function OrbitSceneContents({
                   sunDirection={sunDirection}
                   referenceFrame={referenceFrame}
                   epochJd={epochJd}
+                  sceneTime={simTime}
                   originPosition={lvlhActive ? originPosition : null}
                   lvlhAxes={lvlhActive ? lvlhAxes : null}
                   textureRevision={textureRevision}
@@ -765,6 +771,7 @@ export function OrbitSceneContents({
                   color={color}
                   referenceFrame={referenceFrame}
                   epochJd={epochJd ?? undefined}
+                  sceneTime={simTime}
                   satId={satId}
                   satName={satelliteNames?.get(satId)}
                   originPosition={lvlhActive ? originPosition : null}

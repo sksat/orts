@@ -23,6 +23,16 @@ interface SatelliteProps {
   referenceFrame?: ReferenceFrame;
   /** Julian Date of the simulation epoch (needed for ECEF transform). */
   epochJd?: number;
+  /**
+   * The scene's own elapsed time, used when this satellite's sample carries none.
+   *
+   * `SatelliteState.time` is per satellite and documented to default to the
+   * scene's, so a sample time that is not a number is treated as absent rather
+   * than as a reason to drop the rotation: without it this marker would sit in
+   * the inertial frame while the body, the trails and every other satellite use
+   * body-fixed axes.
+   */
+  sceneTime?: number;
   /** Satellite identifier for model lookup. */
   satId?: string;
   /** Satellite display name for model lookup fallback. */
@@ -54,6 +64,7 @@ export function Satellite({
   color,
   referenceFrame = DEFAULT_REF_FRAME,
   epochJd,
+  sceneTime,
   satId,
   satName,
   originPosition = null,
@@ -63,14 +74,13 @@ export function Satellite({
   // One display frame drives both the position and the attitude, so they can
   // never end up in different bases (the LVLH axis order and the ECEF rotation
   // used to be derived independently, and disagreed).
-  // This satellite's own sample time, which is optional per satellite and can
-  // arrive as `NaN` from a source. A non-finite time is no time: the angle
-  // computed from it is `NaN`, and while `resolveDisplayOrientation` refuses that
-  // and falls back to inertial, the fallback would be silent and this satellite
-  // would sit in a different frame from the rest of the scene.
-  const sampleTime = finiteOrNull(position.t);
+  // This satellite's own sample time when it has one, else the scene's. A `NaN`
+  // would make the angle `NaN`, which `resolveDisplayOrientation` refuses — and
+  // the frame it fell back to would be inertial while the rest of the scene is
+  // body-fixed, so the marker would be drawn in a basis of its own.
+  const sampleTime = finiteOrNull(position.t) ?? finiteOrNull(sceneTime) ?? 0;
   const era =
-    isLegacyEcef(referenceFrame) && epochJd != null && sampleTime != null
+    isLegacyEcef(referenceFrame) && epochJd != null
       ? earth_rotation_angle(epochJd, sampleTime)
       : null;
   const frame = resolveDisplayFrame(referenceFrame, { era, originPosition, lvlhAxes });
