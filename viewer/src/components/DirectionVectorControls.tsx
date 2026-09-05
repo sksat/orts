@@ -6,8 +6,8 @@ import {
 } from "../directionVectors.js";
 import controlStyles from "../styles/controls.module.css";
 
-/** Order the arrows appear in, in the controls and in the legend. */
-export const DIRECTION_VECTOR_KINDS: readonly DirectionVectorKind[] = ["sun", "nadir"];
+/** Order the toggles appear in. */
+const DIRECTION_VECTOR_KINDS: readonly DirectionVectorKind[] = ["sun", "nadir"];
 
 interface DirectionVectorControlsProps {
   value: DirectionVectorOptions;
