@@ -188,6 +188,29 @@ pub trait Model<S: HasFrame>: Send + Sync {
     /// `epoch` is the absolute time corresponding to integration time `t`.
     /// It is `None` when no initial epoch was provided.
     fn eval(&self, t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<S::Frame>;
+
+    /// The next time after `t` at which this model's loads change
+    /// discontinuously, if the model knows one in advance.
+    ///
+    /// A model that switches on a schedule — a thruster with burn windows — can
+    /// report the next edge so a propagation loop can end its step there. A
+    /// solver otherwise samples the loads at stage times of its own choosing,
+    /// and a window that opens and closes between two stages contributes
+    /// nothing at all.
+    ///
+    /// The contract matches
+    /// [`DynamicalSystem::next_discontinuity_after`](utsuroi::DynamicalSystem::next_discontinuity_after):
+    /// a finite time strictly greater than `t`, never `t` itself, and only for
+    /// switches whose time is known without integrating. A load that changes
+    /// when the trajectory reaches some limit is not one of those.
+    ///
+    /// The answer is in integration time, like `t`. `epoch` is the absolute time
+    /// at `t`, as [`eval`](Self::eval) receives it, so that a model whose
+    /// schedule is written in epochs can convert its edges: the system owns
+    /// `epoch_0` and the model does not.
+    fn next_discontinuity_after(&self, _t: f64, _epoch: Option<&Epoch>) -> Option<f64> {
+        None
+    }
 }
 
 // Blanket impl so Box<dyn Model<S>> also satisfies Model<S>.
@@ -199,6 +222,10 @@ impl<S: HasFrame> Model<S> for Box<dyn Model<S>> {
 
     fn eval(&self, t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<S::Frame> {
         (**self).eval(t, state, epoch)
+    }
+
+    fn next_discontinuity_after(&self, t: f64, epoch: Option<&Epoch>) -> Option<f64> {
+        (**self).next_discontinuity_after(t, epoch)
     }
 }
 

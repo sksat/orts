@@ -85,7 +85,7 @@ impl<F: Eci> ConstantThrust<F> {
     ///   in one inertial frame cannot be reused in another (`SimpleEci` and
     ///   `Gcrs` differ by ~484 arcsec at 2024).
     pub fn new(name: &'static str, start: Epoch, end: Epoch, total_dv_kms: Vec3<F>) -> Self {
-        let duration_s = (end.jd() - start.jd()) * 86_400.0;
+        let duration_s = end.duration_since(&start).as_si_seconds();
         assert!(
             duration_s > 0.0,
             "ConstantThrust {name:?}: end epoch must strictly follow start"
@@ -107,7 +107,7 @@ impl<F: Eci> ConstantThrust<F> {
 
     /// Returns the burn duration in seconds.
     pub fn duration_seconds(&self) -> f64 {
-        (self.end.jd() - self.start.jd()) * 86_400.0
+        self.end.duration_since(&self.start).as_si_seconds()
     }
 
     /// Returns the total Δv that this thrust model integrates to over
@@ -117,12 +117,41 @@ impl<F: Eci> ConstantThrust<F> {
     }
 
     /// Returns `true` if `epoch` falls within `[start, end]` (inclusive).
+    ///
+    /// Measured on the canonical TAI timeline, as [`duration_seconds`] and the
+    /// edges reported by [`next_edge_after`] are. UTC Julian Dates do not
+    /// advance uniformly across a leap second, so comparing them would put the
+    /// switch a second away from the boundary this model reports, and would
+    /// spread the Δv over a duration one second short.
+    ///
+    /// [`duration_seconds`]: Self::duration_seconds
+    /// [`next_edge_after`]: Self::next_edge_after
     fn is_active(&self, epoch: &Epoch) -> bool {
-        epoch.jd() >= self.start.jd() && epoch.jd() <= self.end.jd()
+        epoch.duration_since(&self.start).as_si_seconds() >= 0.0
+            && self.end.duration_since(epoch).as_si_seconds() >= 0.0
     }
 }
 
 impl<F: Eci> ConstantThrust<F> {
+    /// Integration time of the next edge of the burn after `t`.
+    ///
+    /// The burn is bounded by two epochs while a propagation loop works in
+    /// integration time, so this converts through `epoch_at_t`: the offset from
+    /// there to an edge is the same in both. Without an epoch there is no
+    /// mapping and no edge to report.
+    ///
+    /// `start` and `end` are where the burn begins and ends. Which one-sided
+    /// value a stage landing exactly on an edge should take is the propagation
+    /// loop's to decide (#446); this reports the times, not that rule.
+    fn next_edge_after(&self, t: f64, epoch_at_t: Option<&Epoch>) -> Option<f64> {
+        let now = epoch_at_t?;
+        [self.start, self.end]
+            .iter()
+            .map(|edge| t + edge.duration_since(now).as_si_seconds())
+            .filter(|edge_t| *edge_t > t && edge_t.is_finite())
+            .min_by(f64::total_cmp)
+    }
+
     /// Shared body of [`Model::eval`] for the frames this model supports.
     fn loads(&self, epoch: Option<&Epoch>) -> ExternalLoads<F> {
         // The stored acceleration is already a `Vec3<F>` and `F` is the state's
@@ -164,6 +193,10 @@ impl<S: HasFrame<Frame = frame::SimpleEci> + HasOrbit> Model<S>
     fn eval(&self, _t: f64, _state: &S, epoch: Option<&Epoch>) -> ExternalLoads<S::Frame> {
         self.loads(epoch)
     }
+
+    fn next_discontinuity_after(&self, t: f64, epoch: Option<&Epoch>) -> Option<f64> {
+        self.next_edge_after(t, epoch)
+    }
 }
 
 impl<S: HasFrame<Frame = frame::Gcrs> + HasOrbit> Model<S> for ConstantThrust<frame::Gcrs> {
@@ -173,6 +206,10 @@ impl<S: HasFrame<Frame = frame::Gcrs> + HasOrbit> Model<S> for ConstantThrust<fr
 
     fn eval(&self, _t: f64, _state: &S, epoch: Option<&Epoch>) -> ExternalLoads<S::Frame> {
         self.loads(epoch)
+    }
+
+    fn next_discontinuity_after(&self, t: f64, epoch: Option<&Epoch>) -> Option<f64> {
+        self.next_edge_after(t, epoch)
     }
 }
 

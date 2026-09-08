@@ -123,6 +123,24 @@ impl DecoupledAttitudeSystem {
 impl DynamicalSystem for DecoupledAttitudeSystem {
     type State = AttitudeState;
 
+    /// The earliest boundary any model reports.
+    ///
+    /// A model that switches on a schedule reports when; a system holding one
+    /// has to pass that on, or a propagation loop stepping the system would
+    /// never see it.
+    ///
+    /// `orbit_fn` and `mass_fn` are the caller's own functions, so their
+    /// breakpoints are not reported here — a caller who passes a piecewise one
+    /// holds its schedule already, and hands it to the propagation loop the same
+    /// way it hands over the span.
+    fn next_discontinuity_after(&self, t: f64) -> Option<f64> {
+        let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
+        self.models
+            .iter()
+            .filter_map(|m| m.next_discontinuity_after(t, epoch.as_ref()))
+            .min_by(f64::total_cmp)
+    }
+
     fn derivatives(&self, t: f64, state: &AttitudeState) -> AttitudeState {
         let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
 

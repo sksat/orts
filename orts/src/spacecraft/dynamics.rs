@@ -232,6 +232,27 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
 impl<G: GravityField, F: Eci + 'static> DynamicalSystem for SpacecraftDynamics<G, F> {
     type State = AugmentedState<SpacecraftState<F>>;
 
+    /// The earliest boundary any model or effector reports.
+    ///
+    /// Models that report the same time collapse to one, which is what a
+    /// propagation loop wants: two thrusters whose windows share an edge, or a
+    /// window whose end abuts the next one's start, are one place to end a step.
+    fn next_discontinuity_after(&self, t: f64) -> Option<f64> {
+        let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
+        let from_models = self
+            .models
+            .iter()
+            .filter_map(|m| m.next_discontinuity_after(t, epoch.as_ref()));
+        let from_effectors = self
+            .effectors
+            .iter()
+            .filter_map(|e| e.next_discontinuity_after(t, epoch.as_ref()));
+        from_models
+            .chain(from_effectors)
+            .filter(|next| *next > t && next.is_finite())
+            .min_by(f64::total_cmp)
+    }
+
     fn derivatives(
         &self,
         t: f64,

@@ -36,6 +36,23 @@ pub trait StateEffector<S: HasFrame>: Send + Sync + std::any::Any {
     /// Human-readable name for this effector (e.g., "reaction_wheels").
     fn name(&self) -> &str;
 
+    /// The next time after `t` at which this effector's contribution to the
+    /// right-hand side changes discontinuously, if it knows one in advance.
+    ///
+    /// An effector is part of the right-hand side alongside the models, and
+    /// [`derivatives`](Self::derivatives) receives `t` and `epoch`, so one
+    /// driven by a schedule can switch. The contract is the same as
+    /// [`Model::next_discontinuity_after`](crate::model::Model::next_discontinuity_after):
+    /// integration time, strictly after `t`, finite, and only for switches whose
+    /// time is known without integrating.
+    ///
+    /// A reaction wheel reaching its momentum limit is not one of those — when
+    /// that happens follows from the trajectory. Issue #446 covers those as
+    /// state events.
+    fn next_discontinuity_after(&self, _t: f64, _epoch: Option<&Epoch>) -> Option<f64> {
+        None
+    }
+
     /// Number of scalar state variables this effector contributes.
     fn state_dim(&self) -> usize;
 

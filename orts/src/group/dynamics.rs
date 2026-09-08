@@ -38,6 +38,20 @@ impl<D: DynamicalSystem> DynamicalSystem for IndependentGroupDynamics<D> {
                 .collect(),
         }
     }
+
+    /// The earliest boundary any satellite reports.
+    ///
+    /// The group's right-hand side switches wherever any of its satellites'
+    /// does, so a propagation loop stepping this system has to end its step at
+    /// the first of them. Without this, a satellite carrying a scheduled burn
+    /// would report its windows and the group would answer `None` over the top
+    /// of them.
+    fn next_discontinuity_after(&self, t: f64) -> Option<f64> {
+        self.dynamics
+            .iter()
+            .filter_map(|d| d.next_discontinuity_after(t))
+            .min_by(f64::total_cmp)
+    }
 }
 
 #[cfg(test)]
