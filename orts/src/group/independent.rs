@@ -3,6 +3,7 @@ use std::ops::ControlFlow;
 use utsuroi::{
     AdvanceOutcome, AdvanceOutcome853, Dop853, DormandPrince, DynamicalSystem, IntegrationError,
     Integrator, OdeState, Rk4, SegmentContext, SegmentSystem, Tolerances, validate_step_size,
+    validate_time_span,
 };
 
 use super::HasPosition;
@@ -306,6 +307,13 @@ where
             if entry.t >= effective_target {
                 continue;
             }
+            // Past that guard the target is ahead of this satellite, or it is
+            // not a number. The segment loop below tests `entry.t <
+            // effective_target` before it builds a stepper, so a non-finite
+            // target would take no step and report success from where the
+            // satellite started, without any solver seeing the target to
+            // reject it.
+            validate_time_span(entry.t, effective_target)?;
 
             // One segment at a time, so that no switch of the right-hand side
             // falls strictly inside a step and the stage on a segment's end
@@ -330,6 +338,12 @@ where
                             *dt,
                             tolerances.clone(),
                         );
+                        // The state a later segment starts from is the one the
+                        // previous segment ended on, and the loop checked it
+                        // after that segment's last accepted step.
+                        if !first_segment {
+                            stepper = stepper.from_checked_state();
+                        }
 
                         let result = stepper.advance_to(
                             segment_end,
@@ -378,6 +392,12 @@ where
                             *dt,
                             tolerances.clone(),
                         );
+                        // The state a later segment starts from is the one the
+                        // previous segment ended on, and the loop checked it
+                        // after that segment's last accepted step.
+                        if !first_segment {
+                            stepper = stepper.from_checked_state();
+                        }
 
                         let result = stepper.advance_to(
                             segment_end,

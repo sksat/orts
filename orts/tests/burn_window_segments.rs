@@ -341,7 +341,6 @@ mod scheduled_effector {
     use arika::epoch::Epoch;
     use orts::effector::StateEffector;
     use orts::model::{EvalSegment, ExternalLoads};
-    use orts::spacecraft::SpacecraftDynamics;
 
     struct WindowedCounter {
         start: f64,
@@ -525,6 +524,106 @@ mod scheduled_pair_force {
                 "{name} moved the satellite {displaced:e} km against the {ANALYTIC:e} km \
                  the push earns"
             );
+        }
+    }
+}
+
+/// A target no loop can walk to is rejected, whichever integrator runs.
+///
+/// The segment loop tests `t < target` before it builds a stepper, so a
+/// non-finite target takes no step and the solver never sees it. Without a
+/// check of its own, the loop would report success from where it started.
+#[test]
+fn a_non_finite_target_is_rejected() {
+    use orts::group::coupled::CoupledGroup;
+    use orts::orbital::OrbitalSystem;
+    use utsuroi::IntegrationError;
+
+    let r = arika::earth::R + 400.0;
+    let v = (arika::earth::MU / r).sqrt();
+    let state = || OrbitalState::new(Vector3::new(r, 0.0, 0.0), Vector3::new(0.0, v, 0.0));
+    let system = || OrbitalSystem::new(arika::earth::MU, Box::new(PointMass));
+
+    for (name, integrator) in integrators() {
+        for target in [f64::NAN, f64::INFINITY] {
+            let mut independent =
+                IndependentGroup::new(integrator.clone()).add_satellite("sat", state(), system());
+            assert!(
+                matches!(
+                    independent.propagate_to(target),
+                    Err(IntegrationError::InvalidTimeSpan { .. })
+                ),
+                "{name}: an independent group accepted the target {target}"
+            );
+
+            let mut coupled =
+                CoupledGroup::new(integrator.clone()).add_satellite("sat", state(), system());
+            assert!(
+                matches!(
+                    coupled.propagate_to(target),
+                    Err(IntegrationError::InvalidTimeSpan { .. })
+                ),
+                "{name}: a coupled group accepted the target {target}"
+            );
+        }
+    }
+}
+
+/// The event predicate is asked about each state once, however many segments
+/// the span is split into.
+///
+/// A stepper asks about the state it starts from, since a level-triggered
+/// event can already hold there. The state a later segment starts from is the
+/// one the previous segment ended on, which the loop has already asked about
+/// after that segment's last accepted step, so a stepper built for a
+/// continuation segment must not ask again — a predicate that counts its own
+/// calls would otherwise answer differently for the same trajectory.
+mod event_checks {
+    use super::*;
+    use std::ops::ControlFlow;
+    use std::sync::{Arc, Mutex};
+
+    use orts::spacecraft::SpacecraftDynamics;
+
+    fn times_checked(windows: Vec<BurnWindow>, integrator: IntegratorConfig) -> Vec<f64> {
+        let seen: Arc<Mutex<Vec<f64>>> = Arc::new(Mutex::new(Vec::new()));
+        let recorder = {
+            let seen = Arc::clone(&seen);
+            move |t: f64, _: &_| -> ControlFlow<String> {
+                seen.lock().expect("the recorder is never poisoned").push(t);
+                ControlFlow::Continue(())
+            }
+        };
+        let mut group = IndependentGroup::new(integrator)
+            .add_satellite("sat", initial_state(), dynamics_with(windows))
+            .with_event_checker(recorder);
+        group
+            .propagate_to(1.0)
+            .expect("the burn and the orbit are finite everywhere");
+        seen.lock().expect("the recorder is never poisoned").clone()
+    }
+
+    #[test]
+    fn a_segment_boundary_is_not_checked_twice() {
+        for (name, integrator) in integrators() {
+            let split = times_checked(vec![BurnWindow::full(0.15, 0.25)], integrator.clone());
+            let duplicates: Vec<f64> = split
+                .windows(2)
+                .filter(|pair| pair[0] == pair[1])
+                .map(|pair| pair[0])
+                .collect();
+            assert!(
+                duplicates.is_empty(),
+                "{name} asked about {duplicates:?} twice in a row, out of {split:?}"
+            );
+            // The boundaries themselves are among the times asked about, so the
+            // check above is about states the loop reached, not an empty list.
+            for edge in [0.15, 0.25] {
+                assert!(
+                    split.iter().any(|t| (t - edge).abs() < 1e-12),
+                    "{name} never asked about the boundary at {edge}, only {split:?}"
+                );
+            }
         }
     }
 }

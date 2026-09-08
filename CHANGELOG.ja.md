@@ -659,6 +659,11 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `utsuroi` (Rust, crates.io)
 
 #### Added
+- `AdaptiveStepper::from_checked_state` と `AdaptiveStepper853::from_checked_state` を追加し、
+  `validate_time_span` を公開した。`advance_to` は開始状態について event 予測子に問い合わせる
+  (level-triggered な event はそこで既に成立しうる)が、前の segment が終えた場所から続く
+  segment では不要で、同じ `(t, state)` を 2 回問い合わせることになる。`validate_time_span` は、
+  span を自分で区切るループが「solver が見ることのない target」を拒否するために要る。([#453](https://github.com/sksat/orts/pull/453))
 - `SegmentContext` / `SegmentSystem` / `DynamicalSystem::derivatives_in_segment`
   (既定は `derivatives` へ転送) を追加。既知の不連続時刻で区切られた区間について右辺を
   評価する。切り替わりでステップを終えるだけでは足りない: solver の最後のステージがステップの

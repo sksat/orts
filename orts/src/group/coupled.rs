@@ -5,7 +5,7 @@ use nalgebra::Vector3;
 use utsuroi::{
     AdvanceOutcome, AdvanceOutcome853, Dop853, DormandPrince, DynamicalSystem, IntegrationError,
     Integrator, OdeState, Rk4, SegmentContext, SegmentSystem, Tolerances,
-    derivatives_maybe_in_segment,
+    derivatives_maybe_in_segment, validate_time_span,
 };
 
 use super::prop_group::{GroupSnapshot, PropGroupOutcome, SatId, SatelliteTermination};
@@ -416,6 +416,10 @@ where
         // fixed-step RK4 branch below would otherwise spin on `h = 0` (or walk
         // backwards for `dt < 0`) forever.
         self.integrator.validate()?;
+        // And reject a target no loop can walk to: the segment loop below tests
+        // `self.t < t_target` before building a stepper, so a non-finite target
+        // would take no step and report success from where it started.
+        validate_time_span(self.t, t_target)?;
 
         // One segment at a time, so that no switch of the right-hand side
         // falls strictly inside a step and the stage on a segment's end reads
@@ -440,6 +444,12 @@ where
                         *dt,
                         tolerances.clone(),
                     );
+                    // The state a later segment starts from is the one the
+                    // previous segment ended on, already checked after its last
+                    // accepted step.
+                    if !first_segment {
+                        stepper = stepper.from_checked_state();
+                    }
 
                     // Build group-level event checker that iterates over all satellites
                     let ids = self.ids.clone();
@@ -519,6 +529,12 @@ where
                 IntegratorConfig::Dop853 { dt, tolerances } => {
                     let mut stepper =
                         Dop853.stepper(&bound, self.state.clone(), self.t, *dt, tolerances.clone());
+                    // The state a later segment starts from is the one the
+                    // previous segment ended on, already checked after its last
+                    // accepted step.
+                    if !first_segment {
+                        stepper = stepper.from_checked_state();
+                    }
 
                     let ids = self.ids.clone();
                     let event_checker = &self.event_checker;

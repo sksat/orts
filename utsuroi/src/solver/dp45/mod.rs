@@ -127,9 +127,31 @@ pub struct AdaptiveStepper<'a, S: DynamicalSystem> {
     /// Minimum step size below which integration fails. Can be overridden
     /// after construction to match the total integration interval.
     pub dt_min: f64,
+    /// Whether the state this stepper starts from has already been checked
+    /// for events.
+    ///
+    /// [`advance_to`](Self::advance_to) asks the predicate about the state it
+    /// starts from, because a level-triggered event can already hold there. A
+    /// propagation loop that splits its span at known boundaries hands each
+    /// segment the state the previous segment ended on, and has already asked
+    /// about it after that segment's last accepted step; asking again calls the
+    /// predicate twice for one `(t, state)`, which a predicate counting its own
+    /// calls would answer differently. Set through
+    /// [`from_checked_state`](Self::from_checked_state).
+    start_is_checked: bool,
 }
 
 impl<'a, S: DynamicalSystem> AdaptiveStepper<'a, S> {
+    /// Skip the event check on the state this stepper starts from.
+    ///
+    /// For a segment that continues where the previous one ended: the caller
+    /// has asked its predicate about that state already. Checks after accepted
+    /// steps are unaffected.
+    pub fn from_checked_state(mut self) -> Self {
+        self.start_is_checked = true;
+        self
+    }
+
     /// Advance adaptively to `t_target`.
     ///
     /// - For a target that advances, `event_check` runs first on the state the
@@ -168,7 +190,8 @@ impl<'a, S: DynamicalSystem> AdaptiveStepper<'a, S> {
         // step late with a state the caller's own predicate calls invalid.
         // Only for a target that advances: `advance_to(self.t, ..)` takes no
         // step, so it reports nothing and asks nothing.
-        if self.t < t_target
+        if !self.start_is_checked
+            && self.t < t_target
             && let ControlFlow::Break(reason) = event_check(self.t, &self.state)
         {
             return Ok(AdvanceOutcome::Event { reason });
@@ -300,6 +323,7 @@ impl DormandPrince {
             k1: None,
             tol,
             dt_min,
+            start_is_checked: false,
         }
     }
 
