@@ -772,8 +772,9 @@ section is subdivided by package.
   that is on over `[a, b)` reads off there, which costs RK4 the 1/6 its fourth
   stage weighs. Wrapping a system in `SegmentSystem` binds one segment and
   leaves every stage loop in the crate unchanged; building the wrapper per
-  segment also keeps an adaptive stepper's FSAL derivative from crossing the
-  switch. ([#453](https://github.com/sksat/orts/pull/453))
+  segment also keeps DP45 from opening the step after a switch with the `k7` it
+  cached on the other side of it; DOP853 leaves its `k1` empty after an accepted
+  step, so what a fresh stepper drops there is the adapted step size. ([#453](https://github.com/sksat/orts/pull/453))
 - `IntegrationError` now implements `core::error::Error` (by hand, no
   `thiserror`, works under `no_std`), so it participates in `?` chains and
   `Box<dyn Error>`. ([#147](https://github.com/sksat/orts/pull/147))

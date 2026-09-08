@@ -428,8 +428,9 @@ where
 
         // One segment at a time, so that no switch of the right-hand side
         // falls strictly inside a step and the stage on a segment's end reads
-        // the mode that held inside it. A fresh stepper per segment is what
-        // keeps a DP45 or DOP853 FSAL derivative from crossing the switch.
+        // the mode that held inside it. A fresh stepper per segment also keeps
+        // DP45 from opening the step after a switch with the `k7` it cached on
+        // the other side of it.
         let mut first_segment = true;
         while !self.terminated && self.t < t_target {
             let segment_end = self

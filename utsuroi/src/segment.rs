@@ -48,9 +48,11 @@ impl SegmentContext {
 /// [`derivatives_in_segment`](DynamicalSystem::derivatives_in_segment) with the
 /// bound segment, so every stage the solver evaluates — including the one at
 /// the segment's end — reads the segment's mode. Build one per segment and drop
-/// it at the end: an adaptive stepper built on it holds its FSAL derivative for
-/// the segment's lifetime only, which is what keeps a derivative from one side
-/// of a switch out of the step on the other side.
+/// it at the end: DP45 carries `k7` from an accepted step into the next step as
+/// its `k1`, so a stepper living across a switch would open the step after it
+/// with a derivative taken on the other side. DOP853's `k1` is empty after an
+/// accepted step — it caches one only to retry a rejected step — so there it is
+/// the adapted step size, not a derivative, that a fresh stepper drops.
 pub struct SegmentSystem<'a, S> {
     system: &'a S,
     segment: SegmentContext,

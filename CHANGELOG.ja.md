@@ -669,8 +669,9 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   評価する。切り替わりで step を終えるだけでは足りない: solver の最後の stage が step の
   終端に乗るので、`[a, b)` で on の項が `b` で off と読まれ、RK4 では第 4 stage の重み 1/6 が
   落ちる。`SegmentSystem` で包むと segment が 1 つ束縛され、crate 内の stage ループはどれも
-  変更せずに済む。segment ごとに包み直すことで、adaptive stepper の FSAL derivative が
-  切り替わりを跨がない。([#453](https://github.com/sksat/orts/pull/453))
+  変更せずに済む。segment ごとに包み直すと、DP45 が accept したステップの `k7` を次のステップの
+  `k1` に持ち越すぶんが切り替わりを跨がない。DOP853 は accept 後に `k1` を空にする (reject の
+  再試行のときだけ持つ) ので、そちらで落ちるのは調整済みの step size である。([#453](https://github.com/sksat/orts/pull/453))
 - `IntegrationError` が `core::error::Error` を実装 (手書き、`thiserror` 不使用、
   `no_std` でも動作)。`?` 連鎖や `Box<dyn Error>` に乗るようになった。([#147](https://github.com/sksat/orts/pull/147))
 - テスト: 8 つの積分ループすべてに contract test を追加 (`Integrator` の既定
