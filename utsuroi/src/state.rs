@@ -315,4 +315,30 @@ pub trait DynamicalSystem {
     fn next_discontinuity_after(&self, _t: f64) -> Option<f64> {
         None
     }
+
+    /// Derivatives at `t`, evaluated for the segment the solver is stepping
+    /// through.
+    ///
+    /// A solver reaches this through [`SegmentSystem`], which binds one
+    /// segment and forwards [`derivatives`](Self::derivatives) here. A term
+    /// that switches on a schedule answers for `segment.start` however late in
+    /// the segment `t` falls, which is what keeps the stage on `segment.end`
+    /// on the inside of a half-open interval that ends there.
+    ///
+    /// A term that reads the state keeps reading `state`: a segment fixes a
+    /// schedule in time, not a feedback law.
+    ///
+    /// The default ignores the segment and forwards to
+    /// [`derivatives`](Self::derivatives), which is right for every system
+    /// whose right-hand side is continuous.
+    ///
+    /// [`SegmentSystem`]: crate::SegmentSystem
+    fn derivatives_in_segment(
+        &self,
+        _segment: &crate::SegmentContext,
+        t: f64,
+        state: &Self::State,
+    ) -> Self::State {
+        self.derivatives(t, state)
+    }
 }
