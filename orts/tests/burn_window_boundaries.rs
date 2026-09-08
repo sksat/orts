@@ -434,6 +434,121 @@ fn an_epoch_scheduled_profile_reports_through_the_thruster() {
     assert_eq!(no_epoch.next_discontinuity_after(0.0), None);
 }
 
+/// A scheduled effector reports through the systems that hold it.
+///
+/// Effectors are part of the right-hand side alongside the models, and their
+/// `derivatives` receives `t` and `epoch`, so one driven by a schedule can
+/// switch. Both systems that hold effectors take the minimum over models and
+/// effectors together.
+#[test]
+fn a_scheduled_effector_reports_through_its_system() {
+    use orts::effector::StateEffector;
+
+    struct ScheduledEffector {
+        edges: Vec<f64>,
+    }
+
+    impl<S: orts::model::HasFrame> StateEffector<S> for ScheduledEffector {
+        fn name(&self) -> &str {
+            "scheduled_effector"
+        }
+
+        fn state_dim(&self) -> usize {
+            0
+        }
+
+        fn derivatives(
+            &self,
+            _t: f64,
+            _state: &S,
+            _aux: &[f64],
+            _aux_rates: &mut [f64],
+            _epoch: Option<&arika::epoch::Epoch>,
+        ) -> orts::model::ExternalLoads<S::Frame> {
+            orts::model::ExternalLoads::zeros()
+        }
+
+        fn next_discontinuity_after(
+            &self,
+            t: f64,
+            _epoch: Option<&arika::epoch::Epoch>,
+        ) -> Option<f64> {
+            self.edges
+                .iter()
+                .copied()
+                .filter(|e| *e > t)
+                .min_by(f64::total_cmp)
+        }
+    }
+
+    // A model and an effector on the same system: the minimum comes from
+    // whichever is earlier at each step.
+    let system: SpacecraftDynamics<PointMass> =
+        SpacecraftDynamics::new(1e-30, PointMass, Matrix3::identity())
+            .with_model(EdgeStub::new("model", vec![4.0]))
+            .with_effector(ScheduledEffector {
+                edges: vec![2.0, 6.0],
+            });
+    assert_eq!(edges_of(&system, 0.0), vec![2.0, 4.0, 6.0]);
+
+    use orts::attitude::AugmentedAttitudeSystem;
+    let attitude =
+        AugmentedAttitudeSystem::circular_orbit(Matrix3::identity(), 398600.4418, 7000.0, 100.0)
+            .with_effector(ScheduledEffector {
+                edges: vec![1.0, 8.0],
+            });
+    assert_eq!(edges_of(&attitude, 0.0), vec![1.0, 8.0]);
+}
+
+/// A scheduled inter-satellite force reports through the coupled group.
+///
+/// `acceleration_pair` receives `PairContext::t`, so a force can carry a
+/// schedule; the group's own doc used to claim these were continuous.
+#[test]
+fn a_scheduled_interaction_force_reports_through_the_group() {
+    use orts::group::coupled::{
+        CoupledGroupDynamics, InterSatelliteForce, InteractionPair, PairContext,
+    };
+    use orts::orbital::system::OrbitalSystem;
+    use std::sync::Arc;
+
+    struct ScheduledForce {
+        edges: Vec<f64>,
+    }
+    impl InterSatelliteForce for ScheduledForce {
+        fn name(&self) -> &str {
+            "scheduled_force"
+        }
+        fn acceleration_pair(&self, _ctx: &PairContext<'_>) -> (Vector3<f64>, Vector3<f64>) {
+            (Vector3::zeros(), Vector3::zeros())
+        }
+        fn next_discontinuity_after(&self, t: f64) -> Option<f64> {
+            self.edges
+                .iter()
+                .copied()
+                .filter(|e| *e > t)
+                .min_by(f64::total_cmp)
+        }
+    }
+
+    let orbital = || -> OrbitalSystem { OrbitalSystem::new(398600.4418, Box::new(PointMass)) };
+    let group = CoupledGroupDynamics::new(
+        vec![
+            orbital().with_model(EdgeStub::new("child", vec![5.0])),
+            orbital(),
+        ],
+        vec![InteractionPair {
+            i: 0,
+            j: 1,
+            force: Arc::new(ScheduledForce {
+                edges: vec![2.0, 9.0],
+            }),
+        }],
+    );
+    // 2.0 and 9.0 come from the force, 5.0 from the first satellite's model.
+    assert_eq!(edges_of(&group, 0.0), vec![2.0, 5.0, 9.0]);
+}
+
 /// A non-finite edge is left out rather than handed to a loop as a target.
 #[test]
 fn a_non_finite_edge_is_not_reported() {

@@ -30,6 +30,19 @@ pub struct PairContext<'a> {
 pub trait InterSatelliteForce: Send + Sync {
     fn name(&self) -> &str;
     fn acceleration_pair(&self, ctx: &PairContext<'_>) -> (Vector3<f64>, Vector3<f64>);
+
+    /// The next time after `t` at which this force changes discontinuously, if
+    /// it knows one in advance.
+    ///
+    /// [`acceleration_pair`](Self::acceleration_pair) receives `PairContext::t`,
+    /// so a force can be driven by a schedule of its own. The contract is the
+    /// same as [`Model::next_discontinuity_after`](crate::model::Model::next_discontinuity_after),
+    /// minus the epoch, which `PairContext` does not carry.
+    ///
+    /// Mutual gravitation and the other continuous forces answer `None`.
+    fn next_discontinuity_after(&self, _t: f64) -> Option<f64> {
+        None
+    }
 }
 
 /// A specific satellite-pair interaction: indices into the group + force model.
@@ -146,14 +159,24 @@ where
 {
     type State = GroupState<D::State>;
 
-    /// The earliest boundary any satellite reports.
+    /// The earliest boundary reported by anything in the right-hand side: the
+    /// satellites' own systems and the interaction forces between them.
     ///
-    /// The inter-satellite forces are continuous in time, so the group switches
-    /// exactly where its satellites do.
+    /// A force reached through [`InteractionPair`] can be driven by a schedule
+    /// of its own, so leaving it out would hide it the same way a composite
+    /// answering `None` hides its children.
     fn next_discontinuity_after(&self, t: f64) -> Option<f64> {
-        self.dynamics
+        let from_children = self
+            .dynamics
             .iter()
-            .filter_map(|d| d.next_discontinuity_after(t))
+            .filter_map(|d| d.next_discontinuity_after(t));
+        let from_interactions = self
+            .interactions
+            .iter()
+            .filter_map(|pair| pair.force.next_discontinuity_after(t));
+        from_children
+            .chain(from_interactions)
+            .filter(|next| *next > t && next.is_finite())
             .min_by(f64::total_cmp)
     }
 

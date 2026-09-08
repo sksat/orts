@@ -239,9 +239,16 @@ impl<G: GravityField, F: Eci + 'static> DynamicalSystem for SpacecraftDynamics<G
     /// window whose end abuts the next one's start, are one place to end a step.
     fn next_discontinuity_after(&self, t: f64) -> Option<f64> {
         let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
-        self.models
+        let from_models = self
+            .models
             .iter()
-            .filter_map(|m| m.next_discontinuity_after(t, epoch.as_ref()))
+            .filter_map(|m| m.next_discontinuity_after(t, epoch.as_ref()));
+        let from_effectors = self
+            .effectors
+            .iter()
+            .filter_map(|e| e.next_discontinuity_after(t, epoch.as_ref()));
+        from_models
+            .chain(from_effectors)
             .filter(|next| *next > t && next.is_finite())
             .min_by(f64::total_cmp)
     }
