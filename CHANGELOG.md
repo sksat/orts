@@ -41,9 +41,7 @@ section is subdivided by package.
   receives one. `SurfacePanel::rectangle` builds one with a boundary, deriving
   the area from the half-extents, and `SpacecraftShape::cube`'s six faces now
   carry theirs — their own forces are unchanged, but a panel added beside the
-  cube can be found behind a face. Complete cover by one panel is the whole of
-  what is found: a panel half in shadow produces its full force, as does one
-  that two others cover between them. ([#424](https://github.com/sksat/orts/pull/424))
+  cube can be found behind a face. ([#424](https://github.com/sksat/orts/pull/424))
 - `SatelliteParams` carries an optional `SpacecraftShape`, and
   `build_spacecraft_dynamics` installs `PanelSrp` and `PanelDrag` from it in
   place of the isotropic `SolarRadiationPressure` and `AtmosphericDrag`. The
@@ -104,6 +102,20 @@ section is subdivided by package.
   0.33 m, and the three shorter Harris-Priester oracles by 20-40%. ([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- `PanelSrp` and `PanelDrag` give a partly shadowed panel the share of the
+  force its lit part earns, acting at the centre of that part, instead of a
+  whole panel's force at the panel's own centre of pressure. The shadow test
+  used to answer "all lit" or "all dark" per panel, so a panel half in shadow
+  pushed as if it were whole: on a 1 m cube bus with a 2 m x 1 m solar array
+  either side, that produced a false SRP torque of 5.6x to 9.6x the true one
+  once the Sun passed 77 deg from an array's normal. Shadows are united rather
+  than taken one at a time, so a panel covered by two others between them is
+  found as well. **Aerodynamic torque changes the same way**: the two models
+  share the geometry, so a panel half in the wake now carries half the area at
+  the centre of the exposed part. Panels without an outline are unaffected.
+  Panels within 1e-12 of edge-on to the source are dropped, which is where the
+  shadow projection leaves the range of `f64` and where the force is worth
+  1e-12 of face-on. ([#444](https://github.com/sksat/orts/pull/444))
 - The WASM host's `magnetic-field-eci` answers with the central body's field
   instead of Earth's. Both backends built their host state with a fixed
   `TiltedDipole::earth()` and never saw the body, so a plugin on a Mars run got

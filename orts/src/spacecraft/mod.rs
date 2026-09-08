@@ -1,4 +1,5 @@
 mod dynamics;
+mod lit_region;
 pub mod mtq;
 mod panel_srp;
 pub mod reaction_wheel;

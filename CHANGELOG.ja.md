@@ -37,9 +37,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   で作ったパネルは従来と同じ力を出し、遮蔽もしないし遮蔽もされない。輪郭を持つ
   パネルは `SurfacePanel::rectangle` で作り、面積は半寸法から導出する。
   `SpacecraftShape::cube` の 6 面も輪郭を持つようになった (面自身の力は変わらないが、
-  cube の隣に足したパネルが面の陰にいることを判定できる)。見つかるのは 1 枚に完全に
-  覆われる場合だけで、一部だけ隠れるパネルは全面照射として力を出し、2 枚の和で
-  覆われる配置も照射扱いのままである。([#424](https://github.com/sksat/orts/pull/424))
+  cube の隣に足したパネルが面の陰にいることを判定できる)。([#424](https://github.com/sksat/orts/pull/424))
 - `SatelliteParams` が `SpacecraftShape` を optional で持ち、
   `build_spacecraft_dynamics` がそれを見て等方面の `SolarRadiationPressure` /
   `AtmosphericDrag` の代わりに `PanelSrp` / `PanelDrag` を install するように
@@ -90,6 +88,15 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   20-40% 改善する。([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- `PanelSrp` と `PanelDrag` が、一部だけ影に入るパネルに日向のぶんだけの力を、日向の重心で
+  与えるようになった。以前はパネルごとに「全部日向」か「全部影」かを答えていたので、半分影に
+  入るパネルが面全体ぶんの力を面の中心に出していた。1 m 立方の衛星本体の両側に 2 m x 1 m の
+  SAP を展開した形状では、太陽が SAP の法線から 77° を超えると真値の 5.6〜9.6 倍の偽の SRP
+  トルクが出ていた。影は和集合として扱うので、2 枚の和で覆われるパネルも見つかる。
+  **空力トルクも同じく変わる**: 2 つのモデルが同じ幾何を共有しているので、半分が wake に入る
+  パネルは露出したぶんの面積を露出部分の重心で持つ。輪郭を持たないパネルは影響を受けない。
+  光源に対して edge-on から 1e-12 以内のパネルは落とす。影の射影が f64 の範囲を出る境界で、
+  力も face-on の 1e-12 以下になる。([#444](https://github.com/sksat/orts/pull/444))
 - WASM host の `magnetic-field-eci` が中心天体の磁場を返すようになった。sync と async の
   両 backend が host state を `TiltedDipole::earth()` 固定で作り、中心天体を見ていなかった
   ので、Mars の run でも plugin には Earth の磁場が返っていた。#372 が残した唯一の経路で、
