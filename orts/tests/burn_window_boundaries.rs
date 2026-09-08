@@ -594,6 +594,26 @@ fn the_reported_edge_agrees_with_the_switch_across_a_leap_second() {
         "reported edge {reported} s against {elapsed} s of burn"
     );
     assert_eq!(system.next_discontinuity_after(reported), None);
+
+    // The load has to switch where the edge says it does. These two offsets
+    // separate the timelines in opposite directions, measured: at +1.5 s the
+    // UTC-JD predicate reads the label 00:00:01Z and calls the burn over while
+    // 0.5 s of it remain, and at +2.0 s it reads 00:00:00Z and calls it running
+    // when it has finished.
+    let acceleration_at = |offset: f64| {
+        let state = orts::OrbitalState::new(Vector3::new(1e12, 0.0, 0.0), Vector3::zeros());
+        system.derivatives(offset, &state).velocity().magnitude()
+    };
+    assert!(
+        acceleration_at(1.5) > 1e-6,
+        "1.5 s in, 0.5 s of the burn remains, got {:.3e} km/s²",
+        acceleration_at(1.5)
+    );
+    assert!(
+        acceleration_at(2.0) < 1e-12,
+        "2.0 s in, the burn has finished, got {:.3e} km/s²",
+        acceleration_at(2.0)
+    );
 }
 
 /// A non-finite edge is left out rather than handed to a loop as a target.
