@@ -11,6 +11,16 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `orts` (Rust, crates.io)
 
 #### Added
+- `Model::eval_in_segment` と `ThrustProfile::throttle_in_segment` を追加。引数の
+  `EvalSegment` は segment を integration time と開始時刻の絶対時刻の両方で運ぶ (`epoch_0` を
+  持つのは system で model ではない)。既定は `eval` / `throttle` への転送で、`ScheduledBurn` は
+  segment 開始時刻の値を返す。これで区間 `[a, b)` は `b` に乗るステージでも on のままになる。
+  model を評価する 5 つの system と group の composite 2 つが segment を配下に転送する。
+  telemetry は `eval` のままなので、`model_breakdown` は区間の終端で区間外を返す。([#453](https://github.com/sksat/orts/pull/453))
+- `StateEffector::derivatives_in_segment` と
+  `InterSatelliteForce::acceleration_pair_in_segment` を追加 (既定は stage 時刻版への転送)。
+  どちらも境界を報告できるので、segment のあいだ保持すべき schedule を持ちうる。衛星間力の
+  引数が `SegmentContext` なのは、`PairContext` が epoch を運ばないため。([#453](https://github.com/sksat/orts/pull/453))
 - 地上局コンタクトウィンドウ検出 (`visibility` module): `GroundStation`
   (WGS-84 位置 + 仰角マスク)、`ContactWindow` (補間した AOS/LOS、最大仰角、
   span クリップフラグ)、純粋な `PassTracker` ステートマシン、frame-aware な
@@ -88,6 +98,21 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   20-40% 改善する。([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- 積分ステップより短い燃焼も伝播に入るようになった。`IndependentGroup` と `CoupledGroup` は
+  現在時刻から目標時刻まで積分器を 1 回走らせていたので、隣り合う評価点の最大間隔より狭い
+  `BurnWindow` が評価点の間に落ちていた。RK4 で `dt = 1` のとき `[0.1, 0.2)` は推進剤
+  3.399e-4 kg を 1 つも消さない。tolerance を締めても直らない: 評価点が区間に入らないあいだ
+  誤差推定は厳密に 0 で、制御器はそのステップを受理する。区間がステップ全体を覆う場合も、
+  終端に乗るステージが throttle を off と読むので推進剤が 5/6 になっていた。両方のループが
+  system の報告する境界で span を区切り、segment ごとに束縛した system と新しい stepper で
+  積分する。**燃焼を含む軌道と消費推進剤が変わる**。([#453](https://github.com/sksat/orts/pull/453))
+- `ConstantThrust` が Δv を `[start, end]` でなく `[start, end)` に配り、積分中の segment に
+  ついて答えるようになった。以前は燃焼区間が両端を数えていたので、その端で span を区切ると、
+  燃焼前の segment の終端ステージと燃焼後の segment の開始ステージが両方とも推力を on と
+  読んでいた。0.1 s の燃焼を RK4 `dt = 1` で伝播した実測で、指定 Δv の 4/3 倍を適用していた。
+  終端を含めたままにすると segment では stage 単位より悪く、燃焼終了時刻から始まる segment が
+  全長にわたって噴射する。**燃焼の最後の瞬間は噴射しなくなり**、燃焼全体の Δv が指定値に
+  一致する。([#453](https://github.com/sksat/orts/pull/453))
 - `PanelSrp` と `PanelDrag` が、一部だけ影に入るパネルに日向のぶんだけの力を、日向の重心で
   与えるようになった。以前はパネルごとに「全部日向」か「全部影」かを答えていたので、半分影に
   入るパネルが面全体ぶんの力を面の中心に出していた。1 m 立方の衛星本体の両側に 2 m x 1 m の
@@ -634,6 +659,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `utsuroi` (Rust, crates.io)
 
 #### Added
+- `SegmentContext` / `SegmentSystem` / `DynamicalSystem::derivatives_in_segment`
+  (既定は `derivatives` へ転送) を追加。既知の不連続時刻で区切られた区間について右辺を
+  評価する。切り替わりでステップを終えるだけでは足りない: solver の最後のステージがステップの
+  終端に乗るので、`[a, b)` で on の項が `b` で off と読まれ、RK4 では第 4 ステージの重み 1/6 が
+  落ちる。`SegmentSystem` で包むと segment が 1 つ束縛され、crate 内のステージループはどれも
+  変更せずに済む。segment ごとに包み直すことで、adaptive stepper の FSAL derivative が
+  切り替わりを跨がない。([#453](https://github.com/sksat/orts/pull/453))
 - `IntegrationError` が `core::error::Error` を実装 (手書き、`thiserror` 不使用、
   `no_std` でも動作)。`?` 連鎖や `Box<dyn Error>` に乗るようになった。([#147](https://github.com/sksat/orts/pull/147))
 - テスト: 8 つの積分ループすべてに contract test を追加 (`Integrator` の既定
