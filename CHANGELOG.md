@@ -758,13 +758,12 @@ section is subdivided by package.
 
 #### Added
 - `AdaptiveStepper::from_checked_state` and
-  `AdaptiveStepper853::from_checked_state`, and `validate_time_span` is public.
+  `AdaptiveStepper853::from_checked_state`.
   `advance_to` asks the event predicate about the state it starts from, since a
   level-triggered event can already hold there; a stepper built for a segment
   that continues where the previous one ended does not need to, and asking
-  again calls the predicate twice for one `(t, state)`. `validate_time_span`
-  lets a loop that splits its own span reject a target no solver would ever
-  see. ([#453](https://github.com/sksat/orts/pull/453))
+  again calls the predicate twice for one `(t, state)`.
+  ([#453](https://github.com/sksat/orts/pull/453))
 - `SegmentContext`, `SegmentSystem` and `DynamicalSystem::derivatives_in_segment`
   (default forwards to `derivatives`) — evaluating the right-hand side for the
   interval between two known discontinuities. Ending a step at a switch is not

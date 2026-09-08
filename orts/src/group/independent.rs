@@ -287,20 +287,34 @@ where
         // satellite: the fixed-step RK4 branch below would otherwise spin on
         // `h = 0` (or walk backwards for `dt < 0`) forever.
         self.integrator.validate()?;
+        // The target the caller asked for, before the loop reshapes it per
+        // satellite. Each of the three steps below hides a non-finite target
+        // instead of rejecting it: `entry.t >= t_target` is true for `-inf` and
+        // skips the satellite, `f64::min` drops a NaN in favour of a finite
+        // `end_time`, and the segment loop tests `entry.t < effective_target`
+        // before building a stepper, so no solver ever sees the target. A group
+        // with no satellites has nothing to name as the start of the span, and
+        // a satellite added without a time of its own starts at zero.
+        if !t_target.is_finite() {
+            return Err(IntegrationError::InvalidTimeSpan {
+                t0: self.satellites.first().map_or(0.0, |(entry, _)| entry.t),
+                t_end: t_target,
+            });
+        }
 
         let mut terminations = Vec::new();
         let integrator = self.integrator.clone();
         let event_checker = &self.event_checker;
 
         for (entry, dynamics) in &mut self.satellites {
-            // The target the caller asked for, before any guard or clamp reads
-            // it. Each of the three below hides a non-finite target instead of
-            // rejecting it: `entry.t >= t_target` is true for `-inf` and skips
-            // the satellite, `f64::min` drops a NaN in favour of a finite
-            // `end_time`, and the segment loop tests `entry.t <
-            // effective_target` before building a stepper, so no solver ever
-            // sees the target either.
-            if !t_target.is_finite() {
+            // A satellite's own time, before the guards read it.
+            // `add_satellite_at` takes any `f64`, and every comparison below is
+            // false for a NaN: the guard would not skip it, and the segment
+            // loop's `entry.t < effective_target` would end the loop before a
+            // solver saw the span. The adaptive steppers used to reject it
+            // through `validate_time_span`, which the segment loop now reaches
+            // only after deciding to step.
+            if !entry.t.is_finite() {
                 return Err(IntegrationError::InvalidTimeSpan {
                     t0: entry.t,
                     t_end: t_target,

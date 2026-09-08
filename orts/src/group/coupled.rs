@@ -407,9 +407,12 @@ where
 
     pub fn propagate_to(&mut self, t_target: f64) -> Result<PropGroupOutcome, IntegrationError> {
         // Before the no-op guard below: `self.t >= t_target` is false for
-        // `-inf` and for a NaN, so an invalid target would otherwise be
-        // reported as a span already covered.
-        if !t_target.is_finite() {
+        // `-inf` and for a NaN, so an invalid span would otherwise be reported
+        // as one already covered. `set_t` takes any `f64`, so the current time
+        // is part of what has to be finite — the adaptive steppers used to
+        // reject it through `validate_time_span`, which the segment loop now
+        // reaches only after deciding to step.
+        if !self.t.is_finite() || !t_target.is_finite() {
             return Err(IntegrationError::InvalidTimeSpan {
                 t0: self.t,
                 t_end: t_target,

@@ -538,7 +538,12 @@ mod scheduled_pair_force {
 /// the target compare `t >= target`, which is false there, so a check placed
 /// after them would let it through. So does a satellite with an `end_time`:
 /// `f64::min` returns the finite end time for both a NaN and `+inf`, and the
-/// group would propagate to that instead of rejecting the call.
+/// group would propagate to that instead of rejecting the call. A group with no
+/// satellites has no entry to check the target against, and a satellite whose
+/// own time is not a number fails every comparison in the loop, so both are
+/// checked here too — the adaptive steppers used to reject the second through
+/// `validate_time_span`, which the segment loop reaches only after deciding to
+/// step.
 #[test]
 fn a_non_finite_target_is_rejected() {
     use orts::group::coupled::CoupledGroup;
@@ -585,7 +590,44 @@ fn a_non_finite_target_is_rejected() {
                 ),
                 "{name}: a satellite with an end time accepted the target {target}"
             );
+
+            let mut empty: IndependentGroup<OrbitalSystem> =
+                IndependentGroup::new(integrator.clone());
+            assert!(
+                matches!(
+                    empty.propagate_to(target),
+                    Err(IntegrationError::InvalidTimeSpan { .. })
+                ),
+                "{name}: a group with no satellites accepted the target {target}"
+            );
         }
+
+        // A satellite whose own time is not a number, propagated to a target
+        // that is perfectly good.
+        let mut started_at_nan = IndependentGroup::new(integrator.clone()).add_satellite_at(
+            "sat",
+            state(),
+            f64::NAN,
+            system(),
+        );
+        assert!(
+            matches!(
+                started_at_nan.propagate_to(1.0),
+                Err(IntegrationError::InvalidTimeSpan { .. })
+            ),
+            "{name}: a satellite starting at NaN was propagated"
+        );
+
+        let mut coupled_at_nan =
+            CoupledGroup::new(integrator).add_satellite("sat", state(), system());
+        coupled_at_nan.set_t(f64::NAN);
+        assert!(
+            matches!(
+                coupled_at_nan.propagate_to(1.0),
+                Err(IntegrationError::InvalidTimeSpan { .. })
+            ),
+            "{name}: a coupled group whose clock is NaN was propagated"
+        );
     }
 }
 
