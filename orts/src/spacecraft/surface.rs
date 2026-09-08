@@ -95,13 +95,19 @@ impl PanelOptics {
 /// from the outlines alone.
 ///
 /// An enum because the shapes will not stay one: a mesh read from CAD gives
-/// triangles. Three operations know the shapes — `SurfacePanel::corners_into`,
-/// which lists the corners, `SurfacePanel::in_plane_axes`, which gives the axes
-/// the corners and the plane coordinates are built from, and
-/// `SpacecraftShape::assert_outlines_are_consistent`, which checks a shape's
-/// own invariants — so a new shape means a new arm in each of those and
-/// nothing else. Each of the three destructures this enum without a fallback
-/// arm, so a new variant that misses one of them does not compile.
+/// triangles. Four places know the shapes:
+///
+/// - `SurfacePanel::corners_into` lists the corners;
+/// - `SurfacePanel::in_plane_axes` gives the axes the corners and the plane
+///   coordinates are built from;
+/// - `SpacecraftShape::assert_outlines_are_consistent` checks a shape's own
+///   invariants;
+/// - `lit_region` reads the extents, because it works in units of them.
+///
+/// Every one of them destructures this enum without a fallback arm, so a new
+/// variant that misses any of them does not compile. That is what the list is
+/// for — it says where to look, and the compiler says whether the looking was
+/// complete.
 ///
 /// `#[non_exhaustive]` so that adding a shape stays a minor change: without it
 /// a downstream `match` could be exhaustive today and stop compiling the day a
