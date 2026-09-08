@@ -260,3 +260,67 @@ fn a_coupled_group_flies_a_short_burn_like_an_independent_one() {
         );
     }
 }
+
+/// The Δv an epoch-scheduled burn applies, against the Δv it was given.
+///
+/// `ConstantThrust` spreads a Δv over `[start, end)`, so what a propagation
+/// applies is that Δv and nothing more. Comparing the two group loops cannot
+/// see this: both would be wrong together. Measured before the burn's interval
+/// became half-open, RK4 with `dt = 1` applied 4/3 of it — the stages on the
+/// two edges each leaked a sixth of a step into the segment beyond.
+///
+/// The span stops just after the burn so the orbit's own evolution stays small,
+/// and the run is compared against a coasting one. The 1e-7 tolerance covers
+/// the gravity the two runs no longer share once the burn has moved one of
+/// them: RK4 and DOP853 agree on the excess to 1e-12, so it is not truncation.
+///
+/// The burn sits at `[0.15, 0.25)` rather than `[0.1, 0.2)` so that the
+/// segment before it is longer than the burn itself. With both 0.1 s long, a
+/// stage-time reading leaks `h/6` of thrust into the segment before the burn
+/// and drops the same `h/6` from the burn's own last stage, and the two cancel
+/// exactly under RK4 — measured, that made RK4 agree with the oracle for the
+/// wrong reason.
+#[test]
+fn an_epoch_scheduled_burn_applies_the_delta_v_it_was_given() {
+    use arika::epoch::Epoch;
+    use arika::frame::Vec3;
+    use orts::orbital::OrbitalSystem;
+    use orts::perturbations::ConstantThrust;
+
+    let epoch_0 = Epoch::j2000();
+    let asked = 1e-6;
+    let system = || {
+        OrbitalSystem::new(arika::earth::MU, Box::new(PointMass))
+            .with_model(ConstantThrust::new(
+                "burn",
+                epoch_0.add_si_seconds(0.15),
+                epoch_0.add_si_seconds(0.25),
+                Vec3::new(asked, 0.0, 0.0),
+            ))
+            .with_epoch(epoch_0)
+    };
+    let coast = || OrbitalSystem::new(arika::earth::MU, Box::new(PointMass)).with_epoch(epoch_0);
+    let r = arika::earth::R + 400.0;
+    let v = (arika::earth::MU / r).sqrt();
+    let state = || OrbitalState::new(Vector3::new(r, 0.0, 0.0), Vector3::new(0.0, v, 0.0));
+
+    for (name, integrator) in integrators() {
+        let mut burning =
+            IndependentGroup::new(integrator.clone()).add_satellite("sat", state(), system());
+        let mut coasting = IndependentGroup::new(integrator).add_satellite("sat", state(), coast());
+        let mut burnt_velocity = Vector3::zeros();
+        let mut coast_velocity = Vector3::zeros();
+        burning
+            .propagate_to_with(0.35, |_, _, s| burnt_velocity = *s.velocity())
+            .expect("the burn and the orbit are finite everywhere");
+        coasting
+            .propagate_to_with(0.35, |_, _, s| coast_velocity = *s.velocity())
+            .expect("the orbit is finite everywhere");
+
+        let applied = (burnt_velocity - coast_velocity).norm();
+        assert!(
+            (applied / asked - 1.0).abs() < 1e-7,
+            "{name} applied {applied:e} km/s of the {asked:e} km/s asked for"
+        );
+    }
+}
