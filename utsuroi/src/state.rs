@@ -288,4 +288,25 @@ pub trait DynamicalSystem {
     type State: OdeState;
 
     fn derivatives(&self, t: f64, state: &Self::State) -> Self::State;
+
+    /// The next time after `t` at which the right-hand side changes
+    /// discontinuously, if the system knows one in advance.
+    ///
+    /// A solver evaluates the right-hand side at stage times of its own
+    /// choosing, so a term that switches inside a step is sampled at whichever
+    /// stages happen to fall on each side of the switch — and one that switches
+    /// on and off between two stages is not sampled at all. A system that knows
+    /// when it switches can say so here, and a propagation loop can end its
+    /// step there instead.
+    ///
+    /// Implementations must return a finite time strictly greater than `t`, and
+    /// must not report `t` itself. Switches whose time depends on the state
+    /// (a limit the trajectory reaches, a threshold it crosses) are not
+    /// knowable here and are not reported.
+    ///
+    /// The default answers `None`: a system whose right-hand side is continuous
+    /// needs no boundary.
+    fn next_discontinuity_after(&self, _t: f64) -> Option<f64> {
+        None
+    }
 }

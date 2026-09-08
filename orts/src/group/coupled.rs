@@ -146,6 +146,17 @@ where
 {
     type State = GroupState<D::State>;
 
+    /// The earliest boundary any satellite reports.
+    ///
+    /// The inter-satellite forces are continuous in time, so the group switches
+    /// exactly where its satellites do.
+    fn next_discontinuity_after(&self, t: f64) -> Option<f64> {
+        self.dynamics
+            .iter()
+            .filter_map(|d| d.next_discontinuity_after(t))
+            .min_by(f64::total_cmp)
+    }
+
     fn derivatives(&self, t: f64, state: &GroupState<D::State>) -> GroupState<D::State> {
         assert_eq!(
             self.dynamics.len(),

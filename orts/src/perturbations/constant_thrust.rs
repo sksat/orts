@@ -124,6 +124,25 @@ impl<F: Eci> ConstantThrust<F> {
 
 impl<F: Eci> ConstantThrust<F> {
     /// Shared body of [`Model::eval`] for the frames this model supports.
+    /// Integration time of the next edge of the burn after `t`.
+    ///
+    /// The burn is bounded by two epochs while a propagation loop works in
+    /// integration time, so this converts through `epoch_at_t`: the offset from
+    /// there to an edge is the same in both. Without an epoch there is no
+    /// mapping and no edge to report.
+    ///
+    /// `end` is inclusive, so the load drops after it rather than at it. The
+    /// time reported is the instant the thrust stops contributing, which is what
+    /// a loop wants to end its step at.
+    fn next_edge_after(&self, t: f64, epoch_at_t: Option<&Epoch>) -> Option<f64> {
+        let now = epoch_at_t?;
+        [self.start, self.end]
+            .iter()
+            .map(|edge| t + edge.duration_since(now).as_si_seconds())
+            .filter(|edge_t| *edge_t > t && edge_t.is_finite())
+            .min_by(f64::total_cmp)
+    }
+
     fn loads(&self, epoch: Option<&Epoch>) -> ExternalLoads<F> {
         // The stored acceleration is already a `Vec3<F>` and `F` is the state's
         // frame, so it goes into the loads without a re-tag.
@@ -164,6 +183,10 @@ impl<S: HasFrame<Frame = frame::SimpleEci> + HasOrbit> Model<S>
     fn eval(&self, _t: f64, _state: &S, epoch: Option<&Epoch>) -> ExternalLoads<S::Frame> {
         self.loads(epoch)
     }
+
+    fn next_discontinuity_after(&self, t: f64, epoch: Option<&Epoch>) -> Option<f64> {
+        self.next_edge_after(t, epoch)
+    }
 }
 
 impl<S: HasFrame<Frame = frame::Gcrs> + HasOrbit> Model<S> for ConstantThrust<frame::Gcrs> {
@@ -173,6 +196,10 @@ impl<S: HasFrame<Frame = frame::Gcrs> + HasOrbit> Model<S> for ConstantThrust<fr
 
     fn eval(&self, _t: f64, _state: &S, epoch: Option<&Epoch>) -> ExternalLoads<S::Frame> {
         self.loads(epoch)
+    }
+
+    fn next_discontinuity_after(&self, t: f64, epoch: Option<&Epoch>) -> Option<f64> {
+        self.next_edge_after(t, epoch)
     }
 }
 

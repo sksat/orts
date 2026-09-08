@@ -78,6 +78,20 @@ impl<F: Eci> OrbitalSystem<F> {
 
 impl<F: Eci> DynamicalSystem for OrbitalSystem<F> {
     type State = OrbitalState<F>;
+
+    /// The earliest boundary any model reports.
+    ///
+    /// `ConstantThrust` is one: its burn is bounded by two epochs, and a
+    /// propagation loop that ends its step at them integrates the burn without
+    /// the caller splitting the span by hand.
+    fn next_discontinuity_after(&self, t: f64) -> Option<f64> {
+        let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
+        self.models
+            .iter()
+            .filter_map(|m| m.next_discontinuity_after(t, epoch.as_ref()))
+            .min_by(f64::total_cmp)
+    }
+
     fn derivatives(&self, t: f64, state: &OrbitalState<F>) -> OrbitalState<F> {
         let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
         let mut accel = self.gravity.acceleration(self.mu, state.position());

@@ -21,6 +21,19 @@ pub trait ThrustProfile: Send + Sync {
     /// 0.0 = off, 1.0 = full thrust.  Values outside this range are clamped
     /// by the [`Thruster`] actuator.
     fn throttle(&self, t: f64, state: &SpacecraftState, epoch: Option<&Epoch>) -> f64;
+
+    /// The next time after `t` at which this profile's throttle jumps, if the
+    /// profile knows one in advance.
+    ///
+    /// A schedule knows its own edges; a law that reads the state does not know
+    /// when the state will cross anything, and answers `None`. A propagation
+    /// loop ends its step at the times reported here, so that a window is not
+    /// sampled only at whichever stage times happen to fall inside it.
+    ///
+    /// Must be finite and strictly greater than `t`.
+    fn next_throttle_jump_after(&self, _t: f64) -> Option<f64> {
+        None
+    }
 }
 
 // Profile implementations
@@ -69,6 +82,21 @@ impl ThrustProfile for ScheduledBurn {
             }
         }
         0.0
+    }
+
+    /// The earliest window edge after `t`.
+    ///
+    /// Both ends of every window count: the throttle jumps up at `start` and
+    /// back down at `end`. `windows` is public and unordered, so this scans
+    /// rather than keeping an index that a later mutation would invalidate. A
+    /// window that abuts the next one shares an edge, and the two report as one
+    /// time.
+    fn next_throttle_jump_after(&self, t: f64) -> Option<f64> {
+        self.windows
+            .iter()
+            .flat_map(|w| [w.start, w.end])
+            .filter(|edge| *edge > t && edge.is_finite())
+            .min_by(f64::total_cmp)
     }
 }
 
@@ -251,6 +279,12 @@ impl<S: HasFrame<Frame = arika::frame::SimpleEci> + HasAttitude + HasOrbit + Has
             mass: state.mass(),
         };
         self.loads(t, &sc_state, epoch)
+    }
+
+    /// Whatever the profile knows. Propellant exhaustion is left out: its time
+    /// follows from the mass the trajectory reaches, not from the clock.
+    fn next_discontinuity_after(&self, t: f64, _epoch: Option<&Epoch>) -> Option<f64> {
+        self.profile.next_throttle_jump_after(t)
     }
 }
 
