@@ -18,7 +18,7 @@ pub(crate) mod test_systems;
 
 pub use error::{IntegrationError, IntegrationOutcome, Tolerances, validate_step_size};
 pub use integrator::Integrator;
-pub use segment::{SegmentContext, SegmentSystem};
+pub use segment::{SegmentContext, SegmentSystem, derivatives_maybe_in_segment};
 pub use solver::dop853::{AdaptiveStepper853, AdvanceOutcome853, Dop853};
 pub use solver::dp45::{AdaptiveStepper, AdvanceOutcome, DormandPrince};
 pub use solver::rk4::Rk4;

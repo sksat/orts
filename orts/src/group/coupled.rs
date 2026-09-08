@@ -4,7 +4,7 @@ use std::sync::Arc;
 use nalgebra::Vector3;
 use utsuroi::{
     AdvanceOutcome, AdvanceOutcome853, Dop853, DormandPrince, DynamicalSystem, IntegrationError,
-    Integrator, OdeState, Rk4, Tolerances,
+    Integrator, OdeState, Rk4, SegmentContext, Tolerances, derivatives_maybe_in_segment,
 };
 
 use super::prop_group::{GroupSnapshot, PropGroupOutcome, SatId, SatelliteTermination};
@@ -153,6 +153,67 @@ where
     }
 }
 
+impl<D: DynamicalSystem> CoupledGroupDynamics<D>
+where
+    D::State: HasPosition + FromAcceleration,
+{
+    /// Shared body of [`derivatives`](DynamicalSystem::derivatives) and
+    /// [`derivatives_in_segment`](DynamicalSystem::derivatives_in_segment).
+    ///
+    /// On the segment path the satellites are asked for the same segment: a
+    /// composite that stepped its children outside it would leave their
+    /// schedules reading the stage time again.
+    fn derivatives_for(
+        &self,
+        segment: Option<&SegmentContext>,
+        t: f64,
+        state: &GroupState<D::State>,
+    ) -> GroupState<D::State> {
+        assert_eq!(
+            self.dynamics.len(),
+            state.states.len(),
+            "CoupledGroupDynamics: dynamics count ({}) != state count ({})",
+            self.dynamics.len(),
+            state.states.len()
+        );
+
+        // 1. Per-satellite derivatives (gravity, drag, etc.)
+        let mut derivs: Vec<D::State> = self
+            .dynamics
+            .iter()
+            .zip(&state.states)
+            .map(|(d, s)| derivatives_maybe_in_segment(d, segment, t, s))
+            .collect();
+
+        // 2. Add inter-satellite force accelerations
+        for pair in &self.interactions {
+            assert!(
+                pair.i < state.states.len() && pair.j < state.states.len(),
+                "InteractionPair indices ({}, {}) out of range for {} satellites",
+                pair.i,
+                pair.j,
+                state.states.len()
+            );
+
+            let pos_i = state.states[pair.i].position();
+            let pos_j = state.states[pair.j].position();
+            // TODO(#446): an inter-satellite force that reports a boundary needs
+            // the same segment mode as the models. Mutual gravitation, the
+            // only force here, is continuous.
+            let ctx = PairContext {
+                t,
+                pos_i: &pos_i,
+                pos_j: &pos_j,
+            };
+            let (a_i, a_j) = pair.force.acceleration_pair(&ctx);
+            derivs[pair.i] = derivs[pair.i].axpy(1.0, &D::State::from_acceleration(a_i));
+            derivs[pair.j] = derivs[pair.j].axpy(1.0, &D::State::from_acceleration(a_j));
+        }
+
+        GroupState { states: derivs }
+    }
+}
+
 impl<D: DynamicalSystem> DynamicalSystem for CoupledGroupDynamics<D>
 where
     D::State: HasPosition + FromAcceleration,
@@ -181,45 +242,16 @@ where
     }
 
     fn derivatives(&self, t: f64, state: &GroupState<D::State>) -> GroupState<D::State> {
-        assert_eq!(
-            self.dynamics.len(),
-            state.states.len(),
-            "CoupledGroupDynamics: dynamics count ({}) != state count ({})",
-            self.dynamics.len(),
-            state.states.len()
-        );
+        self.derivatives_for(None, t, state)
+    }
 
-        // 1. Per-satellite derivatives (gravity, drag, etc.)
-        let mut derivs: Vec<D::State> = self
-            .dynamics
-            .iter()
-            .zip(&state.states)
-            .map(|(d, s)| d.derivatives(t, s))
-            .collect();
-
-        // 2. Add inter-satellite force accelerations
-        for pair in &self.interactions {
-            assert!(
-                pair.i < state.states.len() && pair.j < state.states.len(),
-                "InteractionPair indices ({}, {}) out of range for {} satellites",
-                pair.i,
-                pair.j,
-                state.states.len()
-            );
-
-            let pos_i = state.states[pair.i].position();
-            let pos_j = state.states[pair.j].position();
-            let ctx = PairContext {
-                t,
-                pos_i: &pos_i,
-                pos_j: &pos_j,
-            };
-            let (a_i, a_j) = pair.force.acceleration_pair(&ctx);
-            derivs[pair.i] = derivs[pair.i].axpy(1.0, &D::State::from_acceleration(a_i));
-            derivs[pair.j] = derivs[pair.j].axpy(1.0, &D::State::from_acceleration(a_j));
-        }
-
-        GroupState { states: derivs }
+    fn derivatives_in_segment(
+        &self,
+        segment: &SegmentContext,
+        t: f64,
+        state: &GroupState<D::State>,
+    ) -> GroupState<D::State> {
+        self.derivatives_for(Some(segment), t, state)
     }
 }
 

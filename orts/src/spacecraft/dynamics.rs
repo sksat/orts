@@ -1,12 +1,12 @@
 use std::marker::PhantomData;
 
 use crate::effector::{AugmentedState, AuxRegistry, StateEffector};
-use crate::model::Model;
+use crate::model::{EvalSegment, Model, eval_maybe_in_segment};
 use crate::orbital::gravity::GravityField;
 use arika::epoch::Epoch;
 use arika::frame::{Eci, SimpleEci};
 use nalgebra::Matrix3;
-use utsuroi::DynamicalSystem;
+use utsuroi::{DynamicalSystem, SegmentContext};
 
 use super::{ExternalLoads, SpacecraftState};
 
@@ -229,6 +229,81 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     }
 }
 
+impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
+    /// Shared body of [`derivatives`](DynamicalSystem::derivatives) and
+    /// [`derivatives_in_segment`](DynamicalSystem::derivatives_in_segment).
+    ///
+    /// `segment` is `Some` only on the segment path, where it carries the
+    /// interval's start in both time bases so a model holding a schedule can
+    /// answer for it.
+    fn derivatives_for(
+        &self,
+        segment: Option<&EvalSegment<'_>>,
+        t: f64,
+        state: &AugmentedState<SpacecraftState<F>>,
+    ) -> AugmentedState<SpacecraftState<F>> {
+        let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
+
+        // Gravitational acceleration
+        let grav_accel = self
+            .gravity
+            .acceleration(self.mu, state.plant.orbit.position());
+
+        // Accumulate external loads from models
+        let mut total = ExternalLoads::<F>::zeros();
+        for model in &self.models {
+            total += eval_maybe_in_segment(model, segment, t, &state.plant, epoch.as_ref());
+        }
+
+        // Evaluate state effectors.
+        //
+        // INVARIANT: a `StateEffector<S>` returns `ExternalLoads<S::Frame>` —
+        // already expressed in the frame this system propagates in — so loads
+        // accumulate directly with no coordinate re-tag. Torque-only effectors
+        // (reaction wheels) write `impl<S: HasFrame + HasAttitude>
+        // StateEffector<S>` and leave the acceleration zero, since body-frame
+        // torque names no inertial frame; a translational effector must rotate
+        // its body-frame vector through the state's own attitude. The loads
+        // frame is not a separate parameter that could disagree with the
+        // state's, which is what makes the SimpleEci mislabel from issue #103
+        // unrepresentable.
+        let mut aux_rates = vec![0.0; self.registry.total_dim()];
+        for (i, eff) in self.effectors.iter().enumerate() {
+            let entry = &self.registry.entries()[i];
+            let aux_slice = &state.aux[entry.offset..entry.offset + entry.dim];
+            let rates_slice = &mut aux_rates[entry.offset..entry.offset + entry.dim];
+            // TODO(#446): an effector that reports a boundary needs the same
+            // segment mode as the models. No effector carries a time
+            // schedule yet — a reaction wheel switches on its own momentum,
+            // which is a state event.
+            total += eff.derivatives(t, &state.plant, aux_slice, rates_slice, epoch.as_ref());
+        }
+
+        // Total translational acceleration
+        let total_accel = grav_accel + total.acceleration_inertial.into_inner();
+
+        // Quaternion kinematics: dq/dt = ½ q ⊗ (0, ω)
+        let q_dot = state.plant.attitude.q_dot();
+
+        // Euler's rotation equation: dω/dt = I⁻¹(τ − ω × (I·ω))
+        let iw = self.inertia * state.plant.attitude.angular_velocity;
+        let alpha = self.inertia_inv
+            * (total.torque_body.into_inner() - state.plant.attitude.angular_velocity.cross(&iw));
+
+        AugmentedState {
+            plant: SpacecraftState::from_derivative(
+                *state.plant.orbit.velocity(),
+                total_accel,
+                q_dot,
+                alpha,
+                total.mass_rate,
+            ),
+            aux: aux_rates,
+            aux_bounds: state.aux_bounds.clone(),
+        }
+    }
+}
+
 impl<G: GravityField, F: Eci + 'static> DynamicalSystem for SpacecraftDynamics<G, F> {
     type State = AugmentedState<SpacecraftState<F>>;
 
@@ -258,61 +333,21 @@ impl<G: GravityField, F: Eci + 'static> DynamicalSystem for SpacecraftDynamics<G
         t: f64,
         state: &AugmentedState<SpacecraftState<F>>,
     ) -> AugmentedState<SpacecraftState<F>> {
-        let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
+        self.derivatives_for(None, t, state)
+    }
 
-        // Gravitational acceleration
-        let grav_accel = self
-            .gravity
-            .acceleration(self.mu, state.plant.orbit.position());
-
-        // Accumulate external loads from models
-        let mut total = ExternalLoads::<F>::zeros();
-        for model in &self.models {
-            total += model.eval(t, &state.plant, epoch.as_ref());
-        }
-
-        // Evaluate state effectors.
-        //
-        // INVARIANT: a `StateEffector<S>` returns `ExternalLoads<S::Frame>` —
-        // already expressed in the frame this system propagates in — so loads
-        // accumulate directly with no coordinate re-tag. Torque-only effectors
-        // (reaction wheels) write `impl<S: HasFrame + HasAttitude>
-        // StateEffector<S>` and leave the acceleration zero, since body-frame
-        // torque names no inertial frame; a translational effector must rotate
-        // its body-frame vector through the state's own attitude. The loads
-        // frame is not a separate parameter that could disagree with the
-        // state's, which is what makes the SimpleEci mislabel from issue #103
-        // unrepresentable.
-        let mut aux_rates = vec![0.0; self.registry.total_dim()];
-        for (i, eff) in self.effectors.iter().enumerate() {
-            let entry = &self.registry.entries()[i];
-            let aux_slice = &state.aux[entry.offset..entry.offset + entry.dim];
-            let rates_slice = &mut aux_rates[entry.offset..entry.offset + entry.dim];
-            total += eff.derivatives(t, &state.plant, aux_slice, rates_slice, epoch.as_ref());
-        }
-
-        // Total translational acceleration
-        let total_accel = grav_accel + total.acceleration_inertial.into_inner();
-
-        // Quaternion kinematics: dq/dt = ½ q ⊗ (0, ω)
-        let q_dot = state.plant.attitude.q_dot();
-
-        // Euler's rotation equation: dω/dt = I⁻¹(τ − ω × (I·ω))
-        let iw = self.inertia * state.plant.attitude.angular_velocity;
-        let alpha = self.inertia_inv
-            * (total.torque_body.into_inner() - state.plant.attitude.angular_velocity.cross(&iw));
-
-        AugmentedState {
-            plant: SpacecraftState::from_derivative(
-                *state.plant.orbit.velocity(),
-                total_accel,
-                q_dot,
-                alpha,
-                total.mass_rate,
-            ),
-            aux: aux_rates,
-            aux_bounds: state.aux_bounds.clone(),
-        }
+    fn derivatives_in_segment(
+        &self,
+        segment: &SegmentContext,
+        t: f64,
+        state: &AugmentedState<SpacecraftState<F>>,
+    ) -> AugmentedState<SpacecraftState<F>> {
+        let start_epoch = self.epoch_0.map(|e| e.add_si_seconds(segment.start));
+        self.derivatives_for(
+            Some(&EvalSegment::new(segment, start_epoch.as_ref())),
+            t,
+            state,
+        )
     }
 }
 

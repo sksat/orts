@@ -80,6 +80,23 @@ impl<S: DynamicalSystem> DynamicalSystem for SegmentSystem<'_, S> {
     }
 }
 
+/// Derivatives from `system`, for the segment when there is one.
+///
+/// A system that holds other systems calls this on each of them, so a segment
+/// reaches the part of the right-hand side that switches instead of stopping at
+/// the system on top.
+pub fn derivatives_maybe_in_segment<S: DynamicalSystem>(
+    system: &S,
+    segment: Option<&SegmentContext>,
+    t: f64,
+    state: &S::State,
+) -> S::State {
+    match segment {
+        Some(segment) => system.derivatives_in_segment(segment, t, state),
+        None => system.derivatives(t, state),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use core::ops::ControlFlow;

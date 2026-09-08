@@ -1,11 +1,13 @@
 use arika::epoch::Epoch;
 use nalgebra::{Matrix3, Vector3};
-use utsuroi::DynamicalSystem;
+use utsuroi::{DynamicalSystem, SegmentContext};
 
 use crate::OrbitalState;
 use crate::attitude::AttitudeState;
 use crate::model::ExternalLoads;
-use crate::model::{HasAttitude, HasFrame, HasMass, HasOrbit, Model};
+use crate::model::{
+    EvalSegment, HasAttitude, HasFrame, HasMass, HasOrbit, Model, eval_maybe_in_segment,
+};
 
 /// Combined state providing attitude, orbit, and mass for decoupled models.
 ///
@@ -120,28 +122,19 @@ impl DecoupledAttitudeSystem {
     }
 }
 
-impl DynamicalSystem for DecoupledAttitudeSystem {
-    type State = AttitudeState;
-
-    /// The earliest boundary any model reports.
+impl DecoupledAttitudeSystem {
+    /// Shared body of [`derivatives`](DynamicalSystem::derivatives) and
+    /// [`derivatives_in_segment`](DynamicalSystem::derivatives_in_segment).
     ///
-    /// A model that switches on a schedule reports when; a system holding one
-    /// has to pass that on, or a propagation loop stepping the system would
-    /// never see it.
-    ///
-    /// `orbit_fn` and `mass_fn` are the caller's own functions, so their
-    /// breakpoints are not reported here — a caller who passes a piecewise one
-    /// holds its schedule already, and hands it to the propagation loop the same
-    /// way it hands over the span.
-    fn next_discontinuity_after(&self, t: f64) -> Option<f64> {
-        let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
-        self.models
-            .iter()
-            .filter_map(|m| m.next_discontinuity_after(t, epoch.as_ref()))
-            .min_by(f64::total_cmp)
-    }
-
-    fn derivatives(&self, t: f64, state: &AttitudeState) -> AttitudeState {
+    /// `segment` is `Some` only on the segment path, where it carries the
+    /// interval's start in both time bases so a model holding a schedule can
+    /// answer for it.
+    fn derivatives_for(
+        &self,
+        segment: Option<&EvalSegment<'_>>,
+        t: f64,
+        state: &AttitudeState,
+    ) -> AttitudeState {
         let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
 
         // 1. Construct context with prescribed orbit and mass
@@ -157,7 +150,7 @@ impl DynamicalSystem for DecoupledAttitudeSystem {
         // 3. Total loads from all models
         let mut total = ExternalLoads::zeros();
         for m in &self.models {
-            total += m.eval(t, &context, epoch.as_ref());
+            total += eval_maybe_in_segment(m, segment, t, &context, epoch.as_ref());
         }
 
         // 4. Warn if models produce translational forces or mass changes (ignored here)
@@ -180,6 +173,46 @@ impl DynamicalSystem for DecoupledAttitudeSystem {
             self.inertia_inv * (total.torque_body.into_inner() - state.angular_velocity.cross(&iw));
 
         AttitudeState::from_derivative(q_dot, alpha)
+    }
+}
+
+impl DynamicalSystem for DecoupledAttitudeSystem {
+    type State = AttitudeState;
+
+    /// The earliest boundary any model reports.
+    ///
+    /// A model that switches on a schedule reports when; a system holding one
+    /// has to pass that on, or a propagation loop stepping the system would
+    /// never see it.
+    ///
+    /// `orbit_fn` and `mass_fn` are the caller's own functions, so their
+    /// breakpoints are not reported here — a caller who passes a piecewise one
+    /// holds its schedule already, and hands it to the propagation loop the same
+    /// way it hands over the span.
+    fn next_discontinuity_after(&self, t: f64) -> Option<f64> {
+        let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
+        self.models
+            .iter()
+            .filter_map(|m| m.next_discontinuity_after(t, epoch.as_ref()))
+            .min_by(f64::total_cmp)
+    }
+
+    fn derivatives(&self, t: f64, state: &AttitudeState) -> AttitudeState {
+        self.derivatives_for(None, t, state)
+    }
+
+    fn derivatives_in_segment(
+        &self,
+        segment: &SegmentContext,
+        t: f64,
+        state: &AttitudeState,
+    ) -> AttitudeState {
+        let start_epoch = self.epoch_0.map(|e| e.add_si_seconds(segment.start));
+        self.derivatives_for(
+            Some(&EvalSegment::new(segment, start_epoch.as_ref())),
+            t,
+            state,
+        )
     }
 }
 

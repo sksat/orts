@@ -1,7 +1,7 @@
 use arika::epoch::Epoch;
 use nalgebra::Vector3;
 
-use crate::model::{HasAttitude, HasFrame, HasMass, HasOrbit, Model};
+use crate::model::{EvalSegment, HasAttitude, HasFrame, HasMass, HasOrbit, Model};
 
 use super::{ExternalLoads, SpacecraftState};
 
@@ -38,6 +38,28 @@ pub trait ThrustProfile: Send + Sync {
     /// Must be finite and strictly greater than `t`.
     fn next_throttle_jump_after(&self, _t: f64, _epoch: Option<&Epoch>) -> Option<f64> {
         None
+    }
+
+    /// Throttle for the segment a solver is stepping through.
+    ///
+    /// A schedule answers for the segment's start, so a window `[a, b)` is
+    /// still on at the stage that lands on `b` — that stage belongs to the step
+    /// integrating the window, and dropping it costs the stage's weight (1/6
+    /// of an RK4 step). The segment's ends are the schedule's own edges, so
+    /// holding the schedule for the segment changes nothing but the endpoint.
+    ///
+    /// A law that reads the state keeps reading `state` at every stage: the
+    /// default forwards to [`throttle`](Self::throttle), and a profile that
+    /// combines a schedule with feedback holds only the schedule
+    /// (`schedule(segment.start) * feedback(t, state)`).
+    fn throttle_in_segment(
+        &self,
+        _segment: &EvalSegment<'_>,
+        t: f64,
+        state: &SpacecraftState,
+        epoch: Option<&Epoch>,
+    ) -> f64 {
+        self.throttle(t, state, epoch)
     }
 }
 
@@ -102,6 +124,24 @@ impl ThrustProfile for ScheduledBurn {
             .flat_map(|w| [w.start, w.end])
             .filter(|edge| *edge > t && edge.is_finite())
             .min_by(f64::total_cmp)
+    }
+
+    /// The throttle that holds over the whole segment: the one at its start.
+    ///
+    /// A propagation loop ends its segments at the times
+    /// [`next_throttle_jump_after`](Self::next_throttle_jump_after) reports, so
+    /// no window edge falls strictly inside a segment and one lookup answers
+    /// for all of it. What this changes is the stage on `segment.end`, which
+    /// reading the schedule at its own stage time would find already outside a
+    /// window ending there.
+    fn throttle_in_segment(
+        &self,
+        segment: &EvalSegment<'_>,
+        _t: f64,
+        state: &SpacecraftState,
+        _epoch: Option<&Epoch>,
+    ) -> f64 {
+        self.throttle(segment.start, state, segment.start_epoch)
     }
 }
 
@@ -267,6 +307,22 @@ impl Thruster {
         let throttle = self.profile.throttle(t, state, epoch);
         self.spec.loads_for_throttle(throttle, state, epoch)
     }
+
+    /// Loads with the profile's throttle held for `segment`.
+    ///
+    /// Only the throttle is taken from the segment. Thrust, `Isp` and the
+    /// geometry come from the spec, and the mass flow follows the state at this
+    /// stage, so `loads_for_throttle` keeps the stage's `state` and `epoch`.
+    pub(crate) fn loads_in_segment(
+        &self,
+        segment: &EvalSegment<'_>,
+        t: f64,
+        state: &SpacecraftState,
+        epoch: Option<&Epoch>,
+    ) -> ExternalLoads {
+        let throttle = self.profile.throttle_in_segment(segment, t, state, epoch);
+        self.spec.loads_for_throttle(throttle, state, epoch)
+    }
 }
 
 impl<S: HasFrame<Frame = arika::frame::SimpleEci> + HasAttitude + HasOrbit + HasMass> Model<S>
@@ -284,6 +340,21 @@ impl<S: HasFrame<Frame = arika::frame::SimpleEci> + HasAttitude + HasOrbit + Has
             mass: state.mass(),
         };
         self.loads(t, &sc_state, epoch)
+    }
+
+    fn eval_in_segment(
+        &self,
+        segment: &EvalSegment<'_>,
+        t: f64,
+        state: &S,
+        epoch: Option<&Epoch>,
+    ) -> ExternalLoads {
+        let sc_state = SpacecraftState {
+            orbit: state.orbit().clone(),
+            attitude: state.attitude().clone(),
+            mass: state.mass(),
+        };
+        self.loads_in_segment(segment, t, &sc_state, epoch)
     }
 
     /// Whatever the profile knows. Propellant exhaustion is left out: its time

@@ -6,14 +6,14 @@
 
 use arika::epoch::Epoch;
 use nalgebra::{Matrix3, Vector3};
-use utsuroi::DynamicalSystem;
+use utsuroi::{DynamicalSystem, SegmentContext};
 
 use crate::OrbitalState;
 use crate::attitude::DecoupledContext;
 use crate::attitude::state::AttitudeState;
 use crate::effector::{AugmentedState, AuxRegistry, StateEffector};
 use crate::model::ExternalLoads;
-use crate::model::Model;
+use crate::model::{EvalSegment, Model, eval_maybe_in_segment};
 
 /// Attitude dynamics with prescribed orbit, supporting both pure models
 /// and state effectors.
@@ -155,6 +155,86 @@ impl AugmentedAttitudeSystem {
     }
 }
 
+impl AugmentedAttitudeSystem {
+    /// Shared body of [`derivatives`](DynamicalSystem::derivatives) and
+    /// [`derivatives_in_segment`](DynamicalSystem::derivatives_in_segment).
+    ///
+    /// `segment` is `Some` only on the segment path, where it carries the
+    /// interval's start in both time bases so a model holding a schedule can
+    /// answer for it.
+    fn derivatives_for(
+        &self,
+        segment: Option<&EvalSegment<'_>>,
+        t: f64,
+        state: &AugmentedState<AttitudeState>,
+    ) -> AugmentedState<AttitudeState> {
+        let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
+
+        // 0. Validate auxiliary state length
+        assert_eq!(
+            state.aux.len(),
+            self.registry.total_dim(),
+            "Auxiliary state length ({}) does not match registry ({})",
+            state.aux.len(),
+            self.registry.total_dim()
+        );
+
+        // 1. Construct context with prescribed orbit and mass
+        let context = DecoupledContext {
+            attitude: state.plant.clone(),
+            orbit: (self.orbit_fn)(t),
+            mass: (self.mass_fn)(t),
+        };
+
+        // 2. Evaluate continuous models
+        let mut total = ExternalLoads::zeros();
+        for m in &self.models {
+            total += eval_maybe_in_segment(m, segment, t, &context, epoch.as_ref());
+        }
+
+        // 3. Evaluate state effectors
+        let mut aux_rates = vec![0.0; self.registry.total_dim()];
+        for (i, eff) in self.effectors.iter().enumerate() {
+            let entry = &self.registry.entries()[i];
+            let aux_slice = &state.aux[entry.offset..entry.offset + entry.dim];
+            let rates_slice = &mut aux_rates[entry.offset..entry.offset + entry.dim];
+            // TODO(#446): an effector that reports a boundary needs the same
+            // segment mode as the models. No effector carries a time
+            // schedule yet — a reaction wheel switches on its own momentum,
+            // which is a state event.
+            total += eff.derivatives(t, &context, aux_slice, rates_slice, epoch.as_ref());
+        }
+
+        // 4. Warn if models produce translational forces or mass changes (ignored here)
+        if total.acceleration_inertial.magnitude() > 1e-15 {
+            log::warn!(
+                "AugmentedAttitudeSystem ignoring non-zero acceleration_inertial: {:?}",
+                total.acceleration_inertial
+            );
+        }
+        if total.mass_rate.abs() > 1e-15 {
+            log::warn!(
+                "AugmentedAttitudeSystem ignoring non-zero mass_rate: {}",
+                total.mass_rate
+            );
+        }
+
+        // 5. Quaternion kinematics: dq/dt = 0.5 * q ⊗ (0, ω)
+        let q_dot = state.plant.q_dot();
+
+        // 5. Euler's rotation equation: dω/dt = I⁻¹(τ − ω × (I·ω))
+        let iw = self.inertia * state.plant.angular_velocity;
+        let alpha = self.inertia_inv
+            * (total.torque_body.into_inner() - state.plant.angular_velocity.cross(&iw));
+
+        AugmentedState {
+            plant: AttitudeState::from_derivative(q_dot, alpha),
+            aux: aux_rates,
+            aux_bounds: state.aux_bounds.clone(),
+        }
+    }
+}
+
 impl DynamicalSystem for AugmentedAttitudeSystem {
     type State = AugmentedState<AttitudeState>;
 
@@ -189,66 +269,21 @@ impl DynamicalSystem for AugmentedAttitudeSystem {
         t: f64,
         state: &AugmentedState<AttitudeState>,
     ) -> AugmentedState<AttitudeState> {
-        let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
+        self.derivatives_for(None, t, state)
+    }
 
-        // 0. Validate auxiliary state length
-        assert_eq!(
-            state.aux.len(),
-            self.registry.total_dim(),
-            "Auxiliary state length ({}) does not match registry ({})",
-            state.aux.len(),
-            self.registry.total_dim()
-        );
-
-        // 1. Construct context with prescribed orbit and mass
-        let context = DecoupledContext {
-            attitude: state.plant.clone(),
-            orbit: (self.orbit_fn)(t),
-            mass: (self.mass_fn)(t),
-        };
-
-        // 2. Evaluate continuous models
-        let mut total = ExternalLoads::zeros();
-        for m in &self.models {
-            total += m.eval(t, &context, epoch.as_ref());
-        }
-
-        // 3. Evaluate state effectors
-        let mut aux_rates = vec![0.0; self.registry.total_dim()];
-        for (i, eff) in self.effectors.iter().enumerate() {
-            let entry = &self.registry.entries()[i];
-            let aux_slice = &state.aux[entry.offset..entry.offset + entry.dim];
-            let rates_slice = &mut aux_rates[entry.offset..entry.offset + entry.dim];
-            total += eff.derivatives(t, &context, aux_slice, rates_slice, epoch.as_ref());
-        }
-
-        // 4. Warn if models produce translational forces or mass changes (ignored here)
-        if total.acceleration_inertial.magnitude() > 1e-15 {
-            log::warn!(
-                "AugmentedAttitudeSystem ignoring non-zero acceleration_inertial: {:?}",
-                total.acceleration_inertial
-            );
-        }
-        if total.mass_rate.abs() > 1e-15 {
-            log::warn!(
-                "AugmentedAttitudeSystem ignoring non-zero mass_rate: {}",
-                total.mass_rate
-            );
-        }
-
-        // 5. Quaternion kinematics: dq/dt = 0.5 * q ⊗ (0, ω)
-        let q_dot = state.plant.q_dot();
-
-        // 5. Euler's rotation equation: dω/dt = I⁻¹(τ − ω × (I·ω))
-        let iw = self.inertia * state.plant.angular_velocity;
-        let alpha = self.inertia_inv
-            * (total.torque_body.into_inner() - state.plant.angular_velocity.cross(&iw));
-
-        AugmentedState {
-            plant: AttitudeState::from_derivative(q_dot, alpha),
-            aux: aux_rates,
-            aux_bounds: state.aux_bounds.clone(),
-        }
+    fn derivatives_in_segment(
+        &self,
+        segment: &SegmentContext,
+        t: f64,
+        state: &AugmentedState<AttitudeState>,
+    ) -> AugmentedState<AttitudeState> {
+        let start_epoch = self.epoch_0.map(|e| e.add_si_seconds(segment.start));
+        self.derivatives_for(
+            Some(&EvalSegment::new(segment, start_epoch.as_ref())),
+            t,
+            state,
+        )
     }
 }
 

@@ -1,4 +1,4 @@
-use utsuroi::DynamicalSystem;
+use utsuroi::{DynamicalSystem, SegmentContext, derivatives_maybe_in_segment};
 
 use super::state::GroupState;
 
@@ -18,10 +18,19 @@ impl<D: DynamicalSystem> IndependentGroupDynamics<D> {
     }
 }
 
-impl<D: DynamicalSystem> DynamicalSystem for IndependentGroupDynamics<D> {
-    type State = GroupState<D::State>;
-
-    fn derivatives(&self, t: f64, state: &GroupState<D::State>) -> GroupState<D::State> {
+impl<D: DynamicalSystem> IndependentGroupDynamics<D> {
+    /// Shared body of [`derivatives`](DynamicalSystem::derivatives) and
+    /// [`derivatives_in_segment`](DynamicalSystem::derivatives_in_segment).
+    ///
+    /// On the segment path the children are asked for the same segment: a
+    /// composite that stepped its children outside it would leave their
+    /// schedules reading the stage time again.
+    fn derivatives_for(
+        &self,
+        segment: Option<&SegmentContext>,
+        t: f64,
+        state: &GroupState<D::State>,
+    ) -> GroupState<D::State> {
         assert_eq!(
             self.dynamics.len(),
             state.states.len(),
@@ -34,9 +43,26 @@ impl<D: DynamicalSystem> DynamicalSystem for IndependentGroupDynamics<D> {
                 .dynamics
                 .iter()
                 .zip(&state.states)
-                .map(|(dyn_sys, s)| dyn_sys.derivatives(t, s))
+                .map(|(dyn_sys, s)| derivatives_maybe_in_segment(dyn_sys, segment, t, s))
                 .collect(),
         }
+    }
+}
+
+impl<D: DynamicalSystem> DynamicalSystem for IndependentGroupDynamics<D> {
+    type State = GroupState<D::State>;
+
+    fn derivatives(&self, t: f64, state: &GroupState<D::State>) -> GroupState<D::State> {
+        self.derivatives_for(None, t, state)
+    }
+
+    fn derivatives_in_segment(
+        &self,
+        segment: &SegmentContext,
+        t: f64,
+        state: &GroupState<D::State>,
+    ) -> GroupState<D::State> {
+        self.derivatives_for(Some(segment), t, state)
     }
 
     /// The earliest boundary any satellite reports.
