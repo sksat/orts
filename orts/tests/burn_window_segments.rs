@@ -618,6 +618,22 @@ fn a_non_finite_target_is_rejected() {
             "{name}: a satellite starting at NaN was propagated"
         );
 
+        // An end time that is not a number: `f64::min` would drop it and
+        // propagate to the target, which is the opposite of what it says.
+        let mut ends_at_nan = IndependentGroup::new(integrator.clone()).add_satellite_until(
+            "sat",
+            state(),
+            f64::NAN,
+            system(),
+        );
+        assert!(
+            matches!(
+                ends_at_nan.propagate_to(1.0),
+                Err(IntegrationError::InvalidTimeSpan { .. })
+            ),
+            "{name}: a satellite whose end time is NaN was propagated"
+        );
+
         let mut coupled_at_nan =
             CoupledGroup::new(integrator).add_satellite("sat", state(), system());
         coupled_at_nan.set_t(f64::NAN);

@@ -326,6 +326,15 @@ where
 
             // Clamp to per-satellite end_time if set
             let effective_target = match entry.end_time {
+                // `f64::min` returns the other operand for a NaN, so a NaN end
+                // time would quietly mean the opposite of what it says: no end
+                // at all. `add_satellite_until` takes any `f64`.
+                Some(et) if et.is_nan() => {
+                    return Err(IntegrationError::InvalidTimeSpan {
+                        t0: entry.t,
+                        t_end: et,
+                    });
+                }
                 Some(et) => t_target.min(et),
                 None => t_target,
             };
