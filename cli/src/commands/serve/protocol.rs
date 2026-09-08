@@ -82,6 +82,15 @@ pub enum WsMessage {
         stream_interval: f64,
         central_body: String,
         central_body_radius: f64,
+        /// Inertial frame every `state` message in this stream is expressed in,
+        /// as [`arika::frame::FrameDescriptor::name`] spells it.
+        ///
+        /// Carried once per connection rather than per sample: the frame is
+        /// fixed for a run, and `state` is the hot path. Position, velocity and
+        /// quaternion components mean different things in different frames —
+        /// `SimpleEci` and `Gcrs` differ by ~484 arcsec at 2024 — so a client
+        /// that reads them without knowing the frame is guessing.
+        integration_frame: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         epoch_jd: Option<f64>,
@@ -280,6 +289,7 @@ mod tests {
             stream_interval: 10.0,
             central_body: "earth".to_string(),
             central_body_radius: 6378.137,
+            integration_frame: "SimpleEci".to_string(),
             epoch_jd: Some(2460390.0),
             satellites: vec![
                 SatelliteInfo {
@@ -322,6 +332,7 @@ mod tests {
             stream_interval: 10.0,
             central_body: "earth".to_string(),
             central_body_radius: 6378.137,
+            integration_frame: "SimpleEci".to_string(),
             epoch_jd: Some(2460390.0),
             satellites: vec![SatelliteInfo {
                 id: "default".to_string(),
@@ -348,6 +359,7 @@ mod tests {
             stream_interval: 10.0,
             central_body: "earth".to_string(),
             central_body_radius: 6378.137,
+            integration_frame: "SimpleEci".to_string(),
             epoch_jd: None,
             satellites: vec![],
         };
@@ -366,6 +378,7 @@ mod tests {
             stream_interval: 10.0,
             central_body: "earth".to_string(),
             central_body_radius: 6378.137,
+            integration_frame: "SimpleEci".to_string(),
             epoch_jd: Some(2460390.0),
             satellites: vec![SatelliteInfo {
                 id: "iss".to_string(),

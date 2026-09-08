@@ -133,6 +133,13 @@ fn load_replay_data(path: &str) -> ReplayData {
         stream_interval: dt,
         central_body: central_body.clone(),
         central_body_radius: body_radius,
+        // Replayed from the recording rather than assumed: a file written before
+        // the frame was carried says nothing, and reporting that is honest where
+        // naming a default would not be. Replay only forwards samples, so it
+        // needs no frame of its own.
+        integration_frame: meta
+            .integration_frame
+            .map_or_else(|| "unknown".to_string(), |f| f.name().to_string()),
         epoch_jd: meta.epoch_jd,
         satellites,
     };

@@ -6,7 +6,18 @@ import type { SatelliteInfo } from "./SatelliteInfo";
 /**
  * Server-to-client WebSocket message.
  */
-export type WsMessage = { "type": "info", mu: number, dt: number, output_interval: number, stream_interval: number, central_body: string, central_body_radius: number, epoch_jd?: number, satellites: Array<SatelliteInfo>, } | { "type": "state", entity_path: string, t: number, position: [number, number, number], velocity: [number, number, number], semi_major_axis: number, eccentricity: number, inclination: number, raan: number, argument_of_periapsis: number, true_anomaly: number, 
+export type WsMessage = { "type": "info", mu: number, dt: number, output_interval: number, stream_interval: number, central_body: string, central_body_radius: number, 
+/**
+ * Inertial frame every `state` message in this stream is expressed in,
+ * as [`arika::frame::FrameDescriptor::name`] spells it.
+ *
+ * Carried once per connection rather than per sample: the frame is
+ * fixed for a run, and `state` is the hot path. Position, velocity and
+ * quaternion components mean different things in different frames —
+ * `SimpleEci` and `Gcrs` differ by ~484 arcsec at 2024 — so a client
+ * that reads them without knowing the frame is guessing.
+ */
+integration_frame: string, epoch_jd?: number, satellites: Array<SatelliteInfo>, } | { "type": "state", entity_path: string, t: number, position: [number, number, number], velocity: [number, number, number], semi_major_axis: number, eccentricity: number, inclination: number, raan: number, argument_of_periapsis: number, true_anomaly: number, 
 /**
  * Pre-computed derived values for chart display (avoids client-side recomputation).
  */

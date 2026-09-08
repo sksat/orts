@@ -112,6 +112,27 @@ impl FrameDescriptor {
         }
     }
 
+    /// Recover a descriptor from the name [`Self::name`] writes.
+    ///
+    /// The pair is what lets a frame survive a boundary that carries no types —
+    /// an RRD's metadata, a CSV header, a WebSocket message — so a recording can
+    /// be read back in the frame it was written in.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "SimpleEci" => FrameDescriptor::SimpleEci,
+            "SimpleEcef" => FrameDescriptor::SimpleEcef,
+            "Gcrs" => FrameDescriptor::Gcrs,
+            "Cirs" => FrameDescriptor::Cirs,
+            "Tirs" => FrameDescriptor::Tirs,
+            "Itrs" => FrameDescriptor::Itrs,
+            "Teme" => FrameDescriptor::Teme,
+            "MeanEquinoxOfDate" => FrameDescriptor::MeanEquinoxOfDate,
+            "Rsw" => FrameDescriptor::Rsw,
+            "Body" => FrameDescriptor::Body,
+            _ => return None,
+        })
+    }
+
     pub const fn category(self) -> FrameCategory {
         match self {
             FrameDescriptor::SimpleEci
@@ -705,6 +726,56 @@ impl<From: Frame, To: Frame> core::fmt::Debug for Rotation<From, To> {
 
 #[cfg(test)]
 mod tests {
+    /// Every descriptor survives the name round-trip.
+    ///
+    /// `name` and `from_name` are what carry a frame across a boundary that has
+    /// no types — an RRD's metadata, a CSV header, a WebSocket message. If a
+    /// variant is added to one arm and not the other, a recording written in that
+    /// frame reads back as `None` and the frame is silently lost. Listing every
+    /// variant here rather than iterating means adding one to the enum without
+    /// touching this test leaves the list short, which is visible in review.
+    #[test]
+    fn every_descriptor_round_trips_through_its_name() {
+        let all = [
+            FrameDescriptor::SimpleEci,
+            FrameDescriptor::SimpleEcef,
+            FrameDescriptor::Gcrs,
+            FrameDescriptor::Cirs,
+            FrameDescriptor::Tirs,
+            FrameDescriptor::Itrs,
+            FrameDescriptor::Teme,
+            FrameDescriptor::MeanEquinoxOfDate,
+            FrameDescriptor::Rsw,
+            FrameDescriptor::Body,
+        ];
+        for d in all {
+            assert_eq!(
+                FrameDescriptor::from_name(d.name()),
+                Some(d),
+                "{} does not round-trip",
+                d.name()
+            );
+        }
+    }
+
+    #[test]
+    fn from_name_rejects_what_it_did_not_write() {
+        // Lower case, a frame that does not exist, and the empty string: a
+        // recording carrying any of these is not one this build can read.
+        for name in ["simpleeci", "GCRS", "J2000", ""] {
+            assert_eq!(FrameDescriptor::from_name(name), None, "accepted {name:?}");
+        }
+    }
+
+    /// The marker types agree with the descriptors they claim.
+    #[test]
+    fn frame_descriptor_matches_the_marker_it_belongs_to() {
+        assert_eq!(SimpleEci::DESCRIPTOR, FrameDescriptor::SimpleEci);
+        assert_eq!(Gcrs::DESCRIPTOR, FrameDescriptor::Gcrs);
+        assert_eq!(SimpleEci::DESCRIPTOR.name(), SimpleEci::NAME);
+        assert_eq!(Gcrs::DESCRIPTOR.name(), Gcrs::NAME);
+    }
+
     use super::*;
     use std::f64::consts::PI;
 

@@ -1,3 +1,5 @@
+use arika::frame::FrameDescriptor;
+
 use std::collections::HashMap;
 
 use crate::record::archetypes::OrbitalState;
@@ -290,6 +292,13 @@ pub struct SimMetadata {
     pub period: Option<f64>,
     /// Human-readable initial orbit description (e.g. "circular at 400 km altitude").
     pub orbit_description: Option<String>,
+    /// Inertial frame the states in this recording are expressed in.
+    ///
+    /// Position and velocity components mean different things in different
+    /// frames — `SimpleEci` and `Gcrs` differ by ~484 arcsec at 2024 — so a
+    /// recording that does not say which one it used cannot be read back
+    /// unambiguously. `None` marks a recording written before this was carried.
+    pub integration_frame: Option<FrameDescriptor>,
 }
 
 impl SimMetadata {
@@ -319,6 +328,9 @@ impl SimMetadata {
         }
         if let Some(period) = self.period {
             writeln!(w, "# Period = {:.1} s ({:.1} min)", period, period / 60.0)?;
+        }
+        if let Some(frame) = self.integration_frame {
+            writeln!(w, "# integration_frame = {}", frame.name())?;
         }
         Ok(())
     }
