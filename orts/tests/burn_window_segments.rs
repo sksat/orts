@@ -533,6 +533,12 @@ mod scheduled_pair_force {
 /// The segment loop tests `t < target` before it builds a stepper, so a
 /// non-finite target takes no step and the solver never sees it. Without a
 /// check of its own, the loop would report success from where it started.
+///
+/// `-inf` needs its own case: the guards that skip a satellite already past
+/// the target compare `t >= target`, which is false there, so a check placed
+/// after them would let it through. So does a satellite with an `end_time`:
+/// `f64::min` returns the finite end time for both a NaN and `+inf`, and the
+/// group would propagate to that instead of rejecting the call.
 #[test]
 fn a_non_finite_target_is_rejected() {
     use orts::group::coupled::CoupledGroup;
@@ -545,7 +551,7 @@ fn a_non_finite_target_is_rejected() {
     let system = || OrbitalSystem::new(arika::earth::MU, Box::new(PointMass));
 
     for (name, integrator) in integrators() {
-        for target in [f64::NAN, f64::INFINITY] {
+        for target in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
             let mut independent =
                 IndependentGroup::new(integrator.clone()).add_satellite("sat", state(), system());
             assert!(
@@ -564,6 +570,20 @@ fn a_non_finite_target_is_rejected() {
                     Err(IntegrationError::InvalidTimeSpan { .. })
                 ),
                 "{name}: a coupled group accepted the target {target}"
+            );
+
+            let mut bounded = IndependentGroup::new(integrator.clone()).add_satellite_until(
+                "sat",
+                state(),
+                5.0,
+                system(),
+            );
+            assert!(
+                matches!(
+                    bounded.propagate_to(target),
+                    Err(IntegrationError::InvalidTimeSpan { .. })
+                ),
+                "{name}: a satellite with an end time accepted the target {target}"
             );
         }
     }

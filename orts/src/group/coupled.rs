@@ -5,7 +5,7 @@ use nalgebra::Vector3;
 use utsuroi::{
     AdvanceOutcome, AdvanceOutcome853, Dop853, DormandPrince, DynamicalSystem, IntegrationError,
     Integrator, OdeState, Rk4, SegmentContext, SegmentSystem, Tolerances,
-    derivatives_maybe_in_segment, validate_time_span,
+    derivatives_maybe_in_segment,
 };
 
 use super::prop_group::{GroupSnapshot, PropGroupOutcome, SatId, SatelliteTermination};
@@ -406,6 +406,15 @@ where
     }
 
     pub fn propagate_to(&mut self, t_target: f64) -> Result<PropGroupOutcome, IntegrationError> {
+        // Before the no-op guard below: `self.t >= t_target` is false for
+        // `-inf` and for a NaN, so an invalid target would otherwise be
+        // reported as a span already covered.
+        if !t_target.is_finite() {
+            return Err(IntegrationError::InvalidTimeSpan {
+                t0: self.t,
+                t_end: t_target,
+            });
+        }
         if self.terminated || self.t >= t_target {
             return Ok(PropGroupOutcome {
                 terminations: Vec::new(),
@@ -416,10 +425,6 @@ where
         // fixed-step RK4 branch below would otherwise spin on `h = 0` (or walk
         // backwards for `dt < 0`) forever.
         self.integrator.validate()?;
-        // And reject a target no loop can walk to: the segment loop below tests
-        // `self.t < t_target` before building a stepper, so a non-finite target
-        // would take no step and report success from where it started.
-        validate_time_span(self.t, t_target)?;
 
         // One segment at a time, so that no switch of the right-hand side
         // falls strictly inside a step and the stage on a segment's end reads

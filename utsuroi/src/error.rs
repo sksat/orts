@@ -113,14 +113,7 @@ pub fn validate_step_size(dt: f64) -> Result<(), IntegrationError> {
 }
 
 /// Reject a time span the monotonically-increasing loops cannot cover.
-/// Rejects a span a loop cannot walk: a non-finite end, or one before the
-/// start.
-///
-/// A propagation loop that splits its span at known boundaries has to check
-/// this itself: with a non-finite target, `t < t_target` is false on the first
-/// test, so the loop takes no step and no solver ever sees the target to
-/// reject it.
-pub fn validate_time_span(t0: f64, t_end: f64) -> Result<(), IntegrationError> {
+pub(crate) fn validate_time_span(t0: f64, t_end: f64) -> Result<(), IntegrationError> {
     if t0.is_finite() && t_end.is_finite() && t_end >= t0 {
         Ok(())
     } else {

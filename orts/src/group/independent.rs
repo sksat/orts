@@ -3,7 +3,6 @@ use std::ops::ControlFlow;
 use utsuroi::{
     AdvanceOutcome, AdvanceOutcome853, Dop853, DormandPrince, DynamicalSystem, IntegrationError,
     Integrator, OdeState, Rk4, SegmentContext, SegmentSystem, Tolerances, validate_step_size,
-    validate_time_span,
 };
 
 use super::HasPosition;
@@ -294,6 +293,19 @@ where
         let event_checker = &self.event_checker;
 
         for (entry, dynamics) in &mut self.satellites {
+            // The target the caller asked for, before any guard or clamp reads
+            // it. Each of the three below hides a non-finite target instead of
+            // rejecting it: `entry.t >= t_target` is true for `-inf` and skips
+            // the satellite, `f64::min` drops a NaN in favour of a finite
+            // `end_time`, and the segment loop tests `entry.t <
+            // effective_target` before building a stepper, so no solver ever
+            // sees the target either.
+            if !t_target.is_finite() {
+                return Err(IntegrationError::InvalidTimeSpan {
+                    t0: entry.t,
+                    t_end: t_target,
+                });
+            }
             if entry.terminated || entry.t >= t_target {
                 continue;
             }
@@ -307,13 +319,6 @@ where
             if entry.t >= effective_target {
                 continue;
             }
-            // Past that guard the target is ahead of this satellite, or it is
-            // not a number. The segment loop below tests `entry.t <
-            // effective_target` before it builds a stepper, so a non-finite
-            // target would take no step and report success from where the
-            // satellite started, without any solver seeing the target to
-            // reject it.
-            validate_time_span(entry.t, effective_target)?;
 
             // One segment at a time, so that no switch of the right-hand side
             // falls strictly inside a step and the stage on a segment's end
