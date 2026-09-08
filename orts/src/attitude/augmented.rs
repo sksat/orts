@@ -11,7 +11,7 @@ use utsuroi::{DynamicalSystem, SegmentContext};
 use crate::OrbitalState;
 use crate::attitude::DecoupledContext;
 use crate::attitude::state::AttitudeState;
-use crate::effector::{AugmentedState, AuxRegistry, StateEffector};
+use crate::effector::{AugmentedState, AuxRegistry, StateEffector, effector_derivatives};
 use crate::model::ExternalLoads;
 use crate::model::{EvalSegment, Model, eval_maybe_in_segment};
 
@@ -198,11 +198,15 @@ impl AugmentedAttitudeSystem {
             let entry = &self.registry.entries()[i];
             let aux_slice = &state.aux[entry.offset..entry.offset + entry.dim];
             let rates_slice = &mut aux_rates[entry.offset..entry.offset + entry.dim];
-            // TODO(#446): an effector that reports a boundary needs the same
-            // segment mode as the models. No effector carries a time
-            // schedule yet — a reaction wheel switches on its own momentum,
-            // which is a state event.
-            total += eff.derivatives(t, &context, aux_slice, rates_slice, epoch.as_ref());
+            total += effector_derivatives(
+                eff.as_ref(),
+                segment,
+                t,
+                &context,
+                aux_slice,
+                rates_slice,
+                epoch.as_ref(),
+            );
         }
 
         // 4. Warn if models produce translational forces or mass changes (ignored here)

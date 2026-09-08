@@ -44,6 +44,24 @@ pub trait InterSatelliteForce: Send + Sync {
     fn next_discontinuity_after(&self, _t: f64) -> Option<f64> {
         None
     }
+
+    /// The pair's accelerations for the segment a solver is stepping through.
+    ///
+    /// A force that reports a boundary has its switch turned into the end of a
+    /// segment, and the stage landing there belongs to the step integrating the
+    /// segment before it. Answering for `segment.start` keeps that stage on the
+    /// inside of a half-open interval ending there; `ctx` still describes the
+    /// stage, so a force that varies continuously keeps reading it.
+    ///
+    /// The default ignores the segment and forwards to
+    /// [`acceleration_pair`](Self::acceleration_pair).
+    fn acceleration_pair_in_segment(
+        &self,
+        _segment: &SegmentContext,
+        ctx: &PairContext<'_>,
+    ) -> (Vector3<f64>, Vector3<f64>) {
+        self.acceleration_pair(ctx)
+    }
 }
 
 /// A specific satellite-pair interaction: indices into the group + force model.
@@ -198,15 +216,15 @@ where
 
             let pos_i = state.states[pair.i].position();
             let pos_j = state.states[pair.j].position();
-            // TODO(#446): an inter-satellite force that reports a boundary needs
-            // the same segment mode as the models. Mutual gravitation, the
-            // only force here, is continuous.
             let ctx = PairContext {
                 t,
                 pos_i: &pos_i,
                 pos_j: &pos_j,
             };
-            let (a_i, a_j) = pair.force.acceleration_pair(&ctx);
+            let (a_i, a_j) = match segment {
+                Some(segment) => pair.force.acceleration_pair_in_segment(segment, &ctx),
+                None => pair.force.acceleration_pair(&ctx),
+            };
             derivs[pair.i] = derivs[pair.i].axpy(1.0, &D::State::from_acceleration(a_i));
             derivs[pair.j] = derivs[pair.j].axpy(1.0, &D::State::from_acceleration(a_j));
         }

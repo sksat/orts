@@ -324,3 +324,207 @@ fn an_epoch_scheduled_burn_applies_the_delta_v_it_was_given() {
         );
     }
 }
+
+/// An effector on a schedule of its own, integrated through the same loop.
+///
+/// The aux rate is 1 while the window is open, so the aux state a propagation
+/// reaches is the window's length. Reading the schedule at the stage time
+/// instead costs the stage on the window's end its weight — 1/6 of a step under
+/// RK4 — which is what the segment evaluation is for.
+///
+/// The window sits at `[0.15, 0.25)` so the segment before it is longer than
+/// the window: with both 0.1 s long, the `h/6` a stage-time reading leaks into
+/// the earlier segment and the `h/6` it drops from the window's own last stage
+/// cancel exactly under RK4, and only DP45 and DOP853 would see the mistake.
+mod scheduled_effector {
+    use super::*;
+    use arika::epoch::Epoch;
+    use orts::effector::StateEffector;
+    use orts::model::{EvalSegment, ExternalLoads};
+    use orts::spacecraft::SpacecraftDynamics;
+
+    struct WindowedCounter {
+        start: f64,
+        end: f64,
+    }
+
+    impl WindowedCounter {
+        fn rate_at(&self, t: f64) -> f64 {
+            if t >= self.start && t < self.end {
+                1.0
+            } else {
+                0.0
+            }
+        }
+    }
+
+    impl StateEffector<SpacecraftState> for WindowedCounter {
+        fn name(&self) -> &str {
+            "windowed_counter"
+        }
+
+        fn state_dim(&self) -> usize {
+            1
+        }
+
+        fn next_discontinuity_after(&self, t: f64, _epoch: Option<&Epoch>) -> Option<f64> {
+            [self.start, self.end]
+                .into_iter()
+                .filter(|edge| *edge > t)
+                .min_by(f64::total_cmp)
+        }
+
+        fn derivatives(
+            &self,
+            t: f64,
+            _state: &SpacecraftState,
+            _aux: &[f64],
+            aux_rates: &mut [f64],
+            _epoch: Option<&Epoch>,
+        ) -> ExternalLoads {
+            aux_rates[0] = self.rate_at(t);
+            ExternalLoads::zeros()
+        }
+
+        fn derivatives_in_segment(
+            &self,
+            segment: &EvalSegment<'_>,
+            _t: f64,
+            _state: &SpacecraftState,
+            _aux: &[f64],
+            aux_rates: &mut [f64],
+            _epoch: Option<&Epoch>,
+        ) -> ExternalLoads {
+            aux_rates[0] = self.rate_at(segment.start);
+            ExternalLoads::zeros()
+        }
+    }
+
+    #[test]
+    fn a_scheduled_effector_integrates_its_whole_window() {
+        for (name, integrator) in integrators() {
+            let dynamics =
+                SpacecraftDynamics::new(arika::earth::MU, PointMass, Matrix3::identity())
+                    .with_effector(WindowedCounter {
+                        start: 0.15,
+                        end: 0.25,
+                    });
+            let mut state = initial_state();
+            state.aux = vec![0.0];
+            state.aux_bounds = vec![(f64::NEG_INFINITY, f64::INFINITY)];
+            let mut group = IndependentGroup::new(integrator).add_satellite("sat", state, dynamics);
+            let mut counted = 0.0;
+            group
+                .propagate_to_with(SPAN_S, |_, _, s| counted = s.aux[0])
+                .expect("the orbit is finite everywhere");
+            assert!(
+                (counted - 0.1).abs() < 1e-15,
+                "{name} integrated the window to {counted}, expected 0.1"
+            );
+        }
+    }
+}
+
+/// A force between two satellites on a schedule of its own.
+///
+/// The force pushes satellite 0 along +x while its window is open, so the Δv it
+/// applies is the acceleration times the window's length. `PairContext` carries
+/// no epoch, so the segment here is the interval in integration time alone.
+mod scheduled_pair_force {
+    use super::*;
+    use std::sync::Arc;
+
+    use orts::group::coupled::{CoupledGroup, InterSatelliteForce, PairContext};
+    use orts::orbital::OrbitalSystem;
+    use utsuroi::SegmentContext;
+
+    const ACCELERATION: f64 = 1e-5;
+    /// Displacement the push earns by the end of the span, in km.
+    ///
+    /// Under constant acceleration `a` over a window of length `T`, the
+    /// satellite gains `a T^2 / 2` inside the window and `a T` of velocity to
+    /// carry for the `0.1 s` between the window's end and the span's: with
+    /// `a = 1e-5` and `T = 0.1`, that is `5e-8 + 1e-7` km.
+    const ANALYTIC: f64 = ACCELERATION * 0.1 * 0.1 / 2.0 + ACCELERATION * 0.1 * 0.1;
+
+    struct WindowedPush {
+        start: f64,
+        end: f64,
+    }
+
+    impl WindowedPush {
+        fn push_at(&self, t: f64) -> (Vector3<f64>, Vector3<f64>) {
+            if t >= self.start && t < self.end {
+                (Vector3::new(ACCELERATION, 0.0, 0.0), Vector3::zeros())
+            } else {
+                (Vector3::zeros(), Vector3::zeros())
+            }
+        }
+    }
+
+    impl InterSatelliteForce for WindowedPush {
+        fn name(&self) -> &str {
+            "windowed_push"
+        }
+
+        fn acceleration_pair(&self, ctx: &PairContext<'_>) -> (Vector3<f64>, Vector3<f64>) {
+            self.push_at(ctx.t)
+        }
+
+        fn acceleration_pair_in_segment(
+            &self,
+            segment: &SegmentContext,
+            _ctx: &PairContext<'_>,
+        ) -> (Vector3<f64>, Vector3<f64>) {
+            self.push_at(segment.start)
+        }
+
+        fn next_discontinuity_after(&self, t: f64) -> Option<f64> {
+            [self.start, self.end]
+                .into_iter()
+                .filter(|edge| *edge > t)
+                .min_by(f64::total_cmp)
+        }
+    }
+
+    #[test]
+    fn a_scheduled_pair_force_pushes_for_its_whole_window() {
+        let r = arika::earth::R + 400.0;
+        let v = (arika::earth::MU / r).sqrt();
+        let state = || OrbitalState::new(Vector3::new(r, 0.0, 0.0), Vector3::new(0.0, v, 0.0));
+        let system = || OrbitalSystem::new(arika::earth::MU, Box::new(PointMass));
+
+        for (name, integrator) in integrators() {
+            let mut pushed = CoupledGroup::new(integrator.clone())
+                .add_satellite("a", state(), system())
+                .add_satellite("b", state(), system())
+                .with_interaction(
+                    0,
+                    1,
+                    Arc::new(WindowedPush {
+                        start: 0.15,
+                        end: 0.25,
+                    }),
+                );
+            let mut coasting = CoupledGroup::new(integrator)
+                .add_satellite("a", state(), system())
+                .add_satellite("b", state(), system());
+            pushed.propagate_to(0.35).expect("finite everywhere");
+            coasting.propagate_to(0.35).expect("finite everywhere");
+
+            let moved = pushed.snapshot().positions[0].1;
+            let unmoved = coasting.snapshot().positions[0].1;
+            // Position, not velocity: `CoupledGroup` reports positions.
+            let displaced = (moved - unmoved).norm();
+            assert!(
+                // 1e-5 relative: the two runs stop sharing gravity once the
+                // push has moved one of them, which measures 1.6e-6 of the
+                // displacement here. A stage lost at the window's end costs
+                // far more — 8e-2 of the Δv, measured on the same shape.
+                (displaced / ANALYTIC - 1.0).abs() < 1e-5,
+                "{name} moved the satellite {displaced:e} km against the {ANALYTIC:e} km \
+                 the push earns"
+            );
+        }
+    }
+}
