@@ -6,8 +6,11 @@ use crate::model::{EvalSegment, HasFrame, HasOrbit, Model};
 
 /// Constant-thrust force model active over a fixed epoch interval.
 ///
-/// Applies a uniform acceleration (in ECI) from `start` to `end`
-/// (inclusive on both ends), and zero acceleration outside that window.
+/// Applies a uniform acceleration (in ECI) over `[start, end)` — the start
+/// counts, the end does not — and zero acceleration outside that window. The
+/// half-open interval is the one [`BurnWindow`](crate::spacecraft::BurnWindow)
+/// uses, and it is what lets a propagation loop hold the burn's state over the
+/// segment that begins where the burn ends.
 /// Acceleration is stored pre-computed as `total_dv / duration` so the
 /// hot-path `eval()` is branch-and-lookup only.
 ///
@@ -61,9 +64,11 @@ use crate::model::{EvalSegment, HasFrame, HasOrbit, Model};
 pub struct ConstantThrust<F: Eci = frame::SimpleEci> {
     /// Human-readable name (e.g. `"DRI"`, `"thrust_burn3"`).
     pub name: &'static str,
-    /// First epoch at which the thrust is active (inclusive).
+    /// First epoch at which the thrust is active; it counts.
     pub start: Epoch,
-    /// Last epoch at which the thrust is active (inclusive).
+    /// Epoch at which the thrust stops; it does not count. The last instant
+    /// that thrusts is the one before it, so the burn lasts exactly
+    /// `end - start`.
     pub end: Epoch,
     /// Pre-computed constant acceleration vector [km/s²], in the inertial
     /// frame `F` the Δv was given in.
