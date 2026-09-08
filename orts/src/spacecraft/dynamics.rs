@@ -232,7 +232,7 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
 impl<G: GravityField, F: Eci + 'static> DynamicalSystem for SpacecraftDynamics<G, F> {
     type State = AugmentedState<SpacecraftState<F>>;
 
-    /// The earliest boundary any model reports.
+    /// The earliest boundary any model or effector reports.
     ///
     /// Models that report the same time collapse to one, which is what a
     /// propagation loop wants: two thrusters whose windows share an edge, or a

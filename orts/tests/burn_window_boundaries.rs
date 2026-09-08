@@ -352,8 +352,9 @@ fn the_augmented_attitude_system_forwards_its_models_edges() {
 
 /// `CoupledGroupDynamics` passes on the earliest edge across its satellites.
 ///
-/// The inter-satellite forces are continuous, so the group switches exactly
-/// where its satellites do.
+/// The interaction forces are part of the same right-hand side and can carry a
+/// schedule of their own, so the group takes the minimum over both; that half is
+/// covered by `a_scheduled_interaction_force_reports_through_the_group`.
 #[test]
 fn a_coupled_group_forwards_the_boundaries_of_its_satellites() {
     use orts::group::coupled::CoupledGroupDynamics;
@@ -547,6 +548,52 @@ fn a_scheduled_interaction_force_reports_through_the_group() {
     );
     // 2.0 and 9.0 come from the force, 5.0 from the first satellite's model.
     assert_eq!(edges_of(&group, 0.0), vec![2.0, 5.0, 9.0]);
+}
+
+/// The reported edge and the switch itself agree across a leap second.
+///
+/// A burn from 2016-12-31T23:59:59Z to 2017-01-01T00:00:00Z spans two SI
+/// seconds — a leap second sits between those labels. The edge this reports and
+/// the instant `is_active` starts and stops answering true have to be the same
+/// time, or a loop ending its step at the boundary steps to the wrong place, and
+/// the Δv is spread over the wrong duration.
+#[test]
+fn the_reported_edge_agrees_with_the_switch_across_a_leap_second() {
+    use arika::epoch::{Epoch, Utc};
+    use orts::orbital::system::OrbitalSystem;
+    use orts::perturbations::ConstantThrust;
+
+    let start: Epoch<Utc> = Epoch::from_iso8601("2016-12-31T23:59:59Z").expect("parse");
+    let end: Epoch<Utc> = Epoch::from_iso8601("2017-01-01T00:00:00Z").expect("parse");
+
+    // Two SI seconds, not the one the civil-time labels suggest.
+    let burn = ConstantThrust::new(
+        "across the leap",
+        start,
+        end,
+        arika::frame::Vec3::from_raw(Vector3::new(2e-3, 0.0, 0.0)),
+    );
+    let elapsed = end.duration_since(&start).as_si_seconds();
+    assert!(
+        (burn.duration_seconds() - elapsed).abs() < 1e-9,
+        "the burn lasts {} s on the uniform timeline, model says {}",
+        elapsed,
+        burn.duration_seconds()
+    );
+
+    // With epoch_0 at the burn's start, the end sits at integration time
+    // `elapsed` — the same number the model spreads the Δv over.
+    let system: OrbitalSystem = OrbitalSystem::new(398600.4418, Box::new(PointMass))
+        .with_epoch(start)
+        .with_model(burn);
+    let reported = system
+        .next_discontinuity_after(0.0)
+        .expect("the end of the burn is ahead of t = 0");
+    assert!(
+        (reported - elapsed).abs() < 1e-9,
+        "reported edge {reported} s against {elapsed} s of burn"
+    );
+    assert_eq!(system.next_discontinuity_after(reported), None);
 }
 
 /// A non-finite edge is left out rather than handed to a loop as a target.

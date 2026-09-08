@@ -85,7 +85,7 @@ impl<F: Eci> ConstantThrust<F> {
     ///   in one inertial frame cannot be reused in another (`SimpleEci` and
     ///   `Gcrs` differ by ~484 arcsec at 2024).
     pub fn new(name: &'static str, start: Epoch, end: Epoch, total_dv_kms: Vec3<F>) -> Self {
-        let duration_s = (end.jd() - start.jd()) * 86_400.0;
+        let duration_s = end.duration_since(&start).as_si_seconds();
         assert!(
             duration_s > 0.0,
             "ConstantThrust {name:?}: end epoch must strictly follow start"
@@ -107,7 +107,7 @@ impl<F: Eci> ConstantThrust<F> {
 
     /// Returns the burn duration in seconds.
     pub fn duration_seconds(&self) -> f64 {
-        (self.end.jd() - self.start.jd()) * 86_400.0
+        self.end.duration_since(&self.start).as_si_seconds()
     }
 
     /// Returns the total Δv that this thrust model integrates to over
@@ -117,8 +117,18 @@ impl<F: Eci> ConstantThrust<F> {
     }
 
     /// Returns `true` if `epoch` falls within `[start, end]` (inclusive).
+    ///
+    /// Measured on the canonical TAI timeline, as [`duration_seconds`] and the
+    /// edges reported by [`next_edge_after`] are. UTC Julian Dates do not
+    /// advance uniformly across a leap second, so comparing them would put the
+    /// switch a second away from the boundary this model reports, and would
+    /// spread the Δv over a duration one second short.
+    ///
+    /// [`duration_seconds`]: Self::duration_seconds
+    /// [`next_edge_after`]: Self::next_edge_after
     fn is_active(&self, epoch: &Epoch) -> bool {
-        epoch.jd() >= self.start.jd() && epoch.jd() <= self.end.jd()
+        epoch.duration_since(&self.start).as_si_seconds() >= 0.0
+            && self.end.duration_since(epoch).as_si_seconds() >= 0.0
     }
 }
 

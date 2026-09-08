@@ -304,6 +304,12 @@ pub trait DynamicalSystem {
     /// (a limit the trajectory reaches, a threshold it crosses) are not
     /// knowable here and are not reported.
     ///
+    /// What a system reports is what it knows on its caller's behalf: the
+    /// schedules carried by the parts it holds. A function the caller passed in
+    /// — a prescribed trajectory, a prescribed mass — is the caller's own
+    /// knowledge, and a caller who wrote a piecewise one already holds its
+    /// breakpoints. A propagation loop takes boundaries from both.
+    ///
     /// The default answers `None`: a system whose right-hand side is continuous
     /// needs no boundary.
     fn next_discontinuity_after(&self, _t: f64) -> Option<f64> {
