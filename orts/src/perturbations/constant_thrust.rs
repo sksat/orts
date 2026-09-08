@@ -123,7 +123,6 @@ impl<F: Eci> ConstantThrust<F> {
 }
 
 impl<F: Eci> ConstantThrust<F> {
-    /// Shared body of [`Model::eval`] for the frames this model supports.
     /// Integration time of the next edge of the burn after `t`.
     ///
     /// The burn is bounded by two epochs while a propagation loop works in
@@ -131,9 +130,9 @@ impl<F: Eci> ConstantThrust<F> {
     /// there to an edge is the same in both. Without an epoch there is no
     /// mapping and no edge to report.
     ///
-    /// `end` is inclusive, so the load drops after it rather than at it. The
-    /// time reported is the instant the thrust stops contributing, which is what
-    /// a loop wants to end its step at.
+    /// `start` and `end` are where the burn begins and ends. Which one-sided
+    /// value a stage landing exactly on an edge should take is the propagation
+    /// loop's to decide (#446); this reports the times, not that rule.
     fn next_edge_after(&self, t: f64, epoch_at_t: Option<&Epoch>) -> Option<f64> {
         let now = epoch_at_t?;
         [self.start, self.end]
@@ -143,6 +142,7 @@ impl<F: Eci> ConstantThrust<F> {
             .min_by(f64::total_cmp)
     }
 
+    /// Shared body of [`Model::eval`] for the frames this model supports.
     fn loads(&self, epoch: Option<&Epoch>) -> ExternalLoads<F> {
         // The stored acceleration is already a `Vec3<F>` and `F` is the state's
         // frame, so it goes into the loads without a re-tag.

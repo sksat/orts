@@ -36,11 +36,11 @@ fn a_window_reports_both_of_its_edges() {
     let burn = ScheduledBurn {
         windows: vec![BurnWindow::full(0.1, 0.2)],
     };
-    assert_eq!(burn.next_throttle_jump_after(0.0), Some(0.1));
-    assert_eq!(burn.next_throttle_jump_after(0.1), Some(0.2));
-    assert_eq!(burn.next_throttle_jump_after(0.15), Some(0.2));
+    assert_eq!(burn.next_throttle_jump_after(0.0, None), Some(0.1));
+    assert_eq!(burn.next_throttle_jump_after(0.1, None), Some(0.2));
+    assert_eq!(burn.next_throttle_jump_after(0.15, None), Some(0.2));
     // Past the last edge there is nothing left to report.
-    assert_eq!(burn.next_throttle_jump_after(0.2), None);
+    assert_eq!(burn.next_throttle_jump_after(0.2, None), None);
 }
 
 /// The edge asked about is never the answer, so a loop that steps to one and
@@ -50,8 +50,8 @@ fn the_time_asked_about_is_not_reported() {
     let burn = ScheduledBurn {
         windows: vec![BurnWindow::full(1.0, 2.0)],
     };
-    assert_eq!(burn.next_throttle_jump_after(1.0), Some(2.0));
-    assert_eq!(burn.next_throttle_jump_after(2.0), None);
+    assert_eq!(burn.next_throttle_jump_after(1.0, None), Some(2.0));
+    assert_eq!(burn.next_throttle_jump_after(2.0, None), None);
 }
 
 /// Windows out of order still report their edges in time order.
@@ -69,7 +69,7 @@ fn unordered_windows_report_their_earliest_edge() {
     };
     let mut t = 0.0;
     let mut edges = Vec::new();
-    while let Some(next) = burn.next_throttle_jump_after(t) {
+    while let Some(next) = burn.next_throttle_jump_after(t, None) {
         edges.push(next);
         t = next;
     }
@@ -92,7 +92,7 @@ fn abutting_windows_share_one_edge() {
     };
     let mut t = -1.0;
     let mut edges = Vec::new();
-    while let Some(next) = burn.next_throttle_jump_after(t) {
+    while let Some(next) = burn.next_throttle_jump_after(t, None) {
         edges.push(next);
         t = next;
     }
@@ -249,12 +249,197 @@ fn an_epoch_scheduled_burn_without_an_epoch_reports_no_time() {
     assert_eq!(system.next_discontinuity_after(0.0), None);
 }
 
+/// A model that reports a fixed set of edges, for the systems whose own models
+/// carry no schedule.
+///
+/// Reports the earliest of `edges` after `t`, so a system holding two of these
+/// has a minimum to take and a caller can walk the sequence.
+struct EdgeStub {
+    name: &'static str,
+    edges: Vec<f64>,
+}
+
+impl EdgeStub {
+    fn new(name: &'static str, edges: Vec<f64>) -> Self {
+        Self { name, edges }
+    }
+}
+
+impl<S: orts::model::HasFrame> Model<S> for EdgeStub {
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    fn eval(
+        &self,
+        _t: f64,
+        _state: &S,
+        _epoch: Option<&arika::epoch::Epoch>,
+    ) -> orts::model::ExternalLoads<S::Frame> {
+        orts::model::ExternalLoads::zeros()
+    }
+
+    fn next_discontinuity_after(
+        &self,
+        t: f64,
+        _epoch: Option<&arika::epoch::Epoch>,
+    ) -> Option<f64> {
+        self.edges
+            .iter()
+            .copied()
+            .filter(|e| *e > t)
+            .min_by(f64::total_cmp)
+    }
+}
+
+/// Walk a system's reported edges from `t0` until it stops reporting.
+fn edges_of<D: DynamicalSystem>(system: &D, t0: f64) -> Vec<f64> {
+    let mut t = t0;
+    let mut edges = Vec::new();
+    while let Some(next) = system.next_discontinuity_after(t) {
+        edges.push(next);
+        t = next;
+    }
+    edges
+}
+
+/// `AttitudeSystem` passes on its models' edges.
+#[test]
+fn the_attitude_system_forwards_its_models_edges() {
+    use orts::attitude::AttitudeSystem;
+
+    let bare = AttitudeSystem::new(Matrix3::identity());
+    assert_eq!(bare.next_discontinuity_after(0.0), None);
+
+    let system = AttitudeSystem::new(Matrix3::identity())
+        .with_model(EdgeStub::new("a", vec![3.0, 7.0]))
+        .with_model(EdgeStub::new("b", vec![1.0, 5.0]));
+    assert_eq!(edges_of(&system, 0.0), vec![1.0, 3.0, 5.0, 7.0]);
+}
+
+/// `DecoupledAttitudeSystem` passes on its models' edges.
+#[test]
+fn the_decoupled_attitude_system_forwards_its_models_edges() {
+    use orts::attitude::DecoupledAttitudeSystem;
+
+    let bare =
+        DecoupledAttitudeSystem::circular_orbit(Matrix3::identity(), 398600.4418, 7000.0, 100.0);
+    assert_eq!(bare.next_discontinuity_after(0.0), None);
+
+    let system =
+        DecoupledAttitudeSystem::circular_orbit(Matrix3::identity(), 398600.4418, 7000.0, 100.0)
+            .with_model(EdgeStub::new("a", vec![2.0, 8.0]))
+            .with_model(EdgeStub::new("b", vec![4.0]));
+    assert_eq!(edges_of(&system, 0.0), vec![2.0, 4.0, 8.0]);
+}
+
+/// `AugmentedAttitudeSystem` passes on its models' edges, independently of any
+/// effector state it also carries.
+#[test]
+fn the_augmented_attitude_system_forwards_its_models_edges() {
+    use orts::attitude::AugmentedAttitudeSystem;
+
+    let bare =
+        AugmentedAttitudeSystem::circular_orbit(Matrix3::identity(), 398600.4418, 7000.0, 100.0);
+    assert_eq!(bare.next_discontinuity_after(0.0), None);
+
+    let system =
+        AugmentedAttitudeSystem::circular_orbit(Matrix3::identity(), 398600.4418, 7000.0, 100.0)
+            .with_model(EdgeStub::new("a", vec![6.0]))
+            .with_model(EdgeStub::new("b", vec![1.5, 9.0]));
+    assert_eq!(edges_of(&system, 0.0), vec![1.5, 6.0, 9.0]);
+}
+
+/// `CoupledGroupDynamics` passes on the earliest edge across its satellites.
+///
+/// The inter-satellite forces are continuous, so the group switches exactly
+/// where its satellites do.
+#[test]
+fn a_coupled_group_forwards_the_boundaries_of_its_satellites() {
+    use orts::group::coupled::CoupledGroupDynamics;
+
+    use orts::orbital::system::OrbitalSystem;
+
+    // `CoupledGroupDynamics` needs a state it can add an interaction
+    // acceleration to, which `OrbitalState` is and `AugmentedState` is not.
+    let orbital = || -> OrbitalSystem { OrbitalSystem::new(398600.4418, Box::new(PointMass)) };
+
+    let bare = CoupledGroupDynamics::new(vec![orbital(), orbital()], vec![]);
+    assert_eq!(bare.next_discontinuity_after(0.0), None);
+
+    let group = CoupledGroupDynamics::new(
+        vec![
+            orbital().with_model(EdgeStub::new("a", vec![5.0, 7.0])),
+            orbital().with_model(EdgeStub::new("b", vec![3.0, 11.0])),
+        ],
+        vec![],
+    );
+    assert_eq!(edges_of(&group, 0.0), vec![3.0, 5.0, 7.0, 11.0]);
+}
+
+/// An epoch-scheduled profile reports its edges through `Thruster`.
+///
+/// `throttle` receives the epoch, so `next_throttle_jump_after` does too —
+/// otherwise a profile that schedules itself in epochs could evaluate correctly
+/// while never reporting an edge.
+#[test]
+fn an_epoch_scheduled_profile_reports_through_the_thruster() {
+    use arika::epoch::Epoch;
+
+    /// Fires for 60 s starting 100 s after its reference epoch.
+    struct EpochBurn {
+        reference: Epoch,
+    }
+    impl ThrustProfile for EpochBurn {
+        fn throttle(&self, _t: f64, _s: &SpacecraftState, epoch: Option<&Epoch>) -> f64 {
+            match epoch {
+                Some(now) => {
+                    let since = now.duration_since(&self.reference).as_si_seconds();
+                    if (100.0..160.0).contains(&since) {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                None => 0.0,
+            }
+        }
+
+        fn next_throttle_jump_after(&self, t: f64, epoch: Option<&Epoch>) -> Option<f64> {
+            let now = epoch?;
+            let since = now.duration_since(&self.reference).as_si_seconds();
+            [100.0 - since, 160.0 - since]
+                .iter()
+                .map(|offset| t + offset)
+                .filter(|edge| *edge > t)
+                .min_by(f64::total_cmp)
+        }
+    }
+
+    let epoch_0 = Epoch::j2000();
+    let thruster = Thruster::new(10.0, 300.0, Vector3::x())
+        .with_profile(Box::new(EpochBurn { reference: epoch_0 }));
+    let system: SpacecraftDynamics<PointMass> =
+        SpacecraftDynamics::new(1e-30, PointMass, Matrix3::identity())
+            .with_epoch(epoch_0)
+            .with_model(thruster);
+
+    assert_eq!(edges_of(&system, 0.0), vec![100.0, 160.0]);
+    // Without an epoch the profile has no reference to measure from.
+    let no_epoch: SpacecraftDynamics<PointMass> =
+        SpacecraftDynamics::new(1e-30, PointMass, Matrix3::identity()).with_model(
+            Thruster::new(10.0, 300.0, Vector3::x())
+                .with_profile(Box::new(EpochBurn { reference: epoch_0 })),
+        );
+    assert_eq!(no_epoch.next_discontinuity_after(0.0), None);
+}
+
 /// A non-finite edge is left out rather than handed to a loop as a target.
 #[test]
 fn a_non_finite_edge_is_not_reported() {
     let burn = ScheduledBurn {
         windows: vec![BurnWindow::full(1.0, f64::INFINITY)],
     };
-    assert_eq!(burn.next_throttle_jump_after(0.0), Some(1.0));
-    assert_eq!(burn.next_throttle_jump_after(1.0), None);
+    assert_eq!(burn.next_throttle_jump_after(0.0, None), Some(1.0));
+    assert_eq!(burn.next_throttle_jump_after(1.0, None), None);
 }

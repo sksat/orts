@@ -30,8 +30,13 @@ pub trait ThrustProfile: Send + Sync {
     /// loop ends its step at the times reported here, so that a window is not
     /// sampled only at whichever stage times happen to fall inside it.
     ///
+    /// The answer is in integration time, like `t`. `epoch` is the absolute time
+    /// at `t`, as [`throttle`](Self::throttle) receives it, so a profile written
+    /// in epochs can convert its own edges. `ScheduledBurn`, whose windows are
+    /// already integration times, ignores it.
+    ///
     /// Must be finite and strictly greater than `t`.
-    fn next_throttle_jump_after(&self, _t: f64) -> Option<f64> {
+    fn next_throttle_jump_after(&self, _t: f64, _epoch: Option<&Epoch>) -> Option<f64> {
         None
     }
 }
@@ -91,7 +96,7 @@ impl ThrustProfile for ScheduledBurn {
     /// rather than keeping an index that a later mutation would invalidate. A
     /// window that abuts the next one shares an edge, and the two report as one
     /// time.
-    fn next_throttle_jump_after(&self, t: f64) -> Option<f64> {
+    fn next_throttle_jump_after(&self, t: f64, _epoch: Option<&Epoch>) -> Option<f64> {
         self.windows
             .iter()
             .flat_map(|w| [w.start, w.end])
@@ -283,8 +288,8 @@ impl<S: HasFrame<Frame = arika::frame::SimpleEci> + HasAttitude + HasOrbit + Has
 
     /// Whatever the profile knows. Propellant exhaustion is left out: its time
     /// follows from the mass the trajectory reaches, not from the clock.
-    fn next_discontinuity_after(&self, t: f64, _epoch: Option<&Epoch>) -> Option<f64> {
-        self.profile.next_throttle_jump_after(t)
+    fn next_discontinuity_after(&self, t: f64, epoch: Option<&Epoch>) -> Option<f64> {
+        self.profile.next_throttle_jump_after(t, epoch)
     }
 }
 
