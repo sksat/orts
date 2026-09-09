@@ -767,6 +767,13 @@ section is subdivided by package.
 ### `utsuroi` (Rust, crates.io)
 
 #### Added
+- `FixedSteps` and `Segments`, the two walks a propagation loop needs to step a
+  span itself: the step times of a fixed-step walk, and the segments a span
+  splits into at the switches a system reports. Each yields what a loop needs
+  per iteration — a step's start, width and landing time; a segment's bound
+  system, interval and whether an earlier segment came before it — and
+  `Segments::new` rejects a span no loop can walk, which a loop testing
+  `t < t_end` before stepping cannot leave to the solver. ([#458](https://github.com/sksat/orts/pull/458))
 - `AdaptiveStepper::from_checked_state` and
   `AdaptiveStepper853::from_checked_state`.
   `advance_to` asks the event predicate about the state it starts from, since a
@@ -812,6 +819,15 @@ section is subdivided by package.
   reads `ln x` and `ln y`. `tight_tolerance_dop853_fewer_evaluations` also
   requires both integrations to complete at `t_end` with the right answer
   before comparing what they cost. ([#409](https://github.com/sksat/orts/pull/409))
+
+#### Changed
+- A fixed-step integration walks its grid from the span's start rather than by
+  adding `dt` to a running clock, and its last step lands on the span's end
+  exactly. Accumulating drifted: nine steps of `0.1` from zero reach
+  `0.8999999999999999`, leaving a remainder of `0.10000000000000009` — a hair
+  over `dt` — so `[0, 1]` took eleven steps rather than ten and the last
+  callback never landed on `1.0`. **Step times move by up to an ulp**, and the
+  step count for a span `dt` does not divide is one lower. ([#458](https://github.com/sksat/orts/pull/458))
 
 #### Fixed
 - Every integrate loop asks its event predicate about the state it was given,

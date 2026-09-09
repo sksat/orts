@@ -667,6 +667,11 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `utsuroi` (Rust, crates.io)
 
 #### Added
+- `FixedSteps` と `Segments` を追加。伝播ループが span を自分で刻むときに要る 2 つの走査で、
+  前者は固定刻みの step 時刻、後者は system が報告する切り替わりで span を区切った segment を
+  返す。各 item はループが必要とするもの (step の開始・幅・着地時刻、segment の束縛済み
+  system・区間・先に別の segment があったか) を持ち、`Segments::new` はどのループも歩けない
+  span を拒否する — `t < t_end` を見てから踏むループは、その判断を solver に任せられない。([#458](https://github.com/sksat/orts/pull/458))
 - `AdaptiveStepper::from_checked_state` と `AdaptiveStepper853::from_checked_state` を追加。
   `advance_to` は開始状態について event predicate に問い合わせる (level-triggered な event は
   そこで既に成立しうる) が、前の segment が終えた場所から続く segment では不要で、同じ
@@ -703,6 +708,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `tight_tolerance_dop853_fewer_evaluations` も、評価回数を比べる前に両者が
   `t_end` まで完走して正しい解に達したことを要求する。
   ([#409](https://github.com/sksat/orts/pull/409))
+
+#### Changed
+- 固定刻みの積分が、時計に `dt` を足し込むのではなく span の開始から数えたグリッドを歩き、
+  最後のステップが span の端に厳密に着地するようになった。累積はずれる: 0 から `0.1` を 9 回
+  足すと `0.8999999999999999` になり、残りが `0.10000000000000009` — `dt` をわずかに超える —
+  なので `[0, 1]` は 10 ではなく 11 ステップかかり、最後の callback が `1.0` に一致しなかった。
+  **各ステップの時刻が最大 1 ulp 動き**、`dt` が割り切らない span のステップ数が 1 つ減る。([#458](https://github.com/sksat/orts/pull/458))
 
 #### Fixed
 - 積分ループが、渡された状態そのものについて event の判定を行うようになった
