@@ -496,7 +496,7 @@ where
                         // lands the last step on its end, which the segment's
                         // end being a switch of the right-hand side needs: the
                         // state there has to be the state at the switch.
-                        for step in FixedSteps::new(current_t, segment_end, dt) {
+                        for step in FixedSteps::new(current_t, segment_end, dt)? {
                             if terminated {
                                 break;
                             }

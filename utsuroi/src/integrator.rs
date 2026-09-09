@@ -73,7 +73,9 @@ pub trait Integrator {
 
         let mut state = initial;
 
-        for step in FixedSteps::new(t0, t_end, dt) {
+        // The validation above already covers this, and `FixedSteps` repeats it
+        // rather than trust a caller it cannot see.
+        for step in FixedSteps::new(t0, t_end, dt)? {
             // `h > 0` holds, but for large `|t|` it can still be below the
             // spacing of representable f64 values around `t`.
             if step.next_t == step.t {
@@ -151,7 +153,11 @@ pub trait Integrator {
             };
         }
 
-        for step in FixedSteps::new(t0, t_end, dt) {
+        let steps = match FixedSteps::new(t0, t_end, dt) {
+            Ok(steps) => steps,
+            Err(e) => return IntegrationOutcome::Error(e),
+        };
+        for step in steps {
             if step.next_t == step.t {
                 return IntegrationOutcome::Error(IntegrationError::TimeStagnated {
                     t: step.t,

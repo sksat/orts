@@ -656,7 +656,7 @@ where
                     // `FixedSteps` counts from the segment's start and lands
                     // the last step on its end, which the segment's end being a
                     // switch of the right-hand side needs.
-                    for step in FixedSteps::new(current_t, segment_end, dt) {
+                    for step in FixedSteps::new(current_t, segment_end, dt)? {
                         // `h > 0` after the validate() above, but for large
                         // `|current_t|` it can still be below the f64 spacing there.
                         if step.next_t == step.t {

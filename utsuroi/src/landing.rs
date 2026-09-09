@@ -13,6 +13,8 @@
 //! right-hand side needs that last part: the state there is the state at the
 //! switch, and the clock has to say so.
 
+use crate::error::{IntegrationError, validate_step_size, validate_time_span};
+
 /// The step times of a fixed-step walk from `t0` to `t_end`.
 ///
 /// For a loop that steps a system itself rather than through
@@ -42,15 +44,22 @@ pub struct Step {
 impl FixedSteps {
     /// Walk `[t0, t_end]` in steps of `dt`.
     ///
-    /// `dt > 0` and both ends finite are the caller's to check — the solvers
-    /// do it through `validate_step_size` and `validate_time_span`.
-    pub fn new(t0: f64, t_end: f64, dt: f64) -> Self {
-        Self {
+    /// Rejects what cannot produce a terminating walk: a step size that is not
+    /// positive and finite, a non-finite end of the span, or an end before the
+    /// start. Each of those would otherwise yield forever — a `dt` of zero
+    /// never leaves `t0`, a negative one walks backwards, and every comparison
+    /// against a NaN end is false.
+    ///
+    /// An empty span (`t0 == t_end`) is valid and yields nothing.
+    pub fn new(t0: f64, t_end: f64, dt: f64) -> Result<Self, IntegrationError> {
+        validate_step_size(dt)?;
+        validate_time_span(t0, t_end)?;
+        Ok(Self {
             t0,
             t_end,
             dt,
             taken: 0,
-        }
+        })
     }
 }
 
@@ -90,6 +99,7 @@ mod tests {
 
     fn walk(t0: f64, t_end: f64, dt: f64) -> Vec<(f64, f64)> {
         FixedSteps::new(t0, t_end, dt)
+            .expect("the span and step are valid")
             .map(|step| (step.h, step.next_t))
             .collect()
     }
@@ -135,6 +145,7 @@ mod tests {
     #[test]
     fn the_grid_is_counted_from_the_span_start() {
         let ninth = FixedSteps::new(0.0, 2.0, 0.1)
+            .expect("the span and step are valid")
             .nth(9)
             .expect("the span holds twenty steps");
         assert_eq!(ninth.t, 0.9);
@@ -155,6 +166,27 @@ mod tests {
     #[test]
     fn a_span_narrower_than_a_step_takes_one() {
         assert_eq!(walk(0.0, 0.1, 1.0), vec![(0.1, 0.1)]);
+    }
+
+    /// What would otherwise yield forever: a step that does not advance, one
+    /// that walks backwards, and an end no comparison can order.
+    #[test]
+    fn a_walk_that_cannot_terminate_is_refused() {
+        for (t0, t_end, dt) in [
+            (0.0, 1.0, 0.0),
+            (0.0, 1.0, -0.1),
+            (0.0, 1.0, f64::NAN),
+            (0.0, 1.0, f64::INFINITY),
+            (0.0, f64::NAN, 0.1),
+            (0.0, f64::INFINITY, 0.1),
+            (f64::NAN, 1.0, 0.1),
+            (1.0, 0.0, 0.1),
+        ] {
+            assert!(
+                FixedSteps::new(t0, t_end, dt).is_err(),
+                "[{t0}, {t_end}] in steps of {dt} was accepted"
+            );
+        }
     }
 
     /// A span that starts away from zero keeps its own anchor.
