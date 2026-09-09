@@ -258,9 +258,7 @@ mod tests {
     /// an error.
     #[test]
     fn a_walk_resumed_from_a_stop_covers_the_rest_of_the_span() {
-        let system = Switches {
-            at: vec![0.1, 0.2],
-        };
+        let system = Switches { at: vec![0.1, 0.2] };
         let mut walk = Segments::new(&system, 0.0, 1.0).expect("the span is finite and forward");
         let first = walk.next().expect("the span holds segments");
         assert_eq!((first.start(), first.end()), (0.0, 0.1));
