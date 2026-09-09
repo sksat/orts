@@ -29,7 +29,7 @@ allowBuilds:
   esbuild: false
   sharp: false
 minimumReleaseAgeExclude:
-  # Renovate security update: astro@7.1.0
-  - astro@7.1.0
+  # Renovate security update: astro@7.1.0 || 7.2.8
+  - astro@7.1.0 || 7.2.8
   # Renovate security update: mermaid@11.16.1
   - mermaid@11.16.1
