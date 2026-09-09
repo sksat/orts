@@ -5,6 +5,7 @@ mod integrator;
 mod landing;
 pub(crate) mod math;
 mod segment;
+mod segment_walk;
 mod solver;
 mod state;
 
@@ -21,6 +22,7 @@ pub use error::{IntegrationError, IntegrationOutcome, Tolerances, validate_step_
 pub use integrator::Integrator;
 pub use landing::{FixedSteps, Step};
 pub use segment::{SegmentContext, SegmentSystem, derivatives_maybe_in_segment};
+pub use segment_walk::{Segment, SegmentPosition, Segments};
 pub use solver::dop853::{AdaptiveStepper853, AdvanceOutcome853, Dop853};
 pub use solver::dp45::{AdaptiveStepper, AdvanceOutcome, DormandPrince};
 pub use solver::rk4::Rk4;

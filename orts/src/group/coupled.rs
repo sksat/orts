@@ -4,7 +4,7 @@ use std::sync::Arc;
 use nalgebra::Vector3;
 use utsuroi::{
     AdvanceOutcome, AdvanceOutcome853, Dop853, DormandPrince, DynamicalSystem, FixedSteps,
-    IntegrationError, Integrator, OdeState, Rk4, SegmentContext, SegmentSystem, Tolerances,
+    IntegrationError, Integrator, OdeState, Rk4, SegmentContext, Segments, Tolerances,
     derivatives_maybe_in_segment,
 };
 
@@ -434,20 +434,23 @@ where
         // the mode that held inside it. A fresh stepper per segment also keeps
         // DP45 from opening the step after a switch with the `k7` it cached on
         // the other side of it.
-        let mut first_segment = true;
-        while !self.terminated && self.t < t_target {
-            let segment_end = self
-                .dynamics
-                .next_discontinuity_after(self.t)
-                .filter(|next| *next > self.t && next.is_finite())
-                .map_or(t_target, |next| next.min(t_target));
-            let bound =
-                SegmentSystem::new(&self.dynamics, SegmentContext::new(self.t, segment_end));
+        //
+        // The walk is built once, from the group's own clock, and each item
+        // carries the interval and whether an earlier segment came before it.
+        // Stopping partway — on an event or an error — means stopping taking
+        // items: the state a later segment would start from was never reached.
+        let segments = Segments::new(&self.dynamics, self.t, t_target)?;
+        for segment in segments {
+            if self.terminated {
+                break;
+            }
+            let segment_end = segment.end();
+            let bound = segment.system();
 
             let outcome = match &self.integrator {
                 IntegratorConfig::Dp45 { dt, tolerances } => {
                     let mut stepper = DormandPrince.stepper(
-                        &bound,
+                        bound,
                         self.state.clone(),
                         self.t,
                         *dt,
@@ -456,7 +459,7 @@ where
                     // The state a later segment starts from is the one the
                     // previous segment ended on, already checked after its last
                     // accepted step.
-                    if !first_segment {
+                    if segment.is_continuation() {
                         stepper = stepper.from_checked_state();
                     }
 
@@ -537,11 +540,11 @@ where
                 }
                 IntegratorConfig::Dop853 { dt, tolerances } => {
                     let mut stepper =
-                        Dop853.stepper(&bound, self.state.clone(), self.t, *dt, tolerances.clone());
+                        Dop853.stepper(bound, self.state.clone(), self.t, *dt, tolerances.clone());
                     // The state a later segment starts from is the one the
                     // previous segment ended on, already checked after its last
                     // accepted step.
-                    if !first_segment {
+                    if segment.is_continuation() {
                         stepper = stepper.from_checked_state();
                     }
 
@@ -628,7 +631,9 @@ where
                     // from, before any step. A level-triggered event can already
                     // hold there, and stepping first reports it one step late.
                     // Later segments start from a state the loop already checked.
-                    if first_segment && let Some(ref checker) = self.event_checker {
+                    if !segment.is_continuation()
+                        && let Some(ref checker) = self.event_checker
+                    {
                         for (id, sat_state) in self.ids.iter().zip(&current_state.states) {
                             if let ControlFlow::Break(reason) = checker(current_t, sat_state) {
                                 self.state = current_state;
@@ -668,7 +673,7 @@ where
                                 dt: step.h,
                             });
                         }
-                        current_state = Rk4.step(&bound, step.t, &current_state, step.h);
+                        current_state = Rk4.step(bound, step.t, &current_state, step.h);
                         current_t = step.next_t;
 
                         if !current_state.is_finite() {
@@ -722,7 +727,6 @@ where
             if self.terminated {
                 return outcome;
             }
-            first_segment = false;
         }
 
         Ok(PropGroupOutcome {

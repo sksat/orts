@@ -2,8 +2,7 @@ use std::ops::ControlFlow;
 
 use utsuroi::{
     AdvanceOutcome, AdvanceOutcome853, Dop853, DormandPrince, DynamicalSystem, FixedSteps,
-    IntegrationError, Integrator, OdeState, Rk4, SegmentContext, SegmentSystem, Tolerances,
-    validate_step_size,
+    IntegrationError, Integrator, OdeState, Rk4, Segments, Tolerances, validate_step_size,
 };
 
 use super::HasPosition;
@@ -349,19 +348,22 @@ where
             // reads the mode that held inside it. A fresh stepper per segment
             // also keeps DP45 from opening the step after a switch with the
             // `k7` it cached on the other side of it.
-            let mut first_segment = true;
-            while !entry.terminated && entry.t < effective_target {
-                let segment_end = dynamics
-                    .next_discontinuity_after(entry.t)
-                    .filter(|next| *next > entry.t && next.is_finite())
-                    .map_or(effective_target, |next| next.min(effective_target));
-                let bound =
-                    SegmentSystem::new(&*dynamics, SegmentContext::new(entry.t, segment_end));
+            //
+            // The walk covers this satellite's own span — the target clamped
+            // to its end time — and each item carries the interval and whether
+            // an earlier segment came before it. Stopping partway, on an event
+            // or an error, means stopping taking items.
+            for segment in Segments::new(&*dynamics, entry.t, effective_target)? {
+                if entry.terminated {
+                    break;
+                }
+                let segment_end = segment.end();
+                let bound = segment.system();
 
                 match &integrator {
                     IntegratorConfig::Dp45 { dt, tolerances } => {
                         let mut stepper = DormandPrince.stepper(
-                            &bound,
+                            bound,
                             entry.state.clone(),
                             entry.t,
                             *dt,
@@ -370,7 +372,7 @@ where
                         // The state a later segment starts from is the one the
                         // previous segment ended on, and the loop checked it
                         // after that segment's last accepted step.
-                        if !first_segment {
+                        if segment.is_continuation() {
                             stepper = stepper.from_checked_state();
                         }
 
@@ -415,7 +417,7 @@ where
                     }
                     IntegratorConfig::Dop853 { dt, tolerances } => {
                         let mut stepper = Dop853.stepper(
-                            &bound,
+                            bound,
                             entry.state.clone(),
                             entry.t,
                             *dt,
@@ -424,7 +426,7 @@ where
                         // The state a later segment starts from is the one the
                         // previous segment ended on, and the loop checked it
                         // after that segment's last accepted step.
-                        if !first_segment {
+                        if segment.is_continuation() {
                             stepper = stepper.from_checked_state();
                         }
 
@@ -478,7 +480,7 @@ where
                         // and stepping first reports it one step late. Later segments
                         // start where the previous one ended, whose state the loop
                         // already checked.
-                        if first_segment
+                        if !segment.is_continuation()
                             && let Some(checker) = event_checker
                             && let ControlFlow::Break(reason) = checker(current_t, &current_state)
                         {
@@ -515,7 +517,7 @@ where
                                     dt: step.h,
                                 });
                             }
-                            current_state = Rk4.step(&bound, step.t, &current_state, step.h);
+                            current_state = Rk4.step(bound, step.t, &current_state, step.h);
                             current_t = step.next_t;
 
                             if !current_state.is_finite() {
@@ -556,7 +558,6 @@ where
                         }
                     }
                 }
-                first_segment = false;
             }
         }
 
