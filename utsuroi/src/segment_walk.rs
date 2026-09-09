@@ -59,10 +59,11 @@ pub enum SegmentPosition {
 impl<'a, S: DynamicalSystem> Segments<'a, S> {
     /// Walk the segments of `[t0, t_end]`.
     ///
-    /// Rejects a span no loop can walk — a non-finite end, or an end before
-    /// the start. A loop that tests `t < t_end` before stepping cannot leave
-    /// this to the solver: with a non-finite end it takes no step, and the
-    /// solver never sees the span to reject it.
+    /// Rejects a span no loop can walk: a non-finite start, a non-finite end,
+    /// or an end before the start. A loop that tests `t < t_end` before
+    /// stepping cannot leave this to the solver — every comparison is false
+    /// for a NaN, so it takes no step and the solver never sees the span to
+    /// reject it.
     ///
     /// An empty span (`t0 == t_end`) yields nothing.
     pub fn new(system: &'a S, t0: f64, t_end: f64) -> Result<Self, IntegrationError> {

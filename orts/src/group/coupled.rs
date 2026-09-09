@@ -660,14 +660,11 @@ where
                         // `h > 0` after the validate() above, but for large
                         // `|current_t|` it can still be below the f64 spacing there.
                         if step.next_t == step.t {
-                            // A segment narrower than the spacing of f64 here is
-                            // crossed without a step: no step size advances over
-                            // it, and no change of state over it is
-                            // representable either.
-                            if step.next_t == segment_end {
-                                current_t = segment_end;
-                                continue;
-                            }
+                            // The step size is below the spacing of f64 at this
+                            // time. A segment cannot be this narrow —
+                            // `FixedSteps` assigns its end on the last step and
+                            // yields nothing once `t` reaches it — so what
+                            // stagnates here is `dt` itself.
                             return Err(IntegrationError::TimeStagnated {
                                 t: step.t,
                                 dt: step.h,
