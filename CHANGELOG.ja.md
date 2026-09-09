@@ -394,6 +394,14 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   client への error も無い状態になっていた。([#351](https://github.com/sksat/orts/pull/351))
 
 #### Fixed
+- controlled loop が、積分 step より短い燃焼も伝播に入れるようになった。
+  `propagate_controlled` は span の始まりから終わりまで積分器を 1 回走らせていたので、schedule を
+  持つ dynamics では #453 以前の group ループと同じ取りこぼしが起きていた。`ScheduledBurn` で
+  `[0.15, 0.25)` を指定し RK4 `dt = 1` で伝播した実測で、燃焼が要求する推進剤 3.399e-4 kg を
+  1 つも消さない。dynamics が報告する境界でループを区切り、segment を束縛した system で積分する
+  ようにした。非有限の span は「すでに終わっている」ではなく拒否する (`t1 <= t0` も、ループ自身の
+  条件も NaN では偽になる)。CLI の config から構築されるもので境界を宣言するものは今はないので、
+  影響を受けるのは `ControlledSatellite` を自分で組む呼び出し元。([#455](https://github.com/sksat/orts/pull/455))
 - `duration` が各衛星の軌道周期を置き換えなくなった。`duration` は run の終了時刻だが
   両方が 1 つの field に載っていたため、`--duration 120` は CSV header・RRD の
   `meta/sim/period`・WebSocket の `SatelliteInfo` のすべてに、5553.6 s かかる軌道の

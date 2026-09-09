@@ -24,7 +24,10 @@ use orts::spacecraft::{
     ThrusterAssemblyCore, ThrusterSpec,
 };
 use tobari::magnetic::igrf::Igrf;
-use utsuroi::{Dop853, DormandPrince, IntegrationError, Integrator, Rk4};
+use utsuroi::{
+    Dop853, DormandPrince, DynamicalSystem, IntegrationError, Integrator, Rk4, SegmentContext,
+    SegmentSystem,
+};
 
 use crate::config::{ControllerConfig, MtqConfig, ReactionWheelConfig, SensorChoice};
 use crate::satellite::SatelliteSpec;
@@ -443,48 +446,99 @@ pub fn propagate_controlled(
     t1: f64,
     integrator: &IntegratorConfig,
 ) -> Result<(), String> {
+    let span = |e: IntegrationError| format!("integration failed on [{t0:.3}, {t1:.3}]: {e}");
+
+    // The span the caller asked for, before the segment loop below reads it.
+    // `t1 <= t0` is false for a NaN, and `t < t1` is false too, so the loop
+    // would take no step and report success — the solvers used to reject the
+    // span themselves, which they now only see one segment at a time.
+    if !t0.is_finite() || !t1.is_finite() {
+        return Err(span(IntegrationError::InvalidTimeSpan { t0, t_end: t1 }));
+    }
     if t1 <= t0 {
         return Ok(());
     }
-    let span = |e: IntegrationError| format!("integration failed on [{t0:.3}, {t1:.3}]: {e}");
 
-    match integrator {
-        IntegratorConfig::Rk4 { dt } => {
-            let dt_ode = dt.min(t1 - t0);
-            // `try_integrate` rather than `integrate`: the latter panics on a
-            // bad step or a stalled clock, and this returns `Result` so serve
-            // can send the client an Error down its graceful-halt path.
-            sat.state = Rk4
-                .try_integrate(&sat.dynamics, sat.state.clone(), t0, t1, dt_ode, |_, _| {})
-                .map_err(span)?;
+    // One segment at a time, so that no switch of the right-hand side falls
+    // strictly inside a step and the stage on a segment's end reads the mode
+    // that held inside it. Without this, a burn window narrower than the
+    // largest gap between adjacent stage times contributes nothing at all, and
+    // one covering a whole step loses the weight of the stage on its exclusive
+    // end.
+    // The state stays local until every segment has succeeded. A satellite
+    // carries no integration time of its own, so committing each segment would
+    // leave a failed span with the state at the last boundary while the caller
+    // still holds `t0` — and serve pauses on such an error and can resume from
+    // there, propagating a state that belongs to a later instant.
+    let mut state = sat.state.clone();
+    let mut t = t0;
+    let mut first_segment = true;
+    while t < t1 {
+        let segment_end = sat
+            .dynamics
+            .next_discontinuity_after(t)
+            .filter(|next| *next > t && next.is_finite())
+            .map_or(t1, |next| next.min(t1));
+        let bound = SegmentSystem::new(&sat.dynamics, SegmentContext::new(t, segment_end));
+
+        match integrator {
+            IntegratorConfig::Rk4 { dt } => {
+                let dt_ode = dt.min(segment_end - t);
+                // `try_integrate` rather than `integrate`: the latter panics on
+                // a bad step or a stalled clock, and this returns `Result` so
+                // serve can send the client an Error down its graceful-halt
+                // path.
+                //
+                // Its clock accumulates (`t += h`), unlike the group loops,
+                // which assign the segment's end on the last step. The residual
+                // is the exactly representable `segment_end - t`, so the clock
+                // still arrives on `segment_end` — measured over spans with
+                // inexact accumulation and at times as large as 1e15, it lands
+                // there in every case and never stagnates. What it costs is one
+                // extra step of an ulp's width, which moves the state by less
+                // than its own resolution.
+                state = Rk4
+                    .try_integrate(&bound, state, t, segment_end, dt_ode, |_, _| {})
+                    .map_err(span)?;
+            }
+            IntegratorConfig::Dp45 { dt, tolerances } => {
+                let mut stepper =
+                    DormandPrince.stepper(&bound, state.clone(), t, *dt, tolerances.clone());
+                // A later segment starts from the state the previous one ended
+                // on, which this loop asks no predicate about at all.
+                if !first_segment {
+                    stepper = stepper.from_checked_state();
+                }
+                stepper
+                    .advance_to(
+                        segment_end,
+                        |_, _| {},
+                        |_, _| ControlFlow::<String>::Continue(()),
+                    )
+                    .map_err(span)?;
+                state = stepper.into_state();
+            }
+            IntegratorConfig::Dop853 { dt, tolerances } => {
+                let mut stepper = Dop853.stepper(&bound, state.clone(), t, *dt, tolerances.clone());
+                if !first_segment {
+                    stepper = stepper.from_checked_state();
+                }
+                stepper
+                    .advance_to(
+                        segment_end,
+                        |_, _| {},
+                        |_, _| ControlFlow::<String>::Continue(()),
+                    )
+                    .map_err(span)?;
+                state = stepper.into_state();
+            }
         }
-        IntegratorConfig::Dp45 { dt, tolerances } => {
-            let mut stepper = DormandPrince.stepper(
-                &sat.dynamics,
-                sat.state.clone(),
-                t0,
-                *dt,
-                tolerances.clone(),
-            );
-            stepper
-                .advance_to(t1, |_, _| {}, |_, _| ControlFlow::<String>::Continue(()))
-                .map_err(span)?;
-            sat.state = stepper.into_state();
-        }
-        IntegratorConfig::Dop853 { dt, tolerances } => {
-            let mut stepper = Dop853.stepper(
-                &sat.dynamics,
-                sat.state.clone(),
-                t0,
-                *dt,
-                tolerances.clone(),
-            );
-            stepper
-                .advance_to(t1, |_, _| {}, |_, _| ControlFlow::<String>::Continue(()))
-                .map_err(span)?;
-            sat.state = stepper.into_state();
-        }
+
+        t = segment_end;
+        first_segment = false;
     }
+
+    sat.state = state;
     Ok(())
 }
 
@@ -1460,5 +1514,193 @@ path = "does-not-exist.wasm"
                 "{body}: the magnetorquer should not stop the build: {err}"
             );
         }
+    }
+
+    /// A burn shorter than an integration step is flown by the controlled loop.
+    ///
+    /// `propagate_controlled` used to run the integrator from `t0` straight to
+    /// `t1`, so a `ScheduledBurn` narrower than the largest gap between
+    /// adjacent stage times fell between them and spent nothing. The oracle is
+    /// the analytic propellant, `thrust / (Isp * g0)` times the burn's length,
+    /// which the trajectory cannot change: the mass flow of a thruster at full
+    /// throttle does not depend on the state.
+    ///
+    /// The window sits at `[0.15, 0.25)` so the segment before it is longer
+    /// than the burn. With both 0.1 s long, the `h/6` a stage-time reading
+    /// leaks into the earlier segment and the `h/6` it drops from the burn's
+    /// last stage cancel exactly under RK4.
+    ///
+    /// The second case gives the burn's own segment several RK4 steps — a
+    /// 0.4 s window at `dt = 0.1` — so the propellant also pins the multi-step
+    /// path, where `try_integrate` accumulates its clock and covers the
+    /// residual with one more step.
+    #[test]
+    fn a_burn_shorter_than_a_step_is_flown_by_the_controlled_loop() {
+        use orts::spacecraft::G0;
+
+        const THRUST_N: f64 = 10.0;
+        const ISP_S: f64 = 300.0;
+
+        for (window, dt) in
+            [(0.15, 0.25, 1.0), (0.15, 0.55, 0.1)].map(|(start, end, dt)| ((start, end), dt))
+        {
+            let expected = THRUST_N / (ISP_S * G0) * (window.1 - window.0);
+            run_burn_case(window, dt, expected);
+        }
+    }
+
+    /// Fly one burn window with each integrator and check the propellant.
+    fn run_burn_case(window: (f64, f64), dt: f64, expected: f64) {
+        use orts::spacecraft::{BurnWindow, ScheduledBurn, Thruster};
+        use utsuroi::Tolerances;
+
+        const THRUST_N: f64 = 10.0;
+        const ISP_S: f64 = 300.0;
+
+        for (name, integrator) in [
+            ("RK4", IntegratorConfig::Rk4 { dt }),
+            (
+                "DP45",
+                IntegratorConfig::Dp45 {
+                    dt,
+                    tolerances: Tolerances::default(),
+                },
+            ),
+            (
+                "DOP853",
+                IntegratorConfig::Dop853 {
+                    dt,
+                    tolerances: Tolerances::default(),
+                },
+            ),
+        ] {
+            let (mut sat, _) = satellite_with(1.0, 0.0);
+            sat.dynamics = std::mem::replace(
+                &mut sat.dynamics,
+                orts::spacecraft::SpacecraftDynamics::new(
+                    arika::earth::MU,
+                    Box::new(orts::orbital::gravity::PointMass),
+                    nalgebra::Matrix3::identity(),
+                ),
+            )
+            .with_model(
+                Thruster::new(THRUST_N, ISP_S, Vector3::x()).with_profile(Box::new(
+                    ScheduledBurn {
+                        windows: vec![BurnWindow::full(window.0, window.1)],
+                    },
+                )),
+            );
+            let mass_before = sat.state.plant.mass;
+
+            propagate_controlled(&mut sat, 0.0, 10.0, &integrator)
+                .expect("the burn and the orbit are finite everywhere");
+
+            let spent = mass_before - sat.state.plant.mass;
+            // The propellant is the difference of two masses near 500 kg, so it
+            // carries the resolution of f64 there however exactly the mass flow
+            // was integrated.
+            let tol = 4.0 * mass_before * f64::EPSILON;
+            assert!(
+                (spent - expected).abs() < tol,
+                "{name} at dt={dt} spent {spent} kg over [{}, {}), expected {expected} kg",
+                window.0,
+                window.1
+            );
+        }
+    }
+
+    /// A span the loop cannot walk is rejected rather than reported as done.
+    ///
+    /// The segment loop tests `t < t1` before it builds a stepper, so a
+    /// non-finite bound takes no step and the solvers — which validate the span
+    /// themselves — never see it.
+    #[test]
+    fn a_non_finite_span_is_rejected_by_the_controlled_loop() {
+        for bound in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let (mut sat, _) = satellite_with(1.0, 0.0);
+            assert!(
+                propagate_controlled(&mut sat, 0.0, bound, &IntegratorConfig::Rk4 { dt: 1.0 })
+                    .is_err(),
+                "a target of {bound} was accepted"
+            );
+            let (mut sat, _) = satellite_with(1.0, 0.0);
+            assert!(
+                propagate_controlled(&mut sat, bound, 10.0, &IntegratorConfig::Rk4 { dt: 1.0 })
+                    .is_err(),
+                "a start of {bound} was accepted"
+            );
+        }
+    }
+
+    /// A span that fails partway leaves the satellite where it started.
+    ///
+    /// A `ControlledSatellite` carries no integration time of its own, so a
+    /// state committed at a segment boundary belongs to an instant the caller
+    /// has no record of: serve pauses on the error and can resume, propagating
+    /// a state from the wrong time. The state has to move only when the whole
+    /// span succeeds.
+    #[test]
+    fn a_span_that_fails_partway_leaves_the_state_untouched() {
+        use arika::epoch::Epoch;
+        use orts::model::{ExternalLoads, Model};
+        use orts::spacecraft::SpacecraftState;
+
+        /// Finite up to and including `breaks_at`, not after it — with the
+        /// boundary declared, so the loop splits the span there and it is the
+        /// *second* segment that fails. The stage on the first segment's end
+        /// has to stay finite: this model keeps the default stage-time
+        /// evaluation, so that stage reads `breaks_at` itself.
+        struct BreaksAfter {
+            breaks_at: f64,
+        }
+
+        impl Model<SpacecraftState> for BreaksAfter {
+            fn name(&self) -> &str {
+                "breaks_after"
+            }
+
+            fn eval(
+                &self,
+                t: f64,
+                _state: &SpacecraftState,
+                _epoch: Option<&Epoch>,
+            ) -> ExternalLoads {
+                let mut loads = ExternalLoads::zeros();
+                if t > self.breaks_at {
+                    loads.acceleration_inertial =
+                        arika::frame::Vec3::from_raw(Vector3::new(f64::NAN, 0.0, 0.0));
+                }
+                loads
+            }
+
+            fn next_discontinuity_after(&self, t: f64, _epoch: Option<&Epoch>) -> Option<f64> {
+                (self.breaks_at > t).then_some(self.breaks_at)
+            }
+        }
+
+        let (mut sat, _) = satellite_with(1.0, 0.0);
+        sat.dynamics = std::mem::replace(
+            &mut sat.dynamics,
+            orts::spacecraft::SpacecraftDynamics::new(
+                arika::earth::MU,
+                Box::new(orts::orbital::gravity::PointMass),
+                nalgebra::Matrix3::identity(),
+            ),
+        )
+        .with_model(BreaksAfter { breaks_at: 0.2 });
+        let before = sat.state.clone();
+
+        let err = propagate_controlled(&mut sat, 0.0, 1.0, &IntegratorConfig::Rk4 { dt: 1.0 })
+            .expect_err("the second segment is not finite");
+        assert!(err.contains("non-finite state"), "unexpected error: {err}");
+        assert_eq!(
+            sat.state.plant.orbit.position(),
+            before.plant.orbit.position(),
+            "the failed span moved the satellite"
+        );
+        assert_eq!(
+            sat.state.plant.mass, before.plant.mass,
+            "the failed span changed the mass"
+        );
     }
 }

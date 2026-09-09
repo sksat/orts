@@ -650,8 +650,8 @@ where
 
                     while current_t < segment_end {
                         // The last step of a segment lands on its end exactly.
-                        // Accumulating `h` leaves `current_t` an ulp short, and the
-                        // next `h` is then small enough to stagnate.
+                        // Accumulating `h` instead can leave `current_t` an ulp
+                        // short and spend a whole extra step covering that ulp.
                         let last = segment_end - current_t <= dt;
                         let h = if last { segment_end - current_t } else { dt };
                         // `h > 0` after the validate() above, but for large

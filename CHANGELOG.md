@@ -467,6 +467,16 @@ section is subdivided by package.
   no error to the client. ([#351](https://github.com/sksat/orts/pull/351))
 
 #### Fixed
+- The controlled loop flies a scheduled burn shorter than an integration step.
+  `propagate_controlled` ran the integrator from the span's start straight to
+  its end, so dynamics carrying a schedule lost it the way the group loops did
+  before #453: measured on a `ScheduledBurn` over `[0.15, 0.25)` with RK4 at
+  `dt = 1`, the loop spent none of the 3.399e-4 kg of propellant the burn asks
+  for. It now walks the boundaries the dynamics report, integrating each segment
+  on a system bound to it. A non-finite span is rejected rather than reported as
+  covered — `t1 <= t0` is false for a NaN, and so is the loop's own condition.
+  Nothing the CLI builds from config declares a boundary today, so this reaches
+  a caller assembling a `ControlledSatellite` itself. ([#455](https://github.com/sksat/orts/pull/455))
 - `duration` no longer replaces each satellite's orbital period. It is the
   run's end time, but both were carried in one field, so `--duration 120` left
   the CSV header, the RRD `meta/sim/period` and the WebSocket `SatelliteInfo`
