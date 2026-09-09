@@ -72,6 +72,35 @@ pub trait StateEffector<S: HasFrame>: Send + Sync + std::any::Any {
         epoch: Option<&Epoch>,
     ) -> ExternalLoads<S::Frame>;
 
+    /// Loads and auxiliary rates for the segment a solver is stepping through.
+    ///
+    /// An effector that reports a boundary through
+    /// [`next_discontinuity_after`](Self::next_discontinuity_after) has its
+    /// switch turned into the end of a segment, and the stage that lands there
+    /// belongs to the step integrating the segment before it. Answering for
+    /// [`segment.start`](crate::model::EvalSegment::start) — and
+    /// [`segment.start_epoch`](crate::model::EvalSegment::start_epoch) for a
+    /// schedule written in epochs — keeps that stage on the inside of a
+    /// half-open interval ending there.
+    ///
+    /// `t`, `state`, `aux` and `epoch` still describe the stage, so an effector
+    /// whose contribution varies continuously — a reaction wheel following its
+    /// own momentum — keeps using them. Only a switch in time is held.
+    ///
+    /// The default ignores the segment and forwards to
+    /// [`derivatives`](Self::derivatives).
+    fn derivatives_in_segment(
+        &self,
+        _segment: &crate::model::EvalSegment<'_>,
+        t: f64,
+        state: &S,
+        aux: &[f64],
+        aux_rates: &mut [f64],
+        epoch: Option<&Epoch>,
+    ) -> ExternalLoads<S::Frame> {
+        self.derivatives(t, state, aux, aux_rates, epoch)
+    }
+
     /// Per-element (min, max) bounds for auxiliary state projection.
     ///
     /// By default returns unbounded `(-INF, +INF)` for each element.
@@ -79,6 +108,26 @@ pub trait StateEffector<S: HasFrame>: Send + Sync + std::any::Any {
     /// momentum saturation).
     fn aux_bounds(&self) -> Vec<(f64, f64)> {
         vec![(f64::NEG_INFINITY, f64::INFINITY); self.state_dim()]
+    }
+}
+
+/// Loads and auxiliary rates from `effector`, for the segment when there is one.
+///
+/// Every system that holds effectors evaluates them through this, so the
+/// segment reaches the effector instead of stopping at the system.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn effector_derivatives<S: HasFrame>(
+    effector: &(impl StateEffector<S> + ?Sized),
+    segment: Option<&crate::model::EvalSegment<'_>>,
+    t: f64,
+    state: &S,
+    aux: &[f64],
+    aux_rates: &mut [f64],
+    epoch: Option<&Epoch>,
+) -> ExternalLoads<S::Frame> {
+    match segment {
+        Some(segment) => effector.derivatives_in_segment(segment, t, state, aux, aux_rates, epoch),
+        None => effector.derivatives(t, state, aux, aux_rates, epoch),
     }
 }
 

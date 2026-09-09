@@ -2,12 +2,15 @@ use arika::epoch::Epoch;
 use arika::frame::{self, Eci, Vec3};
 
 use crate::model::ExternalLoads;
-use crate::model::{HasFrame, HasOrbit, Model};
+use crate::model::{EvalSegment, HasFrame, HasOrbit, Model};
 
 /// Constant-thrust force model active over a fixed epoch interval.
 ///
-/// Applies a uniform acceleration (in ECI) from `start` to `end`
-/// (inclusive on both ends), and zero acceleration outside that window.
+/// Applies a uniform acceleration (in ECI) over `[start, end)` — the start
+/// counts, the end does not — and zero acceleration outside that window. The
+/// half-open interval is the one [`BurnWindow`](crate::spacecraft::BurnWindow)
+/// uses, and it is what lets a propagation loop hold the burn's state over the
+/// segment that begins where the burn ends.
 /// Acceleration is stored pre-computed as `total_dv / duration` so the
 /// hot-path `eval()` is branch-and-lookup only.
 ///
@@ -61,9 +64,11 @@ use crate::model::{HasFrame, HasOrbit, Model};
 pub struct ConstantThrust<F: Eci = frame::SimpleEci> {
     /// Human-readable name (e.g. `"DRI"`, `"thrust_burn3"`).
     pub name: &'static str,
-    /// First epoch at which the thrust is active (inclusive).
+    /// First epoch at which the thrust is active; it counts.
     pub start: Epoch,
-    /// Last epoch at which the thrust is active (inclusive).
+    /// Epoch at which the thrust stops; it does not count. The last instant
+    /// that thrusts is the one before it, so the burn lasts exactly
+    /// `end - start`.
     pub end: Epoch,
     /// Pre-computed constant acceleration vector [km/s²], in the inertial
     /// frame `F` the Δv was given in.
@@ -111,12 +116,24 @@ impl<F: Eci> ConstantThrust<F> {
     }
 
     /// Returns the total Δv that this thrust model integrates to over
-    /// `[start, end]` (= acceleration × duration).
+    /// `[start, end)` (= acceleration × duration).
     pub fn total_dv_kms(&self) -> Vec3<F> {
         self.acceleration * self.duration_seconds()
     }
 
-    /// Returns `true` if `epoch` falls within `[start, end]` (inclusive).
+    /// Returns `true` if `epoch` falls within `[start, end)` — the start
+    /// counts, the end does not.
+    ///
+    /// The half-open interval is the one
+    /// [`BurnWindow`](crate::spacecraft::BurnWindow) uses, and it is what makes
+    /// abutting burns add up to their own lengths rather than sharing an
+    /// instant. It also matters beyond that instant once a propagation loop
+    /// splits its span at the edges this model reports and holds the burn's
+    /// state over each segment: with the end counted as active, the segment
+    /// starting at `end` would thrust for its whole length. Measured on a 0.1 s
+    /// burn split into segments, RK4 with `dt = 1` applied 4/3 of the Δv asked
+    /// for, the stages on the two edges leaking a sixth apiece into the
+    /// segments on either side.
     ///
     /// Measured on the canonical TAI timeline, as [`duration_seconds`] and the
     /// edges reported by [`next_edge_after`] are. UTC Julian Dates do not
@@ -128,7 +145,7 @@ impl<F: Eci> ConstantThrust<F> {
     /// [`next_edge_after`]: Self::next_edge_after
     fn is_active(&self, epoch: &Epoch) -> bool {
         epoch.duration_since(&self.start).as_si_seconds() >= 0.0
-            && self.end.duration_since(epoch).as_si_seconds() >= 0.0
+            && self.end.duration_since(epoch).as_si_seconds() > 0.0
     }
 }
 
@@ -194,6 +211,23 @@ impl<S: HasFrame<Frame = frame::SimpleEci> + HasOrbit> Model<S>
         self.loads(epoch)
     }
 
+    /// The burn's state at the segment's start, held for the whole segment.
+    ///
+    /// A propagation loop splits its span at the edges
+    /// [`next_discontinuity_after`](Self::next_discontinuity_after) reports, so
+    /// no edge falls strictly inside a segment and the start speaks for all of
+    /// it. What this changes is the stage on the segment's end, which reading
+    /// the epoch of the stage would find already outside a burn ending there.
+    fn eval_in_segment(
+        &self,
+        segment: &EvalSegment<'_>,
+        _t: f64,
+        _state: &S,
+        _epoch: Option<&Epoch>,
+    ) -> ExternalLoads<S::Frame> {
+        self.loads(segment.start_epoch)
+    }
+
     fn next_discontinuity_after(&self, t: f64, epoch: Option<&Epoch>) -> Option<f64> {
         self.next_edge_after(t, epoch)
     }
@@ -206,6 +240,23 @@ impl<S: HasFrame<Frame = frame::Gcrs> + HasOrbit> Model<S> for ConstantThrust<fr
 
     fn eval(&self, _t: f64, _state: &S, epoch: Option<&Epoch>) -> ExternalLoads<S::Frame> {
         self.loads(epoch)
+    }
+
+    /// The burn's state at the segment's start, held for the whole segment.
+    ///
+    /// A propagation loop splits its span at the edges
+    /// [`next_discontinuity_after`](Self::next_discontinuity_after) reports, so
+    /// no edge falls strictly inside a segment and the start speaks for all of
+    /// it. What this changes is the stage on the segment's end, which reading
+    /// the epoch of the stage would find already outside a burn ending there.
+    fn eval_in_segment(
+        &self,
+        segment: &EvalSegment<'_>,
+        _t: f64,
+        _state: &S,
+        _epoch: Option<&Epoch>,
+    ) -> ExternalLoads<S::Frame> {
+        self.loads(segment.start_epoch)
     }
 
     fn next_discontinuity_after(&self, t: f64, epoch: Option<&Epoch>) -> Option<f64> {
@@ -306,7 +357,13 @@ mod tests {
         let thrust =
             ConstantThrust::<frame::SimpleEci>::new("mid", start, end, Vec3::new(0.01, 0.0, 0.0));
         let expected = vector![1e-4, 0.0, 0.0];
-        for probe_sec in [100.0, 120.0, 150.0, 180.0, 200.0] {
+        // 199.99 rather than 200.0: the window is half-open, so its own end is
+        // outside it, and `epoch_seconds_from_j2000` goes through a Julian Date
+        // whose resolution here is about 40 us — a probe a microsecond short of
+        // the end rounds onto it. `eval_at_the_start_thrusts_and_at_the_end_does_not`
+        // pins the end itself, and `eval_just_before_the_end_thrusts` the
+        // instant before it, on the SI timeline where that is representable.
+        for probe_sec in [100.0, 120.0, 150.0, 180.0, 199.99] {
             let probe = epoch_seconds_from_j2000(probe_sec);
             let loads = thrust.eval(0.0, &test_state(), Some(&probe));
             let a = loads.acceleration_inertial.into_inner();
@@ -332,8 +389,9 @@ mod tests {
     }
 
     #[test]
-    fn eval_at_exact_boundaries_is_active() {
-        // Inclusive on both ends: start and end epochs return thrust, not zero.
+    fn eval_at_the_start_thrusts_and_at_the_end_does_not() {
+        // Half-open, as `BurnWindow` is: the start counts, the end does not, so
+        // a segment beginning where the burn ends does not thrust.
         let start = epoch_seconds_from_j2000(100.0);
         let end = epoch_seconds_from_j2000(200.0);
         let thrust =
@@ -343,7 +401,24 @@ mod tests {
         let loads_start = thrust.eval(0.0, &test_state(), Some(&start));
         let loads_end = thrust.eval(0.0, &test_state(), Some(&end));
         assert!((loads_start.acceleration_inertial.into_inner() - expected).magnitude() < 1e-8);
-        assert!((loads_end.acceleration_inertial.into_inner() - expected).magnitude() < 1e-8);
+        assert_eq!(
+            loads_end.acceleration_inertial.into_inner(),
+            Vector3::zeros()
+        );
+    }
+
+    /// The last instant before the end still thrusts: the interval is
+    /// half-open, not short of its own length.
+    #[test]
+    fn eval_just_before_the_end_thrusts() {
+        let start = epoch_seconds_from_j2000(100.0);
+        let end = epoch_seconds_from_j2000(200.0);
+        let thrust =
+            ConstantThrust::<frame::SimpleEci>::new("bd", start, end, Vec3::new(0.01, 0.0, 0.0));
+        let expected = vector![1e-4, 0.0, 0.0];
+
+        let loads = thrust.eval(0.0, &test_state(), Some(&end.add_si_seconds(-1e-9)));
+        assert!((loads.acceleration_inertial.into_inner() - expected).magnitude() < 1e-8);
     }
 
     #[test]

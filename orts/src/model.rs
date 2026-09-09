@@ -18,6 +18,7 @@ use arika::epoch::Epoch;
 use arika::frame::SimpleEci;
 use arika::frame::{self, Body, Rotation, Vec3};
 use nalgebra::Vector3;
+use utsuroi::SegmentContext;
 
 use crate::OrbitalState;
 use crate::attitude::AttitudeState;
@@ -211,6 +212,76 @@ pub trait Model<S: HasFrame>: Send + Sync {
     fn next_discontinuity_after(&self, _t: f64, _epoch: Option<&Epoch>) -> Option<f64> {
         None
     }
+
+    /// Evaluate the model for the segment a solver is stepping through.
+    ///
+    /// The stage on a segment's end has to read the loads that held inside the
+    /// segment: a burn window `[a, b)` is over at `b`, but the stage there is
+    /// the last one of the step that integrates the window, and RK4 weights it
+    /// `1/6`. A model that switches on a schedule answers for
+    /// [`segment.start`](EvalSegment::start) — and for
+    /// [`segment.start_epoch`](EvalSegment::start_epoch) if its schedule is
+    /// written in epochs — however late in the segment `t` falls.
+    ///
+    /// `t`, `state` and `epoch` still describe the stage, so a model whose
+    /// loads vary continuously keeps using them. Only the switch is held.
+    ///
+    /// The default ignores the segment and forwards to [`eval`](Self::eval),
+    /// which is right for every model that has no schedule to hold.
+    /// Telemetry keeps calling `eval`, so a breakdown at a window's end reads
+    /// the window as over.
+    fn eval_in_segment(
+        &self,
+        _segment: &EvalSegment<'_>,
+        t: f64,
+        state: &S,
+        epoch: Option<&Epoch>,
+    ) -> ExternalLoads<S::Frame> {
+        self.eval(t, state, epoch)
+    }
+}
+
+/// The segment a model is being evaluated for, in both time bases.
+///
+/// `start` and `end` are integration times, as [`Model::eval`] receives `t`.
+/// `start_epoch` is the absolute time at `start`, which a system holding
+/// `epoch_0` can produce and a model cannot.
+#[derive(Debug, Clone, Copy)]
+pub struct EvalSegment<'a> {
+    /// Integration time the segment starts at.
+    pub start: f64,
+    /// Integration time the segment ends at.
+    pub end: f64,
+    /// Absolute time at `start`, or `None` when no initial epoch was given.
+    pub start_epoch: Option<&'a Epoch>,
+}
+
+impl<'a> EvalSegment<'a> {
+    /// The segment `times` spans, with the absolute time at its start.
+    pub fn new(times: &SegmentContext, start_epoch: Option<&'a Epoch>) -> Self {
+        Self {
+            start: times.start,
+            end: times.end,
+            start_epoch,
+        }
+    }
+}
+
+/// Loads from `model`, for the segment when there is one.
+///
+/// Every system that holds models evaluates them through this, so the segment
+/// reaches the models it holds instead of stopping at the system.
+pub(crate) fn eval_maybe_in_segment<S: HasFrame>(
+    model: &(impl Model<S> + ?Sized),
+    segment: Option<&EvalSegment<'_>>,
+    t: f64,
+    state: &S,
+    epoch: Option<&Epoch>,
+) -> ExternalLoads<S::Frame> {
+    match segment {
+        Some(segment) => model.eval_in_segment(segment, t, state, epoch),
+        None => model.eval(t, state, epoch),
+    }
 }
 
 // Blanket impl so Box<dyn Model<S>> also satisfies Model<S>.
@@ -226,6 +297,16 @@ impl<S: HasFrame> Model<S> for Box<dyn Model<S>> {
 
     fn next_discontinuity_after(&self, t: f64, epoch: Option<&Epoch>) -> Option<f64> {
         (**self).next_discontinuity_after(t, epoch)
+    }
+
+    fn eval_in_segment(
+        &self,
+        segment: &EvalSegment<'_>,
+        t: f64,
+        state: &S,
+        epoch: Option<&Epoch>,
+    ) -> ExternalLoads<S::Frame> {
+        (**self).eval_in_segment(segment, t, state, epoch)
     }
 }
 

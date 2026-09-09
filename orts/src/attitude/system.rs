@@ -1,8 +1,8 @@
 use arika::epoch::Epoch;
 use nalgebra::{Matrix3, Vector3};
-use utsuroi::DynamicalSystem;
+use utsuroi::{DynamicalSystem, SegmentContext};
 
-use crate::model::Model;
+use crate::model::{EvalSegment, Model, eval_maybe_in_segment};
 
 use super::state::AttitudeState;
 
@@ -60,6 +60,39 @@ impl AttitudeSystem {
     }
 }
 
+impl AttitudeSystem {
+    /// Shared body of [`derivatives`](DynamicalSystem::derivatives) and
+    /// [`derivatives_in_segment`](DynamicalSystem::derivatives_in_segment).
+    ///
+    /// `segment` is `Some` only on the segment path, where it carries the
+    /// interval's start in both time bases so a model holding a schedule can
+    /// answer for it.
+    fn derivatives_for(
+        &self,
+        segment: Option<&EvalSegment<'_>>,
+        t: f64,
+        state: &AttitudeState,
+    ) -> AttitudeState {
+        let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
+
+        // 1. Quaternion kinematics: dq/dt = 0.5 * q ⊗ (0, ω)
+        let q_dot = state.q_dot();
+
+        // 2. Total torque from all models
+        let mut tau = Vector3::zeros();
+        for m in &self.models {
+            let loads = eval_maybe_in_segment(m, segment, t, state, epoch.as_ref());
+            tau += loads.torque_body.into_inner();
+        }
+
+        // 3. Euler's rotation equation: dω/dt = I⁻¹(τ − ω × (I·ω))
+        let iw = self.inertia * state.angular_velocity;
+        let alpha = self.inertia_inv * (tau - state.angular_velocity.cross(&iw));
+
+        AttitudeState::from_derivative(q_dot, alpha)
+    }
+}
+
 impl DynamicalSystem for AttitudeSystem {
     type State = AttitudeState;
 
@@ -77,23 +110,21 @@ impl DynamicalSystem for AttitudeSystem {
     }
 
     fn derivatives(&self, t: f64, state: &AttitudeState) -> AttitudeState {
-        let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
+        self.derivatives_for(None, t, state)
+    }
 
-        // 1. Quaternion kinematics: dq/dt = 0.5 * q ⊗ (0, ω)
-        let q_dot = state.q_dot();
-
-        // 2. Total torque from all models
-        let mut tau = Vector3::zeros();
-        for m in &self.models {
-            let loads = m.eval(t, state, epoch.as_ref());
-            tau += loads.torque_body.into_inner();
-        }
-
-        // 3. Euler's rotation equation: dω/dt = I⁻¹(τ − ω × (I·ω))
-        let iw = self.inertia * state.angular_velocity;
-        let alpha = self.inertia_inv * (tau - state.angular_velocity.cross(&iw));
-
-        AttitudeState::from_derivative(q_dot, alpha)
+    fn derivatives_in_segment(
+        &self,
+        segment: &SegmentContext,
+        t: f64,
+        state: &AttitudeState,
+    ) -> AttitudeState {
+        let start_epoch = self.epoch_0.map(|e| e.add_si_seconds(segment.start));
+        self.derivatives_for(
+            Some(&EvalSegment::new(segment, start_epoch.as_ref())),
+            t,
+            state,
+        )
     }
 }
 

@@ -14,6 +14,20 @@ section is subdivided by package.
 ### `orts` (Rust, crates.io)
 
 #### Added
+- `Model::eval_in_segment` and `ThrustProfile::throttle_in_segment`, taking an
+  `EvalSegment` — the segment in integration time plus the absolute time at its
+  start, which a system holding `epoch_0` can produce and a model cannot. Both
+  default to `eval` / `throttle`, and `ScheduledBurn` answers for the segment's
+  start, which keeps a window `[a, b)` on at the stage that lands on `b`. The
+  five systems that evaluate models and the two group composites forward the
+  segment to what they hold. Telemetry keeps calling `eval`, so
+  `model_breakdown` at a window's end still reads the window as over. ([#453](https://github.com/sksat/orts/pull/453))
+- `StateEffector::derivatives_in_segment` and
+  `InterSatelliteForce::acceleration_pair_in_segment`, both defaulting to their
+  stage-time counterparts. Either can report a boundary, so either can have a
+  schedule of its own to hold over a segment. A pair force takes
+  `SegmentContext` rather than `EvalSegment`, since `PairContext` carries no
+  epoch. ([#453](https://github.com/sksat/orts/pull/453))
 - Ground-station contact-window detection (`visibility` module): `GroundStation`
   (WGS-84 location + elevation mask), `ContactWindow` (interpolated AOS/LOS, max
   elevation, span-clip flags), the pure `PassTracker` state machine, and a
@@ -102,6 +116,28 @@ section is subdivided by package.
   0.33 m, and the three shorter Harris-Priester oracles by 20-40%. ([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- A scheduled burn is flown even when it is shorter than an integration step.
+  `IndependentGroup` and `CoupledGroup` ran the integrator from the current time
+  straight to the target, so a `BurnWindow` narrower than the largest gap
+  between adjacent stage times fell between them: `[0.1, 0.2)` under RK4 with
+  `dt = 1` spent none of its 3.399e-4 kg of propellant. Tightening the tolerance
+  does not help, because while no stage lands inside the window the error
+  estimate is exactly 0 and the controller accepts the step. A window covering a
+  whole step spent 5/6 of its propellant, the stage on its exclusive end reading
+  the throttle as off. Both loops now walk the boundaries the system reports and
+  integrate each segment on a system bound to it, with a fresh stepper per
+  segment. **Trajectories through a scheduled burn change**, as does the
+  propellant spent. ([#453](https://github.com/sksat/orts/pull/453))
+- `ConstantThrust` spreads its Δv over `[start, end)` rather than
+  `[start, end]`, and answers for the segment it is being integrated over. Its
+  burn used to count both of its own ends, so with the span split at those edges
+  the stage on the end of the segment before the burn and the one on the start
+  of the segment after it both read the thrust as on: measured on a 0.1 s burn
+  with RK4 at `dt = 1`, the propagation applied 4/3 of the Δv asked for. Keeping
+  the end inclusive is worse under segments than it was per stage, since the
+  segment beginning where the burn ends would thrust for its whole length.
+  **A burn's last instant no longer thrusts**, and the Δv over the burn is the
+  Δv given. ([#453](https://github.com/sksat/orts/pull/453))
 - `PanelSrp` and `PanelDrag` give a partly shadowed panel the share of the
   force its lit part earns, acting at the centre of that part, instead of a
   whole panel's force at the panel's own centre of pressure. The shadow test
@@ -721,6 +757,23 @@ section is subdivided by package.
 ### `utsuroi` (Rust, crates.io)
 
 #### Added
+- `AdaptiveStepper::from_checked_state` and
+  `AdaptiveStepper853::from_checked_state`.
+  `advance_to` asks the event predicate about the state it starts from, since a
+  level-triggered event can already hold there; a stepper built for a segment
+  that continues where the previous one ended does not need to, and asking
+  again calls the predicate twice for one `(t, state)`.
+  ([#453](https://github.com/sksat/orts/pull/453))
+- `SegmentContext`, `SegmentSystem` and `DynamicalSystem::derivatives_in_segment`
+  (default forwards to `derivatives`) — evaluating the right-hand side for the
+  interval between two known discontinuities. Ending a step at a switch is not
+  enough on its own: the solver's last stage lands on the step's end, and a term
+  that is on over `[a, b)` reads off there, which costs RK4 the 1/6 its fourth
+  stage weighs. Wrapping a system in `SegmentSystem` binds one segment and
+  leaves every stage loop in the crate unchanged; building the wrapper per
+  segment also keeps DP45 from opening the step after a switch with the `k7` it
+  cached on the other side of it; DOP853 leaves its `k1` empty after an accepted
+  step, so what a fresh stepper drops there is the adapted step size. ([#453](https://github.com/sksat/orts/pull/453))
 - `IntegrationError` now implements `core::error::Error` (by hand, no
   `thiserror`, works under `no_std`), so it participates in `?` chains and
   `Box<dyn Error>`. ([#147](https://github.com/sksat/orts/pull/147))

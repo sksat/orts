@@ -2,7 +2,7 @@ use std::ops::ControlFlow;
 
 use utsuroi::{
     AdvanceOutcome, AdvanceOutcome853, Dop853, DormandPrince, DynamicalSystem, IntegrationError,
-    Integrator, OdeState, Rk4, Tolerances, validate_step_size,
+    Integrator, OdeState, Rk4, SegmentContext, SegmentSystem, Tolerances, validate_step_size,
 };
 
 use super::HasPosition;
@@ -287,18 +287,54 @@ where
         // satellite: the fixed-step RK4 branch below would otherwise spin on
         // `h = 0` (or walk backwards for `dt < 0`) forever.
         self.integrator.validate()?;
+        // The target the caller asked for, before the loop reshapes it per
+        // satellite. Each of the three steps below hides a non-finite target
+        // instead of rejecting it: `entry.t >= t_target` is true for `-inf` and
+        // skips the satellite, `f64::min` drops a NaN in favour of a finite
+        // `end_time`, and the segment loop tests `entry.t < effective_target`
+        // before building a stepper, so no solver ever sees the target. A group
+        // with no satellites has nothing to name as the start of the span, and
+        // a satellite added without a time of its own starts at zero.
+        if !t_target.is_finite() {
+            return Err(IntegrationError::InvalidTimeSpan {
+                t0: self.satellites.first().map_or(0.0, |(entry, _)| entry.t),
+                t_end: t_target,
+            });
+        }
 
         let mut terminations = Vec::new();
         let integrator = self.integrator.clone();
         let event_checker = &self.event_checker;
 
         for (entry, dynamics) in &mut self.satellites {
+            // A satellite's own time, before the guards read it.
+            // `add_satellite_at` takes any `f64`, and every comparison below is
+            // false for a NaN: the guard would not skip it, and the segment
+            // loop's `entry.t < effective_target` would end the loop before a
+            // solver saw the span. The adaptive steppers used to reject it
+            // through `validate_time_span`, which the segment loop now reaches
+            // only after deciding to step.
+            if !entry.t.is_finite() {
+                return Err(IntegrationError::InvalidTimeSpan {
+                    t0: entry.t,
+                    t_end: t_target,
+                });
+            }
             if entry.terminated || entry.t >= t_target {
                 continue;
             }
 
             // Clamp to per-satellite end_time if set
             let effective_target = match entry.end_time {
+                // `f64::min` returns the other operand for a NaN, so a NaN end
+                // time would quietly mean the opposite of what it says: no end
+                // at all. `add_satellite_until` takes any `f64`.
+                Some(et) if et.is_nan() => {
+                    return Err(IntegrationError::InvalidTimeSpan {
+                        t0: entry.t,
+                        t_end: et,
+                    });
+                }
                 Some(et) => t_target.min(et),
                 None => t_target,
             };
@@ -307,157 +343,144 @@ where
                 continue;
             }
 
-            match &integrator {
-                IntegratorConfig::Dp45 { dt, tolerances } => {
-                    let mut stepper = DormandPrince.stepper(
-                        dynamics,
-                        entry.state.clone(),
-                        entry.t,
-                        *dt,
-                        tolerances.clone(),
-                    );
+            // One segment at a time, so that no switch of the right-hand side
+            // falls strictly inside a step and the stage on a segment's end
+            // reads the mode that held inside it. A fresh stepper per segment
+            // also keeps DP45 from opening the step after a switch with the
+            // `k7` it cached on the other side of it.
+            let mut first_segment = true;
+            while !entry.terminated && entry.t < effective_target {
+                let segment_end = dynamics
+                    .next_discontinuity_after(entry.t)
+                    .filter(|next| *next > entry.t && next.is_finite())
+                    .map_or(effective_target, |next| next.min(effective_target));
+                let bound =
+                    SegmentSystem::new(&*dynamics, SegmentContext::new(entry.t, segment_end));
 
-                    let result = stepper.advance_to(
-                        effective_target,
-                        |t, s| observer(&entry.id, t, s),
-                        |t, s| match event_checker {
-                            Some(checker) => checker(t, s),
-                            None => ControlFlow::Continue(()),
-                        },
-                    );
+                match &integrator {
+                    IntegratorConfig::Dp45 { dt, tolerances } => {
+                        let mut stepper = DormandPrince.stepper(
+                            &bound,
+                            entry.state.clone(),
+                            entry.t,
+                            *dt,
+                            tolerances.clone(),
+                        );
+                        // The state a later segment starts from is the one the
+                        // previous segment ended on, and the loop checked it
+                        // after that segment's last accepted step.
+                        if !first_segment {
+                            stepper = stepper.from_checked_state();
+                        }
 
-                    match result {
-                        Ok(AdvanceOutcome::Reached) => {
-                            entry.state = stepper.into_state();
-                            entry.t = effective_target;
-                        }
-                        Ok(AdvanceOutcome::Event { reason }) => {
-                            let t = stepper.t();
-                            entry.state = stepper.into_state();
-                            entry.t = t;
-                            entry.terminated = true;
-                            terminations.push(SatelliteTermination {
-                                satellite_id: entry.id.clone(),
-                                t,
-                                reason,
-                            });
-                        }
-                        Err(e) => {
-                            entry.terminated = true;
-                            // Pre-flight rejections (bad dt/tolerances) carry
-                            // no time of their own; attribute them to where
-                            // the stepper was asked to start.
-                            let t = e.time().unwrap_or(entry.t);
-                            terminations.push(SatelliteTermination {
-                                satellite_id: entry.id.clone(),
-                                t,
-                                reason: format!("{e:?}"),
-                            });
-                        }
-                    }
-                }
-                IntegratorConfig::Dop853 { dt, tolerances } => {
-                    let mut stepper = Dop853.stepper(
-                        dynamics,
-                        entry.state.clone(),
-                        entry.t,
-                        *dt,
-                        tolerances.clone(),
-                    );
+                        let result = stepper.advance_to(
+                            segment_end,
+                            |t, s| observer(&entry.id, t, s),
+                            |t, s| match event_checker {
+                                Some(checker) => checker(t, s),
+                                None => ControlFlow::Continue(()),
+                            },
+                        );
 
-                    let result = stepper.advance_to(
-                        effective_target,
-                        |t, s| observer(&entry.id, t, s),
-                        |t, s| match event_checker {
-                            Some(checker) => checker(t, s),
-                            None => ControlFlow::Continue(()),
-                        },
-                    );
-
-                    match result {
-                        Ok(AdvanceOutcome853::Reached) => {
-                            entry.state = stepper.into_state();
-                            entry.t = effective_target;
-                        }
-                        Ok(AdvanceOutcome853::Event { reason }) => {
-                            let t = stepper.t();
-                            entry.state = stepper.into_state();
-                            entry.t = t;
-                            entry.terminated = true;
-                            terminations.push(SatelliteTermination {
-                                satellite_id: entry.id.clone(),
-                                t,
-                                reason,
-                            });
-                        }
-                        Err(e) => {
-                            entry.terminated = true;
-                            // Pre-flight rejections (bad dt/tolerances) carry
-                            // no time of their own; attribute them to where
-                            // the stepper was asked to start.
-                            let t = e.time().unwrap_or(entry.t);
-                            terminations.push(SatelliteTermination {
-                                satellite_id: entry.id.clone(),
-                                t,
-                                reason: format!("{e:?}"),
-                            });
+                        match result {
+                            Ok(AdvanceOutcome::Reached) => {
+                                entry.state = stepper.into_state();
+                                entry.t = segment_end;
+                            }
+                            Ok(AdvanceOutcome::Event { reason }) => {
+                                let t = stepper.t();
+                                entry.state = stepper.into_state();
+                                entry.t = t;
+                                entry.terminated = true;
+                                terminations.push(SatelliteTermination {
+                                    satellite_id: entry.id.clone(),
+                                    t,
+                                    reason,
+                                });
+                            }
+                            Err(e) => {
+                                entry.terminated = true;
+                                // Pre-flight rejections (bad dt/tolerances) carry
+                                // no time of their own; attribute them to where
+                                // the stepper was asked to start.
+                                let t = e.time().unwrap_or(entry.t);
+                                terminations.push(SatelliteTermination {
+                                    satellite_id: entry.id.clone(),
+                                    t,
+                                    reason: format!("{e:?}"),
+                                });
+                            }
                         }
                     }
-                }
-                IntegratorConfig::Rk4 { dt } => {
-                    let dt = *dt;
-                    let mut current_t = entry.t;
-                    let mut current_state = entry.state.clone();
+                    IntegratorConfig::Dop853 { dt, tolerances } => {
+                        let mut stepper = Dop853.stepper(
+                            &bound,
+                            entry.state.clone(),
+                            entry.t,
+                            *dt,
+                            tolerances.clone(),
+                        );
+                        // The state a later segment starts from is the one the
+                        // previous segment ended on, and the loop checked it
+                        // after that segment's last accepted step.
+                        if !first_segment {
+                            stepper = stepper.from_checked_state();
+                        }
 
-                    let mut terminated = false;
-                    // The predicate is asked about the state this call starts from,
-                    // before any step. A level-triggered event can already hold there,
-                    // and stepping first reports it one step late.
-                    if let Some(checker) = event_checker
-                        && let ControlFlow::Break(reason) = checker(current_t, &current_state)
-                    {
-                        entry.terminated = true;
-                        terminated = true;
-                        terminations.push(SatelliteTermination {
-                            satellite_id: entry.id.clone(),
-                            t: current_t,
-                            reason,
-                        });
+                        let result = stepper.advance_to(
+                            segment_end,
+                            |t, s| observer(&entry.id, t, s),
+                            |t, s| match event_checker {
+                                Some(checker) => checker(t, s),
+                                None => ControlFlow::Continue(()),
+                            },
+                        );
+
+                        match result {
+                            Ok(AdvanceOutcome853::Reached) => {
+                                entry.state = stepper.into_state();
+                                entry.t = segment_end;
+                            }
+                            Ok(AdvanceOutcome853::Event { reason }) => {
+                                let t = stepper.t();
+                                entry.state = stepper.into_state();
+                                entry.t = t;
+                                entry.terminated = true;
+                                terminations.push(SatelliteTermination {
+                                    satellite_id: entry.id.clone(),
+                                    t,
+                                    reason,
+                                });
+                            }
+                            Err(e) => {
+                                entry.terminated = true;
+                                // Pre-flight rejections (bad dt/tolerances) carry
+                                // no time of their own; attribute them to where
+                                // the stepper was asked to start.
+                                let t = e.time().unwrap_or(entry.t);
+                                terminations.push(SatelliteTermination {
+                                    satellite_id: entry.id.clone(),
+                                    t,
+                                    reason: format!("{e:?}"),
+                                });
+                            }
+                        }
                     }
-                    while !terminated && current_t < effective_target - 1e-12 {
-                        let h = dt.min(effective_target - current_t);
-                        // `h > 0` after the validate() above, but for large
-                        // `|current_t|` it can still be below the f64 spacing
-                        // there.
-                        if current_t + h == current_t {
-                            return Err(IntegrationError::TimeStagnated {
-                                t: current_t,
-                                dt: h,
-                            });
-                        }
-                        current_state = Rk4.step(dynamics, current_t, &current_state, h);
-                        current_t += h;
+                    IntegratorConfig::Rk4 { dt } => {
+                        let dt = *dt;
+                        let mut current_t = entry.t;
+                        let mut current_state = entry.state.clone();
 
-                        if !current_state.is_finite() {
-                            entry.t = current_t;
-                            entry.terminated = true;
-                            terminated = true;
-                            terminations.push(SatelliteTermination {
-                                satellite_id: entry.id.clone(),
-                                t: current_t,
-                                reason: "NonFiniteState".to_string(),
-                            });
-                            break;
-                        }
-
-                        // Same ordering as the adaptive steppers: observe the
-                        // accepted step before the event check.
-                        observer(&entry.id, current_t, &current_state);
-
-                        if let Some(checker) = event_checker
+                        let mut terminated = false;
+                        // The predicate is asked about the state this call starts from,
+                        // before any step. A level-triggered event can already hold there,
+                        // and stepping first reports it one step late. Later segments
+                        // start where the previous one ended, whose state the loop
+                        // already checked.
+                        if first_segment
+                            && let Some(checker) = event_checker
                             && let ControlFlow::Break(reason) = checker(current_t, &current_state)
                         {
-                            entry.t = current_t;
                             entry.terminated = true;
                             terminated = true;
                             terminations.push(SatelliteTermination {
@@ -465,15 +488,74 @@ where
                                 t: current_t,
                                 reason,
                             });
-                            break;
+                        }
+                        while !terminated && current_t < segment_end {
+                            // The last step of a segment lands on its end exactly.
+                            // Accumulating `h` instead leaves `current_t` an ulp
+                            // short, and the next `h` is then small enough to
+                            // stagnate. The segment's end is a switch of the
+                            // right-hand side, so landing near it is not enough.
+                            let last = segment_end - current_t <= dt;
+                            let h = if last { segment_end - current_t } else { dt };
+                            // `h > 0` after the validate() above, but for large
+                            // `|current_t|` it can still be below the f64 spacing
+                            // there.
+                            if current_t + h == current_t {
+                                if last {
+                                    // The segment is narrower than the spacing of
+                                    // f64 here. No step size crosses it, and no
+                                    // change of state over it is representable
+                                    // either.
+                                    current_t = segment_end;
+                                    continue;
+                                }
+                                return Err(IntegrationError::TimeStagnated {
+                                    t: current_t,
+                                    dt: h,
+                                });
+                            }
+                            current_state = Rk4.step(&bound, current_t, &current_state, h);
+                            current_t = if last { segment_end } else { current_t + h };
+
+                            if !current_state.is_finite() {
+                                entry.t = current_t;
+                                entry.terminated = true;
+                                terminated = true;
+                                terminations.push(SatelliteTermination {
+                                    satellite_id: entry.id.clone(),
+                                    t: current_t,
+                                    reason: "NonFiniteState".to_string(),
+                                });
+                                break;
+                            }
+
+                            // Same ordering as the adaptive steppers: observe the
+                            // accepted step before the event check.
+                            observer(&entry.id, current_t, &current_state);
+
+                            if let Some(checker) = event_checker
+                                && let ControlFlow::Break(reason) =
+                                    checker(current_t, &current_state)
+                            {
+                                entry.t = current_t;
+                                entry.terminated = true;
+                                terminated = true;
+                                terminations.push(SatelliteTermination {
+                                    satellite_id: entry.id.clone(),
+                                    t: current_t,
+                                    reason,
+                                });
+                                break;
+                            }
+                        }
+
+                        entry.state = current_state;
+                        if !terminated {
+                            entry.t = current_t;
                         }
                     }
-
-                    entry.state = current_state;
-                    if !terminated {
-                        entry.t = current_t;
-                    }
                 }
+                first_segment = false;
             }
         }
 

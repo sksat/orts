@@ -4,7 +4,8 @@ use std::sync::Arc;
 use nalgebra::Vector3;
 use utsuroi::{
     AdvanceOutcome, AdvanceOutcome853, Dop853, DormandPrince, DynamicalSystem, IntegrationError,
-    Integrator, OdeState, Rk4, Tolerances,
+    Integrator, OdeState, Rk4, SegmentContext, SegmentSystem, Tolerances,
+    derivatives_maybe_in_segment,
 };
 
 use super::prop_group::{GroupSnapshot, PropGroupOutcome, SatId, SatelliteTermination};
@@ -42,6 +43,24 @@ pub trait InterSatelliteForce: Send + Sync {
     /// Mutual gravitation and the other continuous forces answer `None`.
     fn next_discontinuity_after(&self, _t: f64) -> Option<f64> {
         None
+    }
+
+    /// The pair's accelerations for the segment a solver is stepping through.
+    ///
+    /// A force that reports a boundary has its switch turned into the end of a
+    /// segment, and the stage landing there belongs to the step integrating the
+    /// segment before it. Answering for `segment.start` keeps that stage on the
+    /// inside of a half-open interval ending there; `ctx` still describes the
+    /// stage, so a force that varies continuously keeps reading it.
+    ///
+    /// The default ignores the segment and forwards to
+    /// [`acceleration_pair`](Self::acceleration_pair).
+    fn acceleration_pair_in_segment(
+        &self,
+        _segment: &SegmentContext,
+        ctx: &PairContext<'_>,
+    ) -> (Vector3<f64>, Vector3<f64>) {
+        self.acceleration_pair(ctx)
     }
 }
 
@@ -153,6 +172,67 @@ where
     }
 }
 
+impl<D: DynamicalSystem> CoupledGroupDynamics<D>
+where
+    D::State: HasPosition + FromAcceleration,
+{
+    /// Shared body of [`derivatives`](DynamicalSystem::derivatives) and
+    /// [`derivatives_in_segment`](DynamicalSystem::derivatives_in_segment).
+    ///
+    /// On the segment path the satellites are asked for the same segment: a
+    /// composite that stepped its children outside it would leave their
+    /// schedules reading the stage time again.
+    fn derivatives_for(
+        &self,
+        segment: Option<&SegmentContext>,
+        t: f64,
+        state: &GroupState<D::State>,
+    ) -> GroupState<D::State> {
+        assert_eq!(
+            self.dynamics.len(),
+            state.states.len(),
+            "CoupledGroupDynamics: dynamics count ({}) != state count ({})",
+            self.dynamics.len(),
+            state.states.len()
+        );
+
+        // 1. Per-satellite derivatives (gravity, drag, etc.)
+        let mut derivs: Vec<D::State> = self
+            .dynamics
+            .iter()
+            .zip(&state.states)
+            .map(|(d, s)| derivatives_maybe_in_segment(d, segment, t, s))
+            .collect();
+
+        // 2. Add inter-satellite force accelerations
+        for pair in &self.interactions {
+            assert!(
+                pair.i < state.states.len() && pair.j < state.states.len(),
+                "InteractionPair indices ({}, {}) out of range for {} satellites",
+                pair.i,
+                pair.j,
+                state.states.len()
+            );
+
+            let pos_i = state.states[pair.i].position();
+            let pos_j = state.states[pair.j].position();
+            let ctx = PairContext {
+                t,
+                pos_i: &pos_i,
+                pos_j: &pos_j,
+            };
+            let (a_i, a_j) = match segment {
+                Some(segment) => pair.force.acceleration_pair_in_segment(segment, &ctx),
+                None => pair.force.acceleration_pair(&ctx),
+            };
+            derivs[pair.i] = derivs[pair.i].axpy(1.0, &D::State::from_acceleration(a_i));
+            derivs[pair.j] = derivs[pair.j].axpy(1.0, &D::State::from_acceleration(a_j));
+        }
+
+        GroupState { states: derivs }
+    }
+}
+
 impl<D: DynamicalSystem> DynamicalSystem for CoupledGroupDynamics<D>
 where
     D::State: HasPosition + FromAcceleration,
@@ -181,45 +261,16 @@ where
     }
 
     fn derivatives(&self, t: f64, state: &GroupState<D::State>) -> GroupState<D::State> {
-        assert_eq!(
-            self.dynamics.len(),
-            state.states.len(),
-            "CoupledGroupDynamics: dynamics count ({}) != state count ({})",
-            self.dynamics.len(),
-            state.states.len()
-        );
+        self.derivatives_for(None, t, state)
+    }
 
-        // 1. Per-satellite derivatives (gravity, drag, etc.)
-        let mut derivs: Vec<D::State> = self
-            .dynamics
-            .iter()
-            .zip(&state.states)
-            .map(|(d, s)| d.derivatives(t, s))
-            .collect();
-
-        // 2. Add inter-satellite force accelerations
-        for pair in &self.interactions {
-            assert!(
-                pair.i < state.states.len() && pair.j < state.states.len(),
-                "InteractionPair indices ({}, {}) out of range for {} satellites",
-                pair.i,
-                pair.j,
-                state.states.len()
-            );
-
-            let pos_i = state.states[pair.i].position();
-            let pos_j = state.states[pair.j].position();
-            let ctx = PairContext {
-                t,
-                pos_i: &pos_i,
-                pos_j: &pos_j,
-            };
-            let (a_i, a_j) = pair.force.acceleration_pair(&ctx);
-            derivs[pair.i] = derivs[pair.i].axpy(1.0, &D::State::from_acceleration(a_i));
-            derivs[pair.j] = derivs[pair.j].axpy(1.0, &D::State::from_acceleration(a_j));
-        }
-
-        GroupState { states: derivs }
+    fn derivatives_in_segment(
+        &self,
+        segment: &SegmentContext,
+        t: f64,
+        state: &GroupState<D::State>,
+    ) -> GroupState<D::State> {
+        self.derivatives_for(Some(segment), t, state)
     }
 }
 
@@ -355,6 +406,18 @@ where
     }
 
     pub fn propagate_to(&mut self, t_target: f64) -> Result<PropGroupOutcome, IntegrationError> {
+        // Before the no-op guard below: `self.t >= t_target` is false for
+        // `-inf` and for a NaN, so an invalid span would otherwise be reported
+        // as one already covered. `set_t` takes any `f64`, so the current time
+        // is part of what has to be finite — the adaptive steppers used to
+        // reject it through `validate_time_span`, which the segment loop now
+        // reaches only after deciding to step.
+        if !self.t.is_finite() || !t_target.is_finite() {
+            return Err(IntegrationError::InvalidTimeSpan {
+                t0: self.t,
+                t_end: t_target,
+            });
+        }
         if self.terminated || self.t >= t_target {
             return Ok(PropGroupOutcome {
                 terminations: Vec::new(),
@@ -366,235 +429,206 @@ where
         // backwards for `dt < 0`) forever.
         self.integrator.validate()?;
 
-        match &self.integrator {
-            IntegratorConfig::Dp45 { dt, tolerances } => {
-                let mut stepper = DormandPrince.stepper(
-                    &self.dynamics,
-                    self.state.clone(),
-                    self.t,
-                    *dt,
-                    tolerances.clone(),
-                );
+        // One segment at a time, so that no switch of the right-hand side
+        // falls strictly inside a step and the stage on a segment's end reads
+        // the mode that held inside it. A fresh stepper per segment also keeps
+        // DP45 from opening the step after a switch with the `k7` it cached on
+        // the other side of it.
+        let mut first_segment = true;
+        while !self.terminated && self.t < t_target {
+            let segment_end = self
+                .dynamics
+                .next_discontinuity_after(self.t)
+                .filter(|next| *next > self.t && next.is_finite())
+                .map_or(t_target, |next| next.min(t_target));
+            let bound =
+                SegmentSystem::new(&self.dynamics, SegmentContext::new(self.t, segment_end));
 
-                // Build group-level event checker that iterates over all satellites
-                let ids = self.ids.clone();
-                let event_checker = &self.event_checker;
+            let outcome = match &self.integrator {
+                IntegratorConfig::Dp45 { dt, tolerances } => {
+                    let mut stepper = DormandPrince.stepper(
+                        &bound,
+                        self.state.clone(),
+                        self.t,
+                        *dt,
+                        tolerances.clone(),
+                    );
+                    // The state a later segment starts from is the one the
+                    // previous segment ended on, already checked after its last
+                    // accepted step.
+                    if !first_segment {
+                        stepper = stepper.from_checked_state();
+                    }
 
-                let result = if let Some(checker) = event_checker {
-                    stepper.advance_to(
-                        t_target,
-                        |_, _| {},
-                        |t: f64, gs: &GroupState<D::State>| {
-                            for (id, sat_state) in ids.iter().zip(&gs.states) {
-                                if let ControlFlow::Break(reason) = checker(t, sat_state) {
-                                    return ControlFlow::Break((id.clone(), reason));
+                    // Build group-level event checker that iterates over all satellites
+                    let ids = self.ids.clone();
+                    let event_checker = &self.event_checker;
+
+                    let result = if let Some(checker) = event_checker {
+                        stepper.advance_to(
+                            segment_end,
+                            |_, _| {},
+                            |t: f64, gs: &GroupState<D::State>| {
+                                for (id, sat_state) in ids.iter().zip(&gs.states) {
+                                    if let ControlFlow::Break(reason) = checker(t, sat_state) {
+                                        return ControlFlow::Break((id.clone(), reason));
+                                    }
                                 }
-                            }
-                            ControlFlow::Continue(())
-                        },
-                    )
-                } else {
-                    stepper.advance_to(
-                        t_target,
-                        |_, _| {},
-                        |_: f64, _: &GroupState<D::State>| {
-                            ControlFlow::<(SatId, String)>::Continue(())
-                        },
-                    )
-                };
+                                ControlFlow::Continue(())
+                            },
+                        )
+                    } else {
+                        stepper.advance_to(
+                            segment_end,
+                            |_, _| {},
+                            |_: f64, _: &GroupState<D::State>| {
+                                ControlFlow::<(SatId, String)>::Continue(())
+                            },
+                        )
+                    };
 
-                match result {
-                    Ok(AdvanceOutcome::Reached) => {
-                        self.state = stepper.into_state();
-                        self.t = t_target;
-                        Ok(PropGroupOutcome {
-                            terminations: Vec::new(),
-                        })
-                    }
-                    Ok(AdvanceOutcome::Event {
-                        reason: (sat_id, reason),
-                    }) => {
-                        let t = stepper.t();
-                        self.state = stepper.into_state();
-                        self.t = t;
-                        self.terminated = true;
-                        self.is_event_termination = true;
-                        let term = SatelliteTermination {
-                            satellite_id: sat_id,
-                            t,
-                            reason,
-                        };
-                        self.termination = Some(term.clone());
-                        Ok(PropGroupOutcome {
-                            terminations: vec![term],
-                        })
-                    }
-                    Err(e) => {
-                        self.terminated = true;
-                        // Pre-flight rejections (bad dt/tolerances) carry no
-                        // time of their own; attribute them to where the
-                        // stepper was asked to start.
-                        let t = e.time().unwrap_or(self.t);
-                        let term = SatelliteTermination {
-                            satellite_id: self
-                                .ids
-                                .first()
-                                .cloned()
-                                .unwrap_or_else(|| SatId::from("unknown")),
-                            t,
-                            reason: format!("{e:?}"),
-                        };
-                        self.termination = Some(term.clone());
-                        Ok(PropGroupOutcome {
-                            terminations: vec![term],
-                        })
-                    }
-                }
-            }
-            IntegratorConfig::Dop853 { dt, tolerances } => {
-                let mut stepper = Dop853.stepper(
-                    &self.dynamics,
-                    self.state.clone(),
-                    self.t,
-                    *dt,
-                    tolerances.clone(),
-                );
-
-                let ids = self.ids.clone();
-                let event_checker = &self.event_checker;
-
-                let result = if let Some(checker) = event_checker {
-                    stepper.advance_to(
-                        t_target,
-                        |_, _| {},
-                        |t: f64, gs: &GroupState<D::State>| {
-                            for (id, sat_state) in ids.iter().zip(&gs.states) {
-                                if let ControlFlow::Break(reason) = checker(t, sat_state) {
-                                    return ControlFlow::Break((id.clone(), reason));
-                                }
-                            }
-                            ControlFlow::Continue(())
-                        },
-                    )
-                } else {
-                    stepper.advance_to(
-                        t_target,
-                        |_, _| {},
-                        |_: f64, _: &GroupState<D::State>| {
-                            ControlFlow::<(SatId, String)>::Continue(())
-                        },
-                    )
-                };
-
-                match result {
-                    Ok(AdvanceOutcome853::Reached) => {
-                        self.state = stepper.into_state();
-                        self.t = t_target;
-                        Ok(PropGroupOutcome {
-                            terminations: Vec::new(),
-                        })
-                    }
-                    Ok(AdvanceOutcome853::Event {
-                        reason: (sat_id, reason),
-                    }) => {
-                        let t = stepper.t();
-                        self.state = stepper.into_state();
-                        self.t = t;
-                        self.terminated = true;
-                        self.is_event_termination = true;
-                        let term = SatelliteTermination {
-                            satellite_id: sat_id,
-                            t,
-                            reason,
-                        };
-                        self.termination = Some(term.clone());
-                        Ok(PropGroupOutcome {
-                            terminations: vec![term],
-                        })
-                    }
-                    Err(e) => {
-                        self.terminated = true;
-                        // Pre-flight rejections (bad dt/tolerances) carry no
-                        // time of their own; attribute them to where the
-                        // stepper was asked to start.
-                        let t = e.time().unwrap_or(self.t);
-                        let term = SatelliteTermination {
-                            satellite_id: self
-                                .ids
-                                .first()
-                                .cloned()
-                                .unwrap_or_else(|| SatId::from("unknown")),
-                            t,
-                            reason: format!("{e:?}"),
-                        };
-                        self.termination = Some(term.clone());
-                        Ok(PropGroupOutcome {
-                            terminations: vec![term],
-                        })
-                    }
-                }
-            }
-            IntegratorConfig::Rk4 { dt } => {
-                let dt = *dt;
-                let mut current_t = self.t;
-                let mut current_state = self.state.clone();
-
-                // The predicate is asked about the state this call starts
-                // from, before any step. A level-triggered event can already
-                // hold there, and stepping first reports it one step late.
-                if let Some(ref checker) = self.event_checker {
-                    for (id, sat_state) in self.ids.iter().zip(&current_state.states) {
-                        if let ControlFlow::Break(reason) = checker(current_t, sat_state) {
-                            self.state = current_state;
-                            self.t = current_t;
+                    match result {
+                        Ok(AdvanceOutcome::Reached) => {
+                            self.state = stepper.into_state();
+                            self.t = segment_end;
+                            Ok(PropGroupOutcome {
+                                terminations: Vec::new(),
+                            })
+                        }
+                        Ok(AdvanceOutcome::Event {
+                            reason: (sat_id, reason),
+                        }) => {
+                            let t = stepper.t();
+                            self.state = stepper.into_state();
+                            self.t = t;
                             self.terminated = true;
                             self.is_event_termination = true;
                             let term = SatelliteTermination {
-                                satellite_id: id.clone(),
-                                t: current_t,
+                                satellite_id: sat_id,
+                                t,
                                 reason,
                             };
                             self.termination = Some(term.clone());
-                            return Ok(PropGroupOutcome {
+                            Ok(PropGroupOutcome {
                                 terminations: vec![term],
-                            });
+                            })
+                        }
+                        Err(e) => {
+                            self.terminated = true;
+                            // Pre-flight rejections (bad dt/tolerances) carry no
+                            // time of their own; attribute them to where the
+                            // stepper was asked to start.
+                            let t = e.time().unwrap_or(self.t);
+                            let term = SatelliteTermination {
+                                satellite_id: self
+                                    .ids
+                                    .first()
+                                    .cloned()
+                                    .unwrap_or_else(|| SatId::from("unknown")),
+                                t,
+                                reason: format!("{e:?}"),
+                            };
+                            self.termination = Some(term.clone());
+                            Ok(PropGroupOutcome {
+                                terminations: vec![term],
+                            })
                         }
                     }
                 }
-
-                while current_t < t_target - 1e-12 {
-                    let h = dt.min(t_target - current_t);
-                    // `h > 0` after the validate() above, but for large
-                    // `|current_t|` it can still be below the f64 spacing there.
-                    if current_t + h == current_t {
-                        return Err(IntegrationError::TimeStagnated {
-                            t: current_t,
-                            dt: h,
-                        });
-                    }
-                    current_state = Rk4.step(&self.dynamics, current_t, &current_state, h);
-                    current_t += h;
-
-                    if !current_state.is_finite() {
-                        self.state = current_state;
-                        self.t = current_t;
-                        self.terminated = true;
-                        let term = SatelliteTermination {
-                            satellite_id: self
-                                .ids
-                                .first()
-                                .cloned()
-                                .unwrap_or_else(|| SatId::from("unknown")),
-                            t: current_t,
-                            reason: "NonFiniteState".to_string(),
-                        };
-                        self.termination = Some(term.clone());
-                        return Ok(PropGroupOutcome {
-                            terminations: vec![term],
-                        });
+                IntegratorConfig::Dop853 { dt, tolerances } => {
+                    let mut stepper =
+                        Dop853.stepper(&bound, self.state.clone(), self.t, *dt, tolerances.clone());
+                    // The state a later segment starts from is the one the
+                    // previous segment ended on, already checked after its last
+                    // accepted step.
+                    if !first_segment {
+                        stepper = stepper.from_checked_state();
                     }
 
-                    if let Some(ref checker) = self.event_checker {
+                    let ids = self.ids.clone();
+                    let event_checker = &self.event_checker;
+
+                    let result = if let Some(checker) = event_checker {
+                        stepper.advance_to(
+                            segment_end,
+                            |_, _| {},
+                            |t: f64, gs: &GroupState<D::State>| {
+                                for (id, sat_state) in ids.iter().zip(&gs.states) {
+                                    if let ControlFlow::Break(reason) = checker(t, sat_state) {
+                                        return ControlFlow::Break((id.clone(), reason));
+                                    }
+                                }
+                                ControlFlow::Continue(())
+                            },
+                        )
+                    } else {
+                        stepper.advance_to(
+                            segment_end,
+                            |_, _| {},
+                            |_: f64, _: &GroupState<D::State>| {
+                                ControlFlow::<(SatId, String)>::Continue(())
+                            },
+                        )
+                    };
+
+                    match result {
+                        Ok(AdvanceOutcome853::Reached) => {
+                            self.state = stepper.into_state();
+                            self.t = segment_end;
+                            Ok(PropGroupOutcome {
+                                terminations: Vec::new(),
+                            })
+                        }
+                        Ok(AdvanceOutcome853::Event {
+                            reason: (sat_id, reason),
+                        }) => {
+                            let t = stepper.t();
+                            self.state = stepper.into_state();
+                            self.t = t;
+                            self.terminated = true;
+                            self.is_event_termination = true;
+                            let term = SatelliteTermination {
+                                satellite_id: sat_id,
+                                t,
+                                reason,
+                            };
+                            self.termination = Some(term.clone());
+                            Ok(PropGroupOutcome {
+                                terminations: vec![term],
+                            })
+                        }
+                        Err(e) => {
+                            self.terminated = true;
+                            // Pre-flight rejections (bad dt/tolerances) carry no
+                            // time of their own; attribute them to where the
+                            // stepper was asked to start.
+                            let t = e.time().unwrap_or(self.t);
+                            let term = SatelliteTermination {
+                                satellite_id: self
+                                    .ids
+                                    .first()
+                                    .cloned()
+                                    .unwrap_or_else(|| SatId::from("unknown")),
+                                t,
+                                reason: format!("{e:?}"),
+                            };
+                            self.termination = Some(term.clone());
+                            Ok(PropGroupOutcome {
+                                terminations: vec![term],
+                            })
+                        }
+                    }
+                }
+                IntegratorConfig::Rk4 { dt } => {
+                    let dt = *dt;
+                    let mut current_t = self.t;
+                    let mut current_state = self.state.clone();
+
+                    // The predicate is asked about the state this call starts
+                    // from, before any step. A level-triggered event can already
+                    // hold there, and stepping first reports it one step late.
+                    // Later segments start from a state the loop already checked.
+                    if first_segment && let Some(ref checker) = self.event_checker {
                         for (id, sat_state) in self.ids.iter().zip(&current_state.states) {
                             if let ControlFlow::Break(reason) = checker(current_t, sat_state) {
                                 self.state = current_state;
@@ -613,15 +647,88 @@ where
                             }
                         }
                     }
-                }
 
-                self.state = current_state;
-                self.t = current_t;
-                Ok(PropGroupOutcome {
-                    terminations: Vec::new(),
-                })
+                    while current_t < segment_end {
+                        // The last step of a segment lands on its end exactly.
+                        // Accumulating `h` leaves `current_t` an ulp short, and the
+                        // next `h` is then small enough to stagnate.
+                        let last = segment_end - current_t <= dt;
+                        let h = if last { segment_end - current_t } else { dt };
+                        // `h > 0` after the validate() above, but for large
+                        // `|current_t|` it can still be below the f64 spacing there.
+                        if current_t + h == current_t {
+                            if last {
+                                // The segment is narrower than the spacing of f64
+                                // here: no step size crosses it, and no change of
+                                // state over it is representable either.
+                                current_t = segment_end;
+                                continue;
+                            }
+                            return Err(IntegrationError::TimeStagnated {
+                                t: current_t,
+                                dt: h,
+                            });
+                        }
+                        current_state = Rk4.step(&bound, current_t, &current_state, h);
+                        current_t = if last { segment_end } else { current_t + h };
+
+                        if !current_state.is_finite() {
+                            self.state = current_state;
+                            self.t = current_t;
+                            self.terminated = true;
+                            let term = SatelliteTermination {
+                                satellite_id: self
+                                    .ids
+                                    .first()
+                                    .cloned()
+                                    .unwrap_or_else(|| SatId::from("unknown")),
+                                t: current_t,
+                                reason: "NonFiniteState".to_string(),
+                            };
+                            self.termination = Some(term.clone());
+                            return Ok(PropGroupOutcome {
+                                terminations: vec![term],
+                            });
+                        }
+
+                        if let Some(ref checker) = self.event_checker {
+                            for (id, sat_state) in self.ids.iter().zip(&current_state.states) {
+                                if let ControlFlow::Break(reason) = checker(current_t, sat_state) {
+                                    self.state = current_state;
+                                    self.t = current_t;
+                                    self.terminated = true;
+                                    self.is_event_termination = true;
+                                    let term = SatelliteTermination {
+                                        satellite_id: id.clone(),
+                                        t: current_t,
+                                        reason,
+                                    };
+                                    self.termination = Some(term.clone());
+                                    return Ok(PropGroupOutcome {
+                                        terminations: vec![term],
+                                    });
+                                }
+                            }
+                        }
+                    }
+
+                    self.state = current_state;
+                    self.t = current_t;
+                    Ok(PropGroupOutcome {
+                        terminations: Vec::new(),
+                    })
+                }
+            };
+
+            if self.terminated {
+                return outcome;
             }
+            first_segment = false;
         }
+
+        Ok(PropGroupOutcome {
+            terminations: Vec::new(),
+        })
     }
 
     pub fn snapshot(&self) -> GroupSnapshot {

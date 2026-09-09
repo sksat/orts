@@ -2,10 +2,10 @@ use std::marker::PhantomData;
 
 use arika::epoch::Epoch;
 use arika::frame::{Eci, SimpleEci};
-use utsuroi::DynamicalSystem;
+use utsuroi::{DynamicalSystem, SegmentContext};
 
 use super::gravity::GravityField;
-use crate::model::Model;
+use crate::model::{EvalSegment, Model, eval_maybe_in_segment};
 use crate::orbital::OrbitalState;
 
 /// Orbital dynamics system combining a gravity field model with perturbation forces.
@@ -76,6 +76,29 @@ impl<F: Eci> OrbitalSystem<F> {
     }
 }
 
+impl<F: Eci> OrbitalSystem<F> {
+    /// Shared body of [`derivatives`](DynamicalSystem::derivatives) and
+    /// [`derivatives_in_segment`](DynamicalSystem::derivatives_in_segment).
+    ///
+    /// `segment` is `Some` only on the segment path, where it carries the
+    /// interval's start in both time bases so a model holding a schedule can
+    /// answer for it.
+    fn derivatives_for(
+        &self,
+        segment: Option<&EvalSegment<'_>>,
+        t: f64,
+        state: &OrbitalState<F>,
+    ) -> OrbitalState<F> {
+        let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
+        let mut accel = self.gravity.acceleration(self.mu, state.position());
+        for m in &self.models {
+            let loads = eval_maybe_in_segment(m, segment, t, state, epoch.as_ref());
+            accel += loads.acceleration_inertial.into_inner();
+        }
+        OrbitalState::from_derivative_in_frame(*state.velocity(), accel)
+    }
+}
+
 impl<F: Eci> DynamicalSystem for OrbitalSystem<F> {
     type State = OrbitalState<F>;
 
@@ -95,13 +118,21 @@ impl<F: Eci> DynamicalSystem for OrbitalSystem<F> {
     }
 
     fn derivatives(&self, t: f64, state: &OrbitalState<F>) -> OrbitalState<F> {
-        let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
-        let mut accel = self.gravity.acceleration(self.mu, state.position());
-        for m in &self.models {
-            let loads = m.eval(t, state, epoch.as_ref());
-            accel += loads.acceleration_inertial.into_inner();
-        }
-        OrbitalState::from_derivative_in_frame(*state.velocity(), accel)
+        self.derivatives_for(None, t, state)
+    }
+
+    fn derivatives_in_segment(
+        &self,
+        segment: &SegmentContext,
+        t: f64,
+        state: &OrbitalState<F>,
+    ) -> OrbitalState<F> {
+        let start_epoch = self.epoch_0.map(|e| e.add_si_seconds(segment.start));
+        self.derivatives_for(
+            Some(&EvalSegment::new(segment, start_epoch.as_ref())),
+            t,
+            state,
+        )
     }
 }
 
