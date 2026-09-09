@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use nalgebra::Vector3;
 use utsuroi::{
-    AdvanceOutcome, AdvanceOutcome853, Dop853, DormandPrince, DynamicalSystem, IntegrationError,
-    Integrator, OdeState, Rk4, SegmentContext, SegmentSystem, Tolerances,
+    AdvanceOutcome, AdvanceOutcome853, Dop853, DormandPrince, DynamicalSystem, FixedSteps,
+    IntegrationError, Integrator, OdeState, Rk4, SegmentContext, SegmentSystem, Tolerances,
     derivatives_maybe_in_segment,
 };
 
@@ -648,29 +648,28 @@ where
                         }
                     }
 
-                    while current_t < segment_end {
-                        // The last step of a segment lands on its end exactly.
-                        // Accumulating `h` instead can leave `current_t` an ulp
-                        // short and spend a whole extra step covering that ulp.
-                        let last = segment_end - current_t <= dt;
-                        let h = if last { segment_end - current_t } else { dt };
+                    // `FixedSteps` counts from the segment's start and lands
+                    // the last step on its end, which the segment's end being a
+                    // switch of the right-hand side needs.
+                    for step in FixedSteps::new(current_t, segment_end, dt) {
                         // `h > 0` after the validate() above, but for large
                         // `|current_t|` it can still be below the f64 spacing there.
-                        if current_t + h == current_t {
-                            if last {
-                                // The segment is narrower than the spacing of f64
-                                // here: no step size crosses it, and no change of
-                                // state over it is representable either.
+                        if step.next_t == step.t {
+                            // A segment narrower than the spacing of f64 here is
+                            // crossed without a step: no step size advances over
+                            // it, and no change of state over it is
+                            // representable either.
+                            if step.next_t == segment_end {
                                 current_t = segment_end;
                                 continue;
                             }
                             return Err(IntegrationError::TimeStagnated {
-                                t: current_t,
-                                dt: h,
+                                t: step.t,
+                                dt: step.h,
                             });
                         }
-                        current_state = Rk4.step(&bound, current_t, &current_state, h);
-                        current_t = if last { segment_end } else { current_t + h };
+                        current_state = Rk4.step(&bound, step.t, &current_state, step.h);
+                        current_t = step.next_t;
 
                         if !current_state.is_finite() {
                             self.state = current_state;

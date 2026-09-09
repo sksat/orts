@@ -1,6 +1,7 @@
 use core::ops::ControlFlow;
 
 use crate::error::{validate_step_size, validate_time_span};
+use crate::landing::FixedSteps;
 use crate::{DynamicalSystem, IntegrationError, IntegrationOutcome, OdeState};
 
 /// Common interface for fixed-step numerical integrators.
@@ -71,17 +72,18 @@ pub trait Integrator {
         validate_time_span(t0, t_end)?;
 
         let mut state = initial;
-        let mut t = t0;
 
-        while t < t_end {
-            let h = dt.min(t_end - t);
+        for step in FixedSteps::new(t0, t_end, dt) {
             // `h > 0` holds, but for large `|t|` it can still be below the
             // spacing of representable f64 values around `t`.
-            if t + h == t {
-                return Err(IntegrationError::TimeStagnated { t, dt: h });
+            if step.next_t == step.t {
+                return Err(IntegrationError::TimeStagnated {
+                    t: step.t,
+                    dt: step.h,
+                });
             }
-            state = self.step(system, t, &state, h);
-            t += h;
+            state = self.step(system, step.t, &state, step.h);
+            let t = step.next_t;
 
             // The same check `integrate_with_events` makes. Without it the
             // controlled path — the one caller that uses `try_integrate` — read
@@ -132,7 +134,6 @@ pub trait Integrator {
         }
 
         let mut state = initial;
-        let mut t = t0;
 
         // The predicate is asked about the state it was given, before any
         // step. A level-triggered event — "below the surface", "past this
@@ -150,13 +151,15 @@ pub trait Integrator {
             };
         }
 
-        while t < t_end {
-            let h = dt.min(t_end - t);
-            if t + h == t {
-                return IntegrationOutcome::Error(IntegrationError::TimeStagnated { t, dt: h });
+        for step in FixedSteps::new(t0, t_end, dt) {
+            if step.next_t == step.t {
+                return IntegrationOutcome::Error(IntegrationError::TimeStagnated {
+                    t: step.t,
+                    dt: step.h,
+                });
             }
-            state = self.step(system, t, &state, h);
-            t += h;
+            state = self.step(system, step.t, &state, step.h);
+            let t = step.next_t;
 
             if !state.is_finite() {
                 return IntegrationOutcome::Error(IntegrationError::NonFiniteState { t });
