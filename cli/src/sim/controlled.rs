@@ -483,16 +483,8 @@ pub fn propagate_controlled(
                 // `try_integrate` rather than `integrate`: the latter panics on
                 // a bad step or a stalled clock, and this returns `Result` so
                 // serve can send the client an Error down its graceful-halt
-                // path.
-                //
-                // Its clock accumulates (`t += h`), unlike the group loops,
-                // which assign the segment's end on the last step. The residual
-                // is the exactly representable `segment_end - t`, so the clock
-                // still arrives on `segment_end` — measured over spans with
-                // inexact accumulation and at times as large as 1e15, it lands
-                // there in every case and never stagnates. What it costs is one
-                // extra step of an ulp's width, which moves the state by less
-                // than its own resolution.
+                // path. It walks the same `FixedSteps` grid the group loops do,
+                // so the last step of a segment lands on `segment_end` itself.
                 state = Rk4
                     .try_integrate(bound, state, t, segment_end, dt_ode, |_, _| {})
                     .map_err(span)?;
