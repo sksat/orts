@@ -465,6 +465,12 @@ pub fn propagate_controlled(
     // largest gap between adjacent stage times contributes nothing at all, and
     // one covering a whole step loses the weight of the stage on its exclusive
     // end.
+    // The state stays local until every segment has succeeded. A satellite
+    // carries no integration time of its own, so committing each segment would
+    // leave a failed span with the state at the last boundary while the caller
+    // still holds `t0` — and serve pauses on such an error and can resume from
+    // there, propagating a state that belongs to a later instant.
+    let mut state = sat.state.clone();
     let mut t = t0;
     let mut first_segment = true;
     while t < t1 {
@@ -491,13 +497,13 @@ pub fn propagate_controlled(
                 // there in every case and never stagnates. What it costs is one
                 // extra step of an ulp's width, which moves the state by less
                 // than its own resolution.
-                sat.state = Rk4
-                    .try_integrate(&bound, sat.state.clone(), t, segment_end, dt_ode, |_, _| {})
+                state = Rk4
+                    .try_integrate(&bound, state, t, segment_end, dt_ode, |_, _| {})
                     .map_err(span)?;
             }
             IntegratorConfig::Dp45 { dt, tolerances } => {
                 let mut stepper =
-                    DormandPrince.stepper(&bound, sat.state.clone(), t, *dt, tolerances.clone());
+                    DormandPrince.stepper(&bound, state.clone(), t, *dt, tolerances.clone());
                 // A later segment starts from the state the previous one ended
                 // on, which this loop asks no predicate about at all.
                 if !first_segment {
@@ -510,11 +516,10 @@ pub fn propagate_controlled(
                         |_, _| ControlFlow::<String>::Continue(()),
                     )
                     .map_err(span)?;
-                sat.state = stepper.into_state();
+                state = stepper.into_state();
             }
             IntegratorConfig::Dop853 { dt, tolerances } => {
-                let mut stepper =
-                    Dop853.stepper(&bound, sat.state.clone(), t, *dt, tolerances.clone());
+                let mut stepper = Dop853.stepper(&bound, state.clone(), t, *dt, tolerances.clone());
                 if !first_segment {
                     stepper = stepper.from_checked_state();
                 }
@@ -525,13 +530,15 @@ pub fn propagate_controlled(
                         |_, _| ControlFlow::<String>::Continue(()),
                     )
                     .map_err(span)?;
-                sat.state = stepper.into_state();
+                state = stepper.into_state();
             }
         }
 
         t = segment_end;
         first_segment = false;
     }
+
+    sat.state = state;
     Ok(())
 }
 
@@ -1623,5 +1630,77 @@ path = "does-not-exist.wasm"
                 "a start of {bound} was accepted"
             );
         }
+    }
+
+    /// A span that fails partway leaves the satellite where it started.
+    ///
+    /// A `ControlledSatellite` carries no integration time of its own, so a
+    /// state committed at a segment boundary belongs to an instant the caller
+    /// has no record of: serve pauses on the error and can resume, propagating
+    /// a state from the wrong time. The state has to move only when the whole
+    /// span succeeds.
+    #[test]
+    fn a_span_that_fails_partway_leaves_the_state_untouched() {
+        use arika::epoch::Epoch;
+        use orts::model::{ExternalLoads, Model};
+        use orts::spacecraft::SpacecraftState;
+
+        /// Finite up to and including `breaks_at`, not after it — with the
+        /// boundary declared, so the loop splits the span there and it is the
+        /// *second* segment that fails. The stage on the first segment's end
+        /// has to stay finite: this model keeps the default stage-time
+        /// evaluation, so that stage reads `breaks_at` itself.
+        struct BreaksAfter {
+            breaks_at: f64,
+        }
+
+        impl Model<SpacecraftState> for BreaksAfter {
+            fn name(&self) -> &str {
+                "breaks_after"
+            }
+
+            fn eval(
+                &self,
+                t: f64,
+                _state: &SpacecraftState,
+                _epoch: Option<&Epoch>,
+            ) -> ExternalLoads {
+                let mut loads = ExternalLoads::zeros();
+                if t > self.breaks_at {
+                    loads.acceleration_inertial =
+                        arika::frame::Vec3::from_raw(Vector3::new(f64::NAN, 0.0, 0.0));
+                }
+                loads
+            }
+
+            fn next_discontinuity_after(&self, t: f64, _epoch: Option<&Epoch>) -> Option<f64> {
+                (self.breaks_at > t).then_some(self.breaks_at)
+            }
+        }
+
+        let (mut sat, _) = satellite_with(1.0, 0.0);
+        sat.dynamics = std::mem::replace(
+            &mut sat.dynamics,
+            orts::spacecraft::SpacecraftDynamics::new(
+                arika::earth::MU,
+                Box::new(orts::orbital::gravity::PointMass),
+                nalgebra::Matrix3::identity(),
+            ),
+        )
+        .with_model(BreaksAfter { breaks_at: 0.2 });
+        let before = sat.state.clone();
+
+        let err = propagate_controlled(&mut sat, 0.0, 1.0, &IntegratorConfig::Rk4 { dt: 1.0 })
+            .expect_err("the second segment is not finite");
+        assert!(err.contains("non-finite state"), "unexpected error: {err}");
+        assert_eq!(
+            sat.state.plant.orbit.position(),
+            before.plant.orbit.position(),
+            "the failed span moved the satellite"
+        );
+        assert_eq!(
+            sat.state.plant.mass, before.plant.mass,
+            "the failed span changed the mass"
+        );
     }
 }
