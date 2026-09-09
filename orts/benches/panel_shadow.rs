@@ -125,13 +125,14 @@ fn bench(c: &mut Criterion) {
     }
     group.finish();
 
-    // The denominator: one derivative evaluation of the whole spacecraft, with
-    // the two panel models installed alongside the gravity the integrator has
-    // to do anyway. Per-model figures only say what they cost relative to
-    // this.
+    // One derivative evaluation of the whole spacecraft, with the two panel
+    // models installed alongside the gravity the integrator has to do anyway.
+    // A per-model figure only says what it costs against this, so every shape
+    // measured above is measured here too.
     let mut group = c.benchmark_group("spacecraft_derivatives");
     for (name, panels) in [
         ("outline_free", outline_free()),
+        ("cube", cube()),
         ("bus_and_arrays", bus_and_arrays(1)),
         ("segmented_array", bus_and_arrays(8)),
     ] {
