@@ -482,6 +482,15 @@ pub fn propagate_controlled(
                 // a bad step or a stalled clock, and this returns `Result` so
                 // serve can send the client an Error down its graceful-halt
                 // path.
+                //
+                // Its clock accumulates (`t += h`), unlike the group loops,
+                // which assign the segment's end on the last step. The residual
+                // is the exactly representable `segment_end - t`, so the clock
+                // still arrives on `segment_end` — measured over spans with
+                // inexact accumulation and at times as large as 1e15, it lands
+                // there in every case and never stagnates. What it costs is one
+                // extra step of an ulp's width, which moves the state by less
+                // than its own resolution.
                 sat.state = Rk4
                     .try_integrate(&bound, sat.state.clone(), t, segment_end, dt_ode, |_, _| {})
                     .map_err(span)?;
@@ -1513,28 +1522,47 @@ path = "does-not-exist.wasm"
     /// than the burn. With both 0.1 s long, the `h/6` a stage-time reading
     /// leaks into the earlier segment and the `h/6` it drops from the burn's
     /// last stage cancel exactly under RK4.
+    ///
+    /// The second case gives the burn's own segment several RK4 steps — a
+    /// 0.4 s window at `dt = 0.1` — so the propellant also pins the multi-step
+    /// path, where `try_integrate` accumulates its clock and covers the
+    /// residual with one more step.
     #[test]
     fn a_burn_shorter_than_a_step_is_flown_by_the_controlled_loop() {
-        use orts::spacecraft::{BurnWindow, G0, ScheduledBurn, Thruster};
+        use orts::spacecraft::G0;
+
+        const THRUST_N: f64 = 10.0;
+        const ISP_S: f64 = 300.0;
+
+        for (window, dt) in
+            [(0.15, 0.25, 1.0), (0.15, 0.55, 0.1)].map(|(start, end, dt)| ((start, end), dt))
+        {
+            let expected = THRUST_N / (ISP_S * G0) * (window.1 - window.0);
+            run_burn_case(window, dt, expected);
+        }
+    }
+
+    /// Fly one burn window with each integrator and check the propellant.
+    fn run_burn_case(window: (f64, f64), dt: f64, expected: f64) {
+        use orts::spacecraft::{BurnWindow, ScheduledBurn, Thruster};
         use utsuroi::Tolerances;
 
         const THRUST_N: f64 = 10.0;
         const ISP_S: f64 = 300.0;
 
-        let expected = THRUST_N / (ISP_S * G0) * 0.1;
         for (name, integrator) in [
-            ("RK4", IntegratorConfig::Rk4 { dt: 1.0 }),
+            ("RK4", IntegratorConfig::Rk4 { dt }),
             (
                 "DP45",
                 IntegratorConfig::Dp45 {
-                    dt: 1.0,
+                    dt,
                     tolerances: Tolerances::default(),
                 },
             ),
             (
                 "DOP853",
                 IntegratorConfig::Dop853 {
-                    dt: 1.0,
+                    dt,
                     tolerances: Tolerances::default(),
                 },
             ),
@@ -1551,7 +1579,7 @@ path = "does-not-exist.wasm"
             .with_model(
                 Thruster::new(THRUST_N, ISP_S, Vector3::x()).with_profile(Box::new(
                     ScheduledBurn {
-                        windows: vec![BurnWindow::full(0.15, 0.25)],
+                        windows: vec![BurnWindow::full(window.0, window.1)],
                     },
                 )),
             );
@@ -1567,7 +1595,9 @@ path = "does-not-exist.wasm"
             let tol = 4.0 * mass_before * f64::EPSILON;
             assert!(
                 (spent - expected).abs() < tol,
-                "{name} spent {spent} kg, expected {expected} kg"
+                "{name} at dt={dt} spent {spent} kg over [{}, {}), expected {expected} kg",
+                window.0,
+                window.1
             );
         }
     }
