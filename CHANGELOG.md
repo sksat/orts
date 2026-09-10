@@ -14,6 +14,26 @@ section is subdivided by package.
 ### `orts` (Rust, crates.io)
 
 #### Added
+- `SpacecraftDynamics::torque_breakdown` answers the disturbance torque each
+  model produces, in the body frame [N·m], beside the existing
+  `acceleration_breakdown`. It returns the vector where that one returns a
+  magnitude, which carries neither the sign nor the axis: a disturbance turning
+  the spacecraft the wrong way reads the same size as one turning it the right
+  way, and the direction is what the flat-panel SRP reflection terms
+  ([#377](https://github.com/sksat/orts/pull/377)) and the drag facing rule ([#437](https://github.com/sksat/orts/pull/437)) were fixed for.
+  The gravity field is absent from the list — it acts on the centre of mass, so
+  it exerts no torque about it — and a gravity-gradient torque answers under its
+  own model name. ([#466](https://github.com/sksat/orts/pull/466))
+- `Recording::log_temporal_scalars` logs a component under a name chosen at run
+  time, registering the field names alongside it;
+  `Recording::log_temporal` now delegates to it. A per-model telemetry column
+  cannot take its name from a type, and the `.rrd` schema carries whatever name
+  it is given. `ModelTorqueBody3D` and `torque_columns` build those names:
+  `orts.ModelTorqueBody3D:panel_srp`, with fields `panel_srp.torque_body_x_Nm`.
+  Model names are encoded reversibly into `[A-Za-z0-9_]`, so two models one
+  substitution apart stay in two columns, and repeats of one name are separated
+  by `.2`, `.3`. Measured on a round trip, `[`, `]`, `*` and `#` do not come
+  back from an entity path. ([#466](https://github.com/sksat/orts/pull/466))
 - `Model::eval_in_segment` and `ThrustProfile::throttle_in_segment`, taking an
   `EvalSegment` — the segment in integration time plus the absolute time at its
   start, which a system holding `epoch_0` can produce and a model cannot. Both
@@ -499,6 +519,23 @@ section is subdivided by package.
   `SpacecraftDynamics::new`; under `orts serve --config` that happened inside
   the spawned manager task, leaving the server listening with no simulation and
   no error to the client. ([#351](https://github.com/sksat/orts/pull/351))
+
+#### Added
+- `orts run` writes the disturbance torque of every model to the CSV and the
+  `.rrd`, one column per model — `gravity_gradient.torque_body_x_Nm` and so on,
+  in the body frame [N·m]. Until now nothing torque-related left the library, so
+  the SRP and aerodynamic torques the panel models produce could only be checked
+  by writing Rust tests: the attitude that came out was the only sign that a
+  disturbance was there, and no output separated one model from another. Both
+  recording paths carry it, with and without a plugin controller.
+
+  The models are evaluated afresh at each sample's own `(t, state)` rather than
+  reusing the integrator's work, whose evaluations sit at internal stage times,
+  on states an adaptive step may reject, and where a model reading an
+  `EvalSegment` deliberately answers something else at a boundary. That costs
+  one derivative evaluation per sample: measured at 50.1 µs against the
+  derivative's 50.5 µs for a 22-panel spacecraft, so roughly a quarter more work
+  under RK4 when `output_interval` equals `dt`. ([#466](https://github.com/sksat/orts/pull/466))
 
 #### Fixed
 - Every satellite's CSV rows carry the columns the header names. The header was

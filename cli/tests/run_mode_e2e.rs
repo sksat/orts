@@ -677,3 +677,80 @@ fn readme_quickstart_config_runs_controlled() {
         );
     }
 }
+
+/// Each model's disturbance torque reaches the CSV under that model's name.
+///
+/// Nothing torque-related used to leave the library: the flat-panel SRP
+/// reflection terms, the panel-to-panel occlusion and the drag facing rule were
+/// all fixed inside it, and a config user saw only the attitude that came out.
+///
+/// The value is checked against a number this file already derives:
+/// `spacecraft_mode_integrates_attitude` puts `diag(10, 40, 45)` at 45° about
+/// `y` in a 400 km orbit, where the gravity-gradient torque is
+/// `|τy| = 6.7e-5 N·m` at `t = 0`, and the other two components are zero
+/// because the body's radial direction lies in the x-z plane. A column that
+/// logged a magnitude, or the wrong model's torque, would not land there.
+#[test]
+fn spacecraft_mode_outputs_each_model_disturbance_torque() {
+    let config = r#"
+body = "earth"
+dt = 1.0
+duration = 20.0
+output_interval = 10.0
+
+[[satellites]]
+id = "sat-1"
+
+[satellites.orbit]
+type = "circular"
+altitude = 400
+
+[satellites.attitude]
+inertia_diag = [10.0, 40.0, 45.0]
+mass = 500
+initial_quaternion = [0.9238795325112867, 0.0, 0.3826834323650898, 0.0]
+initial_angular_velocity = [0.0, 0.0, 0.0]
+"#;
+    let out = run_config("gg_torque", config);
+    assert!(
+        out.status.success(),
+        "run failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let header = header_line(&stdout);
+    let cols: Vec<&str> = header.trim_start_matches("# ").split(',').collect();
+    let idx = |name: &str| {
+        cols.iter()
+            .position(|c| *c == name)
+            .unwrap_or_else(|| panic!("column '{name}' missing: {header}"))
+    };
+    let (itx, ity, itz) = (
+        idx("gravity_gradient.torque_body_x_Nm"),
+        idx("gravity_gradient.torque_body_y_Nm"),
+        idx("gravity_gradient.torque_body_z_Nm"),
+    );
+
+    let rows = data_lines(&stdout);
+    let field =
+        |line: &str, i: usize| -> f64 { line.split(',').nth(i).unwrap().trim().parse().unwrap() };
+    let first = rows[0];
+    let (tx, ty, tz) = (field(first, itx), field(first, ity), field(first, itz));
+    assert!(
+        (ty.abs() - 6.7e-5).abs() < 0.2e-5,
+        "gravity-gradient torque about y at t = 0 should be 6.7e-5 N.m, got {ty:e}"
+    );
+    assert!(
+        tx.abs() < 1e-12 && tz.abs() < 1e-12,
+        "the torque is about y alone at this attitude, got ({tx:e}, {ty:e}, {tz:e})"
+    );
+
+    // The torque turns as the body does, so it is a sample of the model and
+    // not a constant written once.
+    let last = rows[rows.len() - 1];
+    assert!(
+        (field(last, ity) - ty).abs() > 1e-9,
+        "the torque never changed over the run: {ty:e} then {:e}",
+        field(last, ity)
+    );
+}

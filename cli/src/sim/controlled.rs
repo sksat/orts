@@ -93,6 +93,37 @@ pub struct ControlledSatellite {
 }
 
 impl ControlledSatellite {
+    /// Assemble one for a test in another module of this crate, with no
+    /// actuators and the tick schedule at its start.
+    ///
+    /// `build_controlled_satellite` needs a plugin guest, which a unit test
+    /// cannot build, and the two schedule fields are private to this module —
+    /// they are what decides when the controller runs, and nothing outside
+    /// should set them.
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        dynamics: SpacecraftDynamics<Box<dyn GravityField>>,
+        state: AugmentedState<SpacecraftState>,
+        controller: Box<dyn PluginController>,
+        body: arika::body::KnownBody,
+    ) -> Self {
+        Self {
+            dynamics,
+            state,
+            controller,
+            sensors: SensorBundle::default(),
+            actuators: ActuatorBundle::new(),
+            has_rw: false,
+            has_mtq: false,
+            mtq_max_moment: 0.0,
+            body,
+            thruster_specs: Vec::new(),
+            thruster_dry_mass: 0.0,
+            tick_base_t: 0.0,
+            ticks_done: 0,
+        }
+    }
+
     /// Sim time of this satellite's next controller tick [s].
     pub fn next_tick_t(&self) -> f64 {
         self.tick_base_t + (self.ticks_done + 1) as f64 * self.controller.sample_period()
