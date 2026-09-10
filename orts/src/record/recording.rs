@@ -425,7 +425,12 @@ impl Recording {
         fields: &[String],
         scalars: &[f64],
     ) {
-        debug_assert_eq!(
+        // Not a `debug_assert`: a schema whose width disagrees with the data
+        // is written to the file, where the export drops the scalars that have
+        // no field name and the load can drop the component whole. The caller
+        // passes both, so a mismatch is a mistake in the call rather than a
+        // condition of the run.
+        assert_eq!(
             fields.len(),
             scalars.len(),
             "each scalar needs a field name: {name}"
@@ -1215,5 +1220,21 @@ mod tests {
         // Unknown component returns component name as fallback
         let unknown = rec.lookup_component_fields(&"orts.Unknown".into());
         assert_eq!(unknown, vec!["orts.Unknown"]);
+    }
+
+    /// A schema whose width disagrees with the data reaches the file, where the
+    /// export drops the unnamed scalars and the load can drop the component
+    /// whole. The check has to hold in a release build, so it is an `assert`.
+    #[test]
+    #[should_panic(expected = "each scalar needs a field name")]
+    fn log_temporal_scalars_rejects_a_schema_narrower_than_the_data() {
+        let mut rec = Recording::new();
+        rec.log_temporal_scalars(
+            &EntityPath::parse("/world/sat/mismatch"),
+            &TimePoint::new().with_sim_time(0.0),
+            "orts.Mismatch".into(),
+            &["only_one".to_string()],
+            &[1.0, 2.0, 3.0],
+        );
     }
 }
