@@ -153,8 +153,8 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   一部だけ隠れたパネルの日向がどれだけ残るか、その力がどこに働くかは
   [#444](https://github.com/sksat/orts/pull/444) のままである。法線が対になる形状 (`cube` など閉じた箱) では力の
   大きさは変わらない。対になる 2 面の投影面積の和はどちらの面を選んでも同じだからである。
-  変わるのは力が通る `cp_offset` で、重心から離れた片面のパネルでは姿勢外乱の向きが
-  誤っていたし、流れに向けた片面のパネルには抵抗が付かなかった。面の選び方と cos θ の
+  変わるのは力が通る `cp_offset` で、対になる 2 面の offset が異なる機体では姿勢外乱の
+  向きが誤っていた。流れに向けた片面のパネルには抵抗が付かなかった。面の選び方と cos θ の
   法則は、Orekit の paneled drag model に対する fixture
   (`tools/generate_orekit_panel_drag_fixtures.py`) で固定した。
   ([#437](https://github.com/sksat/orts/pull/437))
