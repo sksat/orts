@@ -501,6 +501,16 @@ section is subdivided by package.
   no error to the client. ([#351](https://github.com/sksat/orts/pull/351))
 
 #### Fixed
+- Every satellite's CSV rows carry the columns the header names. The header was
+  built from the first satellite's components and each satellite's rows from its
+  own, so a fleet whose satellites differ wrote rows of different widths: two
+  satellites where only the first has a magnetorquer command give a 17-column
+  header and 14-column rows for the second, which no CSV reader can line up.
+  The columns are now the union over the fleet, taken once and walked by the
+  header and by every row, and a satellite without a component writes its
+  fields empty — the same thing a row already did for a component missing at
+  that step. Field names come from the recording's component registry, which
+  both logging and reading an `.rrd` populate. ([#465](https://github.com/sksat/orts/pull/465))
 - The controlled loop flies a scheduled burn shorter than an integration step.
   `propagate_controlled` ran the integrator from the span's start straight to
   its end, so dynamics carrying a schedule lost it the way the group loops did

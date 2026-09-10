@@ -864,15 +864,23 @@ pub fn write_recording_as_csv(
         )?;
     }
 
-    if let Some((first_path, _)) = sat_entries.first() {
-        writeln!(w, "{}", build_csv_header(rec, first_path, multi_sat))?;
+    // One column list for the whole file. Satellites need not carry the same
+    // components — a magnetorquer command or a panel model belongs to the
+    // satellite that has one — and every row has to line up with the single
+    // header, so the columns are the union over the fleet and a satellite
+    // without one writes its fields empty.
+    let paths: Vec<&EntityPath> = sat_entries.iter().map(|(path, _)| path).collect();
+    let columns = csv_columns(rec, &paths);
+
+    if !sat_entries.is_empty() {
+        writeln!(w, "{}", build_csv_header(&columns, multi_sat))?;
     }
 
     for (sat_path, id) in &sat_entries {
         if multi_sat {
             writeln!(w, "# --- {id} ---")?;
         }
-        write_satellite_csv(w, rec, sat_path, mu, multi_sat)?;
+        write_satellite_csv(w, rec, sat_path, mu, multi_sat, &columns)?;
     }
 
     Ok(())
@@ -885,6 +893,7 @@ pub fn write_satellite_csv(
     sat_path: &EntityPath,
     mu: f64,
     with_id: bool,
+    columns: &[CsvColumn],
 ) -> std::io::Result<()> {
     use orts::record::component::Component;
     use orts::record::components::{Position3D, Velocity3D};
@@ -906,15 +915,6 @@ pub fn write_satellite_csv(
         Some(t) => t,
         None => return Ok(()),
     };
-
-    // Collect extra columns (everything except Position3D and Velocity3D), sorted by name
-    let skip = [Position3D::component_name(), Velocity3D::component_name()];
-    let mut extra_cols: Vec<_> = store
-        .columns
-        .iter()
-        .filter(|(name, _)| !skip.contains(name))
-        .collect();
-    extra_cols.sort_by_key(|(a, _)| *a);
 
     let id = sat_path.to_string();
     let id = id.rsplit('/').next().unwrap_or("default");
@@ -958,17 +958,22 @@ pub fn write_satellite_csv(
             elements.true_anomaly,
         ));
 
-        for (_name, col) in &extra_cols {
-            // The header names every extra column, so a component with no value at
-            // this step contributes empty fields rather than none: a short line
-            // would put the remaining values under the wrong headings.
-            match col.at_logical_row(logical) {
+        for column in columns {
+            // The header names every extra column, so a component with no value
+            // at this step — or none on this satellite at all — contributes
+            // empty fields rather than none: a short line would put the
+            // remaining values under the wrong headings.
+            match store
+                .columns
+                .get(&column.name)
+                .and_then(|col| col.at_logical_row(logical))
+            {
                 Some(row) => {
                     for val in row {
                         line.push_str(&format!(",{:.10}", val));
                     }
                 }
-                None => line.push_str(&",".repeat(col.scalars_per_row())),
+                None => line.push_str(&",".repeat(column.fields.len())),
             }
         }
 
@@ -977,11 +982,62 @@ pub fn write_satellite_csv(
     Ok(())
 }
 
-/// Build the CSV header line dynamically from the Recording's columns.
-pub fn build_csv_header(rec: &Recording, sat_path: &EntityPath, with_id: bool) -> String {
+/// One group of CSV columns: a component and the field name of each of its
+/// scalars.
+///
+/// The header and every satellite's rows walk the same list, which is what
+/// keeps a fleet whose satellites carry different components readable: the
+/// satellites without one write its fields empty rather than shortening their
+/// rows.
+#[derive(Debug, Clone)]
+pub struct CsvColumn {
+    /// Component name, as the entity stores it.
+    pub name: orts::record::component::ComponentName,
+    /// Column heading for each scalar the component contributes.
+    pub fields: Vec<String>,
+}
+
+/// The extra columns of a fleet: every component any of `sat_paths` records,
+/// apart from position and velocity, which the fixed leading columns carry.
+///
+/// Field names come from the recording's component registry, which both
+/// logging and loading an `.rrd` populate. A component the registry does not
+/// know falls back to the built-in table, and then to one field per scalar.
+pub fn csv_columns(rec: &Recording, sat_paths: &[&EntityPath]) -> Vec<CsvColumn> {
     use orts::record::component::Component;
     use orts::record::components::{Position3D, Velocity3D};
 
+    let skip = [Position3D::component_name(), Velocity3D::component_name()];
+    let mut widths: std::collections::BTreeMap<orts::record::component::ComponentName, usize> =
+        std::collections::BTreeMap::new();
+    for path in sat_paths {
+        let Some(store) = rec.entity(path) else {
+            continue;
+        };
+        for (name, col) in &store.columns {
+            if skip.contains(name) {
+                continue;
+            }
+            widths.insert(name.clone(), col.scalars_per_row());
+        }
+    }
+
+    widths
+        .into_iter()
+        .map(|(name, width)| {
+            let registered = rec
+                .component_registry
+                .get(&name)
+                .map(|info| info.field_names.clone())
+                .filter(|fields| fields.len() == width);
+            let fields = registered.unwrap_or_else(|| lookup_field_names(&name, width));
+            CsvColumn { name, fields }
+        })
+        .collect()
+}
+
+/// Build the CSV header line from the fleet's columns.
+pub fn build_csv_header(columns: &[CsvColumn], with_id: bool) -> String {
     let mut header = String::new();
     header.push_str("# ");
     if with_id {
@@ -989,30 +1045,9 @@ pub fn build_csv_header(rec: &Recording, sat_path: &EntityPath, with_id: bool) -
     }
     header.push_str("t[s],x[km],y[km],z[km],vx[km/s],vy[km/s],vz[km/s],a[km],e[-],i[rad],raan[rad],omega[rad],nu[rad]");
 
-    if let Some(store) = rec.entity(sat_path) {
-        let skip = [Position3D::component_name(), Velocity3D::component_name()];
-        let mut extra_cols: Vec<_> = store
-            .columns
-            .keys()
-            .filter(|name| !skip.contains(name))
-            .collect();
-        extra_cols.sort();
-
-        for name in extra_cols {
-            // Use component name as column prefix (strip "orts." prefix)
-            let short = name.strip_prefix("orts.").unwrap_or(name);
-            if let Some(col) = store.columns.get(name) {
-                let n = col.scalars_per_row();
-                if n == 1 {
-                    header.push_str(&format!(",{short}"));
-                } else {
-                    // Look up field names from known components
-                    let field_names = lookup_field_names(name, n);
-                    for fname in field_names {
-                        header.push_str(&format!(",{fname}"));
-                    }
-                }
-            }
+    for column in columns {
+        for field in &column.fields {
+            header.push_str(&format!(",{field}"));
         }
     }
 
@@ -1439,7 +1474,8 @@ mod tests {
         }
 
         let mut out = Vec::new();
-        write_satellite_csv(&mut out, &rec, &sat, 398600.4418, false).expect("csv");
+        let columns = csv_columns(&rec, &[&sat]);
+        write_satellite_csv(&mut out, &rec, &sat, 398600.4418, false, &columns).expect("csv");
         let body = String::from_utf8(out).expect("utf-8");
         let lines: Vec<&str> = body.lines().filter(|l| !l.starts_with('#')).collect();
 
@@ -1511,7 +1547,8 @@ mod tests {
         let loaded = load_as_recording(&path_str).expect("load");
         let _ = std::fs::remove_file(&path);
 
-        let header = build_csv_header(&loaded, &sat, false);
+        let columns = csv_columns(&loaded, &[&sat]);
+        let header = build_csv_header(&columns, false);
         assert!(
             header.contains("mtq_mx"),
             "the command column survives the file: {header}"
@@ -1519,7 +1556,7 @@ mod tests {
         let want = header.trim_start_matches("# ").matches(',').count() + 1;
 
         let mut out = Vec::new();
-        write_satellite_csv(&mut out, &loaded, &sat, 398600.4418, false).expect("csv");
+        write_satellite_csv(&mut out, &loaded, &sat, 398600.4418, false, &columns).expect("csv");
         let body = String::from_utf8(out).expect("utf-8");
         let lines: Vec<&str> = body.lines().filter(|l| !l.starts_with('#')).collect();
 
@@ -1577,11 +1614,13 @@ mod tests {
             }
         }
 
-        let header = build_csv_header(&rec, &sat, false);
+        let columns = csv_columns(&rec, &[&sat]);
+        let header = build_csv_header(&columns, false);
         let want = header.trim_start_matches("# ").matches(',').count() + 1;
 
         let mut out = Vec::new();
-        write_satellite_csv(&mut out, &rec, &sat, 398600.4418, false).expect("csv");
+        let columns = csv_columns(&rec, &[&sat]);
+        write_satellite_csv(&mut out, &rec, &sat, 398600.4418, false, &columns).expect("csv");
         let body = String::from_utf8(out).expect("utf-8");
 
         let lines: Vec<&str> = body.lines().filter(|l| !l.starts_with('#')).collect();
@@ -1675,5 +1714,63 @@ mod tests {
         assert!(
             validate_output_contract(&DataSink::File("out.rrd"), OutputFormat::Rrd, false).is_ok()
         );
+    }
+
+    /// **Reproduction**: the CSV header is built from the first satellite's
+    /// columns, so a fleet whose satellites carry different components writes
+    /// rows that disagree with it. Here one satellite has a magnetorquer
+    /// command and the other does not: the header names its three fields and
+    /// the plain satellite's rows stop three columns short, which no CSV reader
+    /// can parse back.
+    #[test]
+    fn every_satellite_writes_the_columns_the_header_names() {
+        use orts::record::archetypes::OrbitalState as RecOrbitalState;
+        use orts::record::components::MtqCommand3D;
+        use orts::record::timeline::TimePoint;
+
+        let mut rec = Recording::new();
+        let with_mtq = EntityPath::parse("/world/sat/a_has_mtq");
+        let plain = EntityPath::parse("/world/sat/b_plain");
+        let r0 = 6778.137;
+        let v0 = (398600.4418_f64 / r0).sqrt();
+        for i in 0..3u64 {
+            let tp = TimePoint::new().with_sim_time(i as f64).with_step(i);
+            let os = RecOrbitalState::new(
+                nalgebra::Vector3::new(r0, 0.0, 0.0),
+                nalgebra::Vector3::new(0.0, v0, 0.0),
+            );
+            rec.log_orbital_state(&with_mtq, &tp, &os);
+            rec.log_orbital_state(&plain, &tp, &os);
+            rec.log_temporal(
+                &with_mtq,
+                &tp,
+                &MtqCommand3D(nalgebra::Vector3::new(1.0, 0.0, 0.0)),
+            );
+        }
+
+        let mut out = Vec::new();
+        write_recording_as_csv(&mut out, &rec, None).expect("csv");
+        let body = String::from_utf8(out).expect("utf-8");
+
+        let header = body
+            .lines()
+            .find(|l| l.starts_with("# satellite_id,"))
+            .expect("header line");
+        let want = header.matches(',').count() + 1;
+        let rows: Vec<&str> = body.lines().filter(|l| !l.starts_with('#')).collect();
+        assert_eq!(rows.len(), 6, "three rows for each of the two satellites");
+        for row in &rows {
+            assert_eq!(
+                row.matches(',').count() + 1,
+                want,
+                "row disagrees with the header, which names {want} columns: {row}"
+            );
+        }
+        // The satellite without the command leaves those fields empty.
+        let plain_rows: Vec<&&str> = rows.iter().filter(|r| r.starts_with("b_plain,")).collect();
+        assert_eq!(plain_rows.len(), 3);
+        for row in plain_rows {
+            assert!(row.ends_with(",,,"), "expected three empty fields: {row}");
+        }
     }
 }
