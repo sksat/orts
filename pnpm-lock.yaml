@@ -30,13 +30,13 @@ importers:
         version: 7.2.8(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.3)(tsx@4.23.13)(yaml@2.9.0)
       astro-mermaid:
         specifier: ^2.0.1
-        version: 2.1.0(astro@7.2.8(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.3)(tsx@4.23.13)(yaml@2.9.0))(mermaid@11.17.1)
+        version: 2.1.0(astro@7.2.8(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.3)(tsx@4.23.13)(yaml@2.9.0))(mermaid@11.17.2)
       katex:
         specifier: ^0.17.0
         version: 0.17.0
       mermaid:
         specifier: ^11.14.0
-        version: 11.17.1
+        version: 11.17.2
       react:
         specifier: ^19.1.0
         version: 19.2.8
@@ -3617,8 +3617,8 @@ packages:
   mdurl@2.0.0:
     resolution: {integrity: sha512-Lf+9+2r+Tdp5wXDXC4PcIBjTDtq4UKjCPMQhKIuzpJNW0b96kVqSwW0bT7FhRSfmAiFYgP+SCRvdrDozfh0U5w==}
 
-  mermaid@11.17.1:
-    resolution: {integrity: sha512-G1BP6qU4BRwEGk2SdsxgDk1cSuApimT32Nkb52YRSv+856FrmB8qo28BaNk9Ee8Fvuon3OxpXDJ4L6cD5AykXg==}
+  mermaid@11.17.2:
+    resolution: {integrity: sha512-V6K3C8EBdEsPFZXSKMJe6ppQOENxuHARr9GvHX4hh47lAbhMRD9qf4oEK7LoaRQxULMa80/qt5gHO73aCleBBg==}
 
   meshline@3.3.1:
     resolution: {integrity: sha512-/TQj+JdZkeSUOl5Mk2J7eLcYTLiQm2IDzmlSvYm7ov15anEcDJ92GHqqazxTSreeNgfnYu24kiEvvv0WlbCdFQ==}
@@ -7072,12 +7072,12 @@ snapshots:
       rehype-expressive-code: 0.44.1
       url-extras: 0.1.0
 
-  astro-mermaid@2.1.0(astro@7.2.8(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.3)(tsx@4.23.13)(yaml@2.9.0))(mermaid@11.17.1):
+  astro-mermaid@2.1.0(astro@7.2.8(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.3)(tsx@4.23.13)(yaml@2.9.0))(mermaid@11.17.2):
     dependencies:
       astro: 7.2.8(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.3)(tsx@4.23.13)(yaml@2.9.0)
       import-meta-resolve: 4.2.0
       mdast-util-to-string: 4.0.0
-      mermaid: 11.17.1
+      mermaid: 11.17.2
       unist-util-visit: 5.1.0
 
   astro@6.4.8(@types/node@24.13.3)(lightningcss@1.33.0)(rollup@4.62.2)(tsx@4.22.4)(yaml@2.9.0):
@@ -8653,7 +8653,7 @@ snapshots:
 
   mdurl@2.0.0: {}
 
-  mermaid@11.17.1:
+  mermaid@11.17.2:
     dependencies:
       '@braintree/sanitize-url': 7.1.2
       '@iconify/utils': 3.1.4
