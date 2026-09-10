@@ -70,6 +70,12 @@ pub enum IntegrationError {
     /// `t + dt` rounded back to `t` in f64, so time stopped advancing even
     /// though `dt` itself is positive.
     TimeStagnated { t: f64, dt: f64 },
+    /// `dt` is narrower than the spacing of f64 at `t`, so no grid can carry
+    /// it: the clock still advances, but by `spacing` rather than by the `dt`
+    /// asked for. Distinct from [`Self::TimeStagnated`], where the clock does
+    /// not advance at all — that happens once `dt` falls below half the
+    /// spacing.
+    StepBelowSpacing { t: f64, dt: f64, spacing: f64 },
 }
 
 impl IntegrationError {
@@ -87,7 +93,8 @@ impl IntegrationError {
             Self::NonFiniteState { t }
             | Self::StepSizeTooSmall { t, .. }
             | Self::IndeterminateErrorNorm { t }
-            | Self::TimeStagnated { t, .. } => Some(*t),
+            | Self::TimeStagnated { t, .. }
+            | Self::StepBelowSpacing { t, .. } => Some(*t),
             Self::InvalidTimeSpan { t0, .. } => Some(*t0),
             Self::InvalidStepSize { .. } | Self::InvalidTolerances { .. } => None,
         }
@@ -161,6 +168,13 @@ impl core::fmt::Display for IntegrationError {
                 write!(
                     f,
                     "time stopped advancing at t = {t}: t + {dt} rounds back to t"
+                )
+            }
+            Self::StepBelowSpacing { t, dt, spacing } => {
+                write!(
+                    f,
+                    "a step of {dt} is narrower than the spacing {spacing} of f64 at t = {t}, \
+                     so the clock cannot take it"
                 )
             }
         }

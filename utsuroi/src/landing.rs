@@ -116,17 +116,32 @@ impl Iterator for FixedSteps {
             return None;
         }
 
+        // Where the spacing of f64 at `t` is wider than `dt`, no grid can carry
+        // the step that was asked for: the clock moves by the spacing instead,
+        // and rounding each grid time would hand the solver a step wider than
+        // `dt` — the contract says only the last step of a span is different,
+        // and shorter. Reported here rather than in `new`, so a caller whose
+        // event fires in the walkable part of the span still finishes: the grid
+        // at `1e16` cannot carry a step of `1`, but a span from zero to there
+        // can still end at `t = 1`.
+        let spacing = t.next_up() - t;
+        if self.dt < spacing {
+            self.stagnated = true;
+            // Below half the spacing the clock does not move at all, which is
+            // the older and more specific failure.
+            return Some(Err(if t + self.dt == t {
+                IntegrationError::TimeStagnated { t, dt: self.dt }
+            } else {
+                IntegrationError::StepBelowSpacing {
+                    t,
+                    dt: self.dt,
+                    spacing,
+                }
+            }));
+        }
+
         let index = self.index + 1;
         let next_t = self.landing(index);
-        // Where the spacing of f64 is wider than `dt`, consecutive grid indices
-        // round onto the same double and the walk cannot go on. Saying so here
-        // rather than in `new` is what lets a caller whose event fires in the
-        // walkable part of the span finish: the grid at `1e16` cannot carry a
-        // step of `1`, but a span from zero to there can still end at `t = 1`.
-        if next_t <= t {
-            self.stagnated = true;
-            return Some(Err(IntegrationError::TimeStagnated { t, dt: self.dt }));
-        }
 
         self.index = index;
         Some(Ok(Step {
@@ -238,38 +253,85 @@ mod tests {
         }
     }
 
-    /// A `dt` narrower than the spacing of f64 walks what it can and then says
-    /// it cannot go on. At `1e15` the spacing is `0.125`, so a `dt` of `0.1`
-    /// reaches the third grid index and collapses there.
+    /// A `dt` narrower than the spacing of f64 at a step's start is refused
+    /// there, before a step wider than `dt` is handed out: at `1e15` the
+    /// spacing is `0.125`, so the grid would move by that rather than by the
+    /// `0.1` asked for, and the contract says only a span's last step differs
+    /// — by being shorter.
     #[test]
-    fn a_step_below_the_spacing_walks_what_it_can_then_stops() {
+    fn a_step_below_the_spacing_is_refused_where_it_starts() {
         assert_eq!(1e15f64.next_up() - 1e15, 0.125, "precondition: the spacing");
+        assert!(
+            1e15 + 0.1 > 1e15,
+            "precondition: the clock does advance, it just advances too far"
+        );
 
         let mut walk = FixedSteps::new(1e15, 1e15 + 1.0, 0.1).expect("the span and step are valid");
-        let mut taken = 0;
-        let last = loop {
-            match walk.next() {
-                Some(Ok(step)) => {
-                    assert!(step.h > 0.0, "a step of no width: {}", step.h);
-                    taken += 1;
-                }
-                other => break other,
-            }
-        };
-        assert!(taken > 0, "the walkable part of the span was skipped");
         assert!(
-            matches!(last, Some(Err(IntegrationError::TimeStagnated { .. }))),
-            "the walk stopped without saying why: {last:?}"
+            matches!(
+                walk.next(),
+                Some(Err(IntegrationError::StepBelowSpacing { .. }))
+            ),
+            "a step of 0.1 cannot be carried at 1e15"
         );
         assert!(walk.next().is_none(), "the walk ends after saying so");
 
-        // The spacing itself is a walkable step, and lands on the span's end.
+        // The spacing itself is a step the clock can take, and lands on the
+        // span's end.
         let steps: Vec<_> = FixedSteps::new(1e15, 1e15 + 1.0, 0.125)
             .expect("the span and step are valid")
             .map(|step| step.expect("the walk advances"))
             .collect();
         assert_eq!(steps.len(), 8, "eight steps of the spacing cover 1.0");
         assert_eq!(steps.last().expect("eight steps").next_t, 1e15 + 1.0);
+    }
+
+    /// Below half the spacing the clock does not move at all, which is the
+    /// older and more specific failure.
+    #[test]
+    fn a_step_the_clock_cannot_feel_stagnates() {
+        let coarse = 9007199254740992.0_f64; // 2^53, spacing 2
+        assert_eq!(
+            coarse + 0.5,
+            coarse,
+            "precondition: the clock cannot feel it"
+        );
+        let mut walk =
+            FixedSteps::new(coarse, coarse + 10.0, 0.5).expect("the span and step are valid");
+        assert!(matches!(
+            walk.next(),
+            Some(Err(IntegrationError::TimeStagnated { .. }))
+        ));
+    }
+
+    /// No step of a span is wider than the `dt` asked for, beyond the rounding
+    /// of the two grid times it spans: `h` is their difference, and each is
+    /// within half an ulp of the exact grid, so `h` can exceed `dt` by an ulp
+    /// of its own magnitude and no more. Measured — `[0, 1]` in steps of `0.1`
+    /// has a step of `0.10000000000000003` starting at `0.2`. What the spacing
+    /// check rules out is `h` exceeding `dt` by the whole spacing, which is
+    /// what rounding a grid at coarse times would do.
+    #[test]
+    fn no_step_is_wider_than_the_one_asked_for() {
+        for (t0, t_end, dt) in [
+            (0.0, 1.0, 0.1),
+            (0.0, 1.2, 0.5),
+            (5.0, 5.3, 0.1),
+            (-1.0, 1.0, 0.3),
+            (1e9, 1e9 + 1.0, 0.1),
+        ] {
+            for step in FixedSteps::new(t0, t_end, dt).expect("the span and step are valid") {
+                let step = step.expect("the walk advances");
+                let rounding = step.next_t.next_up() - step.next_t;
+                assert!(
+                    step.h <= dt + rounding,
+                    "[{t0}, {t_end}] in steps of {dt}: a step of {} starting at {}, \
+                     over the {rounding:e} an ulp there allows",
+                    step.h,
+                    step.t
+                );
+            }
+        }
     }
 
     /// A span whose far end is too coarse for `dt` is still walked as far as

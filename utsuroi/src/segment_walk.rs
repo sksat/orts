@@ -215,15 +215,42 @@ mod tests {
         );
     }
 
+    /// Hands back whatever it was given, contract or not: `Switches` filters
+    /// its own list, so a test built on it would pass with the walk's own
+    /// filter deleted.
+    struct BrokenSwitch {
+        answer: f64,
+    }
+
+    impl DynamicalSystem for BrokenSwitch {
+        type State = State<1, 1>;
+
+        fn derivatives(&self, _t: f64, _state: &Self::State) -> Self::State {
+            State {
+                components: [Vector1::new(0.0)],
+            }
+        }
+
+        fn next_discontinuity_after(&self, _t: f64) -> Option<f64> {
+            Some(self.answer)
+        }
+    }
+
     /// A system that breaks the contract — a switch at or before `t`, or a
-    /// non-finite one — is ignored rather than allowed to stall the walk.
+    /// non-finite one — is ignored rather than allowed to stall the walk or
+    /// send a solver backwards.
     #[test]
     fn a_switch_that_does_not_advance_is_ignored() {
-        for at in [vec![0.0], vec![-1.0], vec![f64::NAN], vec![f64::INFINITY]] {
+        for answer in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let system = BrokenSwitch { answer };
+            let segments: Vec<_> = Segments::new(&system, 0.0, 1.0)
+                .expect("the span is finite and forward")
+                .map(|segment| (segment.start(), segment.end(), segment.position()))
+                .collect();
             assert_eq!(
-                walk(at.clone(), 0.0, 1.0),
+                segments,
                 vec![(0.0, 1.0, SegmentPosition::Initial)],
-                "switches {at:?}"
+                "a switch reported at {answer} was not ignored"
             );
         }
     }
