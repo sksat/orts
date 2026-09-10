@@ -18,6 +18,8 @@
 //! on `1.0`. What changes is the extra step and the ten grid times before it.
 
 use crate::error::{IntegrationError, validate_step_size, validate_time_span};
+#[cfg(not(feature = "std"))]
+use crate::math::F64Ext;
 
 /// The step times of a fixed-step walk from `t0` to `t_end`.
 ///
@@ -58,36 +60,56 @@ impl FixedSteps {
     ///
     /// An empty span (`t0 == t_end`) is valid and yields nothing.
     ///
-    /// Also rejects a `dt` narrower than the spacing of f64 at the span's
-    /// times, as [`IntegrationError::TimeStagnated`]. Such a step cannot be
-    /// walked on any grid: consecutive grid times round onto the same double,
-    /// and a solver handed the difference would step nowhere. Accumulating a
-    /// clock hid this rather than solving it — adding `0.1` at `1e15` moves the
-    /// clock by the spacing, `0.125`, while the solver is told `0.1`, so the
-    /// state it returns belongs to a time the clock has already passed.
+    /// Also rejects a `dt` narrower than the spacing of f64 at the times a
+    /// step could start from, as [`IntegrationError::TimeStagnated`]. Such a
+    /// step cannot be walked on any grid: consecutive grid times round onto the
+    /// same double, and a solver handed the difference would step nowhere.
+    /// Accumulating a clock hid this rather than solving it — adding `0.1` at
+    /// `1e15` moves the clock by the spacing, `0.125`, while the solver is told
+    /// `0.1`, so the state it returns belongs to a time the clock has already
+    /// passed.
+    ///
+    /// The span's end is only a landing, never the start of a step, so the
+    /// spacing there does not decide: `[2^53 - 1, 2^53]` is one step of `1`
+    /// even though the spacing at `2^53` is `2`. An empty span starts no step
+    /// at all and is accepted whatever `dt` is.
     pub fn new(t0: f64, t_end: f64, dt: f64) -> Result<Self, IntegrationError> {
         validate_step_size(dt)?;
         validate_time_span(t0, t_end)?;
-        // The spacing at the coarsest time the walk visits.
-        let coarsest = if t0.abs() >= t_end.abs() { t0 } else { t_end };
-        let spacing = coarsest.next_up() - coarsest;
-        if dt < spacing {
-            return Err(IntegrationError::TimeStagnated { t: t0, dt });
-        }
-        Ok(Self {
+        let walk = Self {
             t0,
             t_end,
             dt,
             index: 0,
-        })
+        };
+        if t0 == t_end {
+            return Ok(walk);
+        }
+        // The coarsest time a step can start from: the span's own start, or the
+        // last time before its end.
+        let last_start = t_end.next_down();
+        let coarsest = if t0.abs() >= last_start.abs() {
+            t0
+        } else {
+            last_start
+        };
+        let spacing = coarsest.next_up() - coarsest;
+        if dt < spacing {
+            return Err(IntegrationError::TimeStagnated { t: coarsest, dt });
+        }
+        Ok(walk)
     }
 
     /// The grid time at `index`, counted from the span's start.
+    ///
+    /// Fused, so `t0 + index * dt` is rounded once: rounding the product first
+    /// moves the grid by an extra ulp, and a product that overflows would put
+    /// the walk at infinity while the sum it belongs to is finite.
     fn at(&self, index: u64) -> f64 {
         if index == 0 {
             self.t0
         } else {
-            self.t0 + index as f64 * self.dt
+            (index as f64).mul_add(self.dt, self.t0)
         }
     }
 
@@ -262,6 +284,30 @@ mod tests {
             ),
             "a step of 0.5 cannot be walked through 1e16"
         );
+    }
+
+    /// The span's end is a landing, not the start of a step, so the spacing
+    /// there does not decide.
+    #[test]
+    fn a_span_ending_on_a_binade_boundary_is_walkable() {
+        let boundary = 9007199254740992.0_f64; // 2^53
+        assert_eq!(
+            boundary.next_up() - boundary,
+            2.0,
+            "precondition: the spacing above 2^53"
+        );
+        assert_eq!(
+            walk(boundary - 1.0, boundary, 1.0),
+            vec![(1.0, boundary)],
+            "one step of 1 covers it"
+        );
+    }
+
+    /// An empty span starts no step, so no step size can stagnate on it.
+    #[test]
+    fn an_empty_span_accepts_any_step() {
+        assert!(FixedSteps::new(1.0, 1.0, 1e-20).is_ok());
+        assert!(walk(1.0, 1.0, 1e-20).is_empty());
     }
 
     /// A span that starts away from zero keeps its own anchor.

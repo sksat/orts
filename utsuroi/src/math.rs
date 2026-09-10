@@ -9,6 +9,7 @@ pub(crate) trait F64Ext {
     fn sqrt(self) -> f64;
     fn powf(self, n: f64) -> f64;
     fn clamp(self, min: f64, max: f64) -> f64;
+    fn mul_add(self, a: f64, b: f64) -> f64;
 }
 
 impl F64Ext for f64 {
@@ -33,5 +34,9 @@ impl F64Ext for f64 {
         } else {
             self
         }
+    }
+    #[inline]
+    fn mul_add(self, a: f64, b: f64) -> f64 {
+        libm::fma(self, a, b)
     }
 }

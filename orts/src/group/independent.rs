@@ -496,13 +496,19 @@ where
                         // lands the last step on its end, which the segment's
                         // end being a switch of the right-hand side needs: the
                         // state there has to be the state at the switch.
-                        for step in FixedSteps::new(current_t, segment_end, dt)? {
+                        // Only when the predicate above left the satellite
+                        // running: building the walk can fail, and an event
+                        // already recorded at this state comes before that
+                        // failure.
+                        let steps = if terminated {
+                            None
+                        } else {
+                            Some(FixedSteps::new(current_t, segment_end, dt)?)
+                        };
+                        for step in steps.into_iter().flatten() {
                             if terminated {
                                 break;
                             }
-                            // The walk reports a `dt` below the spacing of f64
-                            // at this time; a segment cannot be that narrow,
-                            // since the walk assigns its end on the last step.
                             let step = step?;
                             current_state = Rk4.step(bound, step.t, &current_state, step.h);
                             current_t = step.next_t;
