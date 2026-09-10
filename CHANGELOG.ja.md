@@ -419,6 +419,14 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   client への error も無い状態になっていた。([#351](https://github.com/sksat/orts/pull/351))
 
 #### Fixed
+- CSV の全衛星の行が、header が名前を挙げた列を持つようになった。header は先頭の衛星の
+  component から作られ、各衛星の行はその衛星自身の component から書かれていたので、
+  持ち物が違う艦隊では行の幅が揃わなかった。2 機のうち先頭だけが magnetorquer の指令を
+  持つ場合、header は 17 列で 2 機目の行は 14 列になり、CSV として読み戻せない。
+  列を艦隊全体の和として 1 度作り、header と全衛星の行が同じものを歩くようにした。
+  その component を持たない衛星は欄を空にする (ステップで値が欠けたときに既にそうしていた
+  のと同じ扱い)。列名は recording の component registry から取る。log と `.rrd` の
+  読み込みのどちらも registry を埋める。([#465](https://github.com/sksat/orts/pull/465))
 - controlled loop が、積分 step より短い燃焼も伝播に入れるようになった。
   `propagate_controlled` は span の始まりから終わりまで積分器を 1 回走らせていたので、schedule を
   持つ dynamics では #453 以前の group ループと同じ取りこぼしが起きていた。`ScheduledBurn` で
