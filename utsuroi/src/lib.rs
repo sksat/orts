@@ -1,8 +1,8 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 mod error;
+mod fixed_step;
 mod integrator;
-mod landing;
 pub(crate) mod math;
 mod segment;
 mod segment_walk;
@@ -18,13 +18,15 @@ mod projection;
 #[cfg(test)]
 pub(crate) mod test_systems;
 
-pub use error::{IntegrationError, IntegrationOutcome, Tolerances, validate_step_size};
+pub use error::{
+    AdvanceOutcome, IntegrationError, IntegrationOutcome, Tolerances, validate_step_size,
+};
+pub use fixed_step::{FixedStepper, FixedSteps, Step};
 pub use integrator::Integrator;
-pub use landing::{FixedSteps, Step};
 pub use segment::{SegmentContext, SegmentSystem, derivatives_maybe_in_segment};
-pub use segment_walk::{Segment, SegmentPosition, Segments};
-pub use solver::dop853::{AdaptiveStepper853, AdvanceOutcome853, Dop853};
-pub use solver::dp45::{AdaptiveStepper, AdvanceOutcome, DormandPrince};
+pub use segment_walk::{Segment, Segments};
+pub use solver::dop853::{AdaptiveStepper853, Dop853};
+pub use solver::dp45::{AdaptiveStepper, DormandPrince};
 pub use solver::rk4::Rk4;
 pub use solver::verlet::StormerVerlet;
 pub use solver::yoshida::{Yoshida4, Yoshida6, Yoshida8};

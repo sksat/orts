@@ -13,7 +13,7 @@ use crate::error::{validate_step_size, validate_time_span};
 use crate::{DynamicalSystem, IntegrationError, IntegrationOutcome, OdeState, State};
 
 use super::verlet::StormerVerlet;
-use crate::landing::FixedSteps;
+use crate::fixed_step::FixedSteps;
 
 // 4th order (3 substeps)
 // Triple-jump: w1 = 1/(2 - 2^{1/3}), w0 = 1 - 2*w1

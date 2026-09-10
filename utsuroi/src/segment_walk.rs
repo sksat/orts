@@ -41,15 +41,13 @@ pub struct Segment<'a, S: DynamicalSystem> {
 
 /// Where a segment sits in its walk.
 ///
-/// A solver asks its event predicate about the state it starts from, since a
-/// level-triggered event can already hold there. For a [`Continuation`] that
+/// Read through [`Segment::is_continuation`], which is what a loop needs: a
+/// solver asks its event predicate about the state it starts from, since a
+/// level-triggered event can already hold there, and for a continuation that
 /// state is the one the previous segment ended on, which the loop has already
-/// asked about — the position says which case a segment is, and the loop
-/// decides what that means for its own predicate.
-///
-/// [`Continuation`]: SegmentPosition::Continuation
+/// asked about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SegmentPosition {
+enum SegmentPosition {
     /// The first segment of the walk: its start is the span's start.
     Initial,
     /// A later segment: its start is where the previous segment ended.
@@ -114,7 +112,7 @@ impl<'a, S: DynamicalSystem> Segment<'a, S> {
     }
 
     /// The interval this segment covers.
-    pub fn context(&self) -> &SegmentContext {
+    fn context(&self) -> &SegmentContext {
         self.system.segment()
     }
 
@@ -126,11 +124,6 @@ impl<'a, S: DynamicalSystem> Segment<'a, S> {
     /// Time the segment ends at.
     pub fn end(&self) -> f64 {
         self.context().end
-    }
-
-    /// Where this segment sits in its walk.
-    pub fn position(&self) -> SegmentPosition {
-        self.position
     }
 
     /// Whether an earlier segment of this walk came before it.
@@ -173,7 +166,7 @@ mod tests {
         let system = Switches { at };
         Segments::new(&system, t0, t_end)
             .expect("the span is finite and forward")
-            .map(|segment| (segment.start(), segment.end(), segment.position()))
+            .map(|segment| (segment.start(), segment.end(), segment.position))
             .collect()
     }
 
@@ -245,7 +238,7 @@ mod tests {
             let system = BrokenSwitch { answer };
             let segments: Vec<_> = Segments::new(&system, 0.0, 1.0)
                 .expect("the span is finite and forward")
-                .map(|segment| (segment.start(), segment.end(), segment.position()))
+                .map(|segment| (segment.start(), segment.end(), segment.position))
                 .collect();
             assert_eq!(
                 segments,
@@ -294,7 +287,7 @@ mod tests {
 
         let rest: Vec<_> = Segments::new(&system, first.end(), 1.0)
             .expect("the span is finite and forward")
-            .map(|segment| (segment.start(), segment.end(), segment.position()))
+            .map(|segment| (segment.start(), segment.end(), segment.position))
             .collect();
         assert_eq!(
             rest,

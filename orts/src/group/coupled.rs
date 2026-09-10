@@ -3,9 +3,8 @@ use std::sync::Arc;
 
 use nalgebra::Vector3;
 use utsuroi::{
-    AdvanceOutcome, AdvanceOutcome853, Dop853, DormandPrince, DynamicalSystem, FixedSteps,
-    IntegrationError, Integrator, OdeState, Rk4, SegmentContext, Segments, Tolerances,
-    derivatives_maybe_in_segment,
+    AdvanceOutcome, Dop853, DormandPrince, DynamicalSystem, FixedSteps, IntegrationError,
+    Integrator, OdeState, Rk4, SegmentContext, Segments, Tolerances, derivatives_maybe_in_segment,
 };
 
 use super::prop_group::{GroupSnapshot, PropGroupOutcome, SatId, SatelliteTermination};
@@ -575,14 +574,14 @@ where
                     };
 
                     match result {
-                        Ok(AdvanceOutcome853::Reached) => {
+                        Ok(AdvanceOutcome::Reached) => {
                             self.state = stepper.into_state();
                             self.t = segment_end;
                             Ok(PropGroupOutcome {
                                 terminations: Vec::new(),
                             })
                         }
-                        Ok(AdvanceOutcome853::Event {
+                        Ok(AdvanceOutcome::Event {
                             reason: (sat_id, reason),
                         }) => {
                             let t = stepper.t();

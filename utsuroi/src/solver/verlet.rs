@@ -3,7 +3,7 @@ use core::ops::ControlFlow;
 use nalgebra::SVector;
 
 use crate::error::{validate_step_size, validate_time_span};
-use crate::landing::FixedSteps;
+use crate::fixed_step::FixedSteps;
 use crate::{DynamicalSystem, IntegrationError, IntegrationOutcome, OdeState, State};
 
 /// Störmer-Verlet (velocity Verlet) symplectic integrator.

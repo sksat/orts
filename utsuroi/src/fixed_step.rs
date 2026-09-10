@@ -17,9 +17,12 @@
 //! step is `t_end - t` wide, which is exact, so the callback there was already
 //! on `1.0`. What changes is the extra step and the ten grid times before it.
 
+use core::ops::ControlFlow;
+
 use crate::error::{IntegrationError, validate_step_size, validate_time_span};
 #[cfg(not(feature = "std"))]
 use crate::math::F64Ext;
+use crate::{AdvanceOutcome, DynamicalSystem, Integrator, OdeState};
 
 /// The step times of a fixed-step walk from `t0` to `t_end`.
 ///
@@ -160,6 +163,144 @@ impl Iterator for FixedSteps {
             h: next_t - t,
             next_t,
         }))
+    }
+}
+
+/// Advances a fixed-step solver towards successive target times.
+///
+/// Created via [`Integrator::stepper`]. Holds the state and the time it belongs
+/// to, so a caller that splits its span — at output intervals, or at the
+/// discontinuities a [`Segments`](crate::Segments) walk finds — asks for one
+/// target after another and reads the state back between them. The adaptive
+/// solvers offer the same three calls
+/// ([`stepper`](crate::DormandPrince::stepper),
+/// [`from_checked_state`](Self::from_checked_state),
+/// [`advance_to`](Self::advance_to)), so a loop that chooses its solver at run
+/// time writes one shape for all of them.
+///
+/// Each `advance_to` counts its steps from the time the stepper is at when it
+/// is called, and lands its last step on the target. Two calls covering
+/// `[0, 1]` and `[1, 2]` therefore step through different times than one call
+/// covering `[0, 2]`: splitting a span is a choice about where the solver is
+/// made to land, not a way to reproduce the same trajectory in pieces.
+pub struct FixedStepper<'a, I: ?Sized, S: DynamicalSystem> {
+    integrator: &'a I,
+    system: &'a S,
+    state: S::State,
+    t: f64,
+    dt: f64,
+    /// Whether the state this stepper starts from has already been checked for
+    /// events. Set through [`from_checked_state`](Self::from_checked_state).
+    start_is_checked: bool,
+}
+
+impl<'a, I: Integrator + ?Sized, S: DynamicalSystem> FixedStepper<'a, I, S> {
+    pub(crate) fn new(
+        integrator: &'a I,
+        system: &'a S,
+        initial: S::State,
+        t0: f64,
+        dt: f64,
+    ) -> Self {
+        Self {
+            integrator,
+            system,
+            state: initial,
+            t: t0,
+            dt,
+            start_is_checked: false,
+        }
+    }
+
+    /// Skip the event check on the state this stepper starts from.
+    ///
+    /// For a segment that continues where the previous one ended: the caller
+    /// has asked its predicate about that state already. Checks after accepted
+    /// steps are unaffected.
+    pub fn from_checked_state(mut self) -> Self {
+        self.start_is_checked = true;
+        self
+    }
+
+    /// Advance to `t_target` in steps of the configured `dt`.
+    ///
+    /// - For a target that advances, `event_check` runs first on the state the
+    ///   stepper currently holds, before any step. A level-triggered event can
+    ///   already hold there, and reporting it after a step would name a state
+    ///   the predicate itself rejects. Terminating there leaves the stepper
+    ///   where it was and calls no callback, since the callback reports
+    ///   accepted steps and none was taken. A target the stepper has already
+    ///   reached takes no step, so it asks nothing and reports `Reached`.
+    /// - Each step calls `callback(t, &state)`, then `event_check(t, &state)`;
+    ///   `Break(reason)` reports `Event { reason }`.
+    /// - A step whose result is not finite fails with
+    ///   [`IntegrationError::NonFiniteState`] without storing that result: the
+    ///   state after such a step is not a trajectory, and the stepper stays on
+    ///   the last state it accepted.
+    pub fn advance_to<F, E, B>(
+        &mut self,
+        t_target: f64,
+        mut callback: F,
+        event_check: E,
+    ) -> Result<AdvanceOutcome<B>, IntegrationError>
+    where
+        F: FnMut(f64, &S::State),
+        E: Fn(f64, &S::State) -> ControlFlow<B>,
+    {
+        // Before the walk, so an invalid `dt` or span is reported the same way
+        // whether or not the walk would have reached the step that shows it.
+        validate_step_size(self.dt)?;
+        validate_time_span(self.t, t_target)?;
+
+        // The predicate is asked about the state the stepper holds, before any
+        // step. A level-triggered event — "below the surface", "past this
+        // altitude" — can already hold here, and stepping first reports it one
+        // step late with a state the caller's own predicate calls invalid.
+        // Only for a target that advances: `advance_to(self.t, ..)` takes no
+        // step, so it reports nothing and asks nothing.
+        if !self.start_is_checked
+            && self.t < t_target
+            && let ControlFlow::Break(reason) = event_check(self.t, &self.state)
+        {
+            return Ok(AdvanceOutcome::Event { reason });
+        }
+
+        for step in FixedSteps::new(self.t, t_target, self.dt)? {
+            let step = step?;
+            let candidate = self
+                .integrator
+                .step(self.system, step.t, &self.state, step.h);
+
+            if !candidate.is_finite() {
+                return Err(IntegrationError::NonFiniteState { t: step.next_t });
+            }
+
+            self.state = candidate;
+            self.t = step.next_t;
+
+            callback(self.t, &self.state);
+
+            if let ControlFlow::Break(reason) = event_check(self.t, &self.state) {
+                return Ok(AdvanceOutcome::Event { reason });
+            }
+        }
+
+        Ok(AdvanceOutcome::Reached)
+    }
+
+    /// The state of the last accepted step.
+    pub fn state(&self) -> &S::State {
+        &self.state
+    }
+
+    /// The time the stepper has reached.
+    pub fn t(&self) -> f64 {
+        self.t
+    }
+
+    /// Take the state of the last accepted step.
+    pub fn into_state(self) -> S::State {
+        self.state
     }
 }
 

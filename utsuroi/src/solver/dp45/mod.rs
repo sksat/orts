@@ -8,7 +8,8 @@ use crate::error::{validate_step_size, validate_time_span};
 #[allow(unused_imports)]
 use crate::math::F64Ext;
 use crate::{
-    DynamicalSystem, IntegrationError, IntegrationOutcome, Integrator, OdeState, Tolerances,
+    AdvanceOutcome, DynamicalSystem, IntegrationError, IntegrationOutcome, Integrator, OdeState,
+    Tolerances,
 };
 
 /// Dormand-Prince RK5(4)7M adaptive step-size integrator.
@@ -97,14 +98,6 @@ impl Integrator for DormandPrince {
         let _ = y5.project(t + dt);
         y5
     }
-}
-
-/// Result of [`AdaptiveStepper::advance_to`].
-pub enum AdvanceOutcome<B> {
-    /// Reached the target time.
-    Reached,
-    /// An event terminated integration early.
-    Event { reason: B },
 }
 
 /// Stateful adaptive stepper that encapsulates FSAL k1/dt management.

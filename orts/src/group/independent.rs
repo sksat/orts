@@ -1,8 +1,8 @@
 use std::ops::ControlFlow;
 
 use utsuroi::{
-    AdvanceOutcome, AdvanceOutcome853, Dop853, DormandPrince, DynamicalSystem, FixedSteps,
-    IntegrationError, Integrator, OdeState, Rk4, Segments, Tolerances, validate_step_size,
+    AdvanceOutcome, Dop853, DormandPrince, DynamicalSystem, FixedSteps, IntegrationError,
+    Integrator, OdeState, Rk4, Segments, Tolerances, validate_step_size,
 };
 
 use super::HasPosition;
@@ -440,11 +440,11 @@ where
                         );
 
                         match result {
-                            Ok(AdvanceOutcome853::Reached) => {
+                            Ok(AdvanceOutcome::Reached) => {
                                 entry.state = stepper.into_state();
                                 entry.t = segment_end;
                             }
-                            Ok(AdvanceOutcome853::Event { reason }) => {
+                            Ok(AdvanceOutcome::Event { reason }) => {
                                 let t = stepper.t();
                                 entry.state = stepper.into_state();
                                 entry.t = t;

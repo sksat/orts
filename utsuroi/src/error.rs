@@ -187,6 +187,18 @@ impl core::fmt::Display for IntegrationError {
 // proc-macro dependencies (it pulls in only nalgebra + libm).
 impl core::error::Error for IntegrationError {}
 
+/// How a stepper's advance to a target time ended.
+///
+/// A failure is the `Err` of the `Result` an `advance_to` returns rather than a
+/// variant here, so a stepper that stops on one still holds the state and time
+/// of its last accepted step and its caller can read them.
+pub enum AdvanceOutcome<B> {
+    /// Reached the target time.
+    Reached,
+    /// An event terminated integration early.
+    Event { reason: B },
+}
+
 /// Outcome of an integration with event detection.
 #[derive(Debug, Clone)]
 pub enum IntegrationOutcome<Y: OdeState, B> {
