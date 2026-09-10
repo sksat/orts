@@ -1540,10 +1540,10 @@ mod tests {
     /// comparison also rejected, so it cannot tell the two rules apart.
     #[test]
     fn eval_drops_a_panel_inside_the_force_cutoff() {
-        // `iss_state` puts the flow along -y, so a panel tilted from edge-on
-        // by `cos` has that as its `n · upstream`.
+        // `iss_state` has the gas arriving from +y, so a panel tilted from
+        // edge-on by `cos` has that as its `n · upstream`.
         let tilted = |cos: f64| {
-            let normal = (Vector3::x() * (1.0 - cos * cos).sqrt() - Vector3::y() * cos).normalize();
+            let normal = (Vector3::x() * (1.0 - cos * cos).sqrt() + Vector3::y() * cos).normalize();
             SurfacePanel::rectangle(
                 [1.0, 1.0],
                 normal.cross(&Vector3::z()).normalize(),
@@ -1562,7 +1562,7 @@ mod tests {
             assert_eq!(
                 loads.acceleration_inertial.into_inner(),
                 Vector3::zeros(),
-                "a panel at n·(-v̂) = {cos} is inside the cutoff"
+                "a panel at n·v̂ = {cos} is inside the cutoff"
             );
             assert_eq!(loads.torque_body.into_inner(), Vector3::zeros());
         }
@@ -1581,10 +1581,11 @@ mod tests {
     /// the CoM, which produced no torque at all.
     ///
     /// `iss_state` puts the position on +x and the velocity on +y, and the
-    /// co-rotation term is along +y too, so the flow arrives along -y exactly.
+    /// co-rotation term is along +y too, so the spacecraft travels along +y
+    /// through the atmosphere and the gas arrives from +y exactly.
     #[test]
     fn a_half_shielded_panel_drags_as_its_exposed_half_alone_would() {
-        let upstream = -Vector3::y();
+        let upstream = Vector3::y();
         let optics = PanelOptics::absorber();
         let target = SurfacePanel::rectangle([1.0, 1.0], Vector3::x(), upstream, 2.2, optics);
         // Shields x in [0, 1] of the target's x in [-1, 1], two metres upwind
@@ -1747,12 +1748,17 @@ mod tests {
              {shaded:.4e} vs {caster_alone:.4e}"
         );
 
+        // The downwind caster shades nothing — but the target, being upwind of
+        // it, shades the middle of it. The target is 2 m by 2 m against the
+        // caster's 4 m by 4 m, so a quarter of the caster is in shadow and
+        // three quarters of its force stands. Before partial illumination the
+        // whole of it stood, the target being too small to cover it.
         let unshaded = magnitude(vec![target, downwind_caster]);
-        let sum = target_alone + caster_alone;
+        let want = target_alone + caster_alone * 0.75;
         assert!(
-            (unshaded - sum).abs() / sum < 1e-12,
-            "a caster downwind of the target shades nothing, so both forces stand: \
-             {unshaded:.4e} vs {sum:.4e}"
+            (unshaded - want).abs() / want < 1e-12,
+            "the target shades a quarter of the caster downwind of it: \
+             {unshaded:.4e} vs {want:.4e}"
         );
     }
 
@@ -3307,6 +3313,22 @@ mod tests {
                     Vector3::zeros(),
                     "{}: Orekit loads nothing on a face turned away from the flow, \
                      and we produced {ours:?}",
+                    case.name
+                );
+                continue;
+            }
+            // A face within the force cutoff of edge-on is dropped, and this
+            // model reports exactly zero for it. Orekit reports its own
+            // roundoff instead — 4e-19 N for the edge-on case, twelve orders
+            // below the smallest force in the fixture — so a relative
+            // comparison against that is a comparison of two noise figures.
+            // Below a floor the reference is zero for physical purposes.
+            const FLOOR_N: f64 = 1e-15;
+            if theirs.magnitude() < FLOOR_N {
+                assert!(
+                    ours.magnitude() < FLOOR_N,
+                    "{}: orekit reports {theirs:?}, which is roundoff, and we \
+                     produced {ours:?}",
                     case.name
                 );
                 continue;
