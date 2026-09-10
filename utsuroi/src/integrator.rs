@@ -1,3 +1,4 @@
+use core::convert::Infallible;
 use core::ops::ControlFlow;
 
 use crate::fixed_step::FixedStepper;
@@ -68,11 +69,12 @@ pub trait Integrator {
         F: FnMut(f64, &S::State),
     {
         let mut stepper = self.stepper(system, initial, t0, dt);
-        // No event predicate, so `advance_to` reports only `Reached`.
+        // `Infallible` has no values, so the `Event` arm of the outcome cannot
+        // be built: this reports only `Reached`.
         stepper.advance_to(
             t_end,
             |t, state| callback(t, state),
-            |_, _| ControlFlow::<Never>::Continue(()),
+            |_, _| ControlFlow::<Infallible>::Continue(()),
         )?;
         Ok(stepper.into_state())
     }
@@ -139,13 +141,6 @@ pub trait Integrator {
         FixedStepper::new(self, system, initial, t0, dt)
     }
 }
-
-/// The event reason of a loop that checks no events.
-///
-/// `advance_to` takes a predicate; a caller with nothing to check still has to
-/// name the type it would have reported, and this one has no values, so the
-/// `Event` arm of the outcome cannot be built at all.
-enum Never {}
 
 #[cfg(test)]
 mod tests {

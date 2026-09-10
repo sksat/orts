@@ -479,14 +479,15 @@ pub fn propagate_controlled(
 
         match integrator {
             IntegratorConfig::Rk4 { dt } => {
-                let dt_ode = dt.min(segment_end - t);
                 // `try_integrate` rather than `integrate`: the latter panics on
                 // a bad step or a stalled clock, and this returns `Result` so
                 // serve can send the client an Error down its graceful-halt
-                // path. It walks the same `FixedSteps` grid the group loops do,
-                // so the last step of a segment lands on `segment_end` itself.
+                // path. A `dt` wider than the segment is not clamped here — the
+                // last step of a segment lands on `segment_end` itself, which
+                // is what a segment ending at a switch of the right-hand side
+                // needs.
                 state = Rk4
-                    .try_integrate(bound, state, t, segment_end, dt_ode, |_, _| {})
+                    .try_integrate(bound, state, t, segment_end, *dt, |_, _| {})
                     .map_err(span)?;
             }
             IntegratorConfig::Dp45 { dt, tolerances } => {

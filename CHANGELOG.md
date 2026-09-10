@@ -47,6 +47,20 @@ section is subdivided by package.
 - WIT v0 plugin interface extended with the msg-io and stream-io channels. ([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
 #### Changed
+- `IndependentGroup` and `CoupledGroup` advance every solver through the same
+  three calls (`stepper`, `from_checked_state`, `advance_to`), where the RK4
+  branch used to run a step loop of its own. Two things that loop did
+  differently from the adaptive steppers change with it. A fixed-step error — a
+  state that went non-finite, or a `dt` the grid at that time cannot carry — is
+  recorded as a termination for the satellite, where it used to come back as the
+  `Err` of `propagate_to`: **a group at `t = 1e15` propagated in steps of `0.1`
+  now terminates that satellite with `StepBelowSpacing`** and carries the others
+  on. And **the state of the step that failed is no longer stored** — RK4
+  assigned it, the adaptive steppers kept the last state they had accepted — so
+  `satellites()` and `into_parts()` hand back a finite state, and the
+  satellite's own clock stays at the end of the last completed segment. What a
+  termination records is unchanged: the time the failed step landed on, and the
+  error as its reason. ([#458](https://github.com/sksat/orts/pull/458))
 - **BREAKING**: `SurfacePanel` gains a public `outline: Option<PanelOutline>`
   field, so a struct literal has to name it. `PanelSrp` and `PanelDrag` now skip
   a panel that another one completely covers, which they previously computed as
@@ -767,13 +781,17 @@ section is subdivided by package.
 ### `utsuroi` (Rust, crates.io)
 
 #### Added
-- `FixedSteps` and `Segments`, the two walks a propagation loop needs to step a
-  span itself: the step times of a fixed-step walk, and the segments a span
-  splits into at the switches a system reports. Each yields what a loop needs
-  per iteration — a step's start, width and landing time; a segment's bound
-  system, interval and whether an earlier segment came before it — and
-  `Segments::new` rejects a span no loop can walk, which a loop testing
-  `t < t_end` before stepping cannot leave to the solver. ([#458](https://github.com/sksat/orts/pull/458))
+- `Integrator::stepper`, returning a `FixedStepper` that holds its state and the
+  time it belongs to and is driven towards one target time after another —
+  `stepper` / `from_checked_state` / `advance_to`, the three calls the adaptive
+  solvers already offered. A propagation loop that decides where to stop as it
+  goes now writes one shape whichever solver it was configured with, and
+  `integrate`, `try_integrate` and `integrate_with_events` are this stepper
+  driven to `t_end` in a single call. ([#458](https://github.com/sksat/orts/pull/458))
+- `Segments`, the segments a span splits into at the switches a system reports.
+  Each item carries the bound system, the interval, and whether an earlier
+  segment came before it; `Segments::new` rejects a span no loop can walk, which
+  a loop testing `t < t_end` before stepping cannot leave to the solver. ([#458](https://github.com/sksat/orts/pull/458))
 - `AdaptiveStepper::from_checked_state` and
   `AdaptiveStepper853::from_checked_state`.
   `advance_to` asks the event predicate about the state it starts from, since a
@@ -821,6 +839,10 @@ section is subdivided by package.
   before comparing what they cost. ([#409](https://github.com/sksat/orts/pull/409))
 
 #### Changed
+- One `AdvanceOutcome` for every stepper. `AdvanceOutcome853` was a second copy
+  of the same two variants, so a caller choosing its solver at run time had to
+  write the same two arms twice. **`AdvanceOutcome853` is gone**; DOP853's
+  `advance_to` returns `AdvanceOutcome`. ([#458](https://github.com/sksat/orts/pull/458))
 - Every fixed-step integration — `Integrator`, `StormerVerlet` and the Yoshida
   family — walks its grid from the span's start rather than by adding `dt` to a
   running clock, and assigns the span's end on the last step. Accumulating

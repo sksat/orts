@@ -40,6 +40,17 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - WIT v0 plugin interface に msg-io / stream-io チャネルを追加。([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
 #### Changed
+- `IndependentGroup` と `CoupledGroup` が、どの solver も同じ 3 つの呼び出し
+  (`stepper` / `from_checked_state` / `advance_to`) で進めるようになった (RK4 の枝だけが
+  自前の step ループを持っていた)。それに伴い、そのループが adaptive stepper と違っていた
+  2 点が変わる。固定刻みのエラー (state が非有限になる、あるいはその時刻のグリッドが運べない
+  `dt`) は衛星の termination として記録されるようになった (従来は `propagate_to` の `Err` と
+  して返っていた)。**`t = 1e15` の group を `0.1` 刻みで伝播すると、その衛星が
+  `StepBelowSpacing` で終了し**、他の衛星は進み続ける。もう 1 点、**失敗した step の state を
+  保存しなくなった** — RK4 はそれを代入し、adaptive stepper は最後に受理した state を
+  保っていた — ので、`satellites()` と `into_parts()` が返す state は有限で、衛星自身の clock は
+  最後に完了した segment の終端に留まる。termination が記録する内容は変わらない (失敗した
+  step の着地時刻と、reason としてのエラー)。([#458](https://github.com/sksat/orts/pull/458))
 - **BREAKING**: `SurfacePanel` に public な `outline: Option<PanelOutline>` が
   増えたので、struct literal はこの field を書く必要がある。`PanelSrp` と
   `PanelDrag` は、別のパネルに完全に覆われたパネルを飛ばすようになった (以前は
@@ -667,11 +678,15 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `utsuroi` (Rust, crates.io)
 
 #### Added
-- `FixedSteps` と `Segments` を追加。伝播ループが span を自分で刻むときに要る 2 つの走査で、
-  前者は固定刻みの step 時刻、後者は system が報告する切り替わりで span を区切った segment を
-  返す。各 item はループが必要とするもの (step の開始・幅・着地時刻、segment の束縛済み
-  system・区間・先に別の segment があったか) を持ち、`Segments::new` はどのループも歩けない
-  span を拒否する — `t < t_end` を見てから踏むループは、その判断を solver に任せられない。([#458](https://github.com/sksat/orts/pull/458))
+- `Integrator::stepper` を追加。状態とその時刻を保持し、目標時刻を次々に与えて進める
+  `FixedStepper` を返す。`stepper` / `from_checked_state` / `advance_to` という 3 つの呼び出しは
+  adaptive solver が既に持っていたもので、どこで止まるかを進みながら決める伝播ループは、
+  設定された solver が何であれ 1 つの形で書けるようになった。`integrate` / `try_integrate` /
+  `integrate_with_events` は、この stepper を `t_end` まで 1 回で進めたものである。([#458](https://github.com/sksat/orts/pull/458))
+- `Segments` を追加。system が報告する切り替わりで span を区切った segment を返す。各 item は
+  束縛済みの system・区間・先に別の segment があったかを持つ。`Segments::new` はどのループも
+  歩けない span を拒否する — `t < t_end` を見てから踏むループは、その判断を solver に
+  任せられない。([#458](https://github.com/sksat/orts/pull/458))
 - `AdaptiveStepper::from_checked_state` と `AdaptiveStepper853::from_checked_state` を追加。
   `advance_to` は開始状態について event predicate に問い合わせる (level-triggered な event は
   そこで既に成立しうる) が、前の segment が終えた場所から続く segment では不要で、同じ
@@ -710,6 +725,9 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   ([#409](https://github.com/sksat/orts/pull/409))
 
 #### Changed
+- stepper の outcome 型を 1 つに統合。`AdvanceOutcome853` は同じ 2 variant のもう 1 つの写しで、
+  実行時に solver を選ぶ呼び出し側は同じ 2 つの腕を 2 回書く必要があった。**`AdvanceOutcome853`
+  は削除**し、DOP853 の `advance_to` は `AdvanceOutcome` を返す。([#458](https://github.com/sksat/orts/pull/458))
 - 固定刻みの積分すべて (`Integrator`・`StormerVerlet`・Yoshida 各型) が、時計に `dt` を
   足し込むのではなく span の開始から数えたグリッドを歩き、最後のステップで span の端を
   代入するようになった。累積はずれ、そのずれは walk が長いほど大きくなる: 0 から `0.1` を

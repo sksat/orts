@@ -1,4 +1,5 @@
-//! The times a fixed-step integration steps through.
+//! Fixed-step integration: the times it steps through, and the stepper that
+//! takes them.
 //!
 //! Walking a span by adding `dt` to a running clock drifts, and the drift
 //! grows with the walk: nine steps of `0.1` from zero reach
@@ -16,6 +17,12 @@
 //! The accumulated walk did reach `t_end` in the example above: its eleventh
 //! step is `t_end - t` wide, which is exact, so the callback there was already
 //! on `1.0`. What changes is the extra step and the ten grid times before it.
+//!
+//! [`FixedStepper`] is what a caller drives: it holds the state and the time it
+//! belongs to and takes one target after another, so a propagation loop that
+//! stops where it likes never handles the grid itself. Repeated targets anchor
+//! a new grid at each call's own start — splitting a span decides where the
+//! solver lands, and does not reproduce an unsplit trajectory in pieces.
 
 use core::ops::ControlFlow;
 
@@ -26,12 +33,12 @@ use crate::{AdvanceOutcome, DynamicalSystem, Integrator, OdeState};
 
 /// The step times of a fixed-step walk from `t0` to `t_end`.
 ///
-/// For a loop that steps a system itself rather than through
-/// [`Integrator::integrate`](crate::Integrator::integrate) — a propagation
-/// loop that checks events per step, or one that splits its span at known
-/// discontinuities. Yields each step's start, width and end, counting from
-/// `t0` so the grid does not drift, and lands the last step on `t_end`.
-pub struct FixedSteps {
+/// Yields each step's start, width and end, counting from `t0` so the grid does
+/// not drift, and lands the last step on `t_end`. Driven by
+/// [`FixedStepper::advance_to`], which is how a caller reaches this grid: the
+/// times are the stepper's own machinery, and every caller that used to walk
+/// them itself wanted the steps taken, not the times.
+pub(crate) struct FixedSteps {
     t0: f64,
     t_end: f64,
     dt: f64,
@@ -46,14 +53,14 @@ pub struct FixedSteps {
 /// One step of a [`FixedSteps`] walk: where it starts, how wide it is, and
 /// where it lands.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Step {
+pub(crate) struct Step {
     /// Time the step starts at.
-    pub t: f64,
+    pub(crate) t: f64,
     /// Width of the step.
-    pub h: f64,
+    pub(crate) h: f64,
     /// Time the step lands on. The last step of a walk lands on the span's
     /// end exactly rather than on `t + h`.
-    pub next_t: f64,
+    pub(crate) next_t: f64,
 }
 
 impl FixedSteps {
@@ -73,7 +80,7 @@ impl FixedSteps {
     /// not before. A caller whose event fires earlier never reaches it — an
     /// event at `t = 1` in a span ending at `1e16` is the case that rules out
     /// judging the whole span up front.
-    pub fn new(t0: f64, t_end: f64, dt: f64) -> Result<Self, IntegrationError> {
+    pub(crate) fn new(t0: f64, t_end: f64, dt: f64) -> Result<Self, IntegrationError> {
         validate_step_size(dt)?;
         validate_time_span(t0, t_end)?;
         Ok(Self {

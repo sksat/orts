@@ -21,7 +21,7 @@ pub(crate) mod test_systems;
 pub use error::{
     AdvanceOutcome, IntegrationError, IntegrationOutcome, Tolerances, validate_step_size,
 };
-pub use fixed_step::{FixedStepper, FixedSteps, Step};
+pub use fixed_step::FixedStepper;
 pub use integrator::Integrator;
 pub use segment::{SegmentContext, SegmentSystem, derivatives_maybe_in_segment};
 pub use segment_walk::{Segment, Segments};
