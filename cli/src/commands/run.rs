@@ -559,7 +559,7 @@ pub fn run_simulation(params: &SimParams) -> Result<Recording, CmdError> {
             group.add_satellite_until(sat.id.as_str(), initial, end_time_of(params, sat), system);
     }
 
-    propagate_and_record(params, group, |rec, entity, tp, state| {
+    propagate_and_record(params, group, |rec, entity, tp, _t, state, _dynamics| {
         let os = RecordOrbitalState::new(*state.position(), *state.velocity());
         rec.log_orbital_state(entity, tp, &os);
     })
@@ -616,12 +616,13 @@ pub fn run_spacecraft_simulation(params: &SimParams) -> Result<Recording, CmdErr
             group.add_satellite_until(sat.id.as_str(), initial, end_time_of(params, sat), dynamics);
     }
 
-    propagate_and_record(params, group, |rec, entity, tp, state| {
+    propagate_and_record(params, group, |rec, entity, tp, t, state, dynamics| {
         let sc = &state.plant;
         let os = RecordOrbitalState::new(*sc.orbit.position(), *sc.orbit.velocity());
         let q = Quaternion4D(sc.attitude.quaternion);
         let w = AngularVelocity3D(sc.attitude.angular_velocity);
         rec.log_orbital_state_with_attitude(entity, tp, &os, Some(&q), Some(&w));
+        log_disturbance_torques(rec, entity, tp, t, sc, dynamics);
     })
 }
 
@@ -635,7 +636,7 @@ pub fn run_spacecraft_simulation(params: &SimParams) -> Result<Recording, CmdErr
 fn propagate_and_record<D>(
     params: &SimParams,
     mut group: IndependentGroup<D>,
-    log_state: impl Fn(&mut Recording, &EntityPath, &TimePoint, &D::State),
+    log_state: impl Fn(&mut Recording, &EntityPath, &TimePoint, f64, &D::State, &D),
 ) -> Result<Recording, CmdError>
 where
     D: DynamicalSystem,
@@ -664,9 +665,16 @@ where
     // Record initial states
     let mut steps: Vec<u64> = vec![0; params.satellites.len()];
     let mut last_output_t: Vec<f64> = vec![0.0; params.satellites.len()];
-    for (i, (entry, _)) in group.satellites_with_dynamics().enumerate() {
+    for (i, (entry, dynamics)) in group.satellites_with_dynamics().enumerate() {
         let tp = TimePoint::new().with_sim_time(0.0).with_step(0);
-        log_state(&mut rec, &sat_paths[i], &tp, &entry.state);
+        log_state(
+            &mut rec,
+            &sat_paths[i],
+            &tp,
+            entry.t,
+            &entry.state,
+            dynamics,
+        );
         steps[i] = 1;
     }
     if let Some(monitors) = visibility.as_mut() {
@@ -715,10 +723,17 @@ where
         };
 
         // Record states for satellites that reached this output time
-        for (i, (entry, _)) in group.satellites_with_dynamics().enumerate() {
+        for (i, (entry, dynamics)) in group.satellites_with_dynamics().enumerate() {
             if !entry.terminated && entry.t >= t - 1e-9 {
                 let tp = TimePoint::new().with_sim_time(entry.t).with_step(steps[i]);
-                log_state(&mut rec, &sat_paths[i], &tp, &entry.state);
+                log_state(
+                    &mut rec,
+                    &sat_paths[i],
+                    &tp,
+                    entry.t,
+                    &entry.state,
+                    dynamics,
+                );
                 steps[i] += 1;
                 last_output_t[i] = entry.t;
             }
@@ -742,11 +757,18 @@ where
                 .satellites
                 .iter()
                 .position(|s| s.id.as_str() == AsRef::<str>::as_ref(&term.satellite_id))
-                && let Some(entry) = group.satellite(&term.satellite_id)
+                && let Some((entry, dynamics)) = group.satellites_with_dynamics().nth(i)
                 && entry.t > last_output_t[i]
             {
                 let tp = TimePoint::new().with_sim_time(entry.t).with_step(steps[i]);
-                log_state(&mut rec, &sat_paths[i], &tp, &entry.state);
+                log_state(
+                    &mut rec,
+                    &sat_paths[i],
+                    &tp,
+                    entry.t,
+                    &entry.state,
+                    dynamics,
+                );
                 steps[i] += 1;
                 last_output_t[i] = entry.t;
             }
@@ -755,10 +777,17 @@ where
 
     // Record final states for satellites that finished at end_time
     // (covers the case where period doesn't align with output_interval)
-    for (i, (entry, _)) in group.satellites_with_dynamics().enumerate() {
+    for (i, (entry, dynamics)) in group.satellites_with_dynamics().enumerate() {
         if !entry.terminated && (entry.t - last_output_t[i]) > 1e-9 {
             let tp = TimePoint::new().with_sim_time(entry.t).with_step(steps[i]);
-            log_state(&mut rec, &sat_paths[i], &tp, &entry.state);
+            log_state(
+                &mut rec,
+                &sat_paths[i],
+                &tp,
+                entry.t,
+                &entry.state,
+                dynamics,
+            );
         }
     }
 
@@ -1189,7 +1218,7 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Result<Record
     // 初期状態を記録。
     for (i, sat) in satellites.iter().enumerate() {
         let tp = TimePoint::new().with_sim_time(0.0).with_step(0);
-        log_controlled_state(&mut rec, &sat_paths[i], &tp, sat);
+        log_controlled_state(&mut rec, &sat_paths[i], &tp, 0.0, sat);
     }
 
     // 地上局可視性 monitor（制御 tick ごとにサンプリング）。
@@ -1312,7 +1341,7 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Result<Record
         if t >= next_output_t - 1e-12 {
             for (i, sat) in satellites.iter().enumerate() {
                 let tp = TimePoint::new().with_sim_time(t).with_step(step);
-                log_controlled_state(&mut rec, &sat_paths[i], &tp, sat);
+                log_controlled_state(&mut rec, &sat_paths[i], &tp, t, sat);
             }
             step += 1;
             last_output_t = t;
@@ -1324,7 +1353,7 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Result<Record
     if (t - last_output_t) > 1e-9 {
         for (i, sat) in satellites.iter().enumerate() {
             let tp = TimePoint::new().with_sim_time(t).with_step(step);
-            log_controlled_state(&mut rec, &sat_paths[i], &tp, sat);
+            log_controlled_state(&mut rec, &sat_paths[i], &tp, t, sat);
         }
     }
 
@@ -1337,11 +1366,42 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Result<Record
     Ok(rec)
 }
 
+/// Log what each model is doing to the attitude: one torque column per model,
+/// in the body frame [N·m].
+///
+/// The models are evaluated afresh at the sample's own `(t, state)`. The
+/// integrator's evaluations are not observations of it: they sit at internal
+/// stage times, on states an adaptive step may reject, and a model that reads
+/// an `EvalSegment` deliberately answers something else there. `torque_breakdown`
+/// calls plain `eval`, which is what "the torque at this state" means.
+///
+/// The columns come from `torque_columns`, so a model's own name reaches the
+/// CSV header and two models sharing a name stay apart.
+fn log_disturbance_torques<G, F>(
+    rec: &mut Recording,
+    entity: &EntityPath,
+    tp: &TimePoint,
+    t: f64,
+    state: &orts::spacecraft::SpacecraftState<F>,
+    dynamics: &orts::spacecraft::SpacecraftDynamics<G, F>,
+) where
+    G: orts::orbital::gravity::GravityField,
+    F: arika::frame::Eci + 'static,
+{
+    let breakdown = dynamics.torque_breakdown(t, state);
+    let columns = orts::record::components::torque_columns(breakdown.iter().map(|(name, _)| *name));
+    for ((name, fields), (_, torque)) in columns.into_iter().zip(&breakdown) {
+        let v = torque.into_inner();
+        rec.log_temporal_scalars(entity, tp, name, &fields, &[v.x, v.y, v.z]);
+    }
+}
+
 /// Log controlled satellite state: orbit + attitude + commands + actuator telemetry.
 fn log_controlled_state(
     rec: &mut Recording,
     entity: &EntityPath,
     tp: &TimePoint,
+    t: f64,
     sat: &crate::sim::controlled::ControlledSatellite,
 ) {
     use orts::plugin::{
@@ -1356,6 +1416,7 @@ fn log_controlled_state(
     let q = Quaternion4D(att.quaternion);
     let w = AngularVelocity3D(att.angular_velocity);
     rec.log_orbital_state_with_attitude(entity, tp, &os, Some(&q), Some(&w));
+    log_disturbance_torques(rec, entity, tp, t, &sat.state.plant, &sat.dynamics);
 
     // MTQ command (always log to keep row count aligned with orbital state).
     // TODO: distinguish Moments vs NormalizedMoments — currently both are
@@ -1771,6 +1832,139 @@ mod tests {
         assert_eq!(plain_rows.len(), 3);
         for row in plain_rows {
             assert!(row.ends_with(",,,"), "expected three empty fields: {row}");
+        }
+    }
+
+    /// A per-model torque column survives an `.rrd` and reaches the CSV under
+    /// the same name.
+    ///
+    /// The column name is built at run time from the model's own name, so it is
+    /// in neither the component table the loader falls back to nor the CSV's
+    /// static field-name table: the file has to carry the schema, and the
+    /// recording that comes back has to register it.
+    #[test]
+    fn a_per_model_torque_column_survives_the_file() {
+        use orts::record::archetypes::OrbitalState as RecOrbitalState;
+        use orts::record::components::torque_columns;
+        use orts::record::rerun_export::{load_as_recording, save_as_rrd};
+        use orts::record::timeline::TimePoint;
+
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/torque_chain");
+        let r0 = 6778.137;
+        let v0 = (398600.4418_f64 / r0).sqrt();
+        let columns = torque_columns(["panel_srp", "panel_drag", "panel_srp"]);
+        let values = [
+            [1.5e-6, -2.0e-7, 3.0e-8],
+            [-4.0e-9, 5.0e-9, -6.0e-9],
+            [7.0e-7, 0.0, 0.0],
+        ];
+
+        for i in 0..3u64 {
+            let tp = TimePoint::new().with_sim_time(i as f64).with_step(i);
+            let os = RecOrbitalState::new(
+                nalgebra::Vector3::new(r0, 0.0, 0.0),
+                nalgebra::Vector3::new(0.0, v0, 0.0),
+            );
+            rec.log_orbital_state(&sat, &tp, &os);
+            for ((name, fields), value) in columns.iter().zip(&values) {
+                rec.log_temporal_scalars(&sat, &tp, name.clone(), fields, value);
+            }
+        }
+
+        let path = std::env::temp_dir().join(format!(
+            "orts_torque_{}_{:?}.rrd",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let path_str = path.to_str().unwrap().to_string();
+        save_as_rrd(&rec, "orts-torque-test", &path_str).expect("save");
+        let loaded = load_as_recording(&path_str).expect("load");
+        let _ = std::fs::remove_file(&path);
+
+        let loaded_columns = csv_columns(&loaded, &[&sat]);
+        let header = build_csv_header(&loaded_columns, false);
+        let repeated = columns[2].1[0].clone();
+        for field in [
+            "panel_srp.torque_body_x_Nm",
+            "panel_drag.torque_body_z_Nm",
+            repeated.as_str(),
+        ] {
+            assert!(
+                header.split(',').any(|c| c == field),
+                "column '{field}' did not survive the file: {header}"
+            );
+        }
+
+        let mut out = Vec::new();
+        write_satellite_csv(&mut out, &loaded, &sat, 398600.4418, false, &loaded_columns)
+            .expect("csv");
+        let body = String::from_utf8(out).expect("utf-8");
+        let cols: Vec<&str> = header.trim_start_matches("# ").split(',').collect();
+        let idx = |name: &str| cols.iter().position(|c| *c == name).expect(name);
+        let row = body
+            .lines()
+            .find(|l| !l.starts_with('#'))
+            .expect("a data row");
+        let field = |i: usize| -> f64 { row.split(',').nth(i).unwrap().trim().parse().unwrap() };
+        assert!(
+            (field(idx("panel_srp.torque_body_x_Nm")) - 1.5e-6).abs() < 1e-16,
+            "the SRP value came back changed: {row}"
+        );
+        assert!(
+            (field(idx("panel_drag.torque_body_y_Nm")) - 5.0e-9).abs() < 1e-16,
+            "the drag value came back changed: {row}"
+        );
+    }
+
+    /// A satellite whose models produce no torque column still lines up with
+    /// one that has them: the columns are the union over the run, and the
+    /// satellite without them writes empty fields.
+    #[test]
+    fn a_satellite_without_a_torque_model_keeps_the_columns_empty() {
+        use orts::record::archetypes::OrbitalState as RecOrbitalState;
+        use orts::record::components::torque_columns;
+        use orts::record::timeline::TimePoint;
+
+        let mut rec = Recording::new();
+        let with_model = EntityPath::parse("/world/sat/a_has_torque");
+        let plain = EntityPath::parse("/world/sat/b_plain");
+        let r0 = 6778.137;
+        let v0 = (398600.4418_f64 / r0).sqrt();
+        let columns = torque_columns(["gravity_gradient"]);
+
+        for i in 0..2u64 {
+            let tp = TimePoint::new().with_sim_time(i as f64).with_step(i);
+            let os = RecOrbitalState::new(
+                nalgebra::Vector3::new(r0, 0.0, 0.0),
+                nalgebra::Vector3::new(0.0, v0, 0.0),
+            );
+            rec.log_orbital_state(&with_model, &tp, &os);
+            rec.log_orbital_state(&plain, &tp, &os);
+            let (name, fields) = &columns[0];
+            rec.log_temporal_scalars(&with_model, &tp, name.clone(), fields, &[1e-5, 0.0, 0.0]);
+        }
+
+        let mut out = Vec::new();
+        write_recording_as_csv(&mut out, &rec, None).expect("csv");
+        let body = String::from_utf8(out).expect("utf-8");
+        let header = body
+            .lines()
+            .find(|l| l.starts_with("# satellite_id,"))
+            .expect("header");
+        let want = header.matches(',').count() + 1;
+        for row in body.lines().filter(|l| !l.starts_with('#')) {
+            assert_eq!(
+                row.matches(',').count() + 1,
+                want,
+                "row disagrees with the header: {row}"
+            );
+        }
+        for row in body.lines().filter(|l| l.starts_with("b_plain,")) {
+            assert!(
+                row.ends_with(",,,"),
+                "the satellite without the model should leave the three fields empty: {row}"
+            );
         }
     }
 }

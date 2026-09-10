@@ -156,6 +156,33 @@ fn bench(c: &mut Criterion) {
     }
     group.finish();
 
+    // What a sample costs beside the derivative above. `orts run` writes one
+    // per output step and the torque breakdown evaluates every model again at
+    // that state, so this is the price of the telemetry, measured against the
+    // work the integrator does anyway.
+    let mut group = c.benchmark_group("torque_breakdown");
+    for (name, panels) in [
+        ("outline_free", outline_free()),
+        ("cube", cube()),
+        ("bus_and_arrays", bus_and_arrays(1)),
+        ("segmented_array", bus_and_arrays(8)),
+    ] {
+        let n = panels.len();
+        let inertia = nalgebra::Matrix3::from_diagonal(&Vector3::new(10.0, 12.0, 8.0));
+        let dynamics = orts::spacecraft::SpacecraftDynamics::new(
+            arika::earth::MU,
+            orts::orbital::gravity::PointMass,
+            inertia,
+        )
+        .with_epoch(epoch)
+        .with_model(PanelSrp::for_earth(SpacecraftShape::Panels(panels.clone())))
+        .with_model(PanelDrag::for_earth(SpacecraftShape::Panels(panels)));
+        group.bench_function(format!("{name}_{n}_panels"), |b| {
+            b.iter(|| dynamics.torque_breakdown(0.0, &state))
+        });
+    }
+    group.finish();
+
     let oblique = oblique_state();
     let mut group = c.benchmark_group("panel_drag_eval");
     for (name, panels, st) in [

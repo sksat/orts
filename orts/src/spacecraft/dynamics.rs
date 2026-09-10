@@ -215,6 +215,34 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
             .collect()
     }
 
+    /// Per-model disturbance torque in the body frame [N·m], for telemetry.
+    ///
+    /// The vector rather than a magnitude, because the direction is what a
+    /// torque model gets wrong: the flat-panel SRP reflection terms and the
+    /// drag facing rule were both fixed by turning the torque, not by resizing
+    /// it, and a magnitude cannot show that.
+    ///
+    /// The gravity field is absent. It acts on the centre of mass, so it exerts
+    /// no torque about it; a gravity-gradient torque is a
+    /// [`Model`](crate::model::Model) and answers under its own name. This is
+    /// why the list is one entry per model, where
+    /// [`acceleration_breakdown`](Self::acceleration_breakdown) leads with
+    /// `"gravity"`.
+    ///
+    /// Effectors are absent too: this is the environment acting on the
+    /// spacecraft, and what a reaction wheel or a magnetorquer commands is read
+    /// from the effector itself.
+    pub fn torque_breakdown(
+        &self,
+        t: f64,
+        state: &SpacecraftState<F>,
+    ) -> Vec<(&str, arika::frame::Vec3<arika::frame::Body>)> {
+        self.model_breakdown(t, state)
+            .into_iter()
+            .map(|(name, loads)| (name, loads.torque_body))
+            .collect()
+    }
+
     /// Acceleration breakdown for telemetry.
     pub fn acceleration_breakdown(&self, t: f64, state: &SpacecraftState<F>) -> Vec<(&str, f64)> {
         let grav = self
@@ -413,6 +441,19 @@ mod tests {
         }
         fn eval(&self, _t: f64, _state: &SpacecraftState, _epoch: Option<&Epoch>) -> ExternalLoads {
             ExternalLoads::torque(self.0)
+        }
+    }
+
+    /// A torque under a name the test chooses, so several can stand together:
+    /// `Model::name` is what the breakdown keys on.
+    struct NamedTorqueModel(&'static str, Vector3<f64>);
+
+    impl Model<SpacecraftState> for NamedTorqueModel {
+        fn name(&self) -> &str {
+            self.0
+        }
+        fn eval(&self, _t: f64, _state: &SpacecraftState, _epoch: Option<&Epoch>) -> ExternalLoads {
+            ExternalLoads::torque(self.1)
         }
     }
 
@@ -1050,5 +1091,69 @@ mod tests {
 
         let diff = d.plant.orbit.velocity() - d_grav.plant.orbit.velocity();
         assert!((diff - accel).magnitude() < 1e-15);
+    }
+
+    /// The breakdown telemetry reads has to carry the torque's direction.
+    ///
+    /// `acceleration_breakdown` answers with a magnitude, which is enough for a
+    /// force that always points along the same line but not for a torque: the
+    /// panel SRP fix (#377) and the drag facing fix (#437) both left the size
+    /// alone and changed where the torque pointed. Two models whose torques are
+    /// perpendicular here, so a breakdown that summed or normalised them could
+    /// not produce these components.
+    #[test]
+    fn torque_breakdown_reports_each_model_as_a_body_frame_vector() {
+        let about_x = Vector3::new(0.4, 0.0, 0.0);
+        let about_z = Vector3::new(0.0, 0.0, -0.25);
+        let dynamics = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
+            .with_model(NamedTorqueModel("first", about_x))
+            .with_model(NamedTorqueModel("second", about_z));
+        let state = sample_spacecraft();
+
+        let breakdown = dynamics.torque_breakdown(0.0, &state);
+
+        assert_eq!(
+            breakdown.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+            vec!["first", "second"],
+            "the models keep their order and their names"
+        );
+        assert_eq!(breakdown[0].1.into_inner(), about_x);
+        assert_eq!(breakdown[1].1.into_inner(), about_z);
+
+        // What the acceleration breakdown can say about the same two models:
+        // nothing, because neither produces one.
+        for (name, magnitude) in dynamics.acceleration_breakdown(0.0, &state) {
+            if name == "first" || name == "second" {
+                assert_eq!(magnitude, 0.0, "{name} produces no acceleration");
+            }
+        }
+    }
+
+    /// The gravity field appears in the acceleration breakdown and must not
+    /// appear in the torque one: it acts on the centre of mass, so it exerts no
+    /// torque about it. A gravity-gradient torque is a model of its own and
+    /// answers under its own name.
+    #[test]
+    fn torque_breakdown_leaves_out_the_gravity_field() {
+        let dynamics = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
+            .with_model(NamedTorqueModel("only_model", Vector3::new(0.0, 1.0, 0.0)));
+        let state = sample_spacecraft();
+
+        let accel = dynamics.acceleration_breakdown(0.0, &state);
+        assert!(
+            accel
+                .iter()
+                .any(|(name, value)| *name == "gravity" && *value > 0.0),
+            "the acceleration breakdown leads with gravity: {accel:?}"
+        );
+
+        let torque = dynamics.torque_breakdown(0.0, &state);
+        assert_eq!(
+            torque.len(),
+            1,
+            "one entry per model and nothing else: {:?}",
+            torque.iter().map(|(name, _)| *name).collect::<Vec<_>>()
+        );
+        assert_eq!(torque[0].0, "only_model");
     }
 }

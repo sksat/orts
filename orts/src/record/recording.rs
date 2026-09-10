@@ -395,14 +395,49 @@ impl Recording {
         time_point: &TimePoint,
         component: &C,
     ) {
+        self.log_temporal_scalars(
+            entity,
+            time_point,
+            C::component_name(),
+            &C::field_names()
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>(),
+            &component.to_scalars(),
+        );
+    }
+
+    /// Log one component's scalars under a name chosen at run time.
+    ///
+    /// [`log_temporal`](Self::log_temporal) is this with the name and the field
+    /// names taken from the type. A caller reaches for this one when the name
+    /// is not known until then: a per-model torque column carries the model's
+    /// own name, and there is one component type behind all of them.
+    ///
+    /// `fields` names each scalar and is registered the first time the name is
+    /// seen, which is what lets a reader and the CSV header find the columns of
+    /// a component the built-in table does not know.
+    pub fn log_temporal_scalars(
+        &mut self,
+        entity: &EntityPath,
+        time_point: &TimePoint,
+        name: ComponentName,
+        fields: &[String],
+        scalars: &[f64],
+    ) {
+        debug_assert_eq!(
+            fields.len(),
+            scalars.len(),
+            "each scalar needs a field name: {name}"
+        );
         let store = self.entities.entry(entity.clone()).or_default();
 
         // Register component schema for generic export
         self.component_registry
-            .entry(C::component_name())
+            .entry(name.clone())
             .or_insert_with(|| ComponentFieldInfo {
-                scalars_per_row: C::num_scalars(),
-                field_names: C::field_names().iter().map(|s| s.to_string()).collect(),
+                scalars_per_row: scalars.len(),
+                field_names: fields.to_vec(),
             });
 
         // The row is identified by the time point itself rather than inferred
@@ -416,13 +451,10 @@ impl Recording {
         // the row the first already occupies. That also keeps one entry per
         // logical row in the column's `RowMap`.
         let row_taken = continues_row
-            && store
-                .columns
-                .get(&C::component_name())
-                .is_some_and(|column| {
-                    column.num_rows() > 0
-                        && column.logical_row_of(column.num_rows() - 1) == store.num_rows - 1
-                });
+            && store.columns.get(&name).is_some_and(|column| {
+                column.num_rows() > 0
+                    && column.logical_row_of(column.num_rows() - 1) == store.num_rows - 1
+            });
         if !continues_row || row_taken {
             let logical_row = store.num_rows;
             for (timeline_name, time_index) in time_point.indices() {
@@ -440,9 +472,9 @@ impl Recording {
 
         store
             .columns
-            .entry(C::component_name())
-            .or_insert_with(|| ComponentColumn::new(C::num_scalars()))
-            .push_at(&component.to_scalars(), logical_row);
+            .entry(name)
+            .or_insert_with(|| ComponentColumn::new(scalars.len()))
+            .push_at(scalars, logical_row);
     }
 
     /// Convenience: log an OrbitalState archetype (position + velocity).

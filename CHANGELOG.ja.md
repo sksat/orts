@@ -11,6 +11,20 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `orts` (Rust, crates.io)
 
 #### Added
+- `SpacecraftDynamics::torque_breakdown` を追加。モデルごとの外乱トルクを機体座標系 [N·m]
+  で返す。既存の `acceleration_breakdown` が magnitude を返すのに対しこちらはベクトルを
+  返す。トルクモデルが誤るのは向きだからである (平板 SRP の反射項 [#377](https://github.com/sksat/orts/pull/377) と大気抵抗の
+  面の選び方 [#437](https://github.com/sksat/orts/pull/437) は、どちらも大きさではなく向きの修正だった)。重力場は一覧に
+  出ない。重心に働くので重心まわりのトルクを作らないためで、gravity gradient のトルクは
+  モデルとして自分の名前で出る。([#466](https://github.com/sksat/orts/pull/466))
+- `Recording::log_temporal_scalars` を追加。実行時に決まる名前で component を記録し、
+  field 名も一緒に registry へ登録する。`Recording::log_temporal` はこれに委譲する。
+  モデルごとのテレメトリ列は型から名前を取れず、`.rrd` の schema は与えた名前をそのまま
+  運ぶ。名前を作るのは `ModelTorqueBody3D` と `torque_columns` で、component 名は
+  `orts.ModelTorqueBody3D:panel_srp`、field 名は `panel_srp.torque_body_x_Nm` になる。
+  モデル名は `[A-Za-z0-9_]` へ可逆に符号化するので、1 文字の置換で一致する 2 つのモデルも
+  別の列になる。同名の繰り返しは `.2`, `.3` で分ける。往復の実測で `[`, `]`, `*`, `#` は
+  entity path から戻らない。([#466](https://github.com/sksat/orts/pull/466))
 - `Model::eval_in_segment` と `ThrustProfile::throttle_in_segment` を追加。引数の
   `EvalSegment` は segment を integration time と開始時刻の絶対時刻の両方で運ぶ (`epoch_0` を
   持つのは system で model ではない)。既定は `eval` / `throttle` への転送で、`ScheduledBurn` は
@@ -417,6 +431,20 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `SpacecraftDynamics::new` で panic し、`orts serve --config` では spawn された
   manager task の中で起きるため、server は listen したままシミュレーションも
   client への error も無い状態になっていた。([#351](https://github.com/sksat/orts/pull/351))
+
+#### Added
+- `orts run` が、モデルごとの外乱トルクを CSV と `.rrd` に出すようになった。1 モデル 1 列で
+  `gravity_gradient.torque_body_x_Nm` のような列名になり、値は機体座標系 [N·m]。これまでは
+  トルクに関する値が library から出ていなかったので、パネルモデルが出す SRP と空力の
+  トルクは Rust のテストを書く以外に確認できなかった。外乱が効いていることの手がかりは
+  出てくる姿勢だけで、どのモデルがどれだけ出しているかを分ける出力はなかった。plugin
+  controller のある経路とない経路の両方で記録する。
+
+  モデルは各サンプル自身の `(t, state)` で評価し直す。積分器の評価を流用しない。RK の
+  内部段の時刻であり、適応刻みは棄却したステップも評価し、`EvalSegment` を読むモデルは
+  境界で意図的に別の値を返すからである。コストは 1 サンプルあたり導関数 1 回ぶんで、
+  パネル 22 枚の機体で 50.1 µs (導関数は 50.5 µs) を実測した。RK4 で `output_interval` が
+  `dt` と同じなら、モデル評価の作業が 4 分の 1 ほど増える。([#466](https://github.com/sksat/orts/pull/466))
 
 #### Fixed
 - CSV の全衛星の行が、header が名前を挙げた列を持つようになった。header は先頭の衛星の
