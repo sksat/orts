@@ -435,15 +435,29 @@ impl Recording {
             scalars.len(),
             "each scalar needs a field name: {name}"
         );
-        let store = self.entities.entry(entity.clone()).or_default();
+        // Register the schema before touching the entity, and hold a name to one
+        // schema. Keeping the first silently would label later values with the
+        // earlier field names, so the file would name a component's fields and
+        // carry another's values; a reuse at a different width would panic
+        // further down, with a row already opened.
+        match self.component_registry.entry(name.clone()) {
+            std::collections::hash_map::Entry::Occupied(known) => {
+                let known = known.get();
+                assert!(
+                    known.scalars_per_row == scalars.len() && known.field_names == fields,
+                    "component {name} is already registered as {:?}, and cannot also be {fields:?}",
+                    known.field_names
+                );
+            }
+            std::collections::hash_map::Entry::Vacant(slot) => {
+                slot.insert(ComponentFieldInfo {
+                    scalars_per_row: scalars.len(),
+                    field_names: fields.to_vec(),
+                });
+            }
+        }
 
-        // Register component schema for generic export
-        self.component_registry
-            .entry(name.clone())
-            .or_insert_with(|| ComponentFieldInfo {
-                scalars_per_row: scalars.len(),
-                field_names: fields.to_vec(),
-            });
+        let store = self.entities.entry(entity.clone()).or_default();
 
         // The row is identified by the time point itself rather than inferred
         // from row counts, which is what let a column that skipped steps line up
@@ -1236,5 +1250,52 @@ mod tests {
             &["only_one".to_string()],
             &[1.0, 2.0, 3.0],
         );
+    }
+
+    /// A name registered once keeps its schema, so a second set of field names
+    /// under it has to be refused: keeping the first would label these values
+    /// with the earlier names, and the file would carry a component whose
+    /// fields say one thing and whose values are another's.
+    #[test]
+    #[should_panic(expected = "cannot also be")]
+    fn log_temporal_scalars_refuses_a_second_schema_for_one_name() {
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/reused");
+        let tp = TimePoint::new().with_sim_time(0.0);
+        rec.log_temporal_scalars(
+            &sat,
+            &tp,
+            "orts.Reused".into(),
+            &["a".to_string(), "b".to_string()],
+            &[1.0, 2.0],
+        );
+        rec.log_temporal_scalars(
+            &sat,
+            &tp,
+            "orts.Reused".into(),
+            &["c".to_string(), "d".to_string()],
+            &[3.0, 4.0],
+        );
+    }
+
+    /// The same name at the same schema is a second sample of it, which the row
+    /// handling covers: it must not be mistaken for a conflict.
+    #[test]
+    fn log_temporal_scalars_takes_a_second_sample_at_one_schema() {
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/twice");
+        let fields = ["a".to_string(), "b".to_string()];
+        for value in [1.0, 2.0] {
+            rec.log_temporal_scalars(
+                &sat,
+                &TimePoint::new().with_sim_time(0.0),
+                "orts.Twice".into(),
+                &fields,
+                &[value, value],
+            );
+        }
+        let store = rec.entity(&sat).expect("the entity");
+        let column = store.columns.get("orts.Twice").expect("the column");
+        assert_eq!(column.num_rows(), 2, "both samples are kept");
     }
 }
