@@ -40,12 +40,15 @@ fn state() -> SpacecraftState {
     }
 }
 
-/// The same orbit with the velocity turned 45 deg in the x-y plane.
+/// The same orbit with the velocity turned 45 deg in the x-y plane, so the
+/// atmosphere reaches the arrays.
 ///
-/// In `state` the flow arrives along `-y`, which the arrays' `+-x` normals meet
-/// edge-on: the force cutoff drops them before any geometry runs, so the drag
-/// figures there are a best case that says nothing about the shadow work. Here
-/// the flow hits the arrays.
+/// In `state` the spacecraft travels along `+y`, so the gas arrives from `+y`
+/// and meets the arrays' `+x` normals edge-on: the force cutoff drops them
+/// before any geometry runs, and the drag figures there say nothing about the
+/// shadow work. Here the gas arrives from `+x -y`, which the arrays face. The
+/// direction is what matters, and it puts the arrays upwind and downwind of the
+/// bus rather than beside it, so the subtraction runs.
 fn oblique_state() -> SpacecraftState {
     let r = arika::earth::R + 400.0;
     let v = (arika::earth::MU / r).sqrt();
@@ -53,7 +56,7 @@ fn oblique_state() -> SpacecraftState {
     SpacecraftState {
         orbit: OrbitalState::new(
             Vector3::new(r * s, r * s, 0.0),
-            Vector3::new(-v * s, v * s, 0.0),
+            Vector3::new(v * s, -v * s, 0.0),
         ),
         attitude: AttitudeState::identity(),
         mass: 500.0,

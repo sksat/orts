@@ -135,8 +135,11 @@ impl LitRegion {
 /// The lit part of `panel`, given every panel that could shadow it.
 ///
 /// `upstream` points from the spacecraft toward where the light or the flow
-/// comes from — SRP passes `s_body`, drag passes `-v̂_body` — and must be unit
-/// length. Which way the panel faces does not matter: a shadow is measured
+/// comes from: SRP passes `s_body`, the direction of the Sun, and drag passes
+/// `v̂_body`, the direction the spacecraft is heading through the atmosphere,
+/// which is where the gas arrives from. It must be unit length.
+///
+/// Which way the panel faces does not matter: a shadow is measured
 /// along the light, so a panel whose normal points away from the source is
 /// answered for correctly too, and the force models decide separately whether
 /// such a panel gets a force at all.
