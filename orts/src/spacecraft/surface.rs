@@ -1701,11 +1701,11 @@ mod tests {
     /// passes a one-sided test by removing the force of whichever panel it
     /// happens to be behind.
     ///
-    /// Which side, and only that. What the occlusion does once it has the side
-    /// is what #424 left: a panel one other panel covers completely is dropped
-    /// whole, and a partly covered one still produces its full force, which is
-    /// an asymmetry of its own (#407). Both casters here cover their target
-    /// completely, so this test says nothing about that case either way.
+    /// Which side, and only that. How much of a covered panel is left lit, and
+    /// where its force acts, is `lit_region`'s answer (#444), and this test
+    /// takes it as given: the upwind caster covers the target whole, so the
+    /// target's force goes to zero, while the target itself shades a quarter of
+    /// the caster downwind of it and three quarters of that force stands.
     #[test]
     fn only_a_caster_between_the_flow_and_the_panel_shades_it() {
         let state = iss_state();
