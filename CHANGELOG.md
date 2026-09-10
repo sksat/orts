@@ -829,7 +829,15 @@ section is subdivided by package.
   over `dt` — so `[0, 1]` took eleven steps rather than ten, the last an ulp
   wide. **Step times change**, by an ulp early in a walk and by more further in
   (a thousand steps of `0.1` differ from the anchored `100.0` by several), and a
-  span whose accumulated remainder overshot `dt` takes one step fewer. ([#458](https://github.com/sksat/orts/pull/458))
+  span whose accumulated remainder overshot `dt` takes one step fewer.
+- A fixed-step integration refuses a `dt` narrower than the spacing of f64 at a
+  step's start, as the new `IntegrationError::StepBelowSpacing`. The old loops
+  failed only where the clock did not move at all (`t + dt == t`); between half
+  a spacing and one, they moved it further than asked — at `t = 1e15` a `dt` of
+  `0.1` advanced the clock by `0.125` while the solver integrated `0.1`, so the
+  state returned belonged to a time already passed. **Such a span now stops
+  with an error at the step it happens on**, having walked the part of the span
+  the grid could carry. ([#458](https://github.com/sksat/orts/pull/458))
 
 #### Fixed
 - Every integrate loop asks its event predicate about the state it was given,

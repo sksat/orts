@@ -142,6 +142,17 @@ impl Iterator for FixedSteps {
 
         let index = self.index + 1;
         let next_t = self.landing(index);
+        // Above 2^53 the index itself stops being exact in f64, so the grid
+        // time for `index + 1` can equal the one for `index`, and the spacing
+        // check does not see it — the case is a walk from `-2^53` in steps of
+        // `1`, where the collapse happens as it crosses zero and the spacing
+        // there is a subnormal. No test drives it: reaching that index takes
+        // 2^53 steps. The guard is here so that what a caller receives is
+        // never a step of no width.
+        if next_t <= t {
+            self.stagnated = true;
+            return Some(Err(IntegrationError::TimeStagnated { t, dt: self.dt }));
+        }
 
         self.index = index;
         Some(Ok(Step {
