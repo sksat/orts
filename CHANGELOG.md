@@ -17,9 +17,10 @@ section is subdivided by package.
 - `SpacecraftDynamics::torque_breakdown` answers the disturbance torque each
   model produces, in the body frame [N·m], beside the existing
   `acceleration_breakdown`. It returns the vector where that one returns a
-  magnitude, because what a torque model gets wrong is the direction: the
-  flat-panel SRP reflection terms ([#377](https://github.com/sksat/orts/pull/377)) and the drag facing rule
-  ([#437](https://github.com/sksat/orts/pull/437)) were both fixed by turning the torque, not by resizing it.
+  magnitude, which carries neither the sign nor the axis: a disturbance turning
+  the spacecraft the wrong way reads the same size as one turning it the right
+  way, and the direction is what the flat-panel SRP reflection terms
+  ([#377](https://github.com/sksat/orts/pull/377)) and the drag facing rule ([#437](https://github.com/sksat/orts/pull/437)) were fixed for.
   The gravity field is absent from the list — it acts on the centre of mass, so
   it exerts no torque about it — and a gravity-gradient torque answers under its
   own model name. ([#466](https://github.com/sksat/orts/pull/466))

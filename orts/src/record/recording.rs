@@ -399,10 +399,7 @@ impl Recording {
             entity,
             time_point,
             C::component_name(),
-            &C::field_names()
-                .iter()
-                .map(|s| s.to_string())
-                .collect::<Vec<_>>(),
+            &C::field_names(),
             &component.to_scalars(),
         );
     }
@@ -417,23 +414,34 @@ impl Recording {
     /// `fields` names each scalar and is registered the first time the name is
     /// seen, which is what lets a reader and the CSV header find the columns of
     /// a component the built-in table does not know.
+    ///
+    /// # Panics
+    /// Panics unless every scalar has a field name, there is at least one of
+    /// them, and a name already registered arrives with the schema it was
+    /// registered under. Each of those would otherwise be written to the file
+    /// and read back as different data, and the caller holds both halves, so a
+    /// mismatch is a mistake in the call rather than a condition of the run.
     pub fn log_temporal_scalars(
         &mut self,
         entity: &EntityPath,
         time_point: &TimePoint,
         name: ComponentName,
-        fields: &[String],
+        fields: &[&str],
         scalars: &[f64],
     ) {
-        // Not a `debug_assert`: a schema whose width disagrees with the data
-        // is written to the file, where the export drops the scalars that have
-        // no field name and the load can drop the component whole. The caller
-        // passes both, so a mismatch is a mistake in the call rather than a
-        // condition of the run.
+        // Checked in a release build too: a schema whose width disagrees with
+        // the data reaches the file, where the export drops the scalars that
+        // have no field name and the load can drop the component whole.
         assert_eq!(
             fields.len(),
             scalars.len(),
             "each scalar needs a field name: {name}"
+        );
+        // A column of no scalars cannot be built, and finding that out after
+        // the row is open would leave the entity a row longer than its columns.
+        assert!(
+            !scalars.is_empty(),
+            "a component needs at least one scalar: {name}"
         );
         // Register the schema before touching the entity, and hold a name to one
         // schema. Keeping the first silently would label later values with the
@@ -443,8 +451,17 @@ impl Recording {
         match self.component_registry.entry(name.clone()) {
             std::collections::hash_map::Entry::Occupied(known) => {
                 let known = known.get();
+                // Compared without building the owned schema again: this runs
+                // on every sample of every component.
+                let same = known.scalars_per_row == scalars.len()
+                    && known.field_names.len() == fields.len()
+                    && known
+                        .field_names
+                        .iter()
+                        .zip(fields)
+                        .all(|(registered, given)| registered == given);
                 assert!(
-                    known.scalars_per_row == scalars.len() && known.field_names == fields,
+                    same,
                     "component {name} is already registered as {:?}, and cannot also be {fields:?}",
                     known.field_names
                 );
@@ -452,7 +469,7 @@ impl Recording {
             std::collections::hash_map::Entry::Vacant(slot) => {
                 slot.insert(ComponentFieldInfo {
                     scalars_per_row: scalars.len(),
-                    field_names: fields.to_vec(),
+                    field_names: fields.iter().map(|field| field.to_string()).collect(),
                 });
             }
         }
@@ -1247,7 +1264,7 @@ mod tests {
             &EntityPath::parse("/world/sat/mismatch"),
             &TimePoint::new().with_sim_time(0.0),
             "orts.Mismatch".into(),
-            &["only_one".to_string()],
+            &["only_one"],
             &[1.0, 2.0, 3.0],
         );
     }
@@ -1262,19 +1279,23 @@ mod tests {
         let mut rec = Recording::new();
         let sat = EntityPath::parse("/world/sat/reused");
         let tp = TimePoint::new().with_sim_time(0.0);
+        rec.log_temporal_scalars(&sat, &tp, "orts.Reused".into(), &["a", "b"], &[1.0, 2.0]);
+        rec.log_temporal_scalars(&sat, &tp, "orts.Reused".into(), &["c", "d"], &[3.0, 4.0]);
+    }
+
+    /// A column cannot be built with no scalars, and the row must not be
+    /// opened before finding that out: the entity would carry a row its columns
+    /// do not.
+    #[test]
+    #[should_panic(expected = "at least one scalar")]
+    fn log_temporal_scalars_refuses_a_component_of_no_scalars() {
+        let mut rec = Recording::new();
         rec.log_temporal_scalars(
-            &sat,
-            &tp,
-            "orts.Reused".into(),
-            &["a".to_string(), "b".to_string()],
-            &[1.0, 2.0],
-        );
-        rec.log_temporal_scalars(
-            &sat,
-            &tp,
-            "orts.Reused".into(),
-            &["c".to_string(), "d".to_string()],
-            &[3.0, 4.0],
+            &EntityPath::parse("/world/sat/empty"),
+            &TimePoint::new().with_sim_time(0.0),
+            "orts.Empty".into(),
+            &[],
+            &[],
         );
     }
 
@@ -1284,7 +1305,7 @@ mod tests {
     fn log_temporal_scalars_takes_a_second_sample_at_one_schema() {
         let mut rec = Recording::new();
         let sat = EntityPath::parse("/world/sat/twice");
-        let fields = ["a".to_string(), "b".to_string()];
+        let fields = ["a", "b"];
         for value in [1.0, 2.0] {
             rec.log_temporal_scalars(
                 &sat,

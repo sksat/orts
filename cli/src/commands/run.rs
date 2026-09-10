@@ -1392,6 +1392,7 @@ fn log_disturbance_torques<G, F>(
     let columns = orts::record::components::torque_columns(breakdown.iter().map(|(name, _)| *name));
     for ((name, fields), (_, torque)) in columns.into_iter().zip(&breakdown) {
         let v = torque.into_inner();
+        let fields: Vec<&str> = fields.iter().map(String::as_str).collect();
         rec.log_temporal_scalars(entity, tp, name, &fields, &[v.x, v.y, v.z]);
     }
 }
@@ -1868,7 +1869,8 @@ mod tests {
             );
             rec.log_orbital_state(&sat, &tp, &os);
             for ((name, fields), value) in columns.iter().zip(&values) {
-                rec.log_temporal_scalars(&sat, &tp, name.clone(), fields, value);
+                let fields: Vec<&str> = fields.iter().map(String::as_str).collect();
+                rec.log_temporal_scalars(&sat, &tp, name.clone(), &fields, value);
             }
         }
 
@@ -1942,7 +1944,8 @@ mod tests {
             rec.log_orbital_state(&with_model, &tp, &os);
             rec.log_orbital_state(&plain, &tp, &os);
             let (name, fields) = &columns[0];
-            rec.log_temporal_scalars(&with_model, &tp, name.clone(), fields, &[1e-5, 0.0, 0.0]);
+            let fields: Vec<&str> = fields.iter().map(String::as_str).collect();
+            rec.log_temporal_scalars(&with_model, &tp, name.clone(), &fields, &[1e-5, 0.0, 0.0]);
         }
 
         let mut out = Vec::new();
@@ -1966,5 +1969,122 @@ mod tests {
                 "the satellite without the model should leave the three fields empty: {row}"
             );
         }
+    }
+
+    /// The controlled path logs the torque too.
+    ///
+    /// It records through `log_controlled_state` rather than the callback
+    /// `propagate_and_record` drives, so the plain path's coverage says nothing
+    /// about it: without this, deleting that call would leave the suite green.
+    /// The end-to-end controlled test cannot stand in for it either — it needs
+    /// the plugin guest built and steps over itself when that is absent.
+    ///
+    /// The satellite is assembled the way `controlled.rs`'s own tests assemble
+    /// one, with a gravity-gradient torque to have something to report: the
+    /// inertia is asymmetric and the attitude is turned out of the orbital
+    /// frame, so the torque is not zero by symmetry.
+    #[test]
+    fn the_controlled_path_logs_each_model_disturbance_torque() {
+        use crate::sim::controlled::ControlledSatellite;
+        use orts::plugin::{Command, PluginController, PluginError, TickInput};
+        use orts::spacecraft::SpacecraftState;
+
+        struct Idle;
+        impl PluginController for Idle {
+            fn name(&self) -> &str {
+                "idle"
+            }
+            fn sample_period(&self) -> f64 {
+                1.0
+            }
+            fn update(&mut self, _input: &TickInput<'_>) -> Result<Option<Command>, PluginError> {
+                Ok(None)
+            }
+        }
+
+        let body = arika::body::KnownBody::Earth;
+        let mu = body.properties().mu;
+        let inertia = nalgebra::Matrix3::from_diagonal(&nalgebra::Vector3::new(10.0, 40.0, 45.0));
+        let dynamics = orts::setup::build_spacecraft_dynamics(
+            &body,
+            mu,
+            None,
+            &orts::setup::SatelliteParams {
+                has_drag: false,
+                ballistic_coeff: None,
+                srp_area_to_mass: None,
+                srp_cr: None,
+                disturbances: orts::setup::DisturbanceTorques::default(),
+                shape: None,
+            },
+            &[],
+            inertia,
+            None,
+        )
+        .expect("Earth has a Sun ephemeris");
+        assert!(
+            dynamics.model_names().contains(&"gravity_gradient"),
+            "the satellite carries no torque model: {:?}",
+            dynamics.model_names()
+        );
+
+        let r = body.properties().radius + 400.0;
+        let v = (mu / r).sqrt();
+        // 45 deg about y, where the difference between Ix and Iz makes the
+        // gravity-gradient torque largest.
+        let half = (std::f64::consts::FRAC_PI_8).cos();
+        let plant = SpacecraftState {
+            orbit: orts::orbital::OrbitalState::new(
+                nalgebra::Vector3::new(r, 0.0, 0.0),
+                nalgebra::Vector3::new(0.0, v, 0.0),
+            ),
+            attitude: orts::attitude::AttitudeState {
+                quaternion: nalgebra::Vector4::new(
+                    half,
+                    0.0,
+                    (std::f64::consts::FRAC_PI_8).sin(),
+                    0.0,
+                ),
+                angular_velocity: nalgebra::Vector3::zeros(),
+            },
+            mass: 500.0,
+        };
+        let state = dynamics.initial_augmented_state(plant);
+        let sat = ControlledSatellite::for_test(dynamics, state, Box::new(Idle), body);
+
+        let mut rec = Recording::new();
+        let entity = EntityPath::parse("/world/sat/controlled");
+        let tp = orts::record::timeline::TimePoint::new()
+            .with_sim_time(0.0)
+            .with_step(0);
+        log_controlled_state(&mut rec, &entity, &tp, 0.0, &sat);
+
+        let columns = csv_columns(&rec, &[&entity]);
+        let header = build_csv_header(&columns, false);
+        let column = "gravity_gradient.torque_body_y_Nm";
+        let index = header
+            .trim_start_matches("# ")
+            .split(',')
+            .position(|c| c == column)
+            .unwrap_or_else(|| panic!("column '{column}' missing: {header}"));
+
+        let mut out = Vec::new();
+        write_satellite_csv(&mut out, &rec, &entity, mu, false, &columns).expect("csv");
+        let body_text = String::from_utf8(out).expect("utf-8");
+        let row = body_text
+            .lines()
+            .find(|l| !l.starts_with('#'))
+            .expect("a data row");
+        let value: f64 = row
+            .split(',')
+            .nth(index)
+            .expect("the torque field")
+            .trim()
+            .parse()
+            .expect("a number");
+        assert!(
+            value.abs() > 1e-9,
+            "the gravity-gradient torque should reach the row, got {value:e}: {row}"
+        );
     }
 }

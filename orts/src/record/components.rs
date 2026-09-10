@@ -232,8 +232,9 @@ impl Component for MtqCommand3D {
 /// their sum. [`torque_columns`] builds those names; the values come from
 /// `SpacecraftDynamics::torque_breakdown`.
 ///
-/// The vector rather than a magnitude: what a torque model gets wrong is the
-/// direction, and a magnitude cannot show it.
+/// The vector rather than a magnitude: a magnitude carries neither the sign nor
+/// the axis, and a disturbance turning the spacecraft the wrong way reads the
+/// same as one turning it the right way.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelTorqueBody3D(pub Vector3<f64>);
 

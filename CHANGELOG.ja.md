@@ -13,8 +13,9 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 #### Added
 - `SpacecraftDynamics::torque_breakdown` を追加。モデルごとの外乱トルクを機体座標系 [N·m]
   で返す。既存の `acceleration_breakdown` が magnitude を返すのに対しこちらはベクトルを
-  返す。トルクモデルが誤るのは向きだからである (平板 SRP の反射項 [#377](https://github.com/sksat/orts/pull/377) と大気抵抗の
-  面の選び方 [#437](https://github.com/sksat/orts/pull/437) は、どちらも大きさではなく向きの修正だった)。重力場は一覧に
+  返す。magnitude は符号も軸も運ばないので、機体を逆向きに回す外乱と正しい向きに回す外乱が
+  同じ値になる。その向きを直したのが平板 SRP の反射項 [#377](https://github.com/sksat/orts/pull/377) と大気抵抗の面の
+  選び方 [#437](https://github.com/sksat/orts/pull/437) である。重力場は一覧に
   出ない。重心に働くので重心まわりのトルクを作らないためで、gravity gradient のトルクは
   モデルとして自分の名前で出る。([#466](https://github.com/sksat/orts/pull/466))
 - `Recording::log_temporal_scalars` を追加。実行時に決まる名前で component を記録し、

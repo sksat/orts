@@ -217,10 +217,10 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
 
     /// Per-model disturbance torque in the body frame [N·m], for telemetry.
     ///
-    /// The vector rather than a magnitude, because the direction is what a
-    /// torque model gets wrong: the flat-panel SRP reflection terms and the
-    /// drag facing rule were both fixed by turning the torque, not by resizing
-    /// it, and a magnitude cannot show that.
+    /// The vector rather than a magnitude, because a magnitude carries neither
+    /// the sign nor the axis, and those are what a torque is read for: an
+    /// attitude disturbance that turns the wrong way looks the same size as one
+    /// that turns the right way.
     ///
     /// The gravity field is absent. It acts on the centre of mass, so it exerts
     /// no torque about it; a gravity-gradient torque is a
@@ -229,9 +229,11 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     /// [`acceleration_breakdown`](Self::acceleration_breakdown) leads with
     /// `"gravity"`.
     ///
-    /// Effectors are absent too: this is the environment acting on the
-    /// spacecraft, and what a reaction wheel or a magnetorquer commands is read
-    /// from the effector itself.
+    /// Every model answers, not only the environmental ones. A magnetorquer and
+    /// a thruster assembly are `Model`s and are installed as such, so their
+    /// commanded torques appear here under their own names. A reaction wheel is
+    /// a `StateEffector` — it carries its own state — and is absent; its
+    /// momentum is read from the effector.
     pub fn torque_breakdown(
         &self,
         t: f64,
@@ -1095,12 +1097,11 @@ mod tests {
 
     /// The breakdown telemetry reads has to carry the torque's direction.
     ///
-    /// `acceleration_breakdown` answers with a magnitude, which is enough for a
-    /// force that always points along the same line but not for a torque: the
-    /// panel SRP fix (#377) and the drag facing fix (#437) both left the size
-    /// alone and changed where the torque pointed. Two models whose torques are
-    /// perpendicular here, so a breakdown that summed or normalised them could
-    /// not produce these components.
+    /// `acceleration_breakdown` answers with a magnitude, which cannot carry a
+    /// sign or an axis: a disturbance turning the spacecraft the wrong way
+    /// reads the same as one turning it the right way. The two models here have
+    /// perpendicular torques, so a breakdown that summed or normalised them
+    /// could not produce these components.
     #[test]
     fn torque_breakdown_reports_each_model_as_a_body_frame_vector() {
         let about_x = Vector3::new(0.4, 0.0, 0.0);
