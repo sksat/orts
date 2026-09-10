@@ -750,6 +750,31 @@ section is subdivided by package.
   Non-degenerate orbits are unchanged. ([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- `EopTable::new` checks the order its doc requires. It documented sorted
+  entries and returned `Result`, but only rejected an empty table, so entries at
+  MJD 60000, 60002, 60001 built a table whose `mjd_range` read
+  `(60000, 60001)` — a query at 60001.5 came back `OutOfRange` while 60002 sat
+  in the table, and the lookup's `partition_point` bisected data it could not
+  assume was ordered. Reported as the new
+  `EopLookupError::NonMonotonicMjd`, which names the condition the
+  finals2000A parser already reported as `EopParseError::NonMonotonicMjd`. Two
+  entries at one MJD are refused too, since they leave the interpolation no
+  interval. ([#463](https://github.com/sksat/orts/pull/463))
+- The optional finals2000A columns (LOD, dX, dY, and the Bulletin B block) tell
+  a blank column apart from a corrupt one. Both used to read as absent, and an
+  absent correction is answered with `0.0` — so a row holding `0.3O0` became
+  "IERS published no correction here" with nothing said, while the required
+  columns had always been an error. A blank column is still absent: IERS leaves
+  the prediction tail's correction columns empty, and that is data. ([#463](https://github.com/sksat/orts/pull/463))
+- `EopTable::from_finals2000a` reports what the table refused instead of
+  folding it into `EopParseError::Empty`, and `Finals2000A::parse` refuses a
+  non-finite MJD naming the line it is on. `NaN` parses as a number and compares
+  as neither greater nor smaller, so the parser's `mjd <= previous` test could
+  not see it: a file of 61 rows with one `NaN` MJD came back as
+  `Empty` — "the file contained no valid entries" — while it held 61. ([#463](https://github.com/sksat/orts/pull/463))
+- **BREAKING**: `EopParseError` and `EopLookupError` are `#[non_exhaustive]`, so
+  an exhaustive `match` on either needs a wildcard arm. Both gained a variant
+  here and the EOP work still open will add more. ([#463](https://github.com/sksat/orts/pull/463))
 - `KeplerianElements::from_state_vector` lost the periapsis direction of an
   eccentric equatorial orbit: it zeroed both the RAAN and the argument of
   periapsis while still measuring the true anomaly from the eccentricity vector,
