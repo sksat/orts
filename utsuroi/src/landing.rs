@@ -31,6 +31,7 @@ pub struct FixedSteps {
     t_end: f64,
     dt: f64,
     taken: u64,
+    stagnated: bool,
 }
 
 /// One step of a [`FixedSteps`] walk: where it starts, how wide it is, and
@@ -49,12 +50,17 @@ impl FixedSteps {
     /// Walk `[t0, t_end]` in steps of `dt`.
     ///
     /// Rejects what cannot produce a terminating walk: a step size that is not
-    /// positive and finite, a non-finite end of the span, or an end before the
-    /// start. Each of those would otherwise yield forever — a `dt` of zero
-    /// never leaves `t0`, a negative one walks backwards, and every comparison
-    /// against a NaN end is false.
+    /// positive and finite, a non-finite start or end of the span, or an end
+    /// before the start. Each of those would otherwise yield forever — a `dt`
+    /// of zero never leaves `t0`, a negative one walks backwards, and every
+    /// comparison against a NaN is false.
     ///
     /// An empty span (`t0 == t_end`) is valid and yields nothing.
+    ///
+    /// A `dt` that passes here can still fail to advance the clock further
+    /// into the span, where the spacing of f64 is wider than `dt` itself. The
+    /// walk reports that as [`IntegrationError::TimeStagnated`] on the step it
+    /// happens at, rather than yielding a step of no width.
     pub fn new(t0: f64, t_end: f64, dt: f64) -> Result<Self, IntegrationError> {
         validate_step_size(dt)?;
         validate_time_span(t0, t_end)?;
@@ -63,14 +69,18 @@ impl FixedSteps {
             t_end,
             dt,
             taken: 0,
+            stagnated: false,
         })
     }
 }
 
 impl Iterator for FixedSteps {
-    type Item = Step;
+    type Item = Result<Step, IntegrationError>;
 
-    fn next(&mut self) -> Option<Step> {
+    fn next(&mut self) -> Option<Result<Step, IntegrationError>> {
+        if self.stagnated {
+            return None;
+        }
         let t = if self.taken == 0 {
             self.t0
         } else {
@@ -88,23 +98,35 @@ impl Iterator for FixedSteps {
         } else {
             grid_next
         };
+        // `dt` is positive, but for a large `|t|` it can be narrower than the
+        // spacing of f64 there, and the grid then stops moving. Reporting it
+        // here is what keeps a caller from having to notice a step of no width
+        // — and one error ends the walk, rather than repeating forever.
+        if next_t == t {
+            self.stagnated = true;
+            return Some(Err(IntegrationError::TimeStagnated { t, dt: self.dt }));
+        }
         self.taken += 1;
-        Some(Step {
+        Some(Ok(Step {
             t,
             h: next_t - t,
             next_t,
-        })
+        }))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::FixedSteps;
+    use crate::IntegrationError;
 
     fn walk(t0: f64, t_end: f64, dt: f64) -> Vec<(f64, f64)> {
         FixedSteps::new(t0, t_end, dt)
             .expect("the span and step are valid")
-            .map(|step| (step.h, step.next_t))
+            .map(|step| {
+                let step = step.expect("the walk advances");
+                (step.h, step.next_t)
+            })
             .collect()
     }
 
@@ -151,7 +173,8 @@ mod tests {
         let ninth = FixedSteps::new(0.0, 2.0, 0.1)
             .expect("the span and step are valid")
             .nth(9)
-            .expect("the span holds twenty steps");
+            .expect("the span holds twenty steps")
+            .expect("the walk advances");
         assert_eq!(ninth.t, 0.9);
 
         let mut accumulated = 0.0;
@@ -191,6 +214,23 @@ mod tests {
                 "[{t0}, {t_end}] in steps of {dt} was accepted"
             );
         }
+    }
+
+    /// A `dt` narrower than the spacing of f64 at the span's times cannot
+    /// move the grid. The walk says so once and ends, rather than handing back
+    /// steps of no width for a caller to notice.
+    #[test]
+    fn a_step_the_clock_cannot_feel_is_reported_once() {
+        let mut walk =
+            FixedSteps::new(1e16, 1e16 + 10.0, 0.1).expect("the span and step are valid");
+        assert!(
+            matches!(
+                walk.next(),
+                Some(Err(IntegrationError::TimeStagnated { .. }))
+            ),
+            "a step of 0.1 at 1e16 is below the spacing there"
+        );
+        assert!(walk.next().is_none(), "the walk ends after saying so");
     }
 
     /// A span that starts away from zero keeps its own anchor.

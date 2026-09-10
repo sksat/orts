@@ -500,20 +500,10 @@ where
                             if terminated {
                                 break;
                             }
-                            // `h > 0` after the validate() above, but for large
-                            // `|current_t|` it can still be below the f64 spacing
-                            // there.
-                            if step.next_t == step.t {
-                                // The step size is below the spacing of f64 at
-                                // this time. A segment cannot be this narrow —
-                                // `FixedSteps` assigns its end on the last step
-                                // and yields nothing once `t` reaches it — so
-                                // what stagnates here is `dt` itself.
-                                return Err(IntegrationError::TimeStagnated {
-                                    t: step.t,
-                                    dt: step.h,
-                                });
-                            }
+                            // The walk reports a `dt` below the spacing of f64
+                            // at this time; a segment cannot be that narrow,
+                            // since the walk assigns its end on the last step.
+                            let step = step?;
                             current_state = Rk4.step(bound, step.t, &current_state, step.h);
                             current_t = step.next_t;
 

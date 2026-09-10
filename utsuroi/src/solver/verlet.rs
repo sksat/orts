@@ -132,12 +132,7 @@ impl StormerVerlet {
 
         let mut state = initial;
         for step in FixedSteps::new(t0, t_end, dt)? {
-            if step.next_t == step.t {
-                return Err(IntegrationError::TimeStagnated {
-                    t: step.t,
-                    dt: step.h,
-                });
-            }
+            let step = step?;
             state = self.step(system, step.t, &state, step.h);
             let t = step.next_t;
             if !state.is_finite() {
@@ -190,12 +185,10 @@ impl StormerVerlet {
             Err(e) => return IntegrationOutcome::Error(e),
         };
         for step in steps {
-            if step.next_t == step.t {
-                return IntegrationOutcome::Error(IntegrationError::TimeStagnated {
-                    t: step.t,
-                    dt: step.h,
-                });
-            }
+            let step = match step {
+                Ok(step) => step,
+                Err(e) => return IntegrationOutcome::Error(e),
+            };
             state = self.step(system, step.t, &state, step.h);
             let t = step.next_t;
             if !state.is_finite() {
