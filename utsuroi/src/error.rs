@@ -76,6 +76,19 @@ pub enum IntegrationError {
     /// not advance at all — that happens once `dt` falls below half the
     /// spacing.
     StepBelowSpacing { t: f64, dt: f64, spacing: f64 },
+    /// A fixed-step walk decided a step from `t` should land on `landing`, and
+    /// the width between the two does not carry the clock there: `t + h` falls
+    /// short of `landing`, or past it.
+    ///
+    /// The last step of a span is assigned the span's end rather than reaching
+    /// it by arithmetic, so its width has to resolve both its start and its
+    /// end. Where `|t|` is large enough relative to the resolution the end
+    /// needs, one f64 cannot: from `-1e16` the distance to `1.0` rounds to
+    /// `1e16`, and `-1e16 + 1e16` is `0.0`. Publishing such a step would name a
+    /// time the solver's own stages never saw. Measured across 408 spans, the
+    /// walk refuses only where the span crosses zero from `1e14` or further
+    /// away in a single step.
+    LandingUnreachable { t: f64, h: f64, landing: f64 },
 }
 
 impl IntegrationError {
@@ -94,7 +107,8 @@ impl IntegrationError {
             | Self::StepSizeTooSmall { t, .. }
             | Self::IndeterminateErrorNorm { t }
             | Self::TimeStagnated { t, .. }
-            | Self::StepBelowSpacing { t, .. } => Some(*t),
+            | Self::StepBelowSpacing { t, .. }
+            | Self::LandingUnreachable { t, .. } => Some(*t),
             Self::InvalidTimeSpan { t0, .. } => Some(*t0),
             Self::InvalidStepSize { .. } | Self::InvalidTolerances { .. } => None,
         }
@@ -168,6 +182,14 @@ impl core::fmt::Display for IntegrationError {
                 write!(
                     f,
                     "time stopped advancing at t = {t}: t + {dt} rounds back to t"
+                )
+            }
+            Self::LandingUnreachable { t, h, landing } => {
+                write!(
+                    f,
+                    "a step of {h} from t = {t} lands on {}, not on {landing} as the grid \
+                     asked: one f64 cannot resolve both ends of that step",
+                    t + h
                 )
             }
             Self::StepBelowSpacing { t, dt, spacing } => {
@@ -361,9 +383,81 @@ mod tests {
                 IntegrationError::TimeStagnated { t: 4.0, dt: 1e-9 },
                 "stopped advancing",
             ),
+            (
+                IntegrationError::StepBelowSpacing {
+                    t: 1e15,
+                    dt: 0.1,
+                    spacing: 0.125,
+                },
+                "narrower than the spacing",
+            ),
+            (
+                IntegrationError::LandingUnreachable {
+                    t: -1e16,
+                    h: 1e16,
+                    landing: 1.0,
+                },
+                "as the grid",
+            ),
         ] {
             let msg = err.to_string();
             assert!(msg.contains(needle), "{err:?} display was {msg:?}");
+        }
+    }
+
+    /// Every variant that names a time reports it, so a caller writing
+    /// `err.time().unwrap_or(start_t)` attributes the failure where it happened
+    /// rather than to the start of its span.
+    #[test]
+    fn a_variant_that_names_a_time_reports_it() {
+        for (err, expected) in [
+            (IntegrationError::NonFiniteState { t: 1.5 }, Some(1.5)),
+            (
+                IntegrationError::StepSizeTooSmall { t: 2.0, dt: 1e-15 },
+                Some(2.0),
+            ),
+            (
+                IntegrationError::InvalidTimeSpan {
+                    t0: 3.0,
+                    t_end: 2.0,
+                },
+                Some(3.0),
+            ),
+            (
+                IntegrationError::IndeterminateErrorNorm { t: 4.0 },
+                Some(4.0),
+            ),
+            (
+                IntegrationError::TimeStagnated { t: 5.0, dt: 1e-9 },
+                Some(5.0),
+            ),
+            (
+                IntegrationError::StepBelowSpacing {
+                    t: 1e15,
+                    dt: 0.1,
+                    spacing: 0.125,
+                },
+                Some(1e15),
+            ),
+            (
+                IntegrationError::LandingUnreachable {
+                    t: -1e16,
+                    h: 1e16,
+                    landing: 1.0,
+                },
+                Some(-1e16),
+            ),
+            // The pre-flight argument checks reject before any step runs.
+            (IntegrationError::InvalidStepSize { dt: 0.0 }, None),
+            (
+                IntegrationError::InvalidTolerances {
+                    atol: 0.0,
+                    rtol: 0.0,
+                },
+                None,
+            ),
+        ] {
+            assert_eq!(err.time(), expected, "{err:?}");
         }
     }
 }

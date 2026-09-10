@@ -164,12 +164,26 @@ impl Iterator for FixedSteps {
             return Some(Err(IntegrationError::TimeStagnated { t, dt: self.dt }));
         }
 
+        // The last step of a span is assigned `t_end` rather than reaching it
+        // by arithmetic, so the width and the landing have to agree. Where
+        // `|t|` is large enough relative to the resolution the landing needs,
+        // one f64 cannot resolve both: the solver would evaluate its stages up
+        // to `t + h` while the caller was told the state belongs to `next_t`.
+        // Refused rather than split into two steps: the second would start
+        // from `t + h`, which is not a grid time, and counting from the span's
+        // start is what keeps the grid from drifting.
+        let h = next_t - t;
+        if t + h != next_t {
+            self.stagnated = true;
+            return Some(Err(IntegrationError::LandingUnreachable {
+                t,
+                h,
+                landing: next_t,
+            }));
+        }
+
         self.index = index;
-        Some(Ok(Step {
-            t,
-            h: next_t - t,
-            next_t,
-        }))
+        Some(Ok(Step { t, h, next_t }))
     }
 }
 
@@ -508,6 +522,34 @@ mod tests {
             .expect("the span holds a step")
             .expect("a step of 1 from zero is representable");
         assert_eq!((first.t, first.next_t), (0.0, 1.0));
+    }
+
+    /// The last step of a span is assigned the span's end rather than reaching
+    /// it by arithmetic, and far enough from zero the width between the two
+    /// stops carrying the clock there: from `-1e16` the distance to `1.0`
+    /// rounds to `1e16`, and `-1e16 + 1e16` is `0.0`. Publishing that step
+    /// would tell a caller its state belongs to `1.0` while the solver
+    /// evaluated its last stage at `0.0`.
+    #[test]
+    fn a_span_end_no_step_can_reach_ends_the_walk() {
+        let t0 = -1e16;
+        let t_end = 1.0;
+        assert_ne!(
+            t0 + (t_end - t0),
+            t_end,
+            "precondition: the end is out of reach from the start"
+        );
+        // Wide enough that the first step is the one clamped to the end.
+        let mut walk = FixedSteps::new(t0, t_end, 2e16).expect("the span and step are valid");
+        match walk.next() {
+            Some(Err(IntegrationError::LandingUnreachable { t, h, landing })) => {
+                assert_eq!(t, t0);
+                assert_eq!(h, t_end - t0);
+                assert_eq!(landing, t_end);
+            }
+            other => panic!("expected the walk to refuse the step, got {other:?}"),
+        }
+        assert!(walk.next().is_none(), "one report ends the walk");
     }
 
     /// A span that starts away from zero keeps its own anchor.

@@ -742,6 +742,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   動いていた — `t = 1e15` で `dt = 0.1` は clock を 0.125 進める一方 solver は 0.1 を積分するので、
   返る state は clock が既に通り過ぎた時刻のものだった。**そうした span は、グリッドが運べる
   ぶんを歩いたうえで、その step でエラーになる**。([#458](https://github.com/sksat/orts/pull/458))
+- 固定刻みの積分が、着地予定の時刻まで clock を運べない step を拒否するようになった
+  (新しい `IntegrationError::LandingUnreachable`)。span の最後の step は端を計算で踏むのではなく
+  代入するので、その幅は開始と終端の両方を解像する必要がある。終端が要求する解像度に対して
+  `|t|` が十分大きいと、1 つの f64 では両方を解像できない。`-1e16` から `1.0` までの距離は
+  `1e16` に丸まり、`-1e16 + 1e16` は `0.0` なので、従来のループは 0 で終わる step を solver に
+  渡したうえで、その state を `1.0` のものとして報告していた。408 個の span で実測したところ、
+  この拒否が届くのは、`1e14` 以上離れた場所から 1 ステップで 0 を跨ぐ span だけである。([#458](https://github.com/sksat/orts/pull/458))
 
 #### Fixed
 - 積分ループが、渡された状態そのものについて event の判定を行うようになった

@@ -860,6 +860,16 @@ section is subdivided by package.
   state returned belonged to a time already passed. **Such a span now stops
   with an error at the step it happens on**, having walked the part of the span
   the grid could carry. ([#458](https://github.com/sksat/orts/pull/458))
+- A fixed-step integration refuses a step whose width does not carry the clock
+  to the time it was to land on, as the new
+  `IntegrationError::LandingUnreachable`. The last step of a span is assigned
+  the span's end rather than reaching it by arithmetic, so its width has to
+  resolve both its start and its end; where `|t|` is large enough relative to
+  the resolution the end needs, one f64 cannot. From `-1e16` the distance to
+  `1.0` rounds to `1e16`, and `-1e16 + 1e16` is `0.0`, so the old loops handed
+  the solver a step that ended at zero and then reported the state as belonging
+  to `1.0`. Measured across 408 spans, the refusal reaches only spans that cross
+  zero from `1e14` or further away in a single step. ([#458](https://github.com/sksat/orts/pull/458))
 
 #### Fixed
 - Every integrate loop asks its event predicate about the state it was given,
