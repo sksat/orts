@@ -58,6 +58,11 @@ pub enum TleParseError {
     /// The parsed values are not a valid element set (e.g. non-positive mean
     /// motion or out-of-range eccentricity).
     InvalidElements(ElementsError),
+    /// The input carries more than the one element set this parser returns:
+    /// `read` lines make it up and the input holds `found` non-blank lines.
+    /// A catalog of several satellites has to be split by its caller, since
+    /// reading only the first would drop the rest without saying so.
+    TrailingLines { read: usize, found: usize },
 }
 
 impl fmt::Display for TleParseError {
@@ -90,6 +95,11 @@ impl fmt::Display for TleParseError {
                 "TLE lines are from different satellites: line 1 has catalog number {line1}, line 2 has {line2}"
             ),
             TleParseError::InvalidElements(e) => write!(f, "invalid TLE element set: {e}"),
+            TleParseError::TrailingLines { read, found } => write!(
+                f,
+                "the element set is {read} lines but the input has {found}: \
+                 parse one element set at a time"
+            ),
         }
     }
 }
@@ -99,9 +109,13 @@ impl std::error::Error for TleParseError {}
 
 /// Parse a TLE into a [`ParsedElementSet`].
 ///
-/// Accepts:
+/// Accepts exactly one element set, as blank-line-padded:
 /// - 2 lines: line 1 + line 2
 /// - 3 lines: name + line 1 + line 2
+///
+/// Anything past those lines is [`TleParseError::TrailingLines`]. This returns
+/// one [`ParsedElementSet`], so a caller handing it a catalog of several
+/// satellites gets told rather than getting the first one.
 ///
 /// Both lines must carry a correct mod-10 checksum digit and the same catalog
 /// number, so a hand-edited digit or a pair of lines from two different
@@ -116,21 +130,31 @@ pub fn parse(text: &str) -> Result<ParsedElementSet, TleParseError> {
         .filter(|l| !l.is_empty())
         .collect();
 
-    let (name, line1, line2) = match lines.len() {
+    let (name, line1, line2, read) = match lines.len() {
         0 | 1 => return Err(TleParseError::InsufficientLines),
-        2 => (None, lines[0], lines[1]),
+        2 => (None, lines[0], lines[1], 2),
         _ => {
             // First line is a name only if it isn't itself line 1.
             if lines[0].starts_with('1') {
-                (None, lines[0], lines[1])
+                (None, lines[0], lines[1], 2)
             } else {
                 // CelesTrak "3LE" prefixes the name line with the "0 " line
                 // number; strip it so names match the OMM OBJECT_NAME form.
                 let name = lines[0].strip_prefix("0 ").unwrap_or(lines[0]).trim();
-                (Some(name.to_string()), lines[1], lines[2])
+                (Some(name.to_string()), lines[1], lines[2], 3)
             }
         }
     };
+
+    // Every line past the element set is refused. Reading only the first
+    // record of a catalog dropped the others silently, and both lines of each
+    // record carry valid checksums, so nothing downstream could notice.
+    if lines.len() > read {
+        return Err(TleParseError::TrailingLines {
+            read,
+            found: lines.len(),
+        });
+    }
 
     if !line1.starts_with('1') {
         return Err(TleParseError::InvalidLine1Prefix);
@@ -730,6 +754,48 @@ ISS (ZARYA)
         assert!(
             (a - 42164.0).abs() < 50.0,
             "GEO semi-major axis should be ~42164km, got {a:.1}km"
+        );
+    }
+
+    /// A single-element-set parser hands back one orbit, so input holding more
+    /// than one has to be refused rather than read as its first record. A
+    /// two-satellite catalog parsed as one used to return the first satellite
+    /// and drop the rest, with both lines' checksums intact so nothing else
+    /// caught it.
+    #[test]
+    fn a_second_record_is_refused_rather_than_dropped() {
+        let two_satellites = format!("{ISS_TLE_2LINE}\n{ISS_TLE_2LINE}");
+        assert_eq!(
+            parse(&two_satellites),
+            Err(TleParseError::TrailingLines { read: 2, found: 4 })
+        );
+        let named = format!("{ISS_TLE}\n{ISS_TLE_2LINE}");
+        assert_eq!(
+            parse(&named),
+            Err(TleParseError::TrailingLines { read: 3, found: 5 })
+        );
+    }
+
+    /// Anything after the element set is refused too, whatever it is: a
+    /// truncated download's last partial line is not a line of the orbit that
+    /// precedes it.
+    #[test]
+    fn trailing_text_is_refused() {
+        let with_junk = format!("{ISS_TLE_2LINE}\nnot a TLE line");
+        assert_eq!(
+            parse(&with_junk),
+            Err(TleParseError::TrailingLines { read: 2, found: 3 })
+        );
+    }
+
+    /// Blank lines and trailing whitespace are not extra records — the parser
+    /// drops them before counting, as it always has.
+    #[test]
+    fn blank_lines_around_the_element_set_are_not_records() {
+        let padded = format!("\n\n{ISS_TLE_2LINE}\n\n   \n");
+        assert!(
+            parse(&padded).is_ok(),
+            "blank padding is not a second record"
         );
     }
 

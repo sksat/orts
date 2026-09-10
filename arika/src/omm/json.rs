@@ -81,7 +81,10 @@ struct OmmJson {
     arg_of_pericenter: f64,
     #[serde(deserialize_with = "f64_or_string")]
     mean_anomaly: f64,
-    #[serde(default, deserialize_with = "f64_or_string")]
+    // No `default`: an OMM that declares SGP4 has to carry the drag term the
+    // theory reads. Defaulting it to zero propagated a satellite with no drag
+    // at all, and every other element here is required the same way.
+    #[serde(deserialize_with = "f64_or_string")]
     bstar: f64,
 }
 
@@ -249,6 +252,22 @@ mod tests {
         ));
     }
 
+    /// SGP4 reads the drag term, and this crate refuses any other mean-element
+    /// theory, so an OMM that reaches here declares SGP4 and has to carry
+    /// `BSTAR`. A missing field used to read as `0.0`, which propagates the
+    /// satellite with no drag at all — a different orbit, reported as success.
+    #[test]
+    fn a_missing_bstar_is_refused() {
+        let without = ISS_OMM_JSON.replace(r#""BSTAR": 0.00003,"#, "");
+        assert_ne!(without, ISS_OMM_JSON, "fixture no longer carries BSTAR");
+        match parse(&without) {
+            Err(JsonParseError::Malformed(m)) => {
+                assert!(m.contains("BSTAR"), "the error should name the field: {m}");
+            }
+            other => panic!("expected a refusal naming BSTAR, got {other:?}"),
+        }
+    }
+
     #[test]
     fn rejects_bad_epoch() {
         let j = r#"{
@@ -259,7 +278,8 @@ mod tests {
             "INCLINATION": 0.0,
             "RA_OF_ASC_NODE": 0.0,
             "ARG_OF_PERICENTER": 0.0,
-            "MEAN_ANOMALY": 0.0
+            "MEAN_ANOMALY": 0.0,
+            "BSTAR": 0.0
         }"#;
         assert!(matches!(parse(j), Err(JsonParseError::InvalidEpoch(_))));
     }

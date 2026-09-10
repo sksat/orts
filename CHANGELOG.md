@@ -481,6 +481,10 @@ section is subdivided by package.
   no error to the client. ([#351](https://github.com/sksat/orts/pull/351))
 
 #### Fixed
+- `--tle <path>` and `orbit.tle` refuse a file holding more than one element
+  set. A catalog of several satellites simulated its first one and said nothing
+  about the rest; the run now stops naming how many lines the file has. Split
+  the catalog and run one satellite per invocation. ([#462](https://github.com/sksat/orts/pull/462))
 - The controlled loop flies a scheduled burn shorter than an integration step.
   `propagate_controlled` ran the integrator from the span's start straight to
   its end, so dynamics carrying a schedule lost it the way the group loops did
@@ -750,6 +754,19 @@ section is subdivided by package.
   Non-degenerate orbits are unchanged. ([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- `tle::parse` refuses input carrying more than the one element set it returns,
+  as the new `TleParseError::TrailingLines`. It read the first record and
+  dropped the rest without saying so, and since every record's two lines carry
+  their own valid checksums, nothing downstream could notice — a two-satellite
+  catalog parsed as its first satellite. Blank lines and trailing whitespace are
+  dropped before counting, as they always were. ([#462](https://github.com/sksat/orts/pull/462))
+- The OMM parsers require `BSTAR` in all three serializations (JSON, KVN, XML).
+  A missing drag term read as `0.0`, so an element set with the field absent
+  propagated as a satellite with no drag at all and reported success. Every
+  other element was already required; a `BSTAR` of `0.0` written out explicitly
+  is still accepted, since a high orbit legitimately has one. The parsers refuse
+  any `MEAN_ELEMENT_THEORY` other than SGP4, so this is the drag term SGP4
+  itself reads. ([#462](https://github.com/sksat/orts/pull/462))
 - `KeplerianElements::from_state_vector` lost the periapsis direction of an
   eccentric equatorial orbit: it zeroed both the RAAN and the argument of
   periapsis while still measuring the true anomaly from the eccentricity vector,

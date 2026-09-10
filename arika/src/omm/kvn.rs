@@ -66,7 +66,7 @@ pub fn parse(kvn: &str) -> Result<ParsedElementSet, KvnParseError> {
     let mut raan = None; // deg
     let mut arg_perigee = None; // deg
     let mut mean_anomaly = None; // deg
-    let mut bstar = 0.0;
+    let mut bstar = None;
 
     for line in kvn.lines() {
         let line = line.trim();
@@ -101,7 +101,7 @@ pub fn parse(kvn: &str) -> Result<ParsedElementSet, KvnParseError> {
                 arg_perigee = Some(parse_num::<f64>("ARG_OF_PERICENTER", value)?)
             }
             "MEAN_ANOMALY" => mean_anomaly = Some(parse_num::<f64>("MEAN_ANOMALY", value)?),
-            "BSTAR" => bstar = parse_num::<f64>("BSTAR", value)?,
+            "BSTAR" => bstar = Some(parse_num::<f64>("BSTAR", value)?),
             _ => {} // version / GM / element_set_no / checked metadata / …
         }
     }
@@ -116,6 +116,10 @@ pub fn parse(kvn: &str) -> Result<ParsedElementSet, KvnParseError> {
     let raan = raan.ok_or(KvnParseError::MissingField("RA_OF_ASC_NODE"))?;
     let arg_perigee = arg_perigee.ok_or(KvnParseError::MissingField("ARG_OF_PERICENTER"))?;
     let mean_anomaly = mean_anomaly.ok_or(KvnParseError::MissingField("MEAN_ANOMALY"))?;
+
+    // An OMM that declares SGP4 has to carry the drag term the theory reads;
+    // defaulting it to zero propagated a satellite with no drag at all.
+    let bstar = bstar.ok_or(KvnParseError::MissingField("BSTAR"))?;
 
     let norad_cat_id = norad_cat_id.ok_or(KvnParseError::MissingField("NORAD_CAT_ID"))?;
     let elements = Sgp4Elements::try_new(Sgp4ElementsFields {
@@ -237,6 +241,17 @@ BSTAR = 0.00003
         ));
     }
 
+    /// SGP4 reads the drag term, and this crate refuses any other mean-element
+    /// theory, so an OMM that reaches here declares SGP4 and has to carry
+    /// `BSTAR`. A missing field used to read as `0.0`, which propagates the
+    /// satellite with no drag at all — a different orbit, reported as success.
+    #[test]
+    fn a_missing_bstar_is_refused() {
+        let without = ISS_OMM_KVN.replace("BSTAR = 0.00003\n", "");
+        assert_ne!(without, ISS_OMM_KVN, "fixture no longer carries BSTAR");
+        assert_eq!(parse(&without), Err(KvnParseError::MissingField("BSTAR")));
+    }
+
     #[test]
     fn object_name_with_bracket_not_truncated() {
         // A '[' in a string field must survive (unit stripping is numeric-only).
@@ -249,6 +264,7 @@ INCLINATION = 0.0
 RA_OF_ASC_NODE = 0.0
 ARG_OF_PERICENTER = 0.0
 MEAN_ANOMALY = 0.0
+BSTAR = 0.0
 NORAD_CAT_ID = 1";
         let set = parse(kvn).unwrap();
         assert_eq!(set.object_name.as_deref(), Some("SAT [TEST]"));
