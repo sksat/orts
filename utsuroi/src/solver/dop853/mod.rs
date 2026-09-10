@@ -8,7 +8,8 @@ use crate::error::{validate_step_size, validate_time_span};
 #[allow(unused_imports)]
 use crate::math::F64Ext;
 use crate::{
-    DynamicalSystem, IntegrationError, IntegrationOutcome, Integrator, OdeState, Tolerances,
+    AdvanceOutcome, DynamicalSystem, IntegrationError, IntegrationOutcome, Integrator, OdeState,
+    Tolerances,
 };
 
 /// Dormand-Prince 8(5,3) adaptive step-size integrator (DOP853).
@@ -215,14 +216,6 @@ impl Integrator for Dop853 {
     }
 }
 
-/// Result of [`AdaptiveStepper853::advance_to`].
-pub enum AdvanceOutcome853<B> {
-    /// Reached the target time.
-    Reached,
-    /// An event terminated integration early.
-    Event { reason: B },
-}
-
 /// Stateful adaptive stepper for DOP853.
 ///
 /// Created via [`Dop853::stepper`]. Callers repeatedly call
@@ -287,7 +280,7 @@ impl<'a, S: DynamicalSystem> AdaptiveStepper853<'a, S> {
         t_target: f64,
         mut callback: F,
         event_check: E,
-    ) -> Result<AdvanceOutcome853<B>, IntegrationError>
+    ) -> Result<AdvanceOutcome<B>, IntegrationError>
     where
         F: FnMut(f64, &S::State),
         E: Fn(f64, &S::State) -> ControlFlow<B>,
@@ -309,7 +302,7 @@ impl<'a, S: DynamicalSystem> AdaptiveStepper853<'a, S> {
             && self.t < t_target
             && let ControlFlow::Break(reason) = event_check(self.t, &self.state)
         {
-            return Ok(AdvanceOutcome853::Event { reason });
+            return Ok(AdvanceOutcome::Event { reason });
         }
 
         while self.t < t_target {
@@ -365,7 +358,7 @@ impl<'a, S: DynamicalSystem> AdaptiveStepper853<'a, S> {
                 callback(self.t, &self.state);
 
                 if let ControlFlow::Break(reason) = event_check(self.t, &self.state) {
-                    return Ok(AdvanceOutcome853::Event { reason });
+                    return Ok(AdvanceOutcome::Event { reason });
                 }
 
                 // Grow step size (8th-order exponent)
@@ -392,7 +385,7 @@ impl<'a, S: DynamicalSystem> AdaptiveStepper853<'a, S> {
             }
         }
 
-        Ok(AdvanceOutcome853::Reached)
+        Ok(AdvanceOutcome::Reached)
     }
 
     /// Current state.
@@ -494,8 +487,8 @@ impl Dop853 {
         stepper.dt_min = 1e-12 * (t_end - t0).abs().max(1.0);
 
         match stepper.advance_to(t_end, callback, event_check) {
-            Ok(AdvanceOutcome853::Reached) => IntegrationOutcome::Completed(stepper.into_state()),
-            Ok(AdvanceOutcome853::Event { reason }) => {
+            Ok(AdvanceOutcome::Reached) => IntegrationOutcome::Completed(stepper.into_state()),
+            Ok(AdvanceOutcome::Event { reason }) => {
                 let t = stepper.t();
                 IntegrationOutcome::Terminated {
                     state: stepper.into_state(),
@@ -1347,7 +1340,7 @@ mod tests {
             )
             .expect("a target already reached is valid");
         assert!(
-            matches!(outcome, AdvanceOutcome853::Reached),
+            matches!(outcome, AdvanceOutcome::Reached),
             "nothing to advance to, so the stepper reports Reached"
         );
         assert_eq!(asked.get(), 0, "no step was taken, so nothing was asked");

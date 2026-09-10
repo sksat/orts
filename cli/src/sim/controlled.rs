@@ -24,10 +24,7 @@ use orts::spacecraft::{
     ThrusterAssemblyCore, ThrusterSpec,
 };
 use tobari::magnetic::igrf::Igrf;
-use utsuroi::{
-    Dop853, DormandPrince, DynamicalSystem, IntegrationError, Integrator, Rk4, SegmentContext,
-    SegmentSystem,
-};
+use utsuroi::{Dop853, DormandPrince, IntegrationError, Integrator, Rk4, Segments};
 
 use crate::config::{ControllerConfig, MtqConfig, ReactionWheelConfig, SensorChoice};
 use crate::satellite::SatelliteSpec;
@@ -448,10 +445,11 @@ pub fn propagate_controlled(
 ) -> Result<(), String> {
     let span = |e: IntegrationError| format!("integration failed on [{t0:.3}, {t1:.3}]: {e}");
 
-    // The span the caller asked for, before the segment loop below reads it.
-    // `t1 <= t0` is false for a NaN, and `t < t1` is false too, so the loop
-    // would take no step and report success — the solvers used to reject the
-    // span themselves, which they now only see one segment at a time.
+    // Before the no-op guard: `t1 <= t0` is true for a `t0` of `+inf`, so an
+    // invalid span would be reported as one already covered. `Segments::new`
+    // rejects it too, but it is reached only past this guard, and a span that
+    // runs backwards stays the no-op it has always been rather than becoming
+    // an error.
     if !t0.is_finite() || !t1.is_finite() {
         return Err(span(IntegrationError::InvalidTimeSpan { t0, t_end: t1 }));
     }
@@ -464,49 +462,40 @@ pub fn propagate_controlled(
     // that held inside it. Without this, a burn window narrower than the
     // largest gap between adjacent stage times contributes nothing at all, and
     // one covering a whole step loses the weight of the stage on its exclusive
-    // end.
+    // end. `Segments::new` also rejects a span no loop can walk: `t1 <= t0` is
+    // false for a NaN, and so is a loop's own `t < t1`, so nothing here would
+    // step and the solvers would never see the span.
+    //
     // The state stays local until every segment has succeeded. A satellite
     // carries no integration time of its own, so committing each segment would
     // leave a failed span with the state at the last boundary while the caller
     // still holds `t0` — and serve pauses on such an error and can resume from
     // there, propagating a state that belongs to a later instant.
     let mut state = sat.state.clone();
-    let mut t = t0;
-    let mut first_segment = true;
-    while t < t1 {
-        let segment_end = sat
-            .dynamics
-            .next_discontinuity_after(t)
-            .filter(|next| *next > t && next.is_finite())
-            .map_or(t1, |next| next.min(t1));
-        let bound = SegmentSystem::new(&sat.dynamics, SegmentContext::new(t, segment_end));
+    for segment in Segments::new(&sat.dynamics, t0, t1).map_err(span)? {
+        let t = segment.start();
+        let segment_end = segment.end();
+        let bound = segment.system();
 
         match integrator {
             IntegratorConfig::Rk4 { dt } => {
-                let dt_ode = dt.min(segment_end - t);
                 // `try_integrate` rather than `integrate`: the latter panics on
                 // a bad step or a stalled clock, and this returns `Result` so
                 // serve can send the client an Error down its graceful-halt
-                // path.
-                //
-                // Its clock accumulates (`t += h`), unlike the group loops,
-                // which assign the segment's end on the last step. The residual
-                // is the exactly representable `segment_end - t`, so the clock
-                // still arrives on `segment_end` — measured over spans with
-                // inexact accumulation and at times as large as 1e15, it lands
-                // there in every case and never stagnates. What it costs is one
-                // extra step of an ulp's width, which moves the state by less
-                // than its own resolution.
+                // path. A `dt` wider than the segment is not clamped here — the
+                // last step of a segment lands on `segment_end` itself, which
+                // is what a segment ending at a switch of the right-hand side
+                // needs.
                 state = Rk4
-                    .try_integrate(&bound, state, t, segment_end, dt_ode, |_, _| {})
+                    .try_integrate(bound, state, t, segment_end, *dt, |_, _| {})
                     .map_err(span)?;
             }
             IntegratorConfig::Dp45 { dt, tolerances } => {
                 let mut stepper =
-                    DormandPrince.stepper(&bound, state.clone(), t, *dt, tolerances.clone());
+                    DormandPrince.stepper(bound, state.clone(), t, *dt, tolerances.clone());
                 // A later segment starts from the state the previous one ended
                 // on, which this loop asks no predicate about at all.
-                if !first_segment {
+                if segment.is_continuation() {
                     stepper = stepper.from_checked_state();
                 }
                 stepper
@@ -519,8 +508,8 @@ pub fn propagate_controlled(
                 state = stepper.into_state();
             }
             IntegratorConfig::Dop853 { dt, tolerances } => {
-                let mut stepper = Dop853.stepper(&bound, state.clone(), t, *dt, tolerances.clone());
-                if !first_segment {
+                let mut stepper = Dop853.stepper(bound, state.clone(), t, *dt, tolerances.clone());
+                if segment.is_continuation() {
                     stepper = stepper.from_checked_state();
                 }
                 stepper
@@ -533,9 +522,6 @@ pub fn propagate_controlled(
                 state = stepper.into_state();
             }
         }
-
-        t = segment_end;
-        first_segment = false;
     }
 
     sat.state = state;

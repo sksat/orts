@@ -47,6 +47,20 @@ section is subdivided by package.
 - WIT v0 plugin interface extended with the msg-io and stream-io channels. ([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
 #### Changed
+- `IndependentGroup` and `CoupledGroup` advance every solver through the same
+  three calls (`stepper`, `from_checked_state`, `advance_to`), where the RK4
+  branch used to run a step loop of its own. Two things that loop did
+  differently from the adaptive steppers change with it. A fixed-step error — a
+  state that went non-finite, or a `dt` the grid at that time cannot carry — is
+  recorded as a termination for the satellite, where it used to come back as the
+  `Err` of `propagate_to`: **a group at `t = 1e15` propagated in steps of `0.1`
+  now terminates that satellite with `StepBelowSpacing`** and carries the others
+  on. And **the state of the step that failed is no longer stored** — RK4
+  assigned it, the adaptive steppers kept the last state they had accepted — so
+  `satellites()` and `into_parts()` hand back a finite state, and the
+  satellite's own clock stays at the end of the last completed segment. What a
+  termination records is unchanged: the time the failed step landed on, and the
+  error as its reason. ([#458](https://github.com/sksat/orts/pull/458))
 - **BREAKING**: `SurfacePanel` gains a public `outline: Option<PanelOutline>`
   field, so a struct literal has to name it. `PanelSrp` and `PanelDrag` now skip
   a panel that another one completely covers, which they previously computed as
@@ -767,6 +781,17 @@ section is subdivided by package.
 ### `utsuroi` (Rust, crates.io)
 
 #### Added
+- `Integrator::stepper`, returning a `FixedStepper` that holds its state and the
+  time it belongs to and is driven towards one target time after another —
+  `stepper` / `from_checked_state` / `advance_to`, the three calls the adaptive
+  solvers already offered. A propagation loop that decides where to stop as it
+  goes now writes one shape whichever solver it was configured with, and
+  `integrate`, `try_integrate` and `integrate_with_events` are this stepper
+  driven to `t_end` in a single call. ([#458](https://github.com/sksat/orts/pull/458))
+- `Segments`, the segments a span splits into at the switches a system reports.
+  Each item carries the bound system, the interval, and whether an earlier
+  segment came before it; `Segments::new` rejects a span no loop can walk, which
+  a loop testing `t < t_end` before stepping cannot leave to the solver. ([#458](https://github.com/sksat/orts/pull/458))
 - `AdaptiveStepper::from_checked_state` and
   `AdaptiveStepper853::from_checked_state`.
   `advance_to` asks the event predicate about the state it starts from, since a
@@ -812,6 +837,39 @@ section is subdivided by package.
   reads `ln x` and `ln y`. `tight_tolerance_dop853_fewer_evaluations` also
   requires both integrations to complete at `t_end` with the right answer
   before comparing what they cost. ([#409](https://github.com/sksat/orts/pull/409))
+
+#### Changed
+- One `AdvanceOutcome` for every stepper. `AdvanceOutcome853` was a second copy
+  of the same two variants, so a caller choosing its solver at run time had to
+  write the same two arms twice. **`AdvanceOutcome853` is gone**; DOP853's
+  `advance_to` returns `AdvanceOutcome`. ([#458](https://github.com/sksat/orts/pull/458))
+- Every fixed-step integration — `Integrator`, `StormerVerlet` and the Yoshida
+  family — walks its grid from the span's start rather than by adding `dt` to a
+  running clock, and assigns the span's end on the last step. Accumulating
+  drifted, and the drift grew with the walk: nine steps of `0.1` from zero reach
+  `0.8999999999999999`, leaving a remainder of `0.10000000000000009` — a hair
+  over `dt` — so `[0, 1]` took eleven steps rather than ten, the last an ulp
+  wide. **Step times change**, by an ulp early in a walk and by more further in
+  (a thousand steps of `0.1` differ from the anchored `100.0` by several), and a
+  span whose accumulated remainder overshot `dt` takes one step fewer.
+- A fixed-step integration refuses a `dt` narrower than the spacing of f64 at a
+  step's start, as the new `IntegrationError::StepBelowSpacing`. The old loops
+  failed only where the clock did not move at all (`t + dt == t`); between half
+  a spacing and one, they moved it further than asked — at `t = 1e15` a `dt` of
+  `0.1` advanced the clock by `0.125` while the solver integrated `0.1`, so the
+  state returned belonged to a time already passed. **Such a span now stops
+  with an error at the step it happens on**, having walked the part of the span
+  the grid could carry. ([#458](https://github.com/sksat/orts/pull/458))
+- A fixed-step integration refuses a step whose width does not carry the clock
+  to the time it was to land on, as the new
+  `IntegrationError::LandingUnreachable`. The last step of a span is assigned
+  the span's end rather than reaching it by arithmetic, so its width has to
+  resolve both its start and its end; where `|t|` is large enough relative to
+  the resolution the end needs, one f64 cannot. From `-1e16` the distance to
+  `1.0` rounds to `1e16`, and `-1e16 + 1e16` is `0.0`, so the old loops handed
+  the solver a step that ended at zero and then reported the state as belonging
+  to `1.0`. Measured across 408 spans, the refusal reaches only spans that cross
+  zero from `1e14` or further away in a single step. ([#458](https://github.com/sksat/orts/pull/458))
 
 #### Fixed
 - Every integrate loop asks its event predicate about the state it was given,

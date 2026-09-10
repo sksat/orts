@@ -133,7 +133,7 @@ fn dop853_adaptive_projects_every_published_state() {
             },
         )
         .expect("integration should reach the target");
-    assert!(matches!(outcome, crate::AdvanceOutcome853::Reached));
+    assert!(matches!(outcome, crate::AdvanceOutcome::Reached));
     assert!(
         worst <= 1.0,
         "DOP853 published a state outside the bound: y = {worst}"

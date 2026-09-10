@@ -1,7 +1,8 @@
+use core::convert::Infallible;
 use core::ops::ControlFlow;
 
-use crate::error::{validate_step_size, validate_time_span};
-use crate::{DynamicalSystem, IntegrationError, IntegrationOutcome, OdeState};
+use crate::fixed_step::FixedStepper;
+use crate::{AdvanceOutcome, DynamicalSystem, IntegrationError, IntegrationOutcome};
 
 /// Common interface for fixed-step numerical integrators.
 ///
@@ -67,34 +68,15 @@ pub trait Integrator {
         S: DynamicalSystem,
         F: FnMut(f64, &S::State),
     {
-        validate_step_size(dt)?;
-        validate_time_span(t0, t_end)?;
-
-        let mut state = initial;
-        let mut t = t0;
-
-        while t < t_end {
-            let h = dt.min(t_end - t);
-            // `h > 0` holds, but for large `|t|` it can still be below the
-            // spacing of representable f64 values around `t`.
-            if t + h == t {
-                return Err(IntegrationError::TimeStagnated { t, dt: h });
-            }
-            state = self.step(system, t, &state, h);
-            t += h;
-
-            // The same check `integrate_with_events` makes. Without it the
-            // controlled path — the one caller that uses `try_integrate` — read
-            // sensors off a `NaN` state and fed it to a controller, and the run
-            // reported success.
-            if !state.is_finite() {
-                return Err(IntegrationError::NonFiniteState { t });
-            }
-
-            callback(t, &state);
-        }
-
-        Ok(state)
+        let mut stepper = self.stepper(system, initial, t0, dt);
+        // `Infallible` has no values, so the `Event` arm of the outcome cannot
+        // be built: this reports only `Reached`.
+        stepper.advance_to(
+            t_end,
+            |t, state| callback(t, state),
+            |_, _| ControlFlow::<Infallible>::Continue(()),
+        )?;
+        Ok(stepper.into_state())
     }
 
     /// Integrate a dynamical system with event detection and NaN/Inf checking.
@@ -127,49 +109,36 @@ pub trait Integrator {
         F: FnMut(f64, &S::State),
         E: Fn(f64, &S::State) -> ControlFlow<B>,
     {
-        if let Err(e) = validate_step_size(dt).and_then(|()| validate_time_span(t0, t_end)) {
-            return IntegrationOutcome::Error(e);
-        }
-
-        let mut state = initial;
-        let mut t = t0;
-
-        // The predicate is asked about the state it was given, before any
-        // step. A level-triggered event — "below the surface", "past this
-        // altitude" — can already hold at `t0`, and stepping first reports it
-        // one step late with a state the caller's own predicate calls invalid.
-        // Only for a span that advances: an empty span takes no step, so it
-        // reports nothing and asks nothing, and comes back as it went in.
-        if t0 < t_end
-            && let ControlFlow::Break(reason) = event_check(t0, &state)
-        {
-            return IntegrationOutcome::Terminated {
-                state,
-                t: t0,
-                reason,
-            };
-        }
-
-        while t < t_end {
-            let h = dt.min(t_end - t);
-            if t + h == t {
-                return IntegrationOutcome::Error(IntegrationError::TimeStagnated { t, dt: h });
+        let mut stepper = self.stepper(system, initial, t0, dt);
+        match stepper.advance_to(t_end, |t, state| callback(t, state), event_check) {
+            Ok(AdvanceOutcome::Reached) => IntegrationOutcome::Completed(stepper.into_state()),
+            Ok(AdvanceOutcome::Event { reason }) => {
+                let t = stepper.t();
+                IntegrationOutcome::Terminated {
+                    state: stepper.into_state(),
+                    t,
+                    reason,
+                }
             }
-            state = self.step(system, t, &state, h);
-            t += h;
-
-            if !state.is_finite() {
-                return IntegrationOutcome::Error(IntegrationError::NonFiniteState { t });
-            }
-
-            callback(t, &state);
-
-            if let ControlFlow::Break(reason) = event_check(t, &state) {
-                return IntegrationOutcome::Terminated { state, t, reason };
-            }
+            Err(e) => IntegrationOutcome::Error(e),
         }
+    }
 
-        IntegrationOutcome::Completed(state)
+    /// A stepper that advances this solver towards one target time after
+    /// another, in steps of `dt` from `t0`.
+    ///
+    /// For a loop that decides where to stop as it goes — one checking events
+    /// per step, or splitting its span at the discontinuities a
+    /// [`Segments`](crate::Segments) walk finds. The whole-span loops above are
+    /// this stepper driven to `t_end` in one call.
+    fn stepper<'a, S: DynamicalSystem>(
+        &'a self,
+        system: &'a S,
+        initial: S::State,
+        t0: f64,
+        dt: f64,
+    ) -> FixedStepper<'a, Self, S> {
+        FixedStepper::new(self, system, initial, t0, dt)
     }
 }
 

@@ -13,6 +13,7 @@ use crate::error::{validate_step_size, validate_time_span};
 use crate::{DynamicalSystem, IntegrationError, IntegrationOutcome, OdeState, State};
 
 use super::verlet::StormerVerlet;
+use crate::fixed_step::FixedSteps;
 
 // 4th order (3 substeps)
 // Triple-jump: w1 = 1/(2 - 2^{1/3}), w0 = 1 - 2*w1
@@ -159,14 +160,10 @@ macro_rules! impl_yoshida {
                 validate_time_span(t0, t_end)?;
 
                 let mut state = initial;
-                let mut t = t0;
-                while t < t_end {
-                    let h = dt.min(t_end - t);
-                    if t + h == t {
-                        return Err(IntegrationError::TimeStagnated { t, dt: h });
-                    }
-                    state = self.step(system, t, &state, h);
-                    t += h;
+                for step in FixedSteps::new(t0, t_end, dt)? {
+                    let step = step?;
+                    state = self.step(system, step.t, &state, step.h);
+                    let t = step.next_t;
                     if !state.is_finite() {
                         return Err(IntegrationError::NonFiniteState { t });
                     }
@@ -197,7 +194,6 @@ macro_rules! impl_yoshida {
                 }
 
                 let mut state = initial;
-                let mut t = t0;
                 // The predicate is asked about the state it was given, before any
                 // step. A level-triggered event — "below the surface", "past this
                 // altitude" — can already hold at `t0`, and stepping first reports it
@@ -213,16 +209,17 @@ macro_rules! impl_yoshida {
                         reason,
                     };
                 }
-                while t < t_end {
-                    let h = dt.min(t_end - t);
-                    if t + h == t {
-                        return IntegrationOutcome::Error(IntegrationError::TimeStagnated {
-                            t,
-                            dt: h,
-                        });
-                    }
-                    state = self.step(system, t, &state, h);
-                    t += h;
+                let steps = match FixedSteps::new(t0, t_end, dt) {
+                    Ok(steps) => steps,
+                    Err(e) => return IntegrationOutcome::Error(e),
+                };
+                for step in steps {
+                    let step = match step {
+                        Ok(step) => step,
+                        Err(e) => return IntegrationOutcome::Error(e),
+                    };
+                    state = self.step(system, step.t, &state, step.h);
+                    let t = step.next_t;
                     if !state.is_finite() {
                         return IntegrationOutcome::Error(IntegrationError::NonFiniteState { t });
                     }
