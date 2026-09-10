@@ -3243,8 +3243,11 @@ mod tests {
     /// the projected areas of an opposite pair sum to the same value whichever
     /// face is picked, which is how #416 survived a cube test. The windward
     /// sweep pins the cos θ law over the same geometry, and `edge_on` grazes the
-    /// boundary between them (`cos(π/2)` is 6.1e-17, not 0, so both sides
-    /// produce a force 16 orders down rather than nothing).
+    /// boundary between them: `cos(π/2)` is 6.1e-17 rather than 0, so Orekit
+    /// reports the 4e-19 N that follows from it, while this model's force cutoff
+    /// (`MIN_FORCE_COSINE`, 1e-12) drops the panel and reports exactly zero.
+    /// That is why the comparison below counts a reference under `FLOOR_N` as
+    /// zero instead of dividing by it.
     ///
     /// Compared on the force, because Orekit's paneled model returns only an
     /// acceleration; the torque this model builds from it is pinned by the exact
