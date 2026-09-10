@@ -821,14 +821,15 @@ section is subdivided by package.
   before comparing what they cost. ([#409](https://github.com/sksat/orts/pull/409))
 
 #### Changed
-- A fixed-step integration walks its grid from the span's start rather than by
-  adding `dt` to a running clock, and its last step lands on the span's end
-  exactly. Accumulating drifted: nine steps of `0.1` from zero reach
+- Every fixed-step integration — `Integrator`, `StormerVerlet` and the Yoshida
+  family — walks its grid from the span's start rather than by adding `dt` to a
+  running clock, and assigns the span's end on the last step. Accumulating
+  drifted, and the drift grew with the walk: nine steps of `0.1` from zero reach
   `0.8999999999999999`, leaving a remainder of `0.10000000000000009` — a hair
-  over `dt` — so `[0, 1]` took eleven steps rather than ten and the last
-  callback never landed on `1.0`. **Step times move by up to an ulp**, and a
-  span whose accumulated remainder used to overshoot `dt` takes one step fewer:
-  the ulp-wide step that covered that remainder is gone. ([#458](https://github.com/sksat/orts/pull/458))
+  over `dt` — so `[0, 1]` took eleven steps rather than ten, the last an ulp
+  wide. **Step times change**, by an ulp early in a walk and by more further in
+  (a thousand steps of `0.1` differ from the anchored `100.0` by several), and a
+  span whose accumulated remainder overshot `dt` takes one step fewer. ([#458](https://github.com/sksat/orts/pull/458))
 
 #### Fixed
 - Every integrate loop asks its event predicate about the state it was given,

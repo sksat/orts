@@ -3,6 +3,7 @@ use core::ops::ControlFlow;
 use nalgebra::SVector;
 
 use crate::error::{validate_step_size, validate_time_span};
+use crate::landing::FixedSteps;
 use crate::{DynamicalSystem, IntegrationError, IntegrationOutcome, OdeState, State};
 
 /// Störmer-Verlet (velocity Verlet) symplectic integrator.
@@ -130,14 +131,15 @@ impl StormerVerlet {
         validate_time_span(t0, t_end)?;
 
         let mut state = initial;
-        let mut t = t0;
-        while t < t_end {
-            let h = dt.min(t_end - t);
-            if t + h == t {
-                return Err(IntegrationError::TimeStagnated { t, dt: h });
+        for step in FixedSteps::new(t0, t_end, dt)? {
+            if step.next_t == step.t {
+                return Err(IntegrationError::TimeStagnated {
+                    t: step.t,
+                    dt: step.h,
+                });
             }
-            state = self.step(system, t, &state, h);
-            t += h;
+            state = self.step(system, step.t, &state, step.h);
+            let t = step.next_t;
             if !state.is_finite() {
                 return Err(IntegrationError::NonFiniteState { t });
             }
@@ -168,7 +170,6 @@ impl StormerVerlet {
         }
 
         let mut state = initial;
-        let mut t = t0;
         // The predicate is asked about the state it was given, before any
         // step. A level-triggered event — "below the surface", "past this
         // altitude" — can already hold at `t0`, and stepping first reports it
@@ -184,13 +185,19 @@ impl StormerVerlet {
                 reason,
             };
         }
-        while t < t_end {
-            let h = dt.min(t_end - t);
-            if t + h == t {
-                return IntegrationOutcome::Error(IntegrationError::TimeStagnated { t, dt: h });
+        let steps = match FixedSteps::new(t0, t_end, dt) {
+            Ok(steps) => steps,
+            Err(e) => return IntegrationOutcome::Error(e),
+        };
+        for step in steps {
+            if step.next_t == step.t {
+                return IntegrationOutcome::Error(IntegrationError::TimeStagnated {
+                    t: step.t,
+                    dt: step.h,
+                });
             }
-            state = self.step(system, t, &state, h);
-            t += h;
+            state = self.step(system, step.t, &state, step.h);
+            let t = step.next_t;
             if !state.is_finite() {
                 return IntegrationOutcome::Error(IntegrationError::NonFiniteState { t });
             }

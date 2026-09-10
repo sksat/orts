@@ -1,17 +1,21 @@
 //! The times a fixed-step integration steps through.
 //!
-//! Walking a span by adding `dt` to a running clock drifts: nine steps of
-//! `0.1` from zero reach `0.8999999999999999`, so the remainder is
-//! `0.10000000000000009` — a hair over `dt`. The walk then takes one more full
-//! step and leaves an ulp-wide tail to cover in an eleventh, and the clock the
-//! callback sees never equals the span's end.
+//! Walking a span by adding `dt` to a running clock drifts, and the drift
+//! grows with the walk: nine steps of `0.1` from zero reach
+//! `0.8999999999999999`, so the remainder is `0.10000000000000009` — a hair
+//! over `dt` — and `[0, 1]` takes eleven steps, the last of them an ulp wide.
+//! Over a thousand steps the sum is several ulps from the exact grid.
 //!
 //! Counting from the span's start instead — `t0 + n * dt`, with the last step
-//! assigned `t_end` — keeps every step time within an ulp of the exact grid,
-//! makes the number of steps the one the caller asked for, and lands the last
-//! callback on `t_end` itself. A caller that ends a step at a switch of the
-//! right-hand side needs that last part: the state there is the state at the
-//! switch, and the clock has to say so.
+//! assigned `t_end` — keeps each step time within an ulp of the exact grid
+//! however long the walk, spends no step on a drift-sized remainder, and lands
+//! the last one on `t_end` by assignment rather than by arithmetic. A caller
+//! that ends a step at a switch of the right-hand side needs the state at the
+//! switch, and its grid times to be the ones it asked for.
+//!
+//! The accumulated walk did reach `t_end` in the example above: its eleventh
+//! step is `t_end - t` wide, which is exact, so the callback there was already
+//! on `1.0`. What changes is the extra step and the ten grid times before it.
 
 use crate::error::{IntegrationError, validate_step_size, validate_time_span};
 
