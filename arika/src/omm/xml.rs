@@ -85,10 +85,9 @@ pub fn parse(xml: &str) -> Result<ParsedElementSet, XmlParseError> {
     let arg_perigee = parse_num::<f64>("ARG_OF_PERICENTER", required(xml, "ARG_OF_PERICENTER")?)?;
     let mean_anomaly = parse_num::<f64>("MEAN_ANOMALY", required(xml, "MEAN_ANOMALY")?)?;
     let norad_cat_id = parse_num::<u32>("NORAD_CAT_ID", required(xml, "NORAD_CAT_ID")?)?;
-    let bstar = match element_text(xml, "BSTAR") {
-        Some(v) => parse_num::<f64>("BSTAR", v)?,
-        None => 0.0,
-    };
+    // An OMM that declares SGP4 has to carry the drag term the theory reads;
+    // defaulting it to zero propagated a satellite with no drag at all.
+    let bstar = parse_num::<f64>("BSTAR", required(xml, "BSTAR")?)?;
 
     let elements = Sgp4Elements::try_new(Sgp4ElementsFields {
         norad_cat_id,
@@ -243,6 +242,17 @@ mod tests {
     </segment>
   </body>
 </omm>"#;
+
+    /// SGP4 reads the drag term, and this crate refuses any other mean-element
+    /// theory, so an OMM that reaches here declares SGP4 and has to carry
+    /// `BSTAR`. A missing element used to read as `0.0`, which propagates the
+    /// satellite with no drag at all — a different orbit, reported as success.
+    #[test]
+    fn a_missing_bstar_is_refused() {
+        let without = ISS_OMM_XML.replace("<BSTAR>0.00003</BSTAR>", "");
+        assert_ne!(without, ISS_OMM_XML, "fixture no longer carries BSTAR");
+        assert_eq!(parse(&without), Err(XmlParseError::MissingElement("BSTAR")));
+    }
 
     #[test]
     fn parse_iss_omm_xml() {
