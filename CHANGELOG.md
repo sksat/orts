@@ -192,12 +192,15 @@ section is subdivided by package.
   and fell on the sheltered side too; it now falls on the side the gas arrives
   from. That is a change of side and nothing else: how much of a partly covered
   panel is left lit, and where its force acts, are as
-  [#444](https://github.com/sksat/orts/pull/444) left them. A shape whose panels come in opposite pairs — `cube`,
-  or any closed box — is unaffected in magnitude, since the projected areas of a
-  pair sum to the same value whichever face is picked; what changes is which
-  `cp_offset` the force acts through, so on a body whose opposite faces sit at
-  different offsets the attitude disturbance pointed in the wrong direction, and
-  a single-sided panel turned into the flow produced no drag at all. A new Orekit
+  [#444](https://github.com/sksat/orts/pull/444) left them. Where two opposite faces share their area and
+  `cd`, as the ones `SpacecraftShape::cube` builds do, the force magnitude comes
+  out the same either way, since `cd · area · cos θ` sums to the same value
+  whichever of the two is picked; `cd` and the area belong to the face, so a
+  pair that differs in either changes magnitude as well. What changes in every
+  case is which `cp_offset` the force acts through, so on a body whose opposite
+  faces sit at different offsets the attitude disturbance pointed in the wrong
+  direction, and a single-sided panel turned into the flow produced no drag at
+  all. A new Orekit
   fixture (`tools/generate_orekit_panel_drag_fixtures.py`) pins the face
   selection and the cos θ law against Orekit's paneled drag model. ([#437](https://github.com/sksat/orts/pull/437))
 - `SurfacePanel::at_com` and `SurfacePanel::rectangle` reject a direction vector

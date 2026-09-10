@@ -1701,6 +1701,14 @@ mod tests {
     /// passes a one-sided test by removing the force of whichever panel it
     /// happens to be behind.
     ///
+    /// The casters carry a different `cd` on purpose. With one shared `cd` the
+    /// two directions are indistinguishable by force magnitude: the lit area of
+    /// the pair is `A_target + A_caster - overlap` whichever of them casts, and
+    /// the overlap is the same either way, so the totals agree exactly (the
+    /// `A_target + 0.75 A_caster = A_caster` this test asserts is that identity,
+    /// not a coincidence of these sizes). Weighting the two areas differently is
+    /// what makes the reversal show up.
+    ///
     /// Which side, and only that. How much of a covered panel is left lit, and
     /// where its force acts, is `lit_region`'s answer (#444), and this test
     /// takes it as given: the upwind caster covers the target whole, so the
@@ -1713,19 +1721,21 @@ mod tests {
         // atmosphere (see `drag_loads_the_windward_face_not_the_sheltered_one`),
         // so `+y` is the windward normal and the gas comes from `+y`.
         let windward = Vector3::y();
-        let plate = |half: f64, cp: Vector3<f64>| {
+        let plate = |half: f64, cd: f64, cp: Vector3<f64>| {
             SurfacePanel::rectangle(
                 [half, half],
                 Vector3::x(),
                 windward,
-                2.2,
+                cd,
                 PanelOptics::absorber(),
             )
             .with_cp_offset(cp)
         };
-        let target = plate(1.0, Vector3::zeros());
-        let upwind_caster = plate(2.0, windward * 2.0);
-        let downwind_caster = plate(2.0, -windward * 2.0);
+        const TARGET_CD: f64 = 2.2;
+        const CASTER_CD: f64 = 1.1;
+        let target = plate(1.0, TARGET_CD, Vector3::zeros());
+        let upwind_caster = plate(2.0, CASTER_CD, windward * 2.0);
+        let downwind_caster = plate(2.0, CASTER_CD, -windward * 2.0);
 
         let magnitude = |panels: Vec<SurfacePanel>| {
             PanelDrag::for_earth(SpacecraftShape::panels(panels))

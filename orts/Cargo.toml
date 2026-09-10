@@ -19,9 +19,10 @@ include = [
     "wit/**/*.wit",
     "Cargo.toml",
     "/README.md",
-    # A unit test in src/ includes this Orekit reference fixture, so the
-    # packaged crate has to carry it or `cargo test` there fails to compile.
+    # Unit tests in src/ include these Orekit reference fixtures, so the
+    # packaged crate has to carry them or `cargo test` there fails to compile.
     "tests/fixtures/orekit_panel_srp_reference.json",
+    "tests/fixtures/orekit_panel_drag_reference.json",
 ]
 
 [dependencies]
