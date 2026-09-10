@@ -35,10 +35,14 @@ pub struct FixedSteps {
     /// Grid index of the time the next step starts from: the walk is at
     /// `t0 + index * dt`.
     index: u64,
+    /// Whether the walk has already reported that it cannot advance. One
+    /// report ends it, rather than repeating forever.
+    stagnated: bool,
 }
 
 /// One step of a [`FixedSteps`] walk: where it starts, how wide it is, and
 /// where it lands.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Step {
     /// Time the step starts at.
     pub t: f64,
@@ -60,44 +64,22 @@ impl FixedSteps {
     ///
     /// An empty span (`t0 == t_end`) is valid and yields nothing.
     ///
-    /// Also rejects a `dt` narrower than the spacing of f64 at the times a
-    /// step could start from, as [`IntegrationError::TimeStagnated`]. Such a
-    /// step cannot be walked on any grid: consecutive grid times round onto the
-    /// same double, and a solver handed the difference would step nowhere.
-    /// Accumulating a clock hid this rather than solving it — adding `0.1` at
-    /// `1e15` moves the clock by the spacing, `0.125`, while the solver is told
-    /// `0.1`, so the state it returns belongs to a time the clock has already
-    /// passed.
-    ///
-    /// The span's end is only a landing, never the start of a step, so the
-    /// spacing there does not decide: `[2^53 - 1, 2^53]` is one step of `1`
-    /// even though the spacing at `2^53` is `2`. An empty span starts no step
-    /// at all and is accepted whatever `dt` is.
+    /// A `dt` that passes here can still fail to move the clock further into
+    /// the span, where the spacing of f64 is wider than `dt` itself: the walk
+    /// reports [`IntegrationError::TimeStagnated`] at the step it happens on,
+    /// not before. A caller whose event fires earlier never reaches it — an
+    /// event at `t = 1` in a span ending at `1e16` is the case that rules out
+    /// judging the whole span up front.
     pub fn new(t0: f64, t_end: f64, dt: f64) -> Result<Self, IntegrationError> {
         validate_step_size(dt)?;
         validate_time_span(t0, t_end)?;
-        let walk = Self {
+        Ok(Self {
             t0,
             t_end,
             dt,
             index: 0,
-        };
-        if t0 == t_end {
-            return Ok(walk);
-        }
-        // The coarsest time a step can start from: the span's own start, or the
-        // last time before its end.
-        let last_start = t_end.next_down();
-        let coarsest = if t0.abs() >= last_start.abs() {
-            t0
-        } else {
-            last_start
-        };
-        let spacing = coarsest.next_up() - coarsest;
-        if dt < spacing {
-            return Err(IntegrationError::TimeStagnated { t: coarsest, dt });
-        }
-        Ok(walk)
+            stagnated: false,
+        })
     }
 
     /// The grid time at `index`, counted from the span's start.
@@ -126,6 +108,9 @@ impl Iterator for FixedSteps {
     type Item = Result<Step, IntegrationError>;
 
     fn next(&mut self) -> Option<Result<Step, IntegrationError>> {
+        if self.stagnated {
+            return None;
+        }
         let t = self.at(self.index);
         if t >= self.t_end {
             return None;
@@ -133,9 +118,15 @@ impl Iterator for FixedSteps {
 
         let index = self.index + 1;
         let next_t = self.landing(index);
-        // `new` refused a `dt` below the spacing at this span's times, which is
-        // what would collapse two grid indices onto the same double.
-        debug_assert!(next_t > t, "the grid did not advance from {t}");
+        // Where the spacing of f64 is wider than `dt`, consecutive grid indices
+        // round onto the same double and the walk cannot go on. Saying so here
+        // rather than in `new` is what lets a caller whose event fires in the
+        // walkable part of the span finish: the grid at `1e16` cannot carry a
+        // step of `1`, but a span from zero to there can still end at `t = 1`.
+        if next_t <= t {
+            self.stagnated = true;
+            return Some(Err(IntegrationError::TimeStagnated { t, dt: self.dt }));
+        }
 
         self.index = index;
         Some(Ok(Step {
@@ -247,67 +238,55 @@ mod tests {
         }
     }
 
-    /// A `dt` narrower than the spacing of f64 at the span's times is refused
-    /// before the walk starts, rather than partway through it: at `1e15` the
-    /// spacing is `0.125`, so a `dt` of `0.1` would collapse every fourth grid
-    /// index — but only from the third step on, and a walk that fails there has
-    /// already handed out steps.
+    /// A `dt` narrower than the spacing of f64 walks what it can and then says
+    /// it cannot go on. At `1e15` the spacing is `0.125`, so a `dt` of `0.1`
+    /// reaches the third grid index and collapses there.
     #[test]
-    fn a_step_below_the_spacing_is_refused_up_front() {
+    fn a_step_below_the_spacing_walks_what_it_can_then_stops() {
         assert_eq!(1e15f64.next_up() - 1e15, 0.125, "precondition: the spacing");
+
+        let mut walk = FixedSteps::new(1e15, 1e15 + 1.0, 0.1).expect("the span and step are valid");
+        let mut taken = 0;
+        let last = loop {
+            match walk.next() {
+                Some(Ok(step)) => {
+                    assert!(step.h > 0.0, "a step of no width: {}", step.h);
+                    taken += 1;
+                }
+                other => break other,
+            }
+        };
+        assert!(taken > 0, "the walkable part of the span was skipped");
         assert!(
-            matches!(
-                FixedSteps::new(1e15, 1e15 + 1.0, 0.1),
-                Err(IntegrationError::TimeStagnated { .. })
-            ),
-            "a step of 0.1 cannot be walked at 1e15"
+            matches!(last, Some(Err(IntegrationError::TimeStagnated { .. }))),
+            "the walk stopped without saying why: {last:?}"
         );
-        // The spacing itself is walkable, and lands on the span's end.
+        assert!(walk.next().is_none(), "the walk ends after saying so");
+
+        // The spacing itself is a walkable step, and lands on the span's end.
         let steps: Vec<_> = FixedSteps::new(1e15, 1e15 + 1.0, 0.125)
-            .expect("the spacing is a walkable step")
+            .expect("the span and step are valid")
             .map(|step| step.expect("the walk advances"))
             .collect();
         assert_eq!(steps.len(), 8, "eight steps of the spacing cover 1.0");
         assert_eq!(steps.last().expect("eight steps").next_t, 1e15 + 1.0);
     }
 
-    /// The span's coarsest end decides: a walk that starts where the spacing is
-    /// fine but ends where it is not is refused too.
+    /// A span whose far end is too coarse for `dt` is still walked as far as
+    /// the grid goes — a caller that ends before the coarse part never sees the
+    /// stagnation. Judging the whole span up front would refuse this walk on
+    /// its first step.
     #[test]
-    fn the_coarsest_end_of_the_span_decides() {
+    fn a_span_reaching_into_coarse_times_walks_its_fine_part() {
         let coarse = 1e16_f64;
         assert_eq!(coarse.next_up() - coarse, 2.0, "precondition: the spacing");
-        assert!(
-            matches!(
-                FixedSteps::new(coarse - 10.0, coarse + 10.0, 0.5),
-                Err(IntegrationError::TimeStagnated { .. })
-            ),
-            "a step of 0.5 cannot be walked through 1e16"
-        );
-    }
 
-    /// The span's end is a landing, not the start of a step, so the spacing
-    /// there does not decide.
-    #[test]
-    fn a_span_ending_on_a_binade_boundary_is_walkable() {
-        let boundary = 9007199254740992.0_f64; // 2^53
-        assert_eq!(
-            boundary.next_up() - boundary,
-            2.0,
-            "precondition: the spacing above 2^53"
-        );
-        assert_eq!(
-            walk(boundary - 1.0, boundary, 1.0),
-            vec![(1.0, boundary)],
-            "one step of 1 covers it"
-        );
-    }
-
-    /// An empty span starts no step, so no step size can stagnate on it.
-    #[test]
-    fn an_empty_span_accepts_any_step() {
-        assert!(FixedSteps::new(1.0, 1.0, 1e-20).is_ok());
-        assert!(walk(1.0, 1.0, 1e-20).is_empty());
+        let mut walk = FixedSteps::new(0.0, coarse, 1.0).expect("the span and step are valid");
+        let first = walk
+            .next()
+            .expect("the span holds a step")
+            .expect("a step of 1 from zero is representable");
+        assert_eq!((first.t, first.next_t), (0.0, 1.0));
     }
 
     /// A span that starts away from zero keeps its own anchor.
