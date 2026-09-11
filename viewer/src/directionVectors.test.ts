@@ -231,6 +231,11 @@ describe("drawableAtCentre", () => {
     // and it is nadir alone that has no bearing to take. Answering "nothing" here
     // would disable a Sun toggle over a Sun that is on screen.
     expect(drawableAtCentre({ positionEci: [0, 0, 0], sunIsComputable: true })).toEqual(["sun"]);
+    // Same outcome for a length that overflows: the frame places the spacecraft,
+    // and it is normalising the bearing that fails.
+    expect(drawableAtCentre({ positionEci: [1e200, 1e200, 1e200], sunIsComputable: true })).toEqual(
+      ["sun"],
+    );
   });
 
   it("offers nothing at a centre the scene cannot place", () => {
@@ -242,12 +247,6 @@ describe("drawableAtCentre", () => {
       undefined,
       [Number.NaN, 0, 0],
       [Number.POSITIVE_INFINITY, 0, 0],
-      // Finite as doubles, and past what the renderer's float32 offset can hold —
-      // the scene cannot place the spacecraft, so nothing is drawn beside it.
-      [1e200, 1e200, 1e200],
-      [1e100, 0, 0],
-      // Each component inside float32 while the length is not.
-      [3e38, 3e38, 0],
     ] as (Vec3 | null | undefined)[]) {
       expect(drawableAtCentre({ positionEci, sunIsComputable: true })).toEqual([]);
     }
@@ -260,7 +259,6 @@ describe("drawableAtCentre", () => {
       [7000, 0, 0],
       [0, 0, 0],
       [1e200, 1e200, 1e200],
-      [3e38, 3e38, 0],
       [Number.NaN, 0, 0],
     ] as Vec3[]) {
       const placeable = centrePositionIsUsable(position);

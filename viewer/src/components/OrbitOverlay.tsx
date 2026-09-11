@@ -56,6 +56,11 @@ export interface OrbitOverlayProps {
   /** Why the orbit frame is unavailable for this centre, when it is. */
   lvlhUnavailable?: string;
   /**
+   * Whether the centre is a spacecraft rather than a celestial body (default
+   * true). The scene draws no direction arrows at a body.
+   */
+  centreIsSpacecraft?: boolean;
+  /**
    * Why the Sun is unavailable, when it is. The app owns the wording because it
    * knows which of the two reasons applies — no epoch, or a central body arika
    * cannot place.
@@ -93,6 +98,7 @@ export function OrbitOverlay({
   centreIsPlaceable = true,
   drawnOrientation,
   lvlhUnavailable,
+  centreIsSpacecraft = true,
 }: OrbitOverlayProps) {
   // Three states, all of which draw nothing, and each with its own reason. The
   // frame may name no satellite at all; it may name one the viewer holds no sample
@@ -110,16 +116,21 @@ export function OrbitOverlay({
    * A centre the frame cannot place takes the whole scene with it: no arrow is
    * drawn there, the Sun included, though it needs no position of its own. So
    * both toggles give this reason and neither is left enabled over a scene that
-   * draws nothing. Asked of the frame's own predicate, which refuses a position it
-   * cannot put in the renderer's float32 origin offset — a non-finite component,
-   * or a length past what that offset holds — and accepts every other, the
-   * coordinate origin among them.
+   * draws nothing. Asked of the frame's own predicate, which refuses a non-finite
+   * position and accepts every other, the coordinate origin among them.
    */
   const unplaceableCentre = centreIsPlaceable ? undefined : "Requires a finite position";
   // Nadir's own condition, which the scene draws everything else at: the frame
   // accepts the coordinate origin and the spacecraft is drawn there, and it is the
   // bearing alone that cannot be taken.
   const noBearing = NADIR_NEEDS_LENGTH;
+  /**
+   * A centred celestial body draws no arrows at all, so neither toggle has
+   * anything to offer and the reason is about the centre rather than about either
+   * direction. Stated before the per-direction conditions, which would otherwise
+   * describe a position that is perfectly good.
+   */
+  const bodyCentre = centreIsSpacecraft ? undefined : "Arrows are drawn at a spacecraft";
   return (
     <>
       <FrameSelector
@@ -145,11 +156,13 @@ export function OrbitOverlay({
           sun:
             noCentre ??
             awaitingCentre ??
+            bodyCentre ??
             unplaceableCentre ??
             (drawableVectorKinds.includes("sun") ? undefined : sunUnavailable),
           nadir:
             noCentre ??
             awaitingCentre ??
+            bodyCentre ??
             unplaceableCentre ??
             (drawableVectorKinds.includes("nadir") ? undefined : noBearing),
         }}
