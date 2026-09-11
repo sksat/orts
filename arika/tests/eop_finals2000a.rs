@@ -441,3 +441,185 @@ fn eop_table_works_with_iau2006_full() {
         "rotation should preserve magnitude"
     );
 }
+
+// The order `EopTable` documents, and what reads it
+
+/// `EopTable::new` documents sorted entries and returns `Result`, and
+/// everything past it reads that order: `mjd_range` reports the first and last
+/// entry, and the lookup bisects with `partition_point`. An unsorted table used
+/// to be accepted and then leave its own data out of the range it reported —
+/// entries at 60000, 60002, 60001 gave the range `(60000, 60001)`, so a query
+/// at 60001.5 came back `OutOfRange` while 60002 sat in the table.
+#[test]
+fn an_unsorted_table_is_refused() {
+    let out_of_order = vec![
+        entry_dut1(60000.0, 0.0),
+        entry_dut1(60002.0, 0.0),
+        entry_dut1(60001.0, 0.0),
+    ];
+    match EopTable::new(out_of_order) {
+        Err(arika::earth::eop::EopLookupError::NonMonotonicMjd {
+            index,
+            previous,
+            current,
+        }) => {
+            assert_eq!((index, previous, current), (2, 60002.0, 60001.0));
+        }
+        Err(other) => panic!("unexpected error: {other:?}"),
+        Ok(_) => panic!("the entries run backwards and were accepted"),
+    }
+}
+
+/// Two rows at one MJD leave the interpolation no interval, so they are
+/// refused the same way an inversion is.
+#[test]
+fn a_repeated_mjd_is_refused() {
+    let repeated = vec![entry_dut1(60000.0, 0.0), entry_dut1(60000.0, 0.1)];
+    assert!(
+        matches!(
+            EopTable::new(repeated),
+            Err(arika::earth::eop::EopLookupError::NonMonotonicMjd { .. })
+        ),
+        "a repeated MJD is not a usable interval"
+    );
+}
+
+/// A sorted table still builds, and reports the range its entries cover.
+#[test]
+fn a_sorted_table_reports_the_range_it_covers() {
+    let sorted = vec![
+        entry_dut1(60000.0, 0.0),
+        entry_dut1(60001.0, 0.0),
+        entry_dut1(60002.0, 0.0),
+    ];
+    let table = EopTable::new(sorted).expect("sorted and non-empty");
+    assert_eq!(table.mjd_range(), (60000.0, 60002.0));
+}
+
+// A blank optional column and a corrupt one are different things
+
+/// The optional columns (LOD, dX, dY, and the Bulletin B block) used to read a
+/// corrupt value as a blank: `parse` turned `0.3O0` into `None`, which the
+/// lookup then answered with `0.0` — the same answer as "IERS published no
+/// correction here". A corrupt row became a model-only answer with nothing
+/// said. The required columns have always been an error, and these agree now.
+#[test]
+fn a_corrupt_optional_column_is_an_error_not_an_absent_value() {
+    let first = SAMPLE.lines().next().expect("fixture has rows");
+    // dX_A occupies 1-indexed columns 98..106; corrupt it in place so every
+    // other column keeps its width.
+    let mut corrupt: Vec<char> = first.chars().collect();
+    let dx_col = 97 + (106 - 97) / 2;
+    corrupt[dx_col] = 'O';
+    let corrupt: String = corrupt.into_iter().collect();
+    assert_ne!(corrupt, first, "the fixture column was not changed");
+
+    let text = SAMPLE.replacen(first, &corrupt, 1);
+    match EopTable::from_finals2000a(&text) {
+        Err(arika::earth::eop::EopParseError::InvalidNumber { column, .. }) => {
+            assert_eq!(column, "dX_A");
+        }
+        Err(other) => panic!("unexpected error: {other:?}"),
+        Ok(_) => panic!("a corrupt dX column was read as an absent one"),
+    }
+}
+
+/// A blank optional column is still absent, not an error: IERS leaves the
+/// prediction tail's correction columns empty, and that is data, not damage.
+#[test]
+fn a_blank_optional_column_stays_absent() {
+    let first = SAMPLE.lines().next().expect("fixture has rows");
+    let mut blanked: Vec<char> = first.chars().collect();
+    for c in blanked.iter_mut().take(106).skip(97) {
+        *c = ' ';
+    }
+    let blanked: String = blanked.into_iter().collect();
+    let text = SAMPLE.replacen(first, &blanked, 1);
+    let table = EopTable::from_finals2000a(&text).expect("a blank column is not damage");
+    assert_eq!(
+        table.len(),
+        SAMPLE.lines().filter(|l| !l.trim().is_empty()).count()
+    );
+}
+
+/// `NaN` parses as a number and compares as neither greater nor smaller, so the
+/// parser's `mjd <= previous` test could not see it: the row was accepted, and
+/// `EopTable::new` then refused the pair. `from_finals2000a` folded every
+/// construction error into `Empty`, so a file of 61 rows with one corrupt MJD
+/// was reported as holding no rows at all. The line is named where it is known.
+#[test]
+fn a_non_finite_mjd_is_named_with_its_line() {
+    let first = SAMPLE.lines().next().expect("fixture has rows");
+    let mut row: Vec<char> = first.chars().collect();
+    for (k, c) in "     NaN".chars().enumerate() {
+        row[7 + k] = c;
+    }
+    let row: String = row.into_iter().collect();
+    let text = SAMPLE.replacen(first, &row, 1);
+
+    match EopTable::from_finals2000a(&text) {
+        Err(arika::earth::eop::EopParseError::InvalidNumber { line, column, .. }) => {
+            assert_eq!((line, column), (1, "MJD"));
+        }
+        Err(other) => panic!("expected the corrupt MJD to be named, got {other:?}"),
+        Ok(_) => panic!("a NaN MJD built a table"),
+    }
+}
+
+/// The columns are fixed-width, so a line that stops inside one carries no
+/// value there. Clamping the slice to the line read the prefix as a number
+/// instead: the fixture's LOD column holds `  0.1623`, and a row cut off after
+/// its fourth character parsed `  0.16` — 0.16 s where the row says 0.1623 s.
+#[test]
+fn a_line_that_stops_inside_a_column_has_no_value_there() {
+    let first = SAMPLE.lines().next().expect("fixture has rows");
+    // LOD occupies 1-indexed columns 79..86.
+    assert_eq!(&first[78..86], "  0.1623", "the fixture column moved");
+
+    let cut_inside_lod = format!("{}\n", &first[..84]);
+    let table = EopTable::from_finals2000a(&cut_inside_lod).expect("the required columns fit");
+    // `EopLookupError` carries no PartialEq, so the value is read out first.
+    let lod = table
+        .lod_checked(60370.0)
+        .expect("the row is inside the table's range");
+    assert_eq!(
+        lod, 0.0,
+        "a column the line does not reach has no value, so the lookup answers with none"
+    );
+}
+
+/// Increasing order is not enough on its own. `-inf` ahead of a finite MJD
+/// satisfies it, and the interpolation then divides `inf` by `inf`: the table
+/// reported the range `(-inf, 60000)` and answered a query at 60000 minus a
+/// decade with `Ok(NaN)` rather than an error.
+#[test]
+fn a_non_finite_mjd_is_refused_wherever_it_sits() {
+    let entry = |mjd: f64| arika::earth::eop::EopEntry {
+        mjd,
+        xp: 0.0,
+        yp: 0.0,
+        dut1: 0.0,
+        lod: None,
+        dx: None,
+        dy: None,
+    };
+    for (label, entries) in [
+        ("a lone NaN", vec![entry(f64::NAN)]),
+        (
+            "-inf ahead of a finite MJD",
+            vec![entry(f64::NEG_INFINITY), entry(60000.0)],
+        ),
+        (
+            "+inf after a finite MJD",
+            vec![entry(60000.0), entry(f64::INFINITY)],
+        ),
+    ] {
+        assert!(
+            matches!(
+                EopTable::new(entries),
+                Err(arika::earth::eop::EopLookupError::NonFiniteMjd { .. })
+            ),
+            "{label} built a table"
+        );
+    }
+}

@@ -23,12 +23,38 @@ pub struct EopTable {
 }
 
 impl EopTable {
-    /// Create an EOP table from a sorted vector of entries.
+    /// Create an EOP table from a vector of entries in increasing MJD order.
     ///
-    /// Entries must be sorted by MJD and non-empty.
+    /// Rejects an empty table, and one whose entries do not increase — the
+    /// order is what `mjd_range` reports and what the lookup's bisection
+    /// assumes, so accepting an unsorted table hid rows from both. Every MJD
+    /// has to be finite as well, which increasing order alone does not give.
     pub fn new(entries: Vec<EopEntry>) -> Result<Self, EopLookupError> {
         if entries.is_empty() {
             return Err(EopLookupError::Empty);
+        }
+        // Finite first, and on every entry: increasing order alone lets `-inf`
+        // through ahead of a finite MJD, and the interpolation then divides
+        // `inf` by `inf` and answers `Ok(NaN)` inside the range it reports. A
+        // lone NaN entry has no pair to compare against at all.
+        for (index, entry) in entries.iter().enumerate() {
+            if !entry.mjd.is_finite() {
+                return Err(EopLookupError::NonFiniteMjd {
+                    index,
+                    mjd: entry.mjd,
+                });
+            }
+        }
+        // Strictly increasing: two rows at one MJD leave the interpolation no
+        // interval.
+        for (index, pair) in entries.windows(2).enumerate() {
+            if pair[1].mjd <= pair[0].mjd {
+                return Err(EopLookupError::NonMonotonicMjd {
+                    index: index + 1,
+                    previous: pair[0].mjd,
+                    current: pair[1].mjd,
+                });
+            }
         }
         Ok(Self { entries })
     }
@@ -36,7 +62,13 @@ impl EopTable {
     /// Convenience: parse finals2000A text and build a table.
     pub fn from_finals2000a(text: &str) -> Result<Self, super::error::EopParseError> {
         let entries = super::finals2000a::Finals2000A::parse(text)?;
-        Self::new(entries).map_err(|_| super::error::EopParseError::Empty)
+        // Mapped rather than flattened: collapsing an ordering fault into
+        // `Empty` said the file held no rows, when it held rows the table
+        // refused.
+        Self::new(entries).map_err(|e| match e {
+            EopLookupError::Empty => super::error::EopParseError::Empty,
+            other => super::error::EopParseError::Table(other),
+        })
     }
 
     /// MJD range covered by this table.

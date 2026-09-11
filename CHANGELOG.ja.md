@@ -703,6 +703,34 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   落としていた mantissa の半分を回復した。非退化な軌道の値は変わらない。([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- `EopTable::new` が doc の要求する順序を検査するようになった。従来は「sorted な entries」と
+  書いて `Result` を返しながら、空かどうかだけを見ていた。MJD 60000, 60002, 60001 の entries が
+  テーブルを作れてしまい、`mjd_range` は `(60000, 60001)` を報告する — 60002 がテーブル内に
+  あるのに 60001.5 の照会は `OutOfRange` になり、lookup の `partition_point` は順序を仮定できない
+  データを二分探索していた。新しい `EopLookupError::NonMonotonicMjd` で報告する。これは
+  finals2000A の parser が既に `EopParseError::NonMonotonicMjd` として報告していた条件と同じ
+  名前である。同一 MJD の 2 entries も、補間の区間が作れないので拒否する。([#463](https://github.com/sksat/orts/pull/463))
+- finals2000A の optional 列 (LOD・dX・dY・Bulletin B の一群) が、空欄と破損値を区別する
+  ようになった。従来はどちらも「欠損」として読み、欠損した補正は `0.0` で答えられる — つまり
+  `0.3O0` を含む行が「IERS はここに補正を出していない」になり、何も報告されなかった。必須列は
+  以前からエラーである。空欄は従来どおり欠損として扱う (IERS は予測部の補正列を空にするので、
+  それはデータである)。([#463](https://github.com/sksat/orts/pull/463))
+- `EopTable::from_finals2000a` が、テーブルが拒否した理由を `EopParseError::Empty` に
+  潰さず報告するようになり、`Finals2000A::parse` は非有限の MJD をその行番号とともに拒否する
+  ようになった。`NaN` は数値として parse され、大小どちらの比較も false になるので、parser の
+  `mjd <= previous` では見えなかった。61 行のうち 1 行の MJD が `NaN` のファイルが
+  `Empty` (「有効な entry を含まない」) として返っていたが、実際は 61 行あった。([#463](https://github.com/sksat/orts/pull/463))
+- finals2000A の行が固定幅の列の途中で終わっている場合、その列に値は無いものとして扱う。
+  従来は slice を行の長さに切り詰めていたので、先頭部分が短い数値として読まれていた。fixture の
+  LOD 列は `  0.1623` で、4 文字目の後で切れた行は `  0.16` を読む — 行が 0.1623 s と書いて
+  いるところで 0.16 s になる。([#463](https://github.com/sksat/orts/pull/463))
+- `EopTable::new` が、増加順だけでなく全 MJD の有限性を要求するようになった。増加順だけでは
+  `-inf` が有限の MJD の前に通り、テーブルは範囲 `(-inf, 60000)` を報告したうえで、その範囲内の
+  照会に対しエラーではなく `Ok(NaN)` を返していた。単独の `NaN` entry は比較する相手が無いので
+  そもそも検査されなかった。`EopLookupError::NonFiniteMjd` で報告する。([#463](https://github.com/sksat/orts/pull/463))
+- **BREAKING**: `EopParseError` と `EopLookupError` が `#[non_exhaustive]` になった。網羅的な
+  `match` には wildcard arm が必要である。今回どちらも variant が増え、未着手の EOP の作業でも
+  さらに増える。([#463](https://github.com/sksat/orts/pull/463))
 - `KeplerianElements::from_state_vector` が離心率のある赤道軌道の近地点方向を
   失っていた。RAAN と argument of periapsis の両方を 0 にしつつ真近点角を離心率
   ベクトルから測っていたため、赤道面内の近地点経度がどの要素にも保存されなかった。

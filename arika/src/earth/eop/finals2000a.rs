@@ -62,6 +62,17 @@ impl Finals2000A {
                 Err(_) => continue, // skip non-data lines
             };
 
+            // A NaN parses as a number and then compares as neither greater
+            // nor smaller, so the monotonicity test below cannot see it. Named
+            // here, where the line number is still in hand.
+            if !mjd.is_finite() {
+                return Err(EopParseError::InvalidNumber {
+                    line: line_num,
+                    column: "MJD",
+                    value: mjd_str.trim().to_string(),
+                });
+            }
+
             // Check monotonicity
             if let Some(prev) = prev_mjd.filter(|&p| mjd <= p) {
                 return Err(EopParseError::NonMonotonicMjd {
@@ -79,46 +90,19 @@ impl Finals2000A {
             let dut1_a = parse_col(line, 58, 68, "dut1_A", line_num)?;
 
             // Parse Bulletin A LOD [ms] (optional)
-            let lod_a = parse_col_opt(line, 78, 86);
+            let lod_a = parse_col_opt(line, 78, 86, "lod_A", line_num)?;
 
-            // Parse Bulletin A nutation (optional, line must be long enough)
-            let dx_a = if line.len() >= 106 {
-                parse_col_opt(line, 97, 106)
-            } else {
-                None
-            };
-            let dy_a = if line.len() >= 125 {
-                parse_col_opt(line, 116, 125)
-            } else {
-                None
-            };
+            // Parse Bulletin A nutation (optional; `parse_col_opt` reports a
+            // line that stops inside the column as having no value)
+            let dx_a = parse_col_opt(line, 97, 106, "dX_A", line_num)?;
+            let dy_a = parse_col_opt(line, 116, 125, "dY_A", line_num)?;
 
             // Parse Bulletin B values (preferred when present)
-            let xp_b = if line.len() >= 144 {
-                parse_col_opt(line, 134, 144)
-            } else {
-                None
-            };
-            let yp_b = if line.len() >= 154 {
-                parse_col_opt(line, 144, 154)
-            } else {
-                None
-            };
-            let dut1_b = if line.len() >= 165 {
-                parse_col_opt(line, 154, 165)
-            } else {
-                None
-            };
-            let dx_b = if line.len() >= 175 {
-                parse_col_opt(line, 165, 175)
-            } else {
-                None
-            };
-            let dy_b = if line.len() >= 185 {
-                parse_col_opt(line, 175, 185)
-            } else {
-                None
-            };
+            let xp_b = parse_col_opt(line, 134, 144, "xp_B", line_num)?;
+            let yp_b = parse_col_opt(line, 144, 154, "yp_B", line_num)?;
+            let dut1_b = parse_col_opt(line, 154, 165, "dut1_B", line_num)?;
+            let dx_b = parse_col_opt(line, 165, 175, "dX_B", line_num)?;
+            let dy_b = parse_col_opt(line, 175, 185, "dY_B", line_num)?;
 
             // Prefer Bulletin B when available
             let xp = xp_b.unwrap_or(xp_a);
@@ -169,15 +153,38 @@ fn parse_col(
         })
 }
 
-/// Parse an optional fixed-column field (returns None if blank or unparseable).
-fn parse_col_opt(line: &str, start: usize, end: usize) -> Option<f64> {
-    if start >= line.len() {
-        return None;
+/// Parse an optional fixed-column field: `None` where the column is blank or
+/// the line stops before it, an error where it holds something that is not a
+/// number.
+///
+/// A blank column means IERS published no value there, which a caller can
+/// answer with the model alone. A column holding `0.3O0` means the row is
+/// corrupt, and reading it as "no value" turned that into the same
+/// model-only answer — the required columns have always been an error, and
+/// these now agree.
+fn parse_col_opt(
+    line: &str,
+    start: usize,
+    end: usize,
+    column: &'static str,
+    line_num: usize,
+) -> Result<Option<f64>, EopParseError> {
+    // The columns are fixed-width, so a line that stops inside one carries no
+    // value there. Clamping the slice to the line instead read the prefix as a
+    // number: a row cut off inside LOD's `79..86` parsed `line[78..82]` and
+    // came back as a different, smaller reading.
+    if line.len() < end {
+        return Ok(None);
     }
-    let end = end.min(line.len());
     let s = line[start..end].trim();
     if s.is_empty() {
-        return None;
+        return Ok(None);
     }
-    s.parse::<f64>().ok()
+    s.parse::<f64>()
+        .map(Some)
+        .map_err(|_| EopParseError::InvalidNumber {
+            line: line_num,
+            column,
+            value: s.to_string(),
+        })
 }
