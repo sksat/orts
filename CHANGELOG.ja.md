@@ -137,7 +137,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   J2000 の方向を返すようになったためで、2024 年で 0.335°。Orekit との一致はその分改善し、
   GEO 3 日の third-body oracle は 218 m → 0.33 m、短い Harris-Priester oracle 3 件は
   20-40% 改善する。([#359](https://github.com/sksat/orts/pull/359))
-
+- **破壊的変更**: `SolarRadiationPressure::shadow_body_radius` と `shadow_model` を
+  `occulters: Vec<OccultingBody>` に置き換えた。`PanelSrp` と `SunSensor` も同じ一覧を
+  private に持つ。`without_shadow` / `with_shadow_body` / `with_shadow_model` は引き続き
+  使える (順に、一覧を空にする / 原点の 1 天体で置き換える / 中心天体の幾何を設定する。
+  遠い遮蔽体は必要な円錐のまま残る)。
+  1 つ足すのは `with_occulter`。古いフィールドを名前で書いた struct literal は
+  コンパイルできなくなる。([#469](https://github.com/sksat/orts/pull/469))
 #### Fixed
 - 積分 step より短い燃焼も伝播に入るようになった。`IndependentGroup` と `CoupledGroup` は
   現在時刻から目標時刻まで積分器を 1 回走らせていたので、隣り合う評価点の最大間隔より狭い
@@ -461,14 +467,6 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   境界で意図的に別の値を返すからである。コストは 1 サンプルあたり導関数 1 回ぶんで、
   パネル 22 枚の機体で 50.1 µs (導関数は 50.5 µs) を実測した。RK4 で `output_interval` が
   `dt` と同じなら、モデル評価の作業が 4 分の 1 ほど増える。([#466](https://github.com/sksat/orts/pull/466))
-
-#### Changed
-- **破壊的変更**: `SolarRadiationPressure::shadow_body_radius` と `shadow_model` を
-  `occulters: Vec<OccultingBody>` に置き換えた。`PanelSrp` と `SunSensor` も同じ一覧を
-  private に持つ。`without_shadow` / `with_shadow_body` / `with_shadow_model` は引き続き
-  使える (順に、一覧を空にする / 原点の 1 天体で置き換える / 一覧の全天体の幾何を設定する)。
-  1 つ足すのは `with_occulter`。古いフィールドを名前で書いた struct literal は
-  コンパイルできなくなる。([#469](https://github.com/sksat/orts/pull/469))
 
 #### Fixed
 - CSV の全衛星の行が、header が名前を挙げた列を持つようになった。header は先頭の衛星の

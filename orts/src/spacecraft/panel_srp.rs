@@ -226,10 +226,14 @@ impl PanelSrp {
         self
     }
 
-    /// Set the shadow geometry of every body in the list (builder pattern).
+    /// Set the shadow geometry of the central body (builder pattern).
+    ///
+    /// A distant occulter keeps its own: the Earth seen from a lunar orbit has
+    /// to stay conical, where a cylindrical shadow would call 6.83 hours a year
+    /// dark against the true 3.67.
     pub fn with_shadow_model(mut self, model: ShadowModel) -> Self {
         self.central_shadow_model = model;
-        for occulter in &mut self.occulters {
+        for occulter in self.occulters.iter_mut().filter(|body| body.is_central()) {
             occulter.shadow_model = model;
         }
         self
@@ -274,8 +278,8 @@ impl PanelSrp {
         // What every body in the way leaves of the Sun.
         let illum = crate::eclipse::illumination::<F>(
             &self.occulters,
-            orbit.position(),
-            sun_f.inner(),
+            &orbit.position_vec(),
+            &sun_f,
             epoch,
         );
         if illum <= 0.0 {
@@ -443,7 +447,7 @@ mod tests {
     fn for_earth_defaults() {
         let srp = PanelSrp::for_earth(SpacecraftShape::sphere(20.0, 2.2, 1.5));
         assert_eq!(srp.occulters.len(), 1);
-        assert_eq!(srp.occulters[0].radius, R_EARTH);
+        assert_eq!(srp.occulters[0].radius(), R_EARTH);
     }
 
     // Sphere
@@ -2223,7 +2227,7 @@ mod tests {
     fn with_shadow_body_builder() {
         let srp = PanelSrp::new(SpacecraftShape::sphere(20.0, 2.2, 1.5)).with_shadow_body(R_EARTH);
         assert_eq!(srp.occulters.len(), 1);
-        assert_eq!(srp.occulters[0].radius, R_EARTH);
+        assert_eq!(srp.occulters[0].radius(), R_EARTH);
     }
 
     // Cube (symmetric multi-panel)

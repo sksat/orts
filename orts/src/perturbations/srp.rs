@@ -188,15 +188,16 @@ impl SolarRadiationPressure {
         self
     }
 
-    /// Set the shadow geometry of every body in the list.
+    /// Set the shadow geometry of the central body.
     ///
-    /// The geometry belongs to the body — a distant occulter needs the conical
-    /// model where the central one can do without it — so this is for a caller
-    /// holding a list it built, or the single central body the constructors
-    /// leave. [`with_occulter`](Self::with_occulter) carries its own.
+    /// The geometry belongs to the body, and a distant occulter keeps its own:
+    /// the Earth seen from a lunar orbit has to stay conical, where a
+    /// cylindrical shadow would call 6.83 hours a year dark against the true
+    /// 3.67. A body added by [`with_occulter`](Self::with_occulter) carries the
+    /// geometry it was built with for the same reason.
     pub fn with_shadow_model(mut self, model: ShadowModel) -> Self {
         self.central_shadow_model = model;
-        for occulter in &mut self.occulters {
+        for occulter in self.occulters.iter_mut().filter(|body| body.is_central()) {
             occulter.shadow_model = model;
         }
         self
@@ -266,14 +267,14 @@ impl SolarRadiationPressure {
             Some(e) => e,
             None => return Vector3::zeros(),
         };
-        let sun_pos = (self.sun_position_fn)(&epoch.to_tdb()).into_inner();
+        let sun_gcrs = (self.sun_position_fn)(&epoch.to_tdb());
         let illum = crate::eclipse::illumination::<arika::frame::Gcrs>(
             &self.occulters,
-            sat_position,
-            &sun_pos,
+            &Vec3::from_raw(*sat_position),
+            &sun_gcrs,
             epoch,
         );
-        self.srp_accel(sat_position, &sun_pos, illum)
+        self.srp_accel(sat_position, sun_gcrs.inner(), illum)
     }
 }
 
@@ -298,8 +299,12 @@ impl<F: EphemerisFrameBridge, S: HasFrame<Frame = F> + HasOrbit> Model<S>
         let sun_gcrs = (self.sun_position_fn)(&epoch.to_tdb());
         let sun_f = F::ephemeris_rotation(epoch).transform(&sun_gcrs);
         let position = state.orbit().position();
-        let illum =
-            crate::eclipse::illumination::<F>(&self.occulters, position, sun_f.inner(), epoch);
+        let illum = crate::eclipse::illumination::<F>(
+            &self.occulters,
+            &Vec3::from_raw(*position),
+            &sun_f,
+            epoch,
+        );
         ExternalLoads::acceleration(self.srp_accel(position, sun_f.inner(), illum))
     }
 }
@@ -376,7 +381,12 @@ mod tests {
         let earth_sized = SolarRadiationPressure::for_earth(Some(0.02));
         let epoch = test_epoch();
         let illum = |srp: &SolarRadiationPressure| {
-            crate::eclipse::illumination::<arika::frame::Gcrs>(&srp.occulters, &sat, &sun, &epoch)
+            crate::eclipse::illumination::<arika::frame::Gcrs>(
+                &srp.occulters,
+                &Vec3::from_raw(sat),
+                &Vec3::from_raw(sun),
+                &epoch,
+            )
         };
 
         assert!(
@@ -548,7 +558,7 @@ mod tests {
         assert!((srp.cr - DEFAULT_CR).abs() < 1e-15);
         assert!((srp.area_to_mass - DEFAULT_AREA_TO_MASS).abs() < 1e-15);
         assert_eq!(srp.occulters.len(), 1, "the Earth alone blocks the Sun");
-        assert_eq!(srp.occulters[0].radius, R_EARTH);
+        assert_eq!(srp.occulters[0].radius(), R_EARTH);
         assert_eq!(srp.occulters[0].shadow_model, ShadowModel::Cylindrical);
     }
 
@@ -690,7 +700,7 @@ mod tests {
                 body.properties().name
             );
             assert_eq!(
-                srp.occulters[0].radius,
+                srp.occulters[0].radius(),
                 body.properties().radius,
                 "{} shadow radius",
                 body.properties().name
@@ -788,7 +798,7 @@ mod tests {
             .with_shadow_model(ShadowModel::Conical);
         for srp in [model_first, body_first] {
             assert_eq!(srp.occulters.len(), 1);
-            assert_eq!(srp.occulters[0].radius, 1737.4);
+            assert_eq!(srp.occulters[0].radius(), 1737.4);
             assert_eq!(srp.occulters[0].shadow_model, ShadowModel::Conical);
         }
     }

@@ -136,9 +136,14 @@ impl SunSensor {
     }
 
     /// Set the shadow model.
+    /// Set the shadow geometry of the central body.
+    ///
+    /// A distant occulter keeps its own: the Earth seen from a lunar orbit has
+    /// to stay conical, where a cylindrical shadow would call 6.83 hours a year
+    /// dark against the true 3.67.
     pub fn with_shadow_model(mut self, model: ShadowModel) -> Self {
         self.central_shadow_model = model;
-        for occulter in &mut self.occulters {
+        for occulter in self.occulters.iter_mut().filter(|body| body.is_central()) {
             occulter.shadow_model = model;
         }
         self
@@ -187,8 +192,12 @@ impl SunSensor {
         };
 
         // What every body in the way leaves of the Sun.
-        let illumination =
-            crate::eclipse::illumination::<F>(&self.occulters, &sc_pos, &sun_eci, epoch);
+        let illumination = crate::eclipse::illumination::<F>(
+            &self.occulters,
+            &state.orbit.position_vec(),
+            &Vec3::from_raw(sun_eci),
+            epoch,
+        );
 
         // In total eclipse, direction is unmeasurable
         if illumination <= 0.0 {

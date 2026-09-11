@@ -29,8 +29,10 @@ pub struct OccultingBody {
     ///
     /// The central body sits at the origin, so its own closure returns zero.
     position_fn: BodyPositionFn,
-    /// Radius [km].
-    pub radius: f64,
+    /// Radius [km]. Private: the constructors establish that it is finite and
+    /// positive, and a body whose radius is zero or `NaN` would silently stop
+    /// casting a shadow rather than fail.
+    radius: f64,
     /// Shadow geometry for this body.
     ///
     /// Per body rather than per model: a cylindrical shadow ignores the
@@ -38,6 +40,13 @@ pub struct OccultingBody {
     /// factor of 1.86 in eclipse duration for one as far away as the Earth is
     /// from a lunar orbit.
     pub shadow_model: ShadowModel,
+    /// Whether this is the body at the origin of the propagation frame.
+    ///
+    /// The compatibility builders name a radius or a geometry without saying
+    /// which body they mean, and what they have always meant is the central
+    /// one. A distant occulter keeps the geometry it was built with, which for
+    /// the Earth seen from a lunar orbit has to stay conical.
+    central: bool,
 }
 
 impl OccultingBody {
@@ -57,7 +66,18 @@ impl OccultingBody {
             position_fn: Arc::new(|_| Vec3::from_raw(Vector3::zeros())),
             radius,
             shadow_model,
+            central: true,
         }
+    }
+
+    /// Radius [km].
+    pub fn radius(&self) -> f64 {
+        self.radius
+    }
+
+    /// Whether this is the body at the origin of the propagation frame.
+    pub fn is_central(&self) -> bool {
+        self.central
     }
 
     /// A body whose position comes from the given ephemeris, relative to the
@@ -82,6 +102,7 @@ impl OccultingBody {
             position_fn,
             radius,
             shadow_model,
+            central: false,
         }
     }
 
@@ -96,6 +117,7 @@ impl OccultingBody {
             }),
             radius: arika::earth::R,
             shadow_model: ShadowModel::Conical,
+            central: false,
         }
     }
 
@@ -149,24 +171,40 @@ struct Seen {
 /// The fraction of the Sun's light reaching `observer`, with every body in
 /// `occulters` in the way.
 ///
-/// Positions are in the propagation frame `F`; each occulter's own position
-/// comes from its ephemeris and is rotated into `F` the way the Sun's is.
+/// Every part of the geometry is in the propagation frame `F`: the observer and
+/// the Sun arrive as `Vec3<F>`, and each occulter's own position comes from its
+/// ephemeris and is rotated into `F` the way the Sun's is. Taking raw vectors
+/// here would let a caller pass GCRS positions while `F` says `Cirs`, rotating
+/// one part of the geometry and not the rest.
 pub fn illumination<F: EphemerisFrameBridge>(
     occulters: &[OccultingBody],
-    observer: &Vector3<f64>,
-    sun: &Vector3<f64>,
+    observer: &Vec3<F>,
+    sun: &Vec3<F>,
     epoch: &Epoch,
 ) -> f64 {
-    // The two lists a run actually carries take no allocation: nothing in the
-    // way, or one body in the way, which is every Earth orbit. This is called
-    // once per force evaluation, so an integrator stage that had no allocator
-    // traffic keeps having none.
+    let observer = observer.inner();
+    let sun = sun.inner();
+    // The lists a run actually carries take no allocation: nothing in the way,
+    // one body, which is every Earth orbit, or two, which is every lunar one.
+    // This is called once per force evaluation, so an integrator stage that had
+    // no allocator traffic keeps having none.
     match occulters {
         [] => 1.0,
         [only] => match seen_by::<F>(only, observer, sun, epoch) {
             Some(seen) => (1.0 - seen.obscured).clamp(0.0, 1.0),
             None => 1.0,
         },
+        [first, second] => {
+            let obscured = match (
+                seen_by::<F>(first, observer, sun, epoch),
+                seen_by::<F>(second, observer, sun, epoch),
+            ) {
+                (None, None) => 0.0,
+                (Some(one), None) | (None, Some(one)) => one.obscured,
+                (Some(a), Some(b)) => combine(&a, &b),
+            };
+            (1.0 - obscured).clamp(0.0, 1.0)
+        }
         many => {
             let seen: Vec<Seen> = many
                 .iter()
@@ -264,31 +302,33 @@ fn obscured_fraction(seen: &[Seen]) -> f64 {
         }
     }
 
-    let mut folded: std::collections::HashMap<usize, (f64, Vec<usize>)> =
-        std::collections::HashMap::new();
+    // Groups in the order their widest body appears, and the sum taken in that
+    // order: a hash map's iteration order would leave the floating-point sum
+    // depending on it, and two runs of one simulation have to agree.
+    let mut groups: Vec<(usize, f64, Vec<usize>)> = Vec::new();
     for &i in &order {
         let key = root(&mut group_of, i);
-        let (obscured, taken) = folded.entry(key).or_insert((0.0, Vec::new()));
-        if taken
+        let slot = match groups.iter().position(|(group, _, _)| *group == key) {
+            Some(at) => &mut groups[at],
+            None => {
+                groups.push((key, 0.0, Vec::new()));
+                groups.last_mut().expect("just pushed")
+            }
+        };
+        let (_, obscured, taken) = slot;
+        if let Some(&inside) = taken
             .iter()
-            .any(|&j| seen[i].against(&seen[j]) == Relation::Inside)
+            .find(|&&j| seen[i].against(&seen[j]) == Relation::Inside)
         {
-            // A wider body already counted covers this one whole, so this body
-            // hides nothing the group does not already hide — unless it reports
-            // more than the group does, which a cylindrical shadow inside a
-            // conical one can: the first is total or nothing, the second leaves
-            // a ring. Keeping the larger reading is what stops a configured
-            // total eclipse from coming out partial.
-            *obscured = obscured.max(seen[i].obscured);
+            // A wider body already counted covers this one whole, so it adds
+            // nothing the group does not already hide — unless it reports more.
+            *obscured = obscured.max(combine(&seen[i], &seen[inside]));
             continue;
         }
         taken.push(i);
-        // Shares part of the Sun with the rest of its group: between the
-        // largest fraction in the group and their sum, and never total unless
-        // one body is.
-        *obscured = *obscured + seen[i].obscured - *obscured * seen[i].obscured;
+        *obscured = obscured.max(*obscured + seen[i].obscured - *obscured * seen[i].obscured);
     }
-    folded.values().map(|(obscured, _)| obscured).sum()
+    groups.iter().map(|(_, obscured, _)| obscured).sum()
 }
 
 /// The representative of `i`'s group.
@@ -297,6 +337,26 @@ fn root(group_of: &mut [usize], mut i: usize) -> usize {
         i = group_of[i];
     }
     i
+}
+
+/// What two bodies hide between them, by where their discs sit.
+///
+/// The one rule both the two-body path and the general fold go through, so
+/// there is one answer to the question rather than two.
+fn combine(a: &Seen, b: &Seen) -> f64 {
+    match a.against(b) {
+        // Different parts of the Sun: they add. Exact.
+        Relation::Clear => a.obscured + b.obscured,
+        // `a`'s disc is inside `b`'s, so `b` hides it too — unless `a` reports
+        // more, which a cylindrical shadow inside a conical one can: the first
+        // is total or nothing, the second leaves a ring.
+        Relation::Inside => a.obscured.max(b.obscured),
+        // A shared part and parts of their own. The exact answer is the area of
+        // a union of two circles inside a third, which this does not compute;
+        // this lands between the larger fraction and the sum, and is total only
+        // if one of them is.
+        Relation::Overlapping => a.obscured + b.obscured - a.obscured * b.obscured,
+    }
 }
 
 /// Where one body's disc sits relative to another's, as seen from the observer.
@@ -523,11 +583,21 @@ mod tests {
         let in_front = Vector3::new(7000.0, 0.0, 0.0);
 
         assert_eq!(
-            illumination::<SimpleEci>(&occulters, &behind, &sun, &epoch),
+            illumination::<SimpleEci>(
+                &occulters,
+                &Vec3::from_raw(behind),
+                &Vec3::from_raw(sun),
+                &epoch
+            ),
             0.0
         );
         assert_eq!(
-            illumination::<SimpleEci>(&occulters, &in_front, &sun, &epoch),
+            illumination::<SimpleEci>(
+                &occulters,
+                &Vec3::from_raw(in_front),
+                &Vec3::from_raw(sun),
+                &epoch
+            ),
             1.0
         );
     }
@@ -545,8 +615,8 @@ mod tests {
         let sun_from_moon = *arika::sun::sun_position_from_body(KnownBody::Moon, &epoch.to_tdb())
             .expect("the Moon has a Sun ephemeris")
             .inner();
-        // 100 km up, on the far side of the Moon from the Sun: the Moon itself
-        // is not in the way, so only the Earth can darken this.
+        // 100 km up, on the sunward side of the Moon: the Moon itself is not in
+        // the way there, so only the Earth can darken this.
         let radius = KnownBody::Moon.properties().radius + 100.0;
         let satellite = sun_from_moon.normalize() * radius;
 
@@ -555,14 +625,24 @@ mod tests {
             ShadowModel::Cylindrical,
         )];
         assert_eq!(
-            illumination::<SimpleEci>(&moon_only, &satellite, &sun_from_moon, &epoch),
+            illumination::<SimpleEci>(
+                &moon_only,
+                &Vec3::from_raw(satellite),
+                &Vec3::from_raw(sun_from_moon),
+                &epoch,
+            ),
             1.0,
             "the Moon alone leaves this position sunlit"
         );
 
         let with_earth = default_occulters(KnownBody::Moon, ShadowModel::Cylindrical);
         assert_eq!(with_earth.len(), 2, "the Moon's set carries the Earth");
-        let illum = illumination::<SimpleEci>(&with_earth, &satellite, &sun_from_moon, &epoch);
+        let illum = illumination::<SimpleEci>(
+            &with_earth,
+            &Vec3::from_raw(satellite),
+            &Vec3::from_raw(sun_from_moon),
+            &epoch,
+        );
         assert_eq!(
             illum, 0.0,
             "the Earth's umbra covers a lunar orbit at a total lunar eclipse"
@@ -570,54 +650,75 @@ mod tests {
     }
 
     /// The occulter's own position is rotated into the propagation frame, as
-    /// the Sun's is. A frame test that only moves the Sun cannot catch a
-    /// forgotten rotation on the Earth's Moon-relative vector, so this one
-    /// compares the two frames at a geometry where the rotation matters.
+    /// the Sun's is.
+    ///
+    /// The whole geometry moves together: the observer and the Sun arrive as
+    /// `Vec3<F>` and the occulter is rotated into `F` from its ephemeris, so
+    /// the same physical arrangement has to give the same illumination in two
+    /// frames. Leaving the occulter in GCRS while the rest turned would not.
+    ///
+    /// The arrangement is a partial eclipse on purpose: a total one, or full
+    /// sunlight, would give 0 or 1 in both frames whether or not the rotation
+    /// was applied.
     #[test]
-    fn a_noncentral_occulter_is_rotated_into_the_propagation_frame() {
-        use arika::frame::Cirs;
+    fn the_whole_geometry_is_read_in_one_frame() {
+        use arika::frame::{Cirs, Gcrs};
 
         // Far enough from J2000 for precession to have turned the frames
         // apart: 2026 is 26 years of about 20 arcseconds a year.
         let epoch = Epoch::from_iso8601("2026-03-03T09:00:00Z").expect("a valid epoch");
-        let sun_from_moon = *arika::sun::sun_position_from_body(KnownBody::Moon, &epoch.to_tdb())
-            .expect("the Moon has a Sun ephemeris")
-            .inner();
-        let earth = OccultingBody::earth_from_moon();
+        let rotation = <Cirs as EphemerisFrameBridge>::ephemeris_rotation(&epoch);
 
-        let gcrs = earth.position_in::<arika::frame::Gcrs>(&epoch);
-        let cirs = earth.position_in::<Cirs>(&epoch);
-        let turned = (gcrs - cirs).magnitude();
+        // Observer at the origin, Sun along +y, and a body between them whose
+        // disc half-covers the Sun's: 2618 km at 500000 km is an apparent
+        // radius of 0.3 degrees against the Sun's 0.267, offset by 0.4.
+        let observer_gcrs = Vector3::zeros();
+        let sun_gcrs = Vector3::new(0.0, arika::sun::AU_KM, 0.0);
+        let offset = 0.4_f64.to_radians();
+        let occulter_gcrs = Vector3::new(offset.sin(), offset.cos(), 0.0) * 500_000.0;
+        let occulter = OccultingBody::from_ephemeris(
+            Arc::new(move |_| Vec3::from_raw(occulter_gcrs)),
+            2618.0,
+            ShadowModel::Conical,
+        );
+
+        let in_gcrs = illumination::<Gcrs>(
+            std::slice::from_ref(&occulter),
+            &Vec3::from_raw(observer_gcrs),
+            &Vec3::from_raw(sun_gcrs),
+            &epoch,
+        );
+        assert!(
+            in_gcrs > 0.0 && in_gcrs < 1.0,
+            "the arrangement has to be a partial eclipse to be sensitive at all, got {in_gcrs}"
+        );
+
+        let in_cirs = illumination::<Cirs>(
+            std::slice::from_ref(&occulter),
+            &rotation.transform(&Vec3::<Gcrs>::from_raw(observer_gcrs)),
+            &rotation.transform(&Vec3::<Gcrs>::from_raw(sun_gcrs)),
+            &epoch,
+        );
+        // The two differ by the rotation's own arithmetic, a few parts in
+        // 1e12. Leaving the occulter unrotated would move it by the frames'
+        // 0.14 degrees of precession against an offset of 0.4, which changes
+        // the illumination in the first decimal.
+        assert!(
+            (in_gcrs - in_cirs).abs() < 1e-9,
+            "the same arrangement in two frames: {in_gcrs} against {in_cirs}"
+        );
+
+        // And the rotation is not the identity here, so the test above had
+        // something to catch: the occulter moves by kilometres between frames.
+        let turned = (*rotation
+            .transform(&Vec3::<Gcrs>::from_raw(occulter_gcrs))
+            .inner()
+            - occulter_gcrs)
+            .magnitude();
         assert!(
             turned > 1.0,
             "the frames should differ by more than a kilometre here, got {turned:.3} km"
         );
-        // Same distance, different axes: a rotation and nothing else.
-        assert!((gcrs.magnitude() - cirs.magnitude()).abs() < 1e-6);
-        // And the Sun is far enough away that the illumination is unaffected by
-        // which of the two frames the pair is expressed in.
-        let occulters = vec![earth];
-        let satellite = sun_from_moon.normalize() * (KnownBody::Moon.properties().radius + 100.0);
-        let a = illumination::<arika::frame::Gcrs>(&occulters, &satellite, &sun_from_moon, &epoch);
-        let b = illumination::<Cirs>(&occulters, &satellite, &sun_from_moon, &epoch);
-        assert!(
-            (a - b).abs() < 1e-6,
-            "the same geometry in two frames: {a} against {b}"
-        );
-    }
-
-    /// A radius that is not geometry would give a spacecraft no shadow rather
-    /// than a wrong one, which is the harder failure to notice.
-    #[test]
-    #[should_panic(expected = "finite positive radius")]
-    fn a_body_of_no_radius_is_refused() {
-        OccultingBody::central(0.0, ShadowModel::Cylindrical);
-    }
-
-    #[test]
-    #[should_panic(expected = "finite positive radius")]
-    fn a_body_of_infinite_radius_is_refused() {
-        OccultingBody::central(f64::INFINITY, ShadowModel::Conical);
     }
 
     /// A caller can bring an occulter this module does not name, which is what
@@ -637,7 +738,12 @@ mod tests {
         // The Sun straight behind that body, seen from the origin.
         let sun = fixed.normalize() * arika::sun::AU_KM;
         assert_eq!(
-            illumination::<SimpleEci>(&[occulter], &Vector3::zeros(), &sun, &epoch),
+            illumination::<SimpleEci>(
+                &[occulter],
+                &Vec3::from_raw(Vector3::zeros()),
+                &Vec3::from_raw(sun),
+                &epoch,
+            ),
             0.0,
             "a caller's own body blocks the Sun like any other"
         );
@@ -688,7 +794,12 @@ mod tests {
             ShadowModel::Conical,
         );
         assert_eq!(
-            illumination::<SimpleEci>(&[behind_the_sun], &Vector3::zeros(), &sun, &epoch),
+            illumination::<SimpleEci>(
+                &[behind_the_sun],
+                &Vec3::from_raw(Vector3::zeros()),
+                &Vec3::from_raw(sun),
+                &epoch,
+            ),
             1.0
         );
     }

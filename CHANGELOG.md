@@ -169,6 +169,15 @@ section is subdivided by package.
   mean-equinox-of-date ones, a 0.335° change in 2024. Agreement with Orekit
   improves accordingly — the GEO 3-day third-body oracle goes from 218 m to
   0.33 m, and the three shorter Harris-Priester oracles by 20-40%. ([#359](https://github.com/sksat/orts/pull/359))
+- **Breaking**: `SolarRadiationPressure::shadow_body_radius` and its
+  `shadow_model` are replaced by `occulters: Vec<OccultingBody>`; `PanelSrp` and
+  `SunSensor` hold the same list privately. `without_shadow`,
+  `with_shadow_body` and `with_shadow_model` still work — the first empties the
+  list, the second replaces it with one body at the origin, and the third sets
+  the central body's geometry, leaving a distant occulter the conical one it
+  needs — and `with_occulter` adds a body beside them.
+  A struct literal naming the old fields no longer compiles.
+  ([#469](https://github.com/sksat/orts/pull/469))
 
 #### Fixed
 - A scheduled burn is flown even when it is shorter than an integration step.
@@ -557,16 +566,6 @@ section is subdivided by package.
   one derivative evaluation per sample: measured at 50.1 µs against the
   derivative's 50.5 µs for a 22-panel spacecraft, so roughly a quarter more work
   under RK4 when `output_interval` equals `dt`. ([#466](https://github.com/sksat/orts/pull/466))
-
-#### Changed
-- **Breaking**: `SolarRadiationPressure::shadow_body_radius` and its
-  `shadow_model` are replaced by `occulters: Vec<OccultingBody>`; `PanelSrp` and
-  `SunSensor` hold the same list privately. `without_shadow`,
-  `with_shadow_body` and `with_shadow_model` still work — the first empties the
-  list, the second replaces it with one body at the origin, and the third sets
-  the geometry of every body in it — and `with_occulter` adds one beside them.
-  A struct literal naming the old fields no longer compiles.
-  ([#469](https://github.com/sksat/orts/pull/469))
 
 #### Fixed
 - Every satellite's CSV rows carry the columns the header names. The header was
