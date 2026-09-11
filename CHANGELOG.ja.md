@@ -25,7 +25,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   terminator を通るときである。遮蔽の幾何はモデルではなく天体が持つ。円柱近似は
   周回している天体では食の長さの 0.5% の違いだが、月周回から見た地球のように遠い天体では
   1.86 倍になるので、遠い遮蔽体は中心天体が何であれ円錐で扱う。
-  ([#467](https://github.com/sksat/orts/pull/467))
+  ([#469](https://github.com/sksat/orts/pull/469))
 - `SpacecraftDynamics::torque_breakdown` を追加。モデルごとの外乱トルクを機体座標系 [N·m]
   で返す。既存の `acceleration_breakdown` が magnitude を返すのに対しこちらはベクトルを
   返す。magnitude は符号も軸も運ばないので、機体を逆向きに回す外乱と正しい向きに回す外乱が
@@ -468,7 +468,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   private に持つ。`without_shadow` / `with_shadow_body` / `with_shadow_model` は引き続き
   使える (順に、一覧を空にする / 原点の 1 天体で置き換える / 一覧の全天体の幾何を設定する)。
   1 つ足すのは `with_occulter`。古いフィールドを名前で書いた struct literal は
-  コンパイルできなくなる。([#467](https://github.com/sksat/orts/pull/467))
+  コンパイルできなくなる。([#469](https://github.com/sksat/orts/pull/469))
 
 #### Fixed
 - CSV の全衛星の行が、header が名前を挙げた列を持つようになった。header は先頭の衛星の

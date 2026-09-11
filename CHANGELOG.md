@@ -34,7 +34,7 @@ section is subdivided by package.
   shadow geometry belongs to the body rather than the model: a cylindrical
   shadow is 0.5% of eclipse duration for the body a spacecraft orbits and a
   factor of 1.86 for one as far away as the Earth is from a lunar orbit, so a
-  distant occulter is conical whatever the central one is. ([#467](https://github.com/sksat/orts/pull/467))
+  distant occulter is conical whatever the central one is. ([#469](https://github.com/sksat/orts/pull/469))
 - `SpacecraftDynamics::torque_breakdown` answers the disturbance torque each
   model produces, in the body frame [N·m], beside the existing
   `acceleration_breakdown`. It returns the vector where that one returns a
@@ -566,7 +566,7 @@ section is subdivided by package.
   list, the second replaces it with one body at the origin, and the third sets
   the geometry of every body in it — and `with_occulter` adds one beside them.
   A struct literal naming the old fields no longer compiles.
-  ([#467](https://github.com/sksat/orts/pull/467))
+  ([#469](https://github.com/sksat/orts/pull/469))
 
 #### Fixed
 - Every satellite's CSV rows carry the columns the header names. The header was
