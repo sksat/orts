@@ -565,3 +565,61 @@ fn a_non_finite_mjd_is_named_with_its_line() {
         Ok(_) => panic!("a NaN MJD built a table"),
     }
 }
+
+/// The columns are fixed-width, so a line that stops inside one carries no
+/// value there. Clamping the slice to the line read the prefix as a number
+/// instead: the fixture's LOD column holds `  0.1623`, and a row cut off after
+/// its fourth character parsed `  0.16` — 0.16 s where the row says 0.1623 s.
+#[test]
+fn a_line_that_stops_inside_a_column_has_no_value_there() {
+    let first = SAMPLE.lines().next().expect("fixture has rows");
+    // LOD occupies 1-indexed columns 79..86.
+    assert_eq!(&first[78..86], "  0.1623", "the fixture column moved");
+
+    let cut_inside_lod = format!("{}\n", &first[..84]);
+    let table = EopTable::from_finals2000a(&cut_inside_lod).expect("the required columns fit");
+    // `EopLookupError` carries no PartialEq, so the value is read out first.
+    let lod = table
+        .lod_checked(60370.0)
+        .expect("the row is inside the table's range");
+    assert_eq!(
+        lod, 0.0,
+        "a column the line does not reach has no value, so the lookup answers with none"
+    );
+}
+
+/// Increasing order is not enough on its own. `-inf` ahead of a finite MJD
+/// satisfies it, and the interpolation then divides `inf` by `inf`: the table
+/// reported the range `(-inf, 60000)` and answered a query at 60000 minus a
+/// decade with `Ok(NaN)` rather than an error.
+#[test]
+fn a_non_finite_mjd_is_refused_wherever_it_sits() {
+    let entry = |mjd: f64| arika::earth::eop::EopEntry {
+        mjd,
+        xp: 0.0,
+        yp: 0.0,
+        dut1: 0.0,
+        lod: None,
+        dx: None,
+        dy: None,
+    };
+    for (label, entries) in [
+        ("a lone NaN", vec![entry(f64::NAN)]),
+        (
+            "-inf ahead of a finite MJD",
+            vec![entry(f64::NEG_INFINITY), entry(60000.0)],
+        ),
+        (
+            "+inf after a finite MJD",
+            vec![entry(60000.0), entry(f64::INFINITY)],
+        ),
+    ] {
+        assert!(
+            matches!(
+                EopTable::new(entries),
+                Err(arika::earth::eop::EopLookupError::NonFiniteMjd { .. })
+            ),
+            "{label} built a table"
+        );
+    }
+}

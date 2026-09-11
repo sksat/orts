@@ -668,6 +668,14 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   ようになった。`NaN` は数値として parse され、大小どちらの比較も false になるので、parser の
   `mjd <= previous` では見えなかった。61 行のうち 1 行の MJD が `NaN` のファイルが
   `Empty` (「有効な entry を含まない」) として返っていたが、実際は 61 行あった。([#463](https://github.com/sksat/orts/pull/463))
+- finals2000A の行が固定幅の列の途中で終わっている場合、その列に値は無いものとして扱う。
+  従来は slice を行の長さに切り詰めていたので、先頭部分が短い数値として読まれていた。fixture の
+  LOD 列は `  0.1623` で、4 文字目の後で切れた行は `  0.16` を読む — 行が 0.1623 s と書いて
+  いるところで 0.16 s になる。([#463](https://github.com/sksat/orts/pull/463))
+- `EopTable::new` が、増加順だけでなく全 MJD の有限性を要求するようになった。増加順だけでは
+  `-inf` が有限の MJD の前に通り、テーブルは範囲 `(-inf, 60000)` を報告したうえで、その範囲内の
+  照会に対しエラーではなく `Ok(NaN)` を返していた。単独の `NaN` entry は比較する相手が無いので
+  そもそも検査されなかった。`EopLookupError::NonFiniteMjd` で報告する。([#463](https://github.com/sksat/orts/pull/463))
 - **BREAKING**: `EopParseError` と `EopLookupError` が `#[non_exhaustive]` になった。網羅的な
   `match` には wildcard arm が必要である。今回どちらも variant が増え、未着手の EOP の作業でも
   さらに増える。([#463](https://github.com/sksat/orts/pull/463))

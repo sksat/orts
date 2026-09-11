@@ -1,7 +1,6 @@
 //! EOP lookup table with interpolation.
 
 use alloc::vec::Vec;
-use core::cmp::Ordering;
 
 use super::entry::EopEntry;
 use super::error::EopLookupError;
@@ -28,18 +27,28 @@ impl EopTable {
     ///
     /// Rejects an empty table, and one whose entries do not increase — the
     /// order is what `mjd_range` reports and what the lookup's bisection
-    /// assumes, so accepting an unsorted table hid rows from both. A lone entry
-    /// whose MJD is not finite passes here and makes every lookup
-    /// `OutOfRange`, since the range test is written to fail for a NaN.
+    /// assumes, so accepting an unsorted table hid rows from both. Every MJD
+    /// has to be finite as well, which increasing order alone does not give.
     pub fn new(entries: Vec<EopEntry>) -> Result<Self, EopLookupError> {
         if entries.is_empty() {
             return Err(EopLookupError::Empty);
         }
+        // Finite first, and on every entry: increasing order alone lets `-inf`
+        // through ahead of a finite MJD, and the interpolation then divides
+        // `inf` by `inf` and answers `Ok(NaN)` inside the range it reports. A
+        // lone NaN entry has no pair to compare against at all.
+        for (index, entry) in entries.iter().enumerate() {
+            if !entry.mjd.is_finite() {
+                return Err(EopLookupError::NonFiniteMjd {
+                    index,
+                    mjd: entry.mjd,
+                });
+            }
+        }
         // Strictly increasing: two rows at one MJD leave the interpolation no
-        // interval. Written through `partial_cmp` so a NaN MJD, which compares
-        // as neither greater nor equal, is refused rather than ordered.
+        // interval.
         for (index, pair) in entries.windows(2).enumerate() {
-            if pair[1].mjd.partial_cmp(&pair[0].mjd) != Some(Ordering::Greater) {
+            if pair[1].mjd <= pair[0].mjd {
                 return Err(EopLookupError::NonMonotonicMjd {
                     index: index + 1,
                     previous: pair[0].mjd,

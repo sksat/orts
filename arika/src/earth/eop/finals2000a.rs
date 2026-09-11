@@ -92,44 +92,17 @@ impl Finals2000A {
             // Parse Bulletin A LOD [ms] (optional)
             let lod_a = parse_col_opt(line, 78, 86, "lod_A", line_num)?;
 
-            // Parse Bulletin A nutation (optional, line must be long enough)
-            let dx_a = if line.len() >= 106 {
-                parse_col_opt(line, 97, 106, "dX_A", line_num)?
-            } else {
-                None
-            };
-            let dy_a = if line.len() >= 125 {
-                parse_col_opt(line, 116, 125, "dY_A", line_num)?
-            } else {
-                None
-            };
+            // Parse Bulletin A nutation (optional; `parse_col_opt` reports a
+            // line that stops inside the column as having no value)
+            let dx_a = parse_col_opt(line, 97, 106, "dX_A", line_num)?;
+            let dy_a = parse_col_opt(line, 116, 125, "dY_A", line_num)?;
 
             // Parse Bulletin B values (preferred when present)
-            let xp_b = if line.len() >= 144 {
-                parse_col_opt(line, 134, 144, "xp_B", line_num)?
-            } else {
-                None
-            };
-            let yp_b = if line.len() >= 154 {
-                parse_col_opt(line, 144, 154, "yp_B", line_num)?
-            } else {
-                None
-            };
-            let dut1_b = if line.len() >= 165 {
-                parse_col_opt(line, 154, 165, "dut1_B", line_num)?
-            } else {
-                None
-            };
-            let dx_b = if line.len() >= 175 {
-                parse_col_opt(line, 165, 175, "dX_B", line_num)?
-            } else {
-                None
-            };
-            let dy_b = if line.len() >= 185 {
-                parse_col_opt(line, 175, 185, "dY_B", line_num)?
-            } else {
-                None
-            };
+            let xp_b = parse_col_opt(line, 134, 144, "xp_B", line_num)?;
+            let yp_b = parse_col_opt(line, 144, 154, "yp_B", line_num)?;
+            let dut1_b = parse_col_opt(line, 154, 165, "dut1_B", line_num)?;
+            let dx_b = parse_col_opt(line, 165, 175, "dX_B", line_num)?;
+            let dy_b = parse_col_opt(line, 175, 185, "dY_B", line_num)?;
 
             // Prefer Bulletin B when available
             let xp = xp_b.unwrap_or(xp_a);
@@ -196,10 +169,13 @@ fn parse_col_opt(
     column: &'static str,
     line_num: usize,
 ) -> Result<Option<f64>, EopParseError> {
-    if start >= line.len() {
+    // The columns are fixed-width, so a line that stops inside one carries no
+    // value there. Clamping the slice to the line instead read the prefix as a
+    // number: a row cut off inside LOD's `79..86` parsed `line[78..82]` and
+    // came back as a different, smaller reading.
+    if line.len() < end {
         return Ok(None);
     }
-    let end = end.min(line.len());
     let s = line[start..end].trim();
     if s.is_empty() {
         return Ok(None);

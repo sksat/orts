@@ -772,6 +772,15 @@ section is subdivided by package.
   as neither greater nor smaller, so the parser's `mjd <= previous` test could
   not see it: a file of 61 rows with one `NaN` MJD came back as
   `Empty` — "the file contained no valid entries" — while it held 61. ([#463](https://github.com/sksat/orts/pull/463))
+- A finals2000A line that stops inside a fixed-width column has no value
+  there. The slice was clamped to the line, so the prefix read as a shorter
+  number: the fixture's LOD column holds `  0.1623`, and a row cut off after
+  its fourth character parsed `  0.16` — 0.16 s where the row says 0.1623 s. ([#463](https://github.com/sksat/orts/pull/463))
+- `EopTable::new` requires every MJD to be finite, not only increasing.
+  Increasing order alone let `-inf` through ahead of a finite MJD: the table
+  reported the range `(-inf, 60000)` and answered a query inside it with
+  `Ok(NaN)` rather than an error. A lone `NaN` entry had no pair to compare
+  against at all. Reported as `EopLookupError::NonFiniteMjd`. ([#463](https://github.com/sksat/orts/pull/463))
 - **BREAKING**: `EopParseError` and `EopLookupError` are `#[non_exhaustive]`, so
   an exhaustive `match` on either needs a wildcard arm. Both gained a variant
   here and the EOP work still open will add more. ([#463](https://github.com/sksat/orts/pull/463))

@@ -80,6 +80,12 @@ pub enum EopLookupError {
         previous: f64,
         current: f64,
     },
+    /// Entry `index` has an MJD that is not finite. Increasing order is not
+    /// enough on its own: `-inf` ahead of a finite MJD satisfies it, and the
+    /// interpolation then divides `inf` by `inf` and answers `Ok(NaN)` for a
+    /// query the reported range calls in-bounds. A lone `NaN` entry has no
+    /// pair to compare against at all.
+    NonFiniteMjd { index: usize, mjd: f64 },
 }
 
 impl fmt::Display for EopLookupError {
@@ -98,6 +104,9 @@ impl fmt::Display for EopLookupError {
                 "EOP entry {index} is at MJD {current}, which does not come after \
                  {previous}; entries have to increase"
             ),
+            Self::NonFiniteMjd { index, mjd } => {
+                write!(f, "EOP entry {index} has a non-finite MJD ({mjd})")
+            }
         }
     }
 }
