@@ -1,0 +1,38 @@
+.legend {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--orts-space-sm) var(--orts-space-md);
+  background: var(--orts-panel-bg);
+  border: 1px solid var(--orts-panel-border);
+  border-radius: var(--orts-panel-radius);
+  font-size: var(--orts-font-size-sm);
+  color: var(--orts-text-secondary);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--orts-space-sm);
+  white-space: nowrap;
+}
+
+.group {
+  color: var(--orts-text-primary);
+}
+
+.swatches {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.swatch {
+  display: inline-block;
+  width: 10px;
+  height: 4px;
+  border-radius: 1px;
+}
+
+.dim {
+  opacity: 0.4;
+}

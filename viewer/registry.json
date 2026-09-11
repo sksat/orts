@@ -88,6 +88,11 @@
           "target": "@components/orbit-viewer/components/FarPlaneBeyondScene.tsx"
         },
         {
+          "path": "src/components/InitialCameraFit.tsx",
+          "type": "registry:component",
+          "target": "@components/orbit-viewer/components/InitialCameraFit.tsx"
+        },
+        {
           "path": "src/components/OrbitSceneContents.tsx",
           "type": "registry:component",
           "target": "@components/orbit-viewer/components/OrbitSceneContents.tsx"
@@ -121,6 +126,11 @@
           "path": "src/components/SunLighting.tsx",
           "type": "registry:component",
           "target": "@components/orbit-viewer/components/SunLighting.tsx"
+        },
+        {
+          "path": "src/components/labelTexture.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/components/labelTexture.ts"
         },
         {
           "path": "src/components/renderEntries.ts",
