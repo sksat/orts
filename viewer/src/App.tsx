@@ -7,6 +7,7 @@ const arikaReady = initArika();
 
 import type { TimeRange } from "@sksat/uneri";
 import appStyles from "./App.module.css";
+import { entityPathToBodyId, resolveBodyDefinitions } from "./bodies.js";
 import { AttitudeOverlay } from "./components/AttitudeOverlay.js";
 import { CameraViewProbe } from "./components/CameraViewProbe.js";
 import { NADIR_NEEDS_LENGTH } from "./components/DirectionVectorControls.js";
@@ -25,7 +26,7 @@ import {
 } from "./directionVectors.js";
 import type { DisplayFrame, Vec3 as DisplayVec3 } from "./displayFrame.js";
 import { unitAttitude } from "./displayFrame.js";
-import { centrePositionIsUsable } from "./frameResolve.js";
+import { centrePositionIsUsable, resolveSceneFrame } from "./frameResolve.js";
 import { toViewerReferenceFrame } from "./frameToViewer.js";
 import { CSV_SOURCE_ID, RRD_SOURCE_ID, useFileSource } from "./hooks/useFileSource.js";
 import { useRealtimePlayback } from "./hooks/useRealtimePlayback.js";
@@ -89,6 +90,12 @@ const DEFAULT_DIRECTION_VECTORS: DirectionVectorOptions = { sun: true, nadir: tr
  */
 const ATTITUDE_FOV = 50;
 const ATTITUDE_CAMERA_POSITION: [number, number, number] = [4.3, 0, 2.15];
+
+/**
+ * Why a local-orbital frame cannot be drawn, which both views state the same way:
+ * the axes come from a position and a velocity, and the two have to span a plane.
+ */
+const ORBIT_PLANE_NEEDED = "Requires a position and velocity that define an orbit plane";
 
 export function App() {
   // WASM initialization (must complete before rendering ECEF transforms)
@@ -433,6 +440,10 @@ export function App() {
   // decoupled from React re-renders — no per-render point materialization.
   const snapshot = realtimePlayback.snapshot;
   // biome-ignore lint/correctness/useExhaustiveDependencies: trailBuffersMap is a stable ref-held Map mutated in place; `snapshot` triggers rebuilds on position/playback changes, and `chartBufferVersion` (bumped on ingest AND on resetBuffers) triggers rebuilds when the map is cleared — without it a reset would leave stale satellites referencing detached buffers, since an empty-buffer reset publishes no new snapshot.
+  // What `OrbitScene` resolves with when the app names no bodies of its own, so
+  // the frame question below is asked against the same set the scene draws.
+  const orbitBodyDefinitions = useMemo(() => resolveBodyDefinitions(), []);
+
   const satellites = useMemo<SatelliteState[]>(() => {
     const list: SatelliteState[] = [];
     for (const [id, buf] of trailBuffersMap) {
@@ -639,15 +650,59 @@ export function App() {
   /**
    * The orientation the orbit view is drawn in, which the selector reports.
    *
-   * `OrbitScene` needs an Earth rotation angle for a body-fixed frame and falls
-   * back to inertial without one, so choosing it and then loading a source with
-   * no epoch leaves the toggle pressed over an inertial picture. The same
-   * condition the attitude view asks about its own body-fixed frame answers this.
+   * Asked of `resolveSceneFrame`, the kernel the scene resolves with, rather than
+   * re-tested here: the request falls back to inertial in more ways than one, and
+   * a second description of them drifts. Local-orbital needs a position and a
+   * velocity that span an orbit plane, and a centred *body* keeps its IAU
+   * orientation whatever is requested — both answered by `lvlhActive`.
+   *
+   * Body-fixed asks for the epoch alone, which is the scene's own condition
+   * (`isLegacyEcef(frame) && epochJd != null`). It is not gated on Earth: the
+   * scene applies the Earth rotation angle to whatever central body it was given,
+   * so reporting inertial for another body would describe a picture nobody draws.
+   *
+   * The request stays in `referenceFrame`, which a centre change is computed
+   * from, so a momentary gap in the velocity does not discard it.
    */
+  const drawnOrbitFrame = useMemo(
+    () =>
+      resolveSceneFrame(
+        referenceFrame,
+        (id) => {
+          const sat = satellites.find((s) => s.id === id);
+          return sat ? { position: sat.position, velocity: sat.velocity ?? null } : null;
+        },
+        (id) => entityPathToBodyId(id, orbitBodyDefinitions) != null,
+      ),
+    [referenceFrame, satellites, orbitBodyDefinitions],
+  );
+  /**
+   * Why the orbit view cannot draw its LVLH frame for the current centre.
+   *
+   * Asked hypothetically, so it cannot come from `drawnOrbitFrame`: that resolves
+   * the *current* request, and while the reader sits in inertial it says nothing
+   * about whether the orbit frame would work. `computeLvlhAxes` is the function
+   * the scene resolves with, and a centred body keeps its IAU orientation
+   * whatever is asked.
+   */
+  const orbitLvlhUnavailable: string | undefined = (() => {
+    if (centredSatellite == null) return undefined;
+    if (entityPathToBodyId(centredSatellite.id, orbitBodyDefinitions) != null) {
+      return "A body keeps its own orientation";
+    }
+    return computeLvlhAxes(centredSatellite.position, centredSatellite.velocity ?? null) != null
+      ? undefined
+      : ORBIT_PLANE_NEEDED;
+  })();
+
   const drawnOrbitOrientation: FrameOrientation =
-    referenceFrame.orientation === "body_fixed" && !attitudeFrameAvailable("bodyFixed")
-      ? "inertial"
-      : referenceFrame.orientation;
+    referenceFrame.orientation === "local_orbital"
+      ? drawnOrbitFrame.lvlhActive
+        ? "local_orbital"
+        : "inertial"
+      : referenceFrame.orientation === "body_fixed" && epoch == null
+        ? "inertial"
+        : referenceFrame.orientation;
 
   /**
    * Whether the attitude view draws the body axes.
@@ -746,6 +801,7 @@ export function App() {
               onDirectionVectorsChange={setDirectionVectors}
               centredSatelliteId={centredSatelliteId}
               drawnOrientation={drawnOrbitOrientation}
+              lvlhUnavailable={orbitLvlhUnavailable}
               drawableVectorKinds={orbitDrawableKinds}
               sunUnavailable={sunUnavailableReason}
               centreIsPlaceable={
@@ -760,9 +816,7 @@ export function App() {
               orientation={drawnAttitudeFrame}
               onOrientationChange={setAttitudeFrame}
               localOrbitalUnavailable={
-                attitudeFrameAvailable("localOrbital")
-                  ? undefined
-                  : "Requires a position and velocity that define an orbit plane"
+                attitudeFrameAvailable("localOrbital") ? undefined : ORBIT_PLANE_NEEDED
               }
               bodyFixedUnavailable={
                 centralBody !== "earth"

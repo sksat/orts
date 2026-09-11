@@ -120,6 +120,16 @@ test("a spacecraft at the coordinate origin keeps the Sun, and loses only nadir"
     "aria-label",
     "Nadir: Requires a position of finite, non-zero length",
   );
+
+  // The orbit frame needs a position and a velocity that span a plane, and this
+  // position gives no radial direction to build one from. The option says so
+  // rather than staying selectable over a frame the scene keeps inertial.
+  const lvlh = page.locator('[data-testid="frame-orientation-lvlh"]');
+  await expect(lvlh).toHaveAttribute("aria-disabled", "true");
+  await expect(lvlh).toHaveAttribute(
+    "title",
+    "Requires a position and velocity that define an orbit plane",
+  );
 });
 
 test("a run with no epoch offers no Sun, and says why in the control's name", async ({ page }) => {
