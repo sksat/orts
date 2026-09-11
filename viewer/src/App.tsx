@@ -24,6 +24,7 @@ import {
   resolveDirectionVectors,
 } from "./directionVectors.js";
 import type { DisplayFrame, Vec3 as DisplayVec3 } from "./displayFrame.js";
+import { unitAttitude } from "./displayFrame.js";
 import { centrePositionIsUsable } from "./frameResolve.js";
 import { toViewerReferenceFrame } from "./frameToViewer.js";
 import { CSV_SOURCE_ID, RRD_SOURCE_ID, useFileSource } from "./hooks/useFileSource.js";
@@ -39,7 +40,7 @@ import {
   type SatelliteState,
 } from "./lib/index.js";
 import type { ClientMessage } from "./protocol/generated/ClientMessage.js";
-import { DEFAULT_FRAME, type ReferenceFrame } from "./referenceFrame.js";
+import { DEFAULT_FRAME, type FrameOrientation, type ReferenceFrame } from "./referenceFrame.js";
 import { type MarkerShape, readSatShapeParam, writeSatShapeParam } from "./satelliteShapes.js";
 import { computeLvlhAxes, DEFAULT_CAMERA_POSITION, SCENE_UP } from "./sceneFrame.js";
 import { useSourceRuntime } from "./sources/useSourceRuntime.js";
@@ -635,6 +636,29 @@ export function App() {
     ? attitudeFrame
     : "inertial";
 
+  /**
+   * The orientation the orbit view is drawn in, which the selector reports.
+   *
+   * `OrbitScene` needs an Earth rotation angle for a body-fixed frame and falls
+   * back to inertial without one, so choosing it and then loading a source with
+   * no epoch leaves the toggle pressed over an inertial picture. The same
+   * condition the attitude view asks about its own body-fixed frame answers this.
+   */
+  const drawnOrbitOrientation: FrameOrientation =
+    referenceFrame.orientation === "body_fixed" && !attitudeFrameAvailable("bodyFixed")
+      ? "inertial"
+      : referenceFrame.orientation;
+
+  /**
+   * Whether the attitude view draws the body axes.
+   *
+   * The subject can be on screen without them: this app forwards a zero or
+   * non-finite quaternion, and `AttitudeScene` brings it to unit norm or refuses
+   * it, drawing the marker that shows no orientation. The legend reads this so it
+   * cannot name a triad the reader has no way to see.
+   */
+  const attitudeBodyAxesDrawn = unitAttitude(attitudeBody?.attitude) != null;
+
   // Total points across all satellite buffers.
   // chartBufferVersion bumps on data ingest AND on resetBuffers (clear),
   // so this recalculates when data arrives or buffers are cleared.
@@ -721,6 +745,7 @@ export function App() {
               directionVectors={directionVectors}
               onDirectionVectorsChange={setDirectionVectors}
               centredSatelliteId={centredSatelliteId}
+              drawnOrientation={drawnOrbitOrientation}
               drawableVectorKinds={orbitDrawableKinds}
               sunUnavailable={sunUnavailableReason}
               centreIsPlaceable={
@@ -753,6 +778,7 @@ export function App() {
               directionVectors={directionVectors}
               onDirectionVectorsChange={setDirectionVectors}
               hasBody={attitudeBody != null}
+              bodyAxesDrawn={attitudeBodyAxesDrawn}
             />
           )}
         </div>

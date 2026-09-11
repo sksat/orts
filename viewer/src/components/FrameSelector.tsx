@@ -10,6 +10,16 @@ interface FrameSelectorProps {
   satellites?: SatelliteInfo[];
   /** Whether epoch is available (needed for body-fixed frame). */
   hasEpoch?: boolean;
+  /**
+   * The orientation the scene is drawing in, when it differs from the request.
+   *
+   * `OrbitScene` falls back to inertial for a body-fixed frame it cannot resolve
+   * a rotation angle for, so without this the toggle reports Body-Fixed as
+   * pressed over an inertial picture — reachable by choosing it and then loading a
+   * source with no epoch. The request stays in `referenceFrame`, which is what a
+   * centre change is computed from, so a momentary gap does not discard it.
+   */
+  drawnOrientation?: FrameOrientation;
   /** Central body identifier (e.g. "earth"). Used for display labels. */
   centralBody?: string;
 }
@@ -41,6 +51,7 @@ export function FrameSelector({
   onChange,
   satellites = [],
   hasEpoch = false,
+  drawnOrientation,
   centralBody,
 }: FrameSelectorProps) {
   const centerKey = encodeCenterKey(referenceFrame.center);
@@ -104,7 +115,7 @@ export function FrameSelector({
       </div>
 
       <SegmentedToggle
-        value={referenceFrame.orientation}
+        value={drawnOrientation ?? referenceFrame.orientation}
         options={orientationOptions}
         onChange={handleOrientationChange}
         style={{ marginTop: "4px" }}

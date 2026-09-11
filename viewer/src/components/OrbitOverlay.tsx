@@ -1,7 +1,7 @@
 import styles from "../App.module.css";
 import type { DirectionVectorKind, DirectionVectorOptions } from "../directionVectors.js";
 import type { SatelliteInfo, SimInfo } from "../hooks/useWebSocket.js";
-import type { ReferenceFrame } from "../referenceFrame.js";
+import type { FrameOrientation, ReferenceFrame } from "../referenceFrame.js";
 import type { MarkerShape } from "../satelliteShapes.js";
 import { DirectionVectorControls, NADIR_NEEDS_LENGTH } from "./DirectionVectorControls.js";
 import { FrameSelector } from "./FrameSelector.js";
@@ -51,6 +51,8 @@ export interface OrbitOverlayProps {
    * from the app because only it holds the centred spacecraft's position.
    */
   centreIsPlaceable?: boolean;
+  /** The orientation the scene draws in, when it differs from the request. */
+  drawnOrientation?: FrameOrientation;
   /**
    * Why the Sun is unavailable, when it is. The app owns the wording because it
    * knows which of the two reasons applies — no epoch, or a central body arika
@@ -87,6 +89,7 @@ export function OrbitOverlay({
   drawableVectorKinds,
   sunUnavailable,
   centreIsPlaceable = true,
+  drawnOrientation,
 }: OrbitOverlayProps) {
   // Three states, all of which draw nothing, and each with its own reason. The
   // frame may name no satellite at all; it may name one the viewer holds no sample
@@ -121,6 +124,7 @@ export function OrbitOverlay({
         onChange={onReferenceFrameChange}
         satellites={satellites}
         hasEpoch={epochJd != null}
+        drawnOrientation={drawnOrientation}
         centralBody={centralBody}
       />
       <MarkerShapeSelector
