@@ -56,9 +56,20 @@ function csvRun(opts: { epoch: boolean; position: CsvPosition }): string {
 }
 
 async function loadRun(page: Page, opts: { epoch: boolean; position: CsvPosition }) {
+  await page.goto("/?noAutoConnect=1");
+  await loadInto(page, opts);
+}
+
+/**
+ * Load a run into the page that is already open.
+ *
+ * Kept apart from {@link loadRun} because navigating resets the app's state: a
+ * test about what survives a source change has to change the source without
+ * reloading, or it measures the reset instead.
+ */
+async function loadInto(page: Page, opts: { epoch: boolean; position: CsvPosition }) {
   const path = join(tmpdir(), `orts-availability-${Date.now()}-${Math.random()}.csv`);
   writeFileSync(path, csvRun(opts));
-  await page.goto("/?noAutoConnect=1");
   await page.locator('input[type="file"]').setInputFiles(path);
   await expect(page.locator('[data-testid="orbit-info-file"]')).toContainText("points", {
     timeout: 15000,
@@ -167,4 +178,34 @@ test("a spacecraft with no attitude is named as that, not as one still arriving"
     );
     await expect(toggle).toHaveAttribute("aria-label", `${label}: This spacecraft has no attitude`);
   }
+});
+
+test("the orientation toggle reports the frame the scene fell back to", async ({ page }) => {
+  // Body-Fixed needs an Earth rotation angle, so `OrbitScene` draws inertial
+  // without an epoch. The request survives in the app's state — a momentary gap
+  // should not discard the reader's choice — so the toggle has to report what is
+  // drawn rather than what was asked for, or it says Body-Fixed over an inertial
+  // picture. Reached by choosing it while an epoch is present and then loading a
+  // run without one.
+  await loadRun(page, { epoch: true, position: "orbit" });
+
+  const bodyFixed = page.locator('[data-testid="frame-orientation-body-fixed"]');
+  const inertial = page.locator('[data-testid="frame-orientation-inertial"]');
+  await expect(bodyFixed).not.toHaveAttribute("aria-disabled", "true");
+  await bodyFixed.click();
+  await expect(bodyFixed).toHaveAttribute("aria-pressed", "true");
+
+  // Without navigating: a reload would put the frame back to its default and the
+  // assertions below would hold whatever the selector reported.
+  await loadInto(page, { epoch: false, position: "orbit" });
+
+  await expect(bodyFixed, "the option is unavailable without an epoch").toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  await expect(bodyFixed, "and is not reported as the frame in use").toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+  await expect(inertial, "which is what the scene draws").toHaveAttribute("aria-pressed", "true");
 });

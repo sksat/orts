@@ -41,6 +41,12 @@ export interface AttitudeOverlayProps {
    * so the legend would name lines that are not there.
    */
   hasBody: boolean;
+  /**
+   * Whether the scene draws the body axes, which needs an attitude it can use
+   * (default true). A spacecraft whose quaternion names no rotation is drawn
+   * without them.
+   */
+  bodyAxesDrawn?: boolean;
 }
 
 /**
@@ -66,6 +72,7 @@ export function AttitudeOverlay({
   directionVectors,
   onDirectionVectorsChange,
   hasBody,
+  bodyAxesDrawn = true,
 }: AttitudeOverlayProps) {
   const orientationOptions: SegmentedOption<AttitudeFrame>[] = [
     { value: "inertial", label: "Inertial", testId: "attitude-orientation-inertial" },
@@ -134,7 +141,7 @@ export function AttitudeOverlay({
         unavailable={{ sun: noBody ?? sunUnavailable, nadir: noBody ?? nadirUnavailable }}
       />
 
-      {hasBody && <SceneLegend />}
+      {hasBody && <SceneLegend showBodyAxes={bodyAxesDrawn} />}
 
       <div className={styles.orbitInfo} data-testid="attitude-info">
         Attitude view — no central body or trails
