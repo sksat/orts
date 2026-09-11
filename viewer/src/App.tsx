@@ -618,13 +618,21 @@ export function App() {
     [resolvedVectorKinds, attitudeBody],
   );
 
-  const orbitDrawableKinds = useMemo<readonly DirectionVectorKind[]>(
-    () =>
-      centredSatellite == null
-        ? []
-        : drawableAtCentre({ positionEci: centredSatellite.position, sunIsComputable }),
-    [centredSatellite, sunIsComputable],
-  );
+  /**
+   * The arrows the orbit view would draw at its centre.
+   *
+   * A centred celestial body draws none: `OrbitSceneContents` takes the
+   * `CelestialBody` branch for those ids and returns before the arrows, so
+   * computing them from the body's position would offer the Sun and give nadir a
+   * reason about position length — over a scene with no arrows in it at all.
+   * Replayed recordings put those ids in the entity list, so a reader can centre
+   * on one.
+   */
+  const orbitDrawableKinds = useMemo<readonly DirectionVectorKind[]>(() => {
+    if (centredSatellite == null) return [];
+    if (entityPathToBodyId(centredSatellite.id, orbitBodyDefinitions) != null) return [];
+    return drawableAtCentre({ positionEci: centredSatellite.position, sunIsComputable });
+  }, [centredSatellite, sunIsComputable, orbitBodyDefinitions]);
 
   /**
    * The display orientation the attitude view actually renders in.
@@ -824,6 +832,10 @@ export function App() {
               centredSatelliteId={centredSatelliteId}
               drawnOrientation={drawnOrbitOrientation}
               lvlhUnavailable={orbitLvlhUnavailable}
+              centreIsSpacecraft={
+                centredSatellite == null ||
+                entityPathToBodyId(centredSatellite.id, orbitBodyDefinitions) == null
+              }
               drawableVectorKinds={orbitDrawableKinds}
               sunUnavailable={sunUnavailableReason}
               centreIsPlaceable={
