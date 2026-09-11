@@ -14,6 +14,27 @@ section is subdivided by package.
 ### `orts` (Rust, crates.io)
 
 #### Added
+- `orts::eclipse` holds the bodies that can block the Sun, so more than the
+  central one can: `OccultingBody` carries a body's position, radius and shadow
+  geometry, `default_occulters` gives the set for a central body, and
+  `illumination` combines them into the one fraction a force model or a sensor
+  asks for. A lunar orbiter now enters the Earth's shadow — measured over 2026,
+  a 100 km lunar orbit spends 4.0–7.7 hours a year inside it, in runs of up to
+  257 minutes, on the dates of the lunar eclipses, and Orekit 13.1.7 reports a
+  lighting ratio of 0.000 there against this model's 1.000 before the change.
+  Bodies whose discs stand clear of each other hide disjoint parts of the Sun,
+  so their fractions add, and a body whose disc lies inside another's is
+  already hidden by it, so the larger fraction stands; both are exact. Discs
+  that meet without either containing the other share part of what they hide,
+  and the exact answer there is the area of a union of two circles inside a
+  third, which this does not compute: `a + b - ab` stands in, landing between
+  the larger fraction and the sum and never turning two partial eclipses into a
+  total one. That case is reachable with the lunar set, while the spacecraft
+  crosses the Moon's terminator during an eclipse. The
+  shadow geometry belongs to the body rather than the model: a cylindrical
+  shadow is 0.5% of eclipse duration for the body a spacecraft orbits and a
+  factor of 1.86 for one as far away as the Earth is from a lunar orbit, so a
+  distant occulter is conical whatever the central one is. ([#467](https://github.com/sksat/orts/pull/467))
 - `SpacecraftDynamics::torque_breakdown` answers the disturbance torque each
   model produces, in the body frame [N·m], beside the existing
   `acceleration_breakdown`. It returns the vector where that one returns a
@@ -536,6 +557,16 @@ section is subdivided by package.
   one derivative evaluation per sample: measured at 50.1 µs against the
   derivative's 50.5 µs for a 22-panel spacecraft, so roughly a quarter more work
   under RK4 when `output_interval` equals `dt`. ([#466](https://github.com/sksat/orts/pull/466))
+
+#### Changed
+- **Breaking**: `SolarRadiationPressure::shadow_body_radius` and its
+  `shadow_model` are replaced by `occulters: Vec<OccultingBody>`; `PanelSrp` and
+  `SunSensor` hold the same list privately. `without_shadow`,
+  `with_shadow_body` and `with_shadow_model` still work — the first empties the
+  list, the second replaces it with one body at the origin, and the third sets
+  the geometry of every body in it — and `with_occulter` adds one beside them.
+  A struct literal naming the old fields no longer compiles.
+  ([#467](https://github.com/sksat/orts/pull/467))
 
 #### Fixed
 - Every satellite's CSV rows carry the columns the header names. The header was

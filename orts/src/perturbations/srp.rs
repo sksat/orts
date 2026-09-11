@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use arika::body::KnownBody;
-use arika::eclipse::{self, SUN_RADIUS_KM, ShadowModel};
+use arika::eclipse::ShadowModel;
 use arika::epoch::{Epoch, Tdb};
 use arika::frame::{self, Vec3};
 use arika::sun::{self, SunPositionError};
@@ -9,6 +9,8 @@ use nalgebra::Vector3;
 
 use arika::earth::R as R_EARTH;
 use arika::earth::transform::EphemerisFrameBridge;
+
+use crate::eclipse::{OccultingBody, default_occulters};
 
 use crate::model::ExternalLoads;
 use crate::model::{HasFrame, HasOrbit, Model};
@@ -59,11 +61,21 @@ pub struct SolarRadiationPressure {
     pub cr: f64,
     /// Cross-sectional area to mass ratio \[m²/kg\]
     pub area_to_mass: f64,
-    /// Central body radius for shadow model \[km\].
-    /// `None` disables shadow computation (always sunlit).
-    pub shadow_body_radius: Option<f64>,
-    /// Shadow model to use (default: Cylindrical for backward compatibility).
-    pub shadow_model: ShadowModel,
+    /// The bodies that can block the Sun.
+    ///
+    /// Empty means nothing is in the way and the spacecraft is always sunlit.
+    /// [`for_body`](Self::for_body) fills it from
+    /// [`default_occulters`](crate::eclipse::default_occulters), which carries
+    /// the central body and, for a lunar orbiter, the Earth.
+    pub occulters: Vec<OccultingBody>,
+    /// The shadow geometry a body added by
+    /// [`with_shadow_body`](Self::with_shadow_body) is given, and what
+    /// [`with_shadow_model`](Self::with_shadow_model) records.
+    ///
+    /// Held beside the list so the two builders do not depend on the order they
+    /// are called in: setting the geometry before naming the body has to reach
+    /// that body.
+    central_shadow_model: ShadowModel,
     /// Where the Sun is, relative to the central body [km].
     ///
     /// A closure rather than a body, mirroring
@@ -80,13 +92,22 @@ pub struct SolarRadiationPressure {
 /// model must be `Send + Sync`, and a captured ephemeris table has to fit.
 pub type SunPositionFn = Arc<dyn Fn(&Epoch<Tdb>) -> Vec3<frame::Gcrs> + Send + Sync>;
 
+/// The shadow geometry the SRP models give the central body.
+///
+/// Cylindrical, which is what they have always used: for the body a spacecraft
+/// orbits the penumbra is a 0.5% effect on eclipse duration, and changing it
+/// would move every pinned SRP number. A distant occulter is a different
+/// matter and carries its own model — see
+/// [`OccultingBody`](crate::eclipse::OccultingBody).
+pub const CENTRAL_SHADOW_MODEL: ShadowModel = ShadowModel::Cylindrical;
+
 impl Default for SolarRadiationPressure {
     fn default() -> Self {
         Self {
             cr: DEFAULT_CR,
             area_to_mass: DEFAULT_AREA_TO_MASS,
-            shadow_body_radius: Some(R_EARTH),
-            shadow_model: ShadowModel::Cylindrical,
+            occulters: vec![OccultingBody::central(R_EARTH, CENTRAL_SHADOW_MODEL)],
+            central_shadow_model: CENTRAL_SHADOW_MODEL,
             sun_position_fn: Arc::new(sun::sun_position_eci),
         }
     }
@@ -120,8 +141,8 @@ impl SolarRadiationPressure {
             return Ok(Self {
                 cr: DEFAULT_CR,
                 area_to_mass: area_to_mass.unwrap_or(DEFAULT_AREA_TO_MASS),
-                shadow_body_radius: None,
-                shadow_model: ShadowModel::Cylindrical,
+                occulters: Vec::new(),
+                central_shadow_model: CENTRAL_SHADOW_MODEL,
                 sun_position_fn: Arc::new(|_| Vec3::from_raw(Vector3::zeros())),
             });
         }
@@ -131,8 +152,8 @@ impl SolarRadiationPressure {
         Ok(Self {
             cr: DEFAULT_CR,
             area_to_mass: area_to_mass.unwrap_or(DEFAULT_AREA_TO_MASS),
-            shadow_body_radius: Some(body.properties().radius),
-            shadow_model: ShadowModel::Cylindrical,
+            occulters: default_occulters(body, CENTRAL_SHADOW_MODEL),
+            central_shadow_model: CENTRAL_SHADOW_MODEL,
             sun_position_fn: Arc::new(move |epoch: &Epoch<Tdb>| {
                 sun::sun_position_from_body(body, epoch)
                     .expect("the same body was accepted at construction")
@@ -149,60 +170,73 @@ impl SolarRadiationPressure {
     /// Model no shadow at all: the spacecraft is always sunlit.
     ///
     /// For comparing against a model that has no shadow of its own, and for
-    /// geometry where the central body cannot occult the Sun.
+    /// geometry where nothing can occult the Sun.
     pub fn without_shadow(mut self) -> Self {
-        self.shadow_body_radius = None;
+        self.occulters.clear();
         self
     }
 
-    /// Set or override the shadow body radius (builder pattern).
+    /// Let one body of the given radius, at the origin, block the Sun —
+    /// discarding whatever list was there.
+    ///
+    /// The central body is the one at the origin, so this is how a caller
+    /// states a radius other than the body's own. A second occulter is added
+    /// with [`with_occulter`](Self::with_occulter); replacing the list is what
+    /// this does, since a radius alone cannot say which entry it means.
     pub fn with_shadow_body(mut self, radius: f64) -> Self {
-        self.shadow_body_radius = Some(radius);
+        self.occulters = vec![OccultingBody::central(radius, self.central_shadow_model)];
         self
     }
 
-    /// Set the shadow model (builder pattern).
+    /// Set the shadow geometry of every body in the list.
+    ///
+    /// The geometry belongs to the body — a distant occulter needs the conical
+    /// model where the central one can do without it — so this is for a caller
+    /// holding a list it built, or the single central body the constructors
+    /// leave. [`with_occulter`](Self::with_occulter) carries its own.
     pub fn with_shadow_model(mut self, model: ShadowModel) -> Self {
-        self.shadow_model = model;
+        self.central_shadow_model = model;
+        for occulter in &mut self.occulters {
+            occulter.shadow_model = model;
+        }
+        self
+    }
+
+    /// Add a body that can block the Sun, beside those already there.
+    pub fn with_occulter(mut self, occulter: OccultingBody) -> Self {
+        self.occulters.push(occulter);
+        self
+    }
+
+    /// Replace the list of bodies that can block the Sun.
+    pub fn with_occulters(mut self, occulters: Vec<OccultingBody>) -> Self {
+        self.occulters = occulters;
         self
     }
 }
 
 impl SolarRadiationPressure {
     /// SRP acceleration [km/s²] given the satellite and Sun positions in the
-    /// **same** inertial frame: shadow model + inverse-square distance scaling +
-    /// `Cr·(A/m)`, directed away from the Sun.
-    fn srp_accel(&self, sat_position: &Vector3<f64>, sun_pos: &Vector3<f64>) -> Vector3<f64> {
+    /// **same** inertial frame and the fraction of the Sun reaching the
+    /// satellite: inverse-square distance scaling + `Cr·(A/m)`, directed away
+    /// from the Sun and scaled by `illum`.
+    ///
+    /// The illumination is an argument rather than something computed here: the
+    /// occulters have their own ephemerides, which need the epoch and the
+    /// propagation frame, and neither belongs in the force law.
+    fn srp_accel(
+        &self,
+        sat_position: &Vector3<f64>,
+        sun_pos: &Vector3<f64>,
+        illum: f64,
+    ) -> Vector3<f64> {
+        if illum <= 0.0 {
+            return Vector3::zeros();
+        }
         let sat_to_sun = sun_pos - sat_position;
         let r_sun = sat_to_sun.magnitude();
         let s_hat = sat_to_sun / r_sun;
 
-        // Shadow check using arika::eclipse
-        if let Some(body_r) = self.shadow_body_radius {
-            let illum = eclipse::illumination_central(
-                sat_position,
-                sun_pos,
-                body_r,
-                SUN_RADIUS_KM,
-                self.shadow_model,
-            );
-            if illum <= 0.0 {
-                return Vector3::zeros();
-            }
-            if illum < 1.0 {
-                // Penumbra: scale SRP by illumination fraction
-                let distance_ratio = sun::AU_KM / r_sun;
-                let a_mag = SOLAR_RADIATION_PRESSURE
-                    * self.cr
-                    * self.area_to_mass
-                    * distance_ratio
-                    * distance_ratio
-                    / 1000.0;
-                return -a_mag * illum * s_hat;
-            }
-        }
-
-        // SRP acceleration [km/s²]
         // SOLAR_RADIATION_PRESSURE [N/m²] × Cr × (A/m) [m²/kg] = [m/s²]
         // Divide by 1000 to convert to km/s²
         let distance_ratio = sun::AU_KM / r_sun;
@@ -214,7 +248,7 @@ impl SolarRadiationPressure {
             / 1000.0;
 
         // Acceleration is away from the Sun (opposite to ŝ)
-        -a_mag * s_hat
+        -a_mag * illum * s_hat
     }
 
     /// GCRS-aligned SRP acceleration [km/s²] — the Meeus `Vec3<Gcrs>` Sun
@@ -233,7 +267,13 @@ impl SolarRadiationPressure {
             None => return Vector3::zeros(),
         };
         let sun_pos = (self.sun_position_fn)(&epoch.to_tdb()).into_inner();
-        self.srp_accel(sat_position, &sun_pos)
+        let illum = crate::eclipse::illumination::<arika::frame::Gcrs>(
+            &self.occulters,
+            sat_position,
+            &sun_pos,
+            epoch,
+        );
+        self.srp_accel(sat_position, &sun_pos, illum)
     }
 }
 
@@ -257,7 +297,10 @@ impl<F: EphemerisFrameBridge, S: HasFrame<Frame = F> + HasOrbit> Model<S>
         };
         let sun_gcrs = (self.sun_position_fn)(&epoch.to_tdb());
         let sun_f = F::ephemeris_rotation(epoch).transform(&sun_gcrs);
-        ExternalLoads::acceleration(self.srp_accel(state.orbit().position(), sun_f.inner()))
+        let position = state.orbit().position();
+        let illum =
+            crate::eclipse::illumination::<F>(&self.occulters, position, sun_f.inner(), epoch);
+        ExternalLoads::acceleration(self.srp_accel(position, sun_f.inner(), illum))
     }
 }
 
@@ -291,8 +334,7 @@ mod tests {
         let srp = SolarRadiationPressure {
             cr: 1.5,
             area_to_mass: 0.02,
-            shadow_body_radius: None,
-            shadow_model: ShadowModel::Cylindrical,
+            occulters: Vec::new(),
             ..Default::default()
         };
         let epoch = test_epoch();
@@ -310,13 +352,13 @@ mod tests {
         // bit-exact (the difference is 0.0, not f64 noise). The tight bound is
         // intentional: it also pins that CIRS uses the EOP-free model rotation —
         // an EOP-corrected (dX/dY) variant would shift the result ~5e-18.
-        let expected = srp.srp_accel(&sat, sun_cirs.inner());
+        let expected = srp.srp_accel(&sat, sun_cirs.inner(), 1.0);
         assert!(
             (a_cirs - expected).norm() < 1e-18,
             "CIRS eval must apply the GCRS→CIRS Sun-ephemeris rotation"
         );
 
-        let raw = srp.srp_accel(&sat, sun_gcrs.inner());
+        let raw = srp.srp_accel(&sat, sun_gcrs.inner(), 1.0);
         assert!(
             (a_cirs - raw).norm() > raw.norm() * 1e-4,
             "CIRS eval should differ from the raw GCRS-aligned result"
@@ -332,13 +374,19 @@ mod tests {
 
         let lunar = SolarRadiationPressure::for_earth(Some(0.02)).with_shadow_body(1737.4);
         let earth_sized = SolarRadiationPressure::for_earth(Some(0.02));
+        let epoch = test_epoch();
+        let illum = |srp: &SolarRadiationPressure| {
+            crate::eclipse::illumination::<arika::frame::Gcrs>(&srp.occulters, &sat, &sun, &epoch)
+        };
 
         assert!(
-            lunar.srp_accel(&sat, &sun).magnitude() > 0.0,
+            lunar.srp_accel(&sat, &sun, illum(&lunar)).magnitude() > 0.0,
             "sunlit past the lunar limb"
         );
         assert_eq!(
-            earth_sized.srp_accel(&sat, &sun).magnitude(),
+            earth_sized
+                .srp_accel(&sat, &sun, illum(&earth_sized))
+                .magnitude(),
             0.0,
             "Earth-sized shadow eclipses it"
         );
@@ -349,8 +397,7 @@ mod tests {
         let srp = SolarRadiationPressure {
             cr: 1.5,
             area_to_mass: 0.02,
-            shadow_body_radius: None,
-            shadow_model: ShadowModel::Cylindrical,
+            occulters: Vec::new(),
             ..Default::default()
         };
         let state = iss_state();
@@ -370,8 +417,7 @@ mod tests {
         let srp = SolarRadiationPressure {
             cr: 1.0,
             area_to_mass: 1.0,
-            shadow_body_radius: None,
-            shadow_model: ShadowModel::Cylindrical,
+            occulters: Vec::new(),
             ..Default::default()
         };
         let state = iss_state();
@@ -395,15 +441,13 @@ mod tests {
         let srp1 = SolarRadiationPressure {
             cr: 1.0,
             area_to_mass: 0.01,
-            shadow_body_radius: None,
-            shadow_model: ShadowModel::Cylindrical,
+            occulters: Vec::new(),
             ..Default::default()
         };
         let srp2 = SolarRadiationPressure {
             cr: 2.0,
             area_to_mass: 0.01,
-            shadow_body_radius: None,
-            shadow_model: ShadowModel::Cylindrical,
+            occulters: Vec::new(),
             ..Default::default()
         };
 
@@ -429,15 +473,13 @@ mod tests {
         let srp1 = SolarRadiationPressure {
             cr: 1.5,
             area_to_mass: 0.01,
-            shadow_body_radius: None,
-            shadow_model: ShadowModel::Cylindrical,
+            occulters: Vec::new(),
             ..Default::default()
         };
         let srp2 = SolarRadiationPressure {
             cr: 1.5,
             area_to_mass: 0.02,
-            shadow_body_radius: None,
-            shadow_model: ShadowModel::Cylindrical,
+            occulters: Vec::new(),
             ..Default::default()
         };
 
@@ -468,8 +510,7 @@ mod tests {
         let srp = SolarRadiationPressure {
             cr: 1.5,
             area_to_mass: 0.02,
-            shadow_body_radius: None,
-            shadow_model: ShadowModel::Cylindrical,
+            occulters: Vec::new(),
             ..Default::default()
         };
         let epoch = test_epoch();
@@ -487,8 +528,7 @@ mod tests {
         let srp = SolarRadiationPressure {
             cr: 1.5,
             area_to_mass: 0.02,
-            shadow_body_radius: Some(R_EARTH),
-            shadow_model: ShadowModel::Cylindrical,
+            occulters: vec![OccultingBody::central(R_EARTH, ShadowModel::Cylindrical)],
             ..Default::default()
         };
         let epoch = test_epoch();
@@ -507,8 +547,9 @@ mod tests {
         let srp = SolarRadiationPressure::for_earth(None);
         assert!((srp.cr - DEFAULT_CR).abs() < 1e-15);
         assert!((srp.area_to_mass - DEFAULT_AREA_TO_MASS).abs() < 1e-15);
-        assert_eq!(srp.shadow_body_radius, Some(R_EARTH));
-        assert_eq!(srp.shadow_model, ShadowModel::Cylindrical);
+        assert_eq!(srp.occulters.len(), 1, "the Earth alone blocks the Sun");
+        assert_eq!(srp.occulters[0].radius, R_EARTH);
+        assert_eq!(srp.occulters[0].shadow_model, ShadowModel::Cylindrical);
     }
 
     #[test]
@@ -526,7 +567,7 @@ mod tests {
     #[test]
     fn with_shadow_model_builder() {
         let srp = SolarRadiationPressure::for_earth(None).with_shadow_model(ShadowModel::Conical);
-        assert_eq!(srp.shadow_model, ShadowModel::Conical);
+        assert_eq!(srp.occulters[0].shadow_model, ShadowModel::Conical);
     }
 
     #[test]
@@ -535,15 +576,13 @@ mod tests {
         let srp_conical = SolarRadiationPressure {
             cr: 1.5,
             area_to_mass: 0.02,
-            shadow_body_radius: Some(R_EARTH),
-            shadow_model: ShadowModel::Conical,
+            occulters: vec![OccultingBody::central(R_EARTH, ShadowModel::Conical)],
             ..Default::default()
         };
         let srp_no_shadow = SolarRadiationPressure {
             cr: 1.5,
             area_to_mass: 0.02,
-            shadow_body_radius: None,
-            shadow_model: ShadowModel::Cylindrical,
+            occulters: Vec::new(),
             ..Default::default()
         };
         let epoch = test_epoch();
@@ -645,8 +684,14 @@ mod tests {
         ] {
             let srp = SolarRadiationPressure::for_body(body, None).expect("supported body");
             assert_eq!(
-                srp.shadow_body_radius,
-                Some(body.properties().radius),
+                srp.occulters.len(),
+                1,
+                "{} blocks the Sun on its own",
+                body.properties().name
+            );
+            assert_eq!(
+                srp.occulters[0].radius,
+                body.properties().radius,
                 "{} shadow radius",
                 body.properties().name
             );
@@ -673,7 +718,7 @@ mod tests {
     fn for_body_sun_pushes_radially_outward() {
         let srp = SolarRadiationPressure::for_body(KnownBody::Sun, Some(0.02))
             .expect("orbiting the Sun is supported");
-        assert_eq!(srp.shadow_body_radius, None, "the Sun casts no shadow here");
+        assert!(srp.occulters.is_empty(), "the Sun casts no shadow here");
 
         let sat = vector![1.0e8, 0.0, 0.0];
         let a = srp.acceleration(&sat, Some(&test_epoch()));
@@ -688,5 +733,63 @@ mod tests {
         let a_far = srp.acceleration(&far, Some(&test_epoch()));
         let ratio = a.norm() / a_far.norm();
         assert!((ratio - 4.0).abs() < 1e-9, "expected 4x, got {ratio}");
+    }
+
+    /// A lunar orbiter inside the Earth's shadow feels no SRP.
+    ///
+    /// 2026-03-03T11:30 is a total lunar eclipse. The satellite sits on the
+    /// sunward side of the Moon, so the Moon is not in the way and the model
+    /// used to report full sunlight there; Orekit 13.1.7 reports a lighting
+    /// ratio of 0.000 for this geometry with the Earth as a second occulter.
+    #[test]
+    fn a_lunar_orbiter_feels_no_srp_in_the_earths_shadow() {
+        let epoch = Epoch::from_iso8601("2026-03-03T11:30:00Z").expect("a valid epoch");
+        let sun = *sun::sun_position_from_body(KnownBody::Moon, &epoch.to_tdb())
+            .expect("the Moon has a Sun ephemeris")
+            .inner();
+        let sat = sun.normalize() * (KnownBody::Moon.properties().radius + 100.0);
+
+        let srp = SolarRadiationPressure::for_body(KnownBody::Moon, Some(0.02))
+            .expect("the Moon is supported");
+        assert_eq!(
+            srp.acceleration(&sat, Some(&epoch)).magnitude(),
+            0.0,
+            "the Earth's umbra reaches a lunar orbit"
+        );
+
+        // Not vacuous: the same geometry with nothing in the way is lit, and so
+        // is the same orbit a day later, when the Earth has moved off the line.
+        let unshadowed = SolarRadiationPressure::for_body(KnownBody::Moon, Some(0.02))
+            .expect("the Moon is supported")
+            .without_shadow();
+        assert!(unshadowed.acceleration(&sat, Some(&epoch)).magnitude() > 0.0);
+        let day_later = Epoch::from_iso8601("2026-03-04T11:30:00Z").expect("a valid epoch");
+        let sun_later = *sun::sun_position_from_body(KnownBody::Moon, &day_later.to_tdb())
+            .expect("the Moon has a Sun ephemeris")
+            .inner();
+        let sat_later = sun_later.normalize() * (KnownBody::Moon.properties().radius + 100.0);
+        assert!(
+            srp.acceleration(&sat_later, Some(&day_later)).magnitude() > 0.0,
+            "a day past the eclipse the orbit is sunlit again"
+        );
+    }
+
+    /// The geometry a caller asks for reaches the body it names, whichever
+    /// order the two builders are called in.
+    #[test]
+    fn the_shadow_model_survives_either_builder_order() {
+        let model_first = SolarRadiationPressure::for_earth(None)
+            .without_shadow()
+            .with_shadow_model(ShadowModel::Conical)
+            .with_shadow_body(1737.4);
+        let body_first = SolarRadiationPressure::for_earth(None)
+            .without_shadow()
+            .with_shadow_body(1737.4)
+            .with_shadow_model(ShadowModel::Conical);
+        for srp in [model_first, body_first] {
+            assert_eq!(srp.occulters.len(), 1);
+            assert_eq!(srp.occulters[0].radius, 1737.4);
+            assert_eq!(srp.occulters[0].shadow_model, ShadowModel::Conical);
+        }
     }
 }
