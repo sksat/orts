@@ -513,12 +513,29 @@ export function App() {
   // The chosen id is left alone when its spacecraft goes missing, so a source
   // that brings it back returns to it rather than stranding the reader on a
   // fallback they never picked.
+  /**
+   * The spacecraft among the entities, which is what the attitude view is about.
+   *
+   * A replayed `.rrd` carries a trail for every entity it logged, the Moon and the
+   * Sun included (`rrdMetadataToSimInfo` maps them all, and the orbit scene draws
+   * those ids as bodies). They reach this list the same way a satellite does, so
+   * without this the attitude selector offers the Moon as a subject — and picks it
+   * when it sorts first.
+   */
+  const spacecraft = useMemo(
+    () => satellites.filter((s) => entityPathToBodyId(s.id, orbitBodyDefinitions) == null),
+    [satellites, orbitBodyDefinitions],
+  );
+
   const attitudeSubjectId = useMemo(() => {
-    if (selectedSatelliteId != null && satellites.some((s) => s.id === selectedSatelliteId)) {
+    if (selectedSatelliteId != null && spacecraft.some((s) => s.id === selectedSatelliteId)) {
       return selectedSatelliteId;
     }
-    return centredSatelliteId ?? satellites[0]?.id ?? null;
-  }, [satellites, centredSatelliteId, selectedSatelliteId]);
+    // A centred body is no subject either, so it is taken only when it is one of
+    // the spacecraft.
+    const centred = spacecraft.some((s) => s.id === centredSatelliteId) ? centredSatelliteId : null;
+    return centred ?? spacecraft[0]?.id ?? null;
+  }, [spacecraft, centredSatelliteId, selectedSatelliteId]);
 
   const handleViewChange = useCallback(
     (next: ViewMode) => {
@@ -540,8 +557,8 @@ export function App() {
    * first sample landed.
    */
   const attitudeSubjects = useMemo(
-    () => satellites.map((s) => ({ id: s.id, name: s.name })),
-    [satellites],
+    () => spacecraft.map((s) => ({ id: s.id, name: s.name })),
+    [spacecraft],
   );
 
   /**
@@ -550,7 +567,7 @@ export function App() {
    * present "no data" as "pointing at the reference frame".
    */
   const attitudeBody = useMemo<AttitudeBodyState | null>(() => {
-    const sat = satellites.find((s) => s.id === attitudeSubjectId);
+    const sat = spacecraft.find((s) => s.id === attitudeSubjectId);
     if (sat?.attitude == null) return null;
     return {
       id: sat.id,
@@ -562,7 +579,7 @@ export function App() {
       color: sat.color,
       markerShape: sat.markerShape,
     };
-  }, [satellites, attitudeSubjectId]);
+  }, [spacecraft, attitudeSubjectId]);
 
   /**
    * Which arrows a scene would draw for a spacecraft at this position — asked of
@@ -686,7 +703,12 @@ export function App() {
    * whatever is asked.
    */
   const orbitLvlhUnavailable: string | undefined = (() => {
-    if (centredSatellite == null) return undefined;
+    if (referenceFrame.center.type !== "satellite") return undefined;
+    // The frame names a satellite the viewer holds no sample for — before the
+    // first arrives, or after a source change took it away. The scene draws
+    // inertial until one lands, so the option would sit enabled over a frame it
+    // cannot produce.
+    if (centredSatellite == null) return "Waiting for this spacecraft's data";
     if (entityPathToBodyId(centredSatellite.id, orbitBodyDefinitions) != null) {
       return "A body keeps its own orientation";
     }
