@@ -30,7 +30,9 @@ section is subdivided by package.
   third, which this does not compute: `a + b - ab` stands in, landing between
   the larger fraction and the sum and never turning two partial eclipses into a
   total one. That case is reachable with the lunar set, while the spacecraft
-  crosses the Moon's terminator during an eclipse. The
+  crosses the Moon's terminator during an eclipse. With three or more bodies,
+  each is discounted only against the bodies its own disc meets: one that
+  stands clear hides a part of the Sun the others do not. The
   shadow geometry belongs to the body rather than the model: a cylindrical
   shadow is 0.5% of eclipse duration for the body a spacecraft orbits and a
   factor of 1.86 for one as far away as the Earth is from a lunar orbit, so a

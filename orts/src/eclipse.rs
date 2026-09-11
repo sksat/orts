@@ -123,6 +123,13 @@ impl OccultingBody {
 
     /// This body's position in the propagation frame `F` [km].
     fn position_in<F: EphemerisFrameBridge>(&self, epoch: &Epoch) -> Vector3<f64> {
+        if self.central {
+            // The origin is the origin in every frame, and this is the body
+            // every run carries: asking for the rotation would pay for the
+            // precession and nutation again, next to the one the caller already
+            // computed for the Sun.
+            return Vector3::zeros();
+        }
         let gcrs = (self.position_fn)(&epoch.to_tdb());
         *F::ephemeris_rotation(epoch).transform(&gcrs).inner()
     }
@@ -286,57 +293,40 @@ fn obscured_fraction(seen: &[Seen]) -> f64 {
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    // Bodies whose discs meet, directly or through another, form a group. What
-    // a group hides is folded together; groups hide different parts of the Sun,
-    // so the groups add. Both have to be per group: folding against everything
-    // counted so far would discount a body against one it does not meet.
-    let mut group_of: Vec<usize> = (0..seen.len()).collect();
-    for (a, &i) in order.iter().enumerate() {
-        for &j in &order[..a] {
-            if seen[i].against(&seen[j]) != Relation::Clear {
-                let (root_i, root_j) = (root(&mut group_of, i), root(&mut group_of, j));
-                if root_i != root_j {
-                    group_of[root_i] = root_j;
-                }
-            }
-        }
-    }
-
-    // Groups in the order their widest body appears, and the sum taken in that
-    // order: a hash map's iteration order would leave the floating-point sum
-    // depending on it, and two runs of one simulation have to agree.
-    let mut groups: Vec<(usize, f64, Vec<usize>)> = Vec::new();
+    // Widest first, and each body discounted against the bodies it actually
+    // meets rather than against everything counted so far. Grouping by
+    // connected component would discount a body against one it is clear of:
+    // with A meeting B and B meeting C while A and C stand apart, C's own part
+    // of the Sun is not hidden by A.
+    //
+    // The order is fixed and the sum is taken in it, so the floating-point
+    // result does not depend on iteration order.
+    let mut total = 0.0_f64;
+    let mut taken: Vec<usize> = Vec::with_capacity(seen.len());
     for &i in &order {
-        let key = root(&mut group_of, i);
-        let slot = match groups.iter().position(|(group, _, _)| *group == key) {
-            Some(at) => &mut groups[at],
-            None => {
-                groups.push((key, 0.0, Vec::new()));
-                groups.last_mut().expect("just pushed")
-            }
-        };
-        let (_, obscured, taken) = slot;
         if let Some(&inside) = taken
             .iter()
             .find(|&&j| seen[i].against(&seen[j]) == Relation::Inside)
         {
             // A wider body already counted covers this one whole, so it adds
-            // nothing the group does not already hide — unless it reports more.
-            *obscured = obscured.max(combine(&seen[i], &seen[inside]));
+            // nothing that body does not already hide — unless it reports more,
+            // which a cylindrical shadow inside a conical one can.
+            total = total.max(combine(&seen[i], &seen[inside]));
+            taken.push(i);
             continue;
         }
+        // Of the bodies this one meets, the one hiding most: the part of this
+        // body's share that may already be hidden. Bodies it does not meet hide
+        // a different part of the Sun and take nothing away from it.
+        let shared = taken
+            .iter()
+            .filter(|&&j| seen[i].against(&seen[j]) != Relation::Clear)
+            .map(|&j| seen[j].obscured)
+            .fold(0.0_f64, f64::max);
+        total += seen[i].obscured * (1.0 - shared);
         taken.push(i);
-        *obscured = obscured.max(*obscured + seen[i].obscured - *obscured * seen[i].obscured);
     }
-    groups.iter().map(|(_, obscured, _)| obscured).sum()
-}
-
-/// The representative of `i`'s group.
-fn root(group_of: &mut [usize], mut i: usize) -> usize {
-    while group_of[i] != i {
-        i = group_of[i];
-    }
-    i
+    total
 }
 
 /// What two bodies hide between them, by where their discs sit.
@@ -857,6 +847,38 @@ mod tests {
             assert!(
                 from_ephemeris.is_err(),
                 "`from_ephemeris` accepted a radius of {radius}"
+            );
+        }
+    }
+
+    /// A body is discounted only against the bodies it actually meets. With A
+    /// meeting B and B meeting C while A and C stand apart, C hides a part of
+    /// the Sun that A does not, so A must not take anything away from it.
+    ///
+    /// Grouping the three together and folding against the running total gives
+    /// 0.664 where this gives 0.72.
+    #[test]
+    fn a_body_is_discounted_only_against_what_it_meets() {
+        let at = |angle: f64, obscured: f64, angular_radius: f64| Seen {
+            obscured,
+            direction: (Vector3::x() * angle.cos() + Vector3::y() * angle.sin()).normalize(),
+            angular_radius,
+        };
+        // A at 0 and C at 0.5 are 0.5 apart against radii summing to 0.3, so
+        // they stand clear; B at 0.3 meets both.
+        let a = at(0.0, 0.4, 0.2);
+        let b = at(0.3, 0.3, 0.15);
+        let c = at(0.5, 0.2, 0.1);
+        assert_eq!(a.against(&c), Relation::Clear);
+        assert_eq!(b.against(&a), Relation::Overlapping);
+        assert_eq!(c.against(&b), Relation::Overlapping);
+
+        let want = 0.4 + 0.3 * (1.0 - 0.4) + 0.2 * (1.0 - 0.3);
+        for order in [[a, b, c], [c, b, a], [b, a, c]] {
+            let obscured = obscured_fraction(&order);
+            assert!(
+                (obscured - want).abs() < 1e-15,
+                "expected {want}, got {obscured}"
             );
         }
     }
