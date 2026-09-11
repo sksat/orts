@@ -20,6 +20,15 @@ interface FrameSelectorProps {
    * centre change is computed from, so a momentary gap does not discard it.
    */
   drawnOrientation?: FrameOrientation;
+  /**
+   * Why the orbit frame cannot be drawn for this centre, when it cannot.
+   *
+   * The scene needs a position and a velocity that span an orbit plane, and keeps
+   * a centred body in its IAU orientation whatever is asked. Without this the
+   * option stays selectable while {@link drawnOrientation} keeps reporting
+   * inertial, so the click looks lost.
+   */
+  lvlhUnavailable?: string;
   /** Central body identifier (e.g. "earth"). Used for display labels. */
   centralBody?: string;
 }
@@ -52,6 +61,7 @@ export function FrameSelector({
   satellites = [],
   hasEpoch = false,
   drawnOrientation,
+  lvlhUnavailable,
   centralBody,
 }: FrameSelectorProps) {
   const centerKey = encodeCenterKey(referenceFrame.center);
@@ -85,7 +95,13 @@ export function FrameSelector({
   const orientationOptions: SegmentedOption<FrameOrientation>[] = [
     { value: "inertial", label: labels.inertial, testId: "frame-orientation-inertial" },
     isSatCentered
-      ? { value: "local_orbital", label: "LVLH", testId: "frame-orientation-lvlh" }
+      ? {
+          value: "local_orbital",
+          label: "LVLH",
+          testId: "frame-orientation-lvlh",
+          disabled: lvlhUnavailable != null,
+          title: lvlhUnavailable,
+        }
       : {
           value: "body_fixed",
           label: labels.body_fixed,

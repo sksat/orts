@@ -53,6 +53,8 @@ export interface OrbitOverlayProps {
   centreIsPlaceable?: boolean;
   /** The orientation the scene draws in, when it differs from the request. */
   drawnOrientation?: FrameOrientation;
+  /** Why the orbit frame is unavailable for this centre, when it is. */
+  lvlhUnavailable?: string;
   /**
    * Why the Sun is unavailable, when it is. The app owns the wording because it
    * knows which of the two reasons applies — no epoch, or a central body arika
@@ -90,6 +92,7 @@ export function OrbitOverlay({
   sunUnavailable,
   centreIsPlaceable = true,
   drawnOrientation,
+  lvlhUnavailable,
 }: OrbitOverlayProps) {
   // Three states, all of which draw nothing, and each with its own reason. The
   // frame may name no satellite at all; it may name one the viewer holds no sample
@@ -125,6 +128,7 @@ export function OrbitOverlay({
         satellites={satellites}
         hasEpoch={epochJd != null}
         drawnOrientation={drawnOrientation}
+        lvlhUnavailable={lvlhUnavailable}
         centralBody={centralBody}
       />
       <MarkerShapeSelector
