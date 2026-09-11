@@ -344,18 +344,27 @@ fn root(group_of: &mut [usize], mut i: usize) -> usize {
 /// The one rule both the two-body path and the general fold go through, so
 /// there is one answer to the question rather than two.
 fn combine(a: &Seen, b: &Seen) -> f64 {
+    // `against` asks whether the receiver's disc is inside the other's, so
+    // containment has to be asked both ways round: taking the caller's order
+    // would read a wide body followed by a small one as merely overlapping,
+    // and the answer would depend on how the list was written.
+    if a.against(b) == Relation::Inside || b.against(a) == Relation::Inside {
+        // One disc is inside the other, so the wider body hides it too —
+        // unless the contained one reports more, which a cylindrical shadow
+        // inside a conical one can: the first is total or nothing, the second
+        // leaves a ring.
+        return a.obscured.max(b.obscured);
+    }
     match a.against(b) {
         // Different parts of the Sun: they add. Exact.
         Relation::Clear => a.obscured + b.obscured,
-        // `a`'s disc is inside `b`'s, so `b` hides it too — unless `a` reports
-        // more, which a cylindrical shadow inside a conical one can: the first
-        // is total or nothing, the second leaves a ring.
-        Relation::Inside => a.obscured.max(b.obscured),
         // A shared part and parts of their own. The exact answer is the area of
         // a union of two circles inside a third, which this does not compute;
         // this lands between the larger fraction and the sum, and is total only
         // if one of them is.
-        Relation::Overlapping => a.obscured + b.obscured - a.obscured * b.obscured,
+        Relation::Inside | Relation::Overlapping => {
+            a.obscured + b.obscured - a.obscured * b.obscured
+        }
     }
 }
 
@@ -802,5 +811,53 @@ mod tests {
             ),
             1.0
         );
+    }
+
+    /// Containment does not depend on which way round the pair arrives. The
+    /// relation is asked of one disc about another, so a wide body followed by
+    /// a small one inside it has to read the same as the reverse.
+    #[test]
+    fn containment_is_found_whichever_order_the_pair_comes_in() {
+        let wide = Seen {
+            obscured: 0.9,
+            direction: Vector3::x(),
+            angular_radius: 0.5,
+        };
+        let inside = Seen {
+            obscured: 0.2,
+            direction: (Vector3::x() + Vector3::y() * 0.05).normalize(),
+            angular_radius: 0.01,
+        };
+        assert!((combine(&wide, &inside) - 0.9).abs() < 1e-15);
+        assert!((combine(&inside, &wide) - 0.9).abs() < 1e-15);
+        // And through the two-body path, which calls `combine` in list order.
+        for pair in [[wide, inside], [inside, wide]] {
+            assert!((obscured_fraction(&pair) - 0.9).abs() < 1e-15);
+        }
+    }
+
+    /// A radius that is not geometry would leave a body casting no shadow, or
+    /// carry `NaN` into the force, so both constructors refuse it. Each case is
+    /// named because a validation nothing exercises is one that can quietly go
+    /// away.
+    #[test]
+    fn a_radius_that_is_not_geometry_is_refused() {
+        use std::panic::catch_unwind;
+
+        for radius in [0.0, -1.0, f64::INFINITY, f64::NAN] {
+            let central = catch_unwind(|| OccultingBody::central(radius, ShadowModel::Cylindrical));
+            assert!(central.is_err(), "`central` accepted a radius of {radius}");
+            let from_ephemeris = catch_unwind(|| {
+                OccultingBody::from_ephemeris(
+                    Arc::new(|_| Vec3::from_raw(Vector3::zeros())),
+                    radius,
+                    ShadowModel::Conical,
+                )
+            });
+            assert!(
+                from_ephemeris.is_err(),
+                "`from_ephemeris` accepted a radius of {radius}"
+            );
+        }
     }
 }
