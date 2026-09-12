@@ -169,9 +169,9 @@ pub fn default_occulters(central: KnownBody, central_model: ShadowModel) -> Vec<
 struct Seen {
     /// The fraction of the Sun's light this body leaves, in [0, 1].
     ///
-    /// The light rather than what is hidden: a body that leaves a part in 1e10
-    /// keeps that value exactly, where `1 - obscured` would recover it with a
-    /// relative error of 2e-7.
+    /// The light rather than what is hidden: a body that leaves `1e-10` of the
+    /// light keeps that value exactly, where `1 - obscured` would recover it
+    /// with a relative error of 2e-7.
     visible: f64,
     /// Unit vector from the observer toward the body.
     direction: Vector3<f64>,
@@ -264,10 +264,10 @@ fn seen_by<F: EphemerisFrameBridge>(
 
 /// How much of the Sun's light a set of bodies leaves, as a fraction.
 ///
-/// The light rather than what is hidden, all the way through: a group of bodies
-/// each hiding all but a part in 1e10 leaves a product of 1e-30, and turning
-/// that into an obscured fraction and back would round it to a total eclipse
-/// the bodies do not produce.
+/// The light rather than what is hidden, all the way through: three bodies that
+/// each leave `1e-10` of the light leave `1e-30` between them, and turning that
+/// into an obscured fraction and back would round it to a total eclipse the
+/// bodies do not produce.
 ///
 /// Two bodies are read geometrically, by where their discs sit: see
 /// [`combine`]. That is exact, and it covers every list this library builds —
