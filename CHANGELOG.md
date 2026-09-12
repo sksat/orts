@@ -31,10 +31,10 @@ section is subdivided by package.
   the larger fraction and the sum and never turning two partial eclipses into a
   total one. That case is reachable with the lunar set, while the spacecraft
   crosses the Moon's terminator during an eclipse. The geometric rule covers
-  two bodies, which is every list this library builds; three or more, which
-  only a caller's own list can produce, are combined as `1 - Π(1 - aᵢ)`, a
-  value that does not depend on the order they were written in and is total
-  only if one body is. The
+  two bodies, which is every list this library builds. Beyond two, bodies whose
+  discs meet form a group: groups add, which is exact, and within a group the
+  shares combine as `1 - Π(1 - aᵢ)`, which is symmetric — no ordering of the
+  list can change it — and total only if one body is. The
   shadow geometry belongs to the body rather than the model: a cylindrical
   shadow is 0.5% of eclipse duration for the body a spacecraft orbits and a
   factor of 1.86 for one as far away as the Earth is from a lunar orbit, so a
