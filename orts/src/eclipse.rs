@@ -167,8 +167,12 @@ pub fn default_occulters(central: KnownBody, central_model: ShadowModel) -> Vec<
 /// What one occulter leaves of the Sun, and where it sits on the sky.
 #[derive(Clone, Copy)]
 struct Seen {
-    /// The fraction of the Sun's disc this body hides, in [0, 1].
-    obscured: f64,
+    /// The fraction of the Sun's light this body leaves, in [0, 1].
+    ///
+    /// The light rather than what is hidden: a body that leaves a part in 1e10
+    /// keeps that value exactly, where `1 - obscured` would recover it with a
+    /// relative error of 2e-7.
+    visible: f64,
     /// Unit vector from the observer toward the body.
     direction: Vector3<f64>,
     /// Apparent angular radius of the body [rad].
@@ -198,26 +202,23 @@ pub fn illumination<F: EphemerisFrameBridge>(
     match occulters {
         [] => 1.0,
         [only] => match seen_by::<F>(only, observer, sun, epoch) {
-            Some(seen) => (1.0 - seen.obscured).clamp(0.0, 1.0),
+            Some(seen) => visible_fraction(&[seen]),
             None => 1.0,
         },
-        [first, second] => {
-            let obscured = match (
-                seen_by::<F>(first, observer, sun, epoch),
-                seen_by::<F>(second, observer, sun, epoch),
-            ) {
-                (None, None) => 0.0,
-                (Some(one), None) | (None, Some(one)) => one.obscured,
-                (Some(a), Some(b)) => combine(&a, &b),
-            };
-            (1.0 - obscured).clamp(0.0, 1.0)
-        }
+        [first, second] => match (
+            seen_by::<F>(first, observer, sun, epoch),
+            seen_by::<F>(second, observer, sun, epoch),
+        ) {
+            (None, None) => 1.0,
+            (Some(one), None) | (None, Some(one)) => visible_fraction(&[one]),
+            (Some(a), Some(b)) => visible_fraction(&[a, b]),
+        },
         many => {
             let seen: Vec<Seen> = many
                 .iter()
                 .filter_map(|body| seen_by::<F>(body, observer, sun, epoch))
                 .collect();
-            (1.0 - obscured_fraction(&seen)).clamp(0.0, 1.0)
+            visible_fraction(&seen)
         }
     }
 }
@@ -255,13 +256,18 @@ fn seen_by<F: EphemerisFrameBridge>(
         return None;
     }
     Some(Seen {
-        obscured: 1.0 - illum,
+        visible: illum,
         direction: to_body / distance,
         angular_radius: (body.radius / distance).clamp(-1.0, 1.0).asin(),
     })
 }
 
-/// How much of the Sun's disc a set of bodies hides between them.
+/// How much of the Sun's light a set of bodies leaves, as a fraction.
+///
+/// The light rather than what is hidden, all the way through: a group of bodies
+/// each hiding all but a part in 1e10 leaves a product of 1e-30, and turning
+/// that into an obscured fraction and back would round it to a total eclipse
+/// the bodies do not produce.
 ///
 /// Two bodies are read geometrically, by where their discs sit: see
 /// [`combine`]. That is exact, and it covers every list this library builds —
@@ -269,18 +275,16 @@ fn seen_by<F: EphemerisFrameBridge>(
 ///
 /// Beyond two, bodies whose discs meet, directly or through another, form a
 /// group. Groups hide different parts of the Sun, so what they hide adds, which
-/// is exact. Within a group the shares are combined as `1 - Π(1 - aᵢ)`: each
-/// body hides its share of what the others leave. That is symmetric, so no
-/// ordering of the list can change it, and it is total only if one body is
-/// total on its own. It is an approximation — three discs meeting each other
-/// enclose an area no pairwise bookkeeping recovers, the exact answer being the
-/// area of a union of circles inside the Sun's disc — but an approximation that
-/// cannot depend on how the list was written. Reaching it takes a caller's own
-/// list of three or more.
-fn obscured_fraction(seen: &[Seen]) -> f64 {
+/// is exact. Within a group the light passes through each in turn — the product
+/// of what each leaves — which is symmetric, so no ordering of the list can
+/// change it, and zero only if one body leaves nothing. It is an approximation:
+/// three discs meeting each other enclose an area no pairwise bookkeeping
+/// recovers, the exact answer being the area of a union of circles inside the
+/// Sun's disc. Reaching it takes a caller's own list of three or more.
+fn visible_fraction(seen: &[Seen]) -> f64 {
     match seen {
-        [] => 0.0,
-        [only] => only.obscured,
+        [] => 1.0,
+        [only] => only.visible,
         [a, b] => combine(a, b),
         many => {
             // Bodies that meet, directly or through another. `Relation::Clear`
@@ -297,16 +301,25 @@ fn obscured_fraction(seen: &[Seen]) -> f64 {
                 }
             }
 
-            // One factor per group, each the product of what its bodies leave.
-            let mut left: Vec<(usize, f64)> = Vec::with_capacity(many.len());
+            // One factor per group: the light that gets past every body in it.
+            let mut groups: Vec<(usize, f64)> = Vec::with_capacity(many.len());
             for (i, body) in many.iter().enumerate() {
                 let key = root(&group_of, i);
-                match left.iter_mut().find(|(group, _)| *group == key) {
-                    Some((_, product)) => *product *= 1.0 - body.obscured,
-                    None => left.push((key, 1.0 - body.obscured)),
+                match groups.iter_mut().find(|(group, _)| *group == key) {
+                    Some((_, light)) => *light *= body.visible,
+                    None => groups.push((key, body.visible)),
                 }
             }
-            left.iter().map(|(_, product)| 1.0 - product).sum()
+            match groups.as_slice() {
+                // One group: its product is the answer, with no subtraction to
+                // round a sliver of light away.
+                [(_, light)] => *light,
+                // Several: what they hide adds, so what is left is one minus
+                // that sum. Each term is a fraction of the disc, so the sum
+                // cannot swallow a near-total group the way a product could.
+                several => (1.0 - several.iter().map(|(_, light)| 1.0 - light).sum::<f64>())
+                    .clamp(0.0, 1.0),
+            }
         }
     }
 }
@@ -319,32 +332,31 @@ fn root(group_of: &[usize], mut i: usize) -> usize {
     i
 }
 
-/// What two bodies hide between them, by where their discs sit.
+/// How much of the Sun's light two bodies leave between them, by where their
+/// discs sit.
 ///
-/// The one rule both the two-body path and the general fold go through, so
-/// there is one answer to the question rather than two.
+/// The one rule both the two-body path and the group fold go through, so there
+/// is one answer to the question rather than two.
 fn combine(a: &Seen, b: &Seen) -> f64 {
     // `against` asks whether the receiver's disc is inside the other's, so
     // containment has to be asked both ways round: taking the caller's order
     // would read a wide body followed by a small one as merely overlapping,
     // and the answer would depend on how the list was written.
     if a.against(b) == Relation::Inside || b.against(a) == Relation::Inside {
-        // One disc is inside the other, so the wider body hides it too —
-        // unless the contained one reports more, which a cylindrical shadow
-        // inside a conical one can: the first is total or nothing, the second
-        // leaves a ring.
-        return a.obscured.max(b.obscured);
+        // One disc is inside the other, so the wider body hides what the
+        // narrower one does — unless the contained one hides more, which a
+        // cylindrical shadow inside a conical one can: the first is total or
+        // nothing, the second leaves a ring.
+        return a.visible.min(b.visible);
     }
     match a.against(b) {
-        // Different parts of the Sun: they add. Exact.
-        Relation::Clear => a.obscured + b.obscured,
-        // A shared part and parts of their own. The exact answer is the area of
-        // a union of two circles inside a third, which this does not compute;
-        // this lands between the larger fraction and the sum, and is total only
-        // if one of them is.
-        Relation::Inside | Relation::Overlapping => {
-            a.obscured + b.obscured - a.obscured * b.obscured
-        }
+        // Different parts of the Sun: what they hide adds. Exact.
+        Relation::Clear => (a.visible + b.visible - 1.0).clamp(0.0, 1.0),
+        // A shared part and parts of their own. The light passes each in turn,
+        // which lands between the two rules above and is zero only if one of
+        // them leaves nothing. The exact answer is the area of a union of two
+        // circles inside a third, which this does not compute.
+        Relation::Inside | Relation::Overlapping => a.visible * b.visible,
     }
 }
 
@@ -375,6 +387,12 @@ impl Seen {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What a set of bodies hides between them: the tests below are written in
+    /// those terms, where the module answers with the light that is left.
+    fn obscured_fraction(seen: &[Seen]) -> f64 {
+        1.0 - visible_fraction(seen)
+    }
     use arika::frame::SimpleEci;
 
     /// One body's fraction stands on its own, and an empty sky leaves the Sun
@@ -382,14 +400,12 @@ mod tests {
     #[test]
     fn one_body_hides_its_own_fraction_and_no_body_hides_none() {
         assert_eq!(obscured_fraction(&[]), 0.0);
-        assert_eq!(
-            obscured_fraction(&[Seen {
-                obscured: 0.3,
-                direction: Vector3::x(),
-                angular_radius: 0.1,
-            }]),
-            0.3
-        );
+        let one = obscured_fraction(&[Seen {
+            visible: 0.7,
+            direction: Vector3::x(),
+            angular_radius: 0.1,
+        }]);
+        assert!((one - 0.3).abs() < 1e-15, "got {one}");
     }
 
     /// Two bodies far apart on the sky hide different parts of the Sun, so what
@@ -398,12 +414,12 @@ mod tests {
     fn bodies_apart_on_the_sky_add_what_they_hide() {
         let seen = [
             Seen {
-                obscured: 0.25,
+                visible: 0.75,
                 direction: Vector3::x(),
                 angular_radius: 0.01,
             },
             Seen {
-                obscured: 0.4,
+                visible: 0.6,
                 direction: Vector3::y(),
                 angular_radius: 0.01,
             },
@@ -419,12 +435,12 @@ mod tests {
     fn bodies_whose_discs_meet_do_not_add_up_to_a_total_eclipse() {
         let seen = [
             Seen {
-                obscured: 0.6,
+                visible: 0.4,
                 direction: Vector3::x(),
                 angular_radius: 0.2,
             },
             Seen {
-                obscured: 0.6,
+                visible: 0.4,
                 direction: (Vector3::x() + Vector3::y() * 0.1).normalize(),
                 angular_radius: 0.2,
             },
@@ -446,12 +462,12 @@ mod tests {
     fn a_body_behind_another_adds_nothing() {
         let seen = [
             Seen {
-                obscured: 0.9,
+                visible: 0.1,
                 direction: Vector3::x(),
                 angular_radius: 0.5,
             },
             Seen {
-                obscured: 0.2,
+                visible: 0.8,
                 direction: (Vector3::x() + Vector3::y() * 0.05).normalize(),
                 angular_radius: 0.01,
             },
@@ -467,12 +483,12 @@ mod tests {
     fn a_contained_body_keeps_the_stronger_reading() {
         let seen = [
             Seen {
-                obscured: 0.3,
+                visible: 0.7,
                 direction: Vector3::x(),
                 angular_radius: 0.5,
             },
             Seen {
-                obscured: 1.0,
+                visible: 0.0,
                 direction: (Vector3::x() + Vector3::y() * 0.05).normalize(),
                 angular_radius: 0.02,
             },
@@ -489,12 +505,12 @@ mod tests {
     fn a_total_eclipse_by_one_body_leaves_nothing() {
         let seen = [
             Seen {
-                obscured: 1.0,
+                visible: 0.0,
                 direction: Vector3::x(),
                 angular_radius: 0.3,
             },
             Seen {
-                obscured: 0.5,
+                visible: 0.5,
                 direction: Vector3::y(),
                 angular_radius: 0.01,
             },
@@ -509,7 +525,7 @@ mod tests {
     #[test]
     fn three_or_more_bodies_do_not_depend_on_their_order() {
         let at = |angle: f64, obscured: f64| Seen {
-            obscured,
+            visible: 1.0 - obscured,
             direction: (Vector3::x() * angle.cos() + Vector3::y() * angle.sin()).normalize(),
             angular_radius: 0.2,
         };
@@ -532,7 +548,7 @@ mod tests {
     #[test]
     fn three_bodies_are_total_only_when_one_of_them_is() {
         let at = |angle: f64, obscured: f64| Seen {
-            obscured,
+            visible: 1.0 - obscured,
             direction: (Vector3::x() * angle.cos() + Vector3::y() * angle.sin()).normalize(),
             angular_radius: 0.2,
         };
@@ -784,17 +800,17 @@ mod tests {
     #[test]
     fn containment_is_found_whichever_order_the_pair_comes_in() {
         let wide = Seen {
-            obscured: 0.9,
+            visible: 0.1,
             direction: Vector3::x(),
             angular_radius: 0.5,
         };
         let inside = Seen {
-            obscured: 0.2,
+            visible: 0.8,
             direction: (Vector3::x() + Vector3::y() * 0.05).normalize(),
             angular_radius: 0.01,
         };
-        assert!((combine(&wide, &inside) - 0.9).abs() < 1e-15);
-        assert!((combine(&inside, &wide) - 0.9).abs() < 1e-15);
+        assert!((combine(&wide, &inside) - 0.1).abs() < 1e-15);
+        assert!((combine(&inside, &wide) - 0.1).abs() < 1e-15);
         // And through the two-body path, which calls `combine` in list order.
         for pair in [[wide, inside], [inside, wide]] {
             assert!((obscured_fraction(&pair) - 0.9).abs() < 1e-15);
@@ -832,7 +848,7 @@ mod tests {
     #[test]
     fn clear_discs_add_exactly_however_many_there_are() {
         let at = |angle: f64, obscured: f64| Seen {
-            obscured,
+            visible: 1.0 - obscured,
             direction: (Vector3::x() * angle.cos() + Vector3::y() * angle.sin()).normalize(),
             angular_radius: 0.05,
         };
@@ -858,7 +874,7 @@ mod tests {
     #[test]
     fn a_group_of_touching_discs_adds_beside_a_clear_body() {
         let at = |angle: f64, obscured: f64, angular_radius: f64| Seen {
-            obscured,
+            visible: 1.0 - obscured,
             direction: (Vector3::x() * angle.cos() + Vector3::y() * angle.sin()).normalize(),
             angular_radius,
         };
@@ -877,5 +893,33 @@ mod tests {
                 group + 0.2
             );
         }
+    }
+
+    /// The invariant has to survive the arithmetic: bodies that each leave a
+    /// sliver of light leave a smaller sliver between them, not nothing.
+    ///
+    /// Carrying what is hidden instead would round `1 - 1e-30` to 1 and report
+    /// a total eclipse none of these three produces.
+    #[test]
+    fn near_total_bodies_leave_a_sliver_rather_than_nothing() {
+        let at = |angle: f64, visible: f64| Seen {
+            visible,
+            direction: (Vector3::x() * angle.cos() + Vector3::y() * angle.sin()).normalize(),
+            angular_radius: 0.2,
+        };
+        // All three meet, so they are one group.
+        let three = [at(0.0, 1e-10), at(0.1, 1e-10), at(0.2, 1e-10)];
+        let light = visible_fraction(&three);
+        assert!(
+            light > 0.0,
+            "three partial eclipses must not leave nothing, got {light:e}"
+        );
+        assert!((light - 1e-30).abs() < 1e-40, "got {light:e}");
+
+        // And a pair, which goes through `combine`.
+        let pair = [at(0.0, 1e-10), at(0.1, 1e-10)];
+        let light = visible_fraction(&pair);
+        assert!(light > 0.0, "got {light:e}");
+        assert!((light - 1e-20).abs() < 1e-30, "got {light:e}");
     }
 }

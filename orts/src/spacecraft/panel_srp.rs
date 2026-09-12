@@ -221,6 +221,11 @@ impl PanelSrp {
     ///
     /// A radius alone cannot say which entry of a list it means, so this
     /// replaces it. [`with_occulter`](Self::with_occulter) adds one.
+    ///
+    /// # Panics
+    /// Panics unless the radius is finite and positive, as
+    /// [`OccultingBody::central`](crate::eclipse::OccultingBody::central) does:
+    /// a body of no radius would silently stop casting a shadow.
     pub fn with_shadow_body(mut self, radius: f64) -> Self {
         self.occulters = vec![OccultingBody::central(radius, self.central_shadow_model)];
         self
@@ -2563,5 +2568,33 @@ mod tests {
             unshadowed.acceleration_inertial.into_inner().magnitude() > 0.0,
             "the same panel is lit with nothing in the way"
         );
+    }
+
+    /// The geometry a caller asks for reaches the body it names, whichever
+    /// order the two builders are called in.
+    ///
+    /// The three models carry this state separately, so the tests do too: a
+    /// regression in one of them is not caught by the others.
+    #[test]
+    fn the_shadow_model_survives_either_builder_order() {
+        let shape = || {
+            SpacecraftShape::panels(vec![SurfacePanel::at_com(
+                1.0,
+                Vector3::x(),
+                2.2,
+                crate::spacecraft::PanelOptics::absorber(),
+            )])
+        };
+        let model_first = PanelSrp::new(shape())
+            .with_shadow_model(ShadowModel::Conical)
+            .with_shadow_body(1737.4);
+        let body_first = PanelSrp::new(shape())
+            .with_shadow_body(1737.4)
+            .with_shadow_model(ShadowModel::Conical);
+        for srp in [model_first, body_first] {
+            assert_eq!(srp.occulters.len(), 1);
+            assert_eq!(srp.occulters[0].radius(), 1737.4);
+            assert_eq!(srp.occulters[0].shadow_model, ShadowModel::Conical);
+        }
     }
 }

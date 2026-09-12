@@ -130,6 +130,11 @@ impl SunSensor {
     }
 
     /// Set the shadow body radius for eclipse computation.
+    ///
+    /// # Panics
+    /// Panics unless the radius is finite and positive, as
+    /// [`OccultingBody::central`](crate::eclipse::OccultingBody::central) does:
+    /// a body of no radius would silently stop casting a shadow.
     pub fn with_shadow_body(mut self, radius: f64) -> Self {
         self.occulters = vec![OccultingBody::central(radius, self.central_shadow_model)];
         self

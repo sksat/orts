@@ -183,6 +183,11 @@ impl SolarRadiationPressure {
     /// states a radius other than the body's own. A second occulter is added
     /// with [`with_occulter`](Self::with_occulter); replacing the list is what
     /// this does, since a radius alone cannot say which entry it means.
+    ///
+    /// # Panics
+    /// Panics unless the radius is finite and positive, as
+    /// [`OccultingBody::central`](crate::eclipse::OccultingBody::central) does:
+    /// a body of no radius would silently stop casting a shadow.
     pub fn with_shadow_body(mut self, radius: f64) -> Self {
         self.occulters = vec![OccultingBody::central(radius, self.central_shadow_model)];
         self
