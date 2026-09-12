@@ -263,70 +263,27 @@ fn seen_by<F: EphemerisFrameBridge>(
 
 /// How much of the Sun's disc a set of bodies hides between them.
 ///
-/// Three cases, decided by where the bodies' own discs sit relative to each
-/// other:
+/// Two bodies are read geometrically, by where their discs sit: see
+/// [`combine`]. That covers every list this library builds — a central body,
+/// and the Earth for a lunar orbiter.
 ///
-/// - **Clear of each other**: they hide different parts of the Sun, so their
-///   fractions add. Exact.
-/// - **One inside the other**: the nearer body already hides that part of the
-///   sky, the far body included, so the larger fraction stands. Exact.
-/// - **Overlapping without either containing the other**: they hide a shared
-///   part of the Sun and parts of their own. The exact answer is the area of a
-///   union of two circles inside a third, which this does not compute; taking
-///   `a + b - ab` instead lands between the largest fraction and the sum of
-///   them, and it cannot turn two partial eclipses into a total one — totality
-///   still needs one body to produce it alone.
-///
-/// The last case is reachable with the set [`default_occulters`] gives a lunar
-/// orbiter, and only there: during a lunar eclipse the Sun sits behind the
-/// Earth, so when the spacecraft crosses the Moon's terminator the Earth's
-/// small disc straddles the Moon's limb. It lasts as long as that crossing.
+/// Three or more, which only a caller's own list can produce, are combined as
+/// `1 - Π(1 - aᵢ)`: each body hides its share of what the others leave. The
+/// value is symmetric in the list, so it cannot depend on the order the bodies
+/// were written in, and it is total only if one body is total on its own.
+/// Against the geometric rule it under-counts bodies that stand clear of each
+/// other, whose shares add exactly, and over-counts one body hidden behind
+/// another. Three discs meeting each other cannot be resolved by pairwise
+/// bookkeeping anyway: the exact answer is the area of a union of circles
+/// inside the Sun's disc, and the pairwise attempts at it were what made the
+/// result depend on the order the list arrived in.
 fn obscured_fraction(seen: &[Seen]) -> f64 {
-    // Widest disc first: a body's disc can only lie inside a wider one, so
-    // this order is what lets the containment test below look at bodies
-    // already counted and stop there.
-    let mut order: Vec<usize> = (0..seen.len()).collect();
-    order.sort_by(|&a, &b| {
-        seen[b]
-            .angular_radius
-            .partial_cmp(&seen[a].angular_radius)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
-    // Widest first, and each body discounted against the bodies it actually
-    // meets rather than against everything counted so far. Grouping by
-    // connected component would discount a body against one it is clear of:
-    // with A meeting B and B meeting C while A and C stand apart, C's own part
-    // of the Sun is not hidden by A.
-    //
-    // The order is fixed and the sum is taken in it, so the floating-point
-    // result does not depend on iteration order.
-    let mut total = 0.0_f64;
-    let mut taken: Vec<usize> = Vec::with_capacity(seen.len());
-    for &i in &order {
-        if let Some(&inside) = taken
-            .iter()
-            .find(|&&j| seen[i].against(&seen[j]) == Relation::Inside)
-        {
-            // A wider body already counted covers this one whole, so it adds
-            // nothing that body does not already hide — unless it reports more,
-            // which a cylindrical shadow inside a conical one can.
-            total = total.max(combine(&seen[i], &seen[inside]));
-            taken.push(i);
-            continue;
-        }
-        // Of the bodies this one meets, the one hiding most: the part of this
-        // body's share that may already be hidden. Bodies it does not meet hide
-        // a different part of the Sun and take nothing away from it.
-        let shared = taken
-            .iter()
-            .filter(|&&j| seen[i].against(&seen[j]) != Relation::Clear)
-            .map(|&j| seen[j].obscured)
-            .fold(0.0_f64, f64::max);
-        total += seen[i].obscured * (1.0 - shared);
-        taken.push(i);
+    match seen {
+        [] => 0.0,
+        [only] => only.obscured,
+        [a, b] => combine(a, b),
+        many => 1.0 - many.iter().map(|body| 1.0 - body.obscured).product::<f64>(),
     }
-    total
 }
 
 /// What two bodies hide between them, by where their discs sit.
@@ -512,59 +469,43 @@ mod tests {
         assert!(obscured_fraction(&seen) >= 1.0);
     }
 
-    /// A body clear of an overlapping pair adds its own fraction, whichever
-    /// order the list arrives in. Folding against everything counted so far
-    /// discounts it against a body it does not meet: 0.2 before two
-    /// overlapping 0.3s would read as 0.65 instead of 0.71.
+    /// Three or more bodies are combined symmetrically, so the value cannot
+    /// depend on the order the list was written in. The pairwise attempts at
+    /// the geometry did: three mutually overlapping discs of 0.8, 0.5 and 0.4
+    /// came out at 0.98 one way round and 1.1 the other — a total eclipse none
+    /// of them produces.
     #[test]
-    fn a_clear_body_adds_whatever_order_it_comes_in() {
-        let overlapping = |x: f64| Seen {
-            obscured: 0.3,
-            direction: (Vector3::x() + Vector3::y() * x).normalize(),
-            angular_radius: 0.1,
+    fn three_or_more_bodies_do_not_depend_on_their_order() {
+        let at = |angle: f64, obscured: f64| Seen {
+            obscured,
+            direction: (Vector3::x() * angle.cos() + Vector3::y() * angle.sin()).normalize(),
+            angular_radius: 0.2,
         };
-        let clear = Seen {
-            obscured: 0.2,
-            direction: -Vector3::x(),
-            angular_radius: 0.01,
-        };
-        let want = 0.2 + (0.3 + 0.3 - 0.09);
-        for seen in [
-            vec![clear, overlapping(0.0), overlapping(0.15)],
-            vec![overlapping(0.0), overlapping(0.15), clear],
-            vec![overlapping(0.0), clear, overlapping(0.15)],
-        ] {
-            let obscured = obscured_fraction(&seen);
+        let (a, b, c) = (at(0.0, 0.8), at(0.1, 0.5), at(0.2, 0.4));
+        let want = 1.0 - (1.0 - 0.8) * (1.0 - 0.5) * (1.0 - 0.4);
+        for order in [[a, b, c], [c, b, a], [b, a, c], [c, a, b]] {
+            let obscured = obscured_fraction(&order);
             assert!(
                 (obscured - want).abs() < 1e-15,
                 "expected {want}, got {obscured}"
             );
+            assert!(obscured < 1.0, "no body here is total on its own");
         }
     }
 
-    /// Three bodies, two of them meeting: the pair combines and the third,
-    /// clear of both, adds.
+    /// Three bodies leave nothing only if one of them hides the Sun whole: the
+    /// symmetric rule has a factor of zero exactly there.
     #[test]
-    fn touching_discs_form_one_group_however_many_there_are() {
-        let chain = |x: f64| Seen {
-            obscured: 0.3,
-            direction: (Vector3::x() + Vector3::y() * x).normalize(),
-            angular_radius: 0.1,
+    fn three_bodies_are_total_only_when_one_of_them_is() {
+        let at = |angle: f64, obscured: f64| Seen {
+            obscured,
+            direction: (Vector3::x() * angle.cos() + Vector3::y() * angle.sin()).normalize(),
+            angular_radius: 0.2,
         };
-        let seen = [
-            chain(0.0),
-            chain(0.15),
-            Seen {
-                obscured: 0.2,
-                direction: -Vector3::x(),
-                angular_radius: 0.01,
-            },
-        ];
-        let obscured = obscured_fraction(&seen);
-        let pair = 0.3 + 0.3 - 0.09;
-        assert!(
-            (obscured - (pair + 0.2)).abs() < 1e-15,
-            "the touching pair combines ({pair}) and the far body adds (0.2), got {obscured}"
+        assert!(obscured_fraction(&[at(0.0, 0.9), at(0.1, 0.9), at(0.2, 0.9)]) < 1.0);
+        assert_eq!(
+            obscured_fraction(&[at(0.0, 0.9), at(0.1, 1.0), at(0.2, 0.9)]),
+            1.0
         );
     }
 
@@ -851,35 +792,33 @@ mod tests {
         }
     }
 
-    /// A body is discounted only against the bodies it actually meets. With A
-    /// meeting B and B meeting C while A and C stand apart, C hides a part of
-    /// the Sun that A does not, so A must not take anything away from it.
-    ///
-    /// Grouping the three together and folding against the running total gives
-    /// 0.664 where this gives 0.72.
+    /// Bodies that stand clear of each other hide different parts of the Sun,
+    /// which the two-body rule adds exactly. Beyond two the symmetric rule
+    /// under-counts that arrangement, which is the price of a value that does
+    /// not depend on the order the list arrived in.
     #[test]
-    fn a_body_is_discounted_only_against_what_it_meets() {
-        let at = |angle: f64, obscured: f64, angular_radius: f64| Seen {
+    fn clear_discs_add_exactly_as_a_pair_and_approximately_beyond() {
+        let at = |angle: f64, obscured: f64| Seen {
             obscured,
             direction: (Vector3::x() * angle.cos() + Vector3::y() * angle.sin()).normalize(),
-            angular_radius,
+            angular_radius: 0.05,
         };
-        // A at 0 and C at 0.5 are 0.5 apart against radii summing to 0.3, so
-        // they stand clear; B at 0.3 meets both.
-        let a = at(0.0, 0.4, 0.2);
-        let b = at(0.3, 0.3, 0.15);
-        let c = at(0.5, 0.2, 0.1);
-        assert_eq!(a.against(&c), Relation::Clear);
-        assert_eq!(b.against(&a), Relation::Overlapping);
-        assert_eq!(c.against(&b), Relation::Overlapping);
+        let pair = [at(0.0, 0.3), at(1.0, 0.2)];
+        assert_eq!(pair[0].against(&pair[1]), Relation::Clear);
+        assert!(
+            (obscured_fraction(&pair) - 0.5).abs() < 1e-15,
+            "two clear discs add"
+        );
 
-        let want = 0.4 + 0.3 * (1.0 - 0.4) + 0.2 * (1.0 - 0.3);
-        for order in [[a, b, c], [c, b, a], [b, a, c]] {
-            let obscured = obscured_fraction(&order);
-            assert!(
-                (obscured - want).abs() < 1e-15,
-                "expected {want}, got {obscured}"
-            );
-        }
+        let three = [at(0.0, 0.3), at(1.0, 0.2), at(2.0, 0.1)];
+        let symmetric = 1.0 - 0.7 * 0.8 * 0.9;
+        assert!(
+            (obscured_fraction(&three) - symmetric).abs() < 1e-15,
+            "three go through the symmetric rule: {symmetric}"
+        );
+        assert!(
+            obscured_fraction(&three) < 0.3 + 0.2 + 0.1,
+            "which under-counts what clear discs hide"
+        );
     }
 }
