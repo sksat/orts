@@ -1,12 +1,13 @@
-use arika::eclipse::{self, SUN_RADIUS_KM, ShadowModel};
+use arika::eclipse::ShadowModel;
 use arika::epoch::Epoch;
 use arika::sun;
 use nalgebra::Vector3;
 
-use crate::perturbations::SOLAR_RADIATION_PRESSURE;
+use crate::perturbations::{CENTRAL_SHADOW_MODEL, SOLAR_RADIATION_PRESSURE};
 use arika::earth::R as R_EARTH;
 use arika::earth::transform::EphemerisFrameBridge;
 
+use crate::eclipse::{OccultingBody, default_occulters};
 use crate::model::{HasAttitude, HasFrame, HasMass, HasOrbit, Model};
 
 use super::lit_region::{MIN_FORCE_COSINE, lit_region};
@@ -62,12 +63,19 @@ fn panel_force(panel: &SurfacePanel, s_body: &Vector3<f64>, pressure: f64) -> Ve
 /// [`PanelOptics`]: super::PanelOptics
 pub struct PanelSrp {
     shape: SpacecraftShape,
-    /// Central body radius for the eclipse model [km].
-    /// `None` disables the eclipse test, so the spacecraft is never in a
-    /// body's shadow. Panel-to-panel occlusion is separate and always applies.
-    shadow_body_radius: Option<f64>,
-    /// Shadow model to use (default: Cylindrical).
-    shadow_model: ShadowModel,
+    /// The bodies that can block the Sun.
+    ///
+    /// Empty means no body ever shadows this spacecraft. Panel-to-panel
+    /// occlusion is separate and always applies.
+    occulters: Vec<OccultingBody>,
+    /// The shadow geometry a body added by
+    /// [`with_shadow_body`](Self::with_shadow_body) is given, and what
+    /// [`with_shadow_model`](Self::with_shadow_model) records.
+    ///
+    /// Held beside the list so the two builders do not depend on the order they
+    /// are called in: setting the geometry before naming the body has to reach
+    /// that body.
+    central_shadow_model: ShadowModel,
     /// Where the Sun is, relative to the body this spacecraft orbits.
     ///
     /// The panel force points along the satellite-to-Sun line, so this decides
@@ -111,8 +119,8 @@ impl PanelSrp {
         shape.assert_outlines_are_consistent();
         Self {
             shape,
-            shadow_body_radius: Some(R_EARTH),
-            shadow_model: ShadowModel::Cylindrical,
+            occulters: vec![OccultingBody::central(R_EARTH, CENTRAL_SHADOW_MODEL)],
+            central_shadow_model: CENTRAL_SHADOW_MODEL,
             sun_position_fn: std::sync::Arc::new(sun::sun_position_eci),
         }
     }
@@ -147,8 +155,8 @@ impl PanelSrp {
         if body == arika::body::KnownBody::Sun {
             return Ok(Self {
                 shape,
-                shadow_body_radius: None,
-                shadow_model: ShadowModel::Cylindrical,
+                occulters: Vec::new(),
+                central_shadow_model: CENTRAL_SHADOW_MODEL,
                 sun_position_fn: std::sync::Arc::new(|_| {
                     arika::frame::Vec3::from_raw(Vector3::zeros())
                 }),
@@ -159,8 +167,8 @@ impl PanelSrp {
         sun::sun_position_from_body(body, &Epoch::j2000().to_tdb())?;
         Ok(Self {
             shape,
-            shadow_body_radius: Some(body.properties().radius),
-            shadow_model: ShadowModel::Cylindrical,
+            occulters: default_occulters(body, CENTRAL_SHADOW_MODEL),
+            central_shadow_model: CENTRAL_SHADOW_MODEL,
             sun_position_fn: std::sync::Arc::new(move |epoch: &Epoch<arika::epoch::Tdb>| {
                 sun::sun_position_from_body(body, epoch)
                     .expect("the same body was accepted at construction")
@@ -195,28 +203,56 @@ impl PanelSrp {
         shape.assert_outlines_are_consistent();
         Self {
             shape,
-            shadow_body_radius: None,
-            shadow_model: ShadowModel::Cylindrical,
+            occulters: Vec::new(),
+            central_shadow_model: CENTRAL_SHADOW_MODEL,
             sun_position_fn: std::sync::Arc::new(sun::sun_position_eci),
         }
     }
 
-    /// Drop the shadow, keeping the Sun direction this model was built with
+    /// Drop every shadow, keeping the Sun direction this model was built with
     /// (builder pattern).
     pub fn without_shadow(mut self) -> Self {
-        self.shadow_body_radius = None;
+        self.occulters.clear();
         self
     }
 
-    /// Set or override the shadow body radius (builder pattern).
+    /// Let one body of the given radius, at the origin, block the Sun —
+    /// discarding whatever list was there.
+    ///
+    /// A radius alone cannot say which entry of a list it means, so this
+    /// replaces it. [`with_occulter`](Self::with_occulter) adds one.
+    ///
+    /// # Panics
+    /// Panics unless the radius is finite and positive, as
+    /// [`OccultingBody::central`](crate::eclipse::OccultingBody::central) does:
+    /// a body of no radius would silently stop casting a shadow.
     pub fn with_shadow_body(mut self, radius: f64) -> Self {
-        self.shadow_body_radius = Some(radius);
+        self.occulters = vec![OccultingBody::central(radius, self.central_shadow_model)];
         self
     }
 
-    /// Set the shadow model (builder pattern).
+    /// Set the shadow geometry of the central body (builder pattern).
+    ///
+    /// A distant occulter keeps its own: the Earth seen from a lunar orbit has
+    /// to stay conical, where a cylindrical shadow would call 6.83 hours a year
+    /// dark against the true 3.67.
     pub fn with_shadow_model(mut self, model: ShadowModel) -> Self {
-        self.shadow_model = model;
+        self.central_shadow_model = model;
+        for occulter in self.occulters.iter_mut().filter(|body| body.is_central()) {
+            occulter.shadow_model = model;
+        }
+        self
+    }
+
+    /// Add a body that can block the Sun, beside those already there.
+    pub fn with_occulter(mut self, occulter: OccultingBody) -> Self {
+        self.occulters.push(occulter);
+        self
+    }
+
+    /// Replace the list of bodies that can block the Sun.
+    pub fn with_occulters(mut self, occulters: Vec<OccultingBody>) -> Self {
+        self.occulters = occulters;
         self
     }
 }
@@ -244,22 +280,16 @@ impl PanelSrp {
         let r_sun = sat_to_sun.magnitude();
         let s_hat = sat_to_sun / r_sun;
 
-        // Shadow check using arika::eclipse
-        let illum = if let Some(body_r) = self.shadow_body_radius {
-            let v = eclipse::illumination_central(
-                orbit.position(),
-                sun_f.inner(),
-                body_r,
-                SUN_RADIUS_KM,
-                self.shadow_model,
-            );
-            if v <= 0.0 {
-                return ExternalLoads::zeros();
-            }
-            v
-        } else {
-            1.0
-        };
+        // What every body in the way leaves of the Sun.
+        let illum = crate::eclipse::illumination::<F>(
+            &self.occulters,
+            &orbit.position_vec(),
+            &sun_f,
+            epoch,
+        );
+        if illum <= 0.0 {
+            return ExternalLoads::zeros();
+        }
 
         let distance_ratio = sun::AU_KM / r_sun;
         // Scale base pressure by illumination for penumbra support
@@ -421,7 +451,8 @@ mod tests {
     #[test]
     fn for_earth_defaults() {
         let srp = PanelSrp::for_earth(SpacecraftShape::sphere(20.0, 2.2, 1.5));
-        assert_eq!(srp.shadow_body_radius, Some(R_EARTH));
+        assert_eq!(srp.occulters.len(), 1);
+        assert_eq!(srp.occulters[0].radius(), R_EARTH);
     }
 
     // Sphere
@@ -2200,7 +2231,8 @@ mod tests {
     #[test]
     fn with_shadow_body_builder() {
         let srp = PanelSrp::new(SpacecraftShape::sphere(20.0, 2.2, 1.5)).with_shadow_body(R_EARTH);
-        assert_eq!(srp.shadow_body_radius, Some(R_EARTH));
+        assert_eq!(srp.occulters.len(), 1);
+        assert_eq!(srp.occulters[0].radius(), R_EARTH);
     }
 
     // Cube (symmetric multi-panel)
@@ -2486,5 +2518,83 @@ mod tests {
         );
         let outward = a.normalize().dot(&position.normalize());
         assert!(outward > 0.9, "radially outward: {outward} (a = {a:?})");
+    }
+
+    /// A lunar orbiter inside the Earth's shadow feels no panel SRP either.
+    ///
+    /// `PanelSrp` keeps its own list of occulters, so the cannonball model's
+    /// test says nothing about this one. Same geometry: 2026-03-03T11:30 is a
+    /// total lunar eclipse and the satellite sits on the sunward side of the
+    /// Moon, where the Moon itself is not in the way.
+    #[test]
+    fn a_lunar_orbiter_feels_no_panel_srp_in_the_earths_shadow() {
+        use arika::body::KnownBody;
+
+        let epoch = Epoch::from_iso8601("2026-03-03T11:30:00Z").expect("a valid epoch");
+        let sun = *sun::sun_position_from_body(KnownBody::Moon, &epoch.to_tdb())
+            .expect("the Moon has a Sun ephemeris")
+            .inner();
+        let radius = KnownBody::Moon.properties().radius + 100.0;
+        let position = sun.normalize() * radius;
+        let speed = (KnownBody::Moon.properties().mu / radius).sqrt();
+        // Any perpendicular velocity: the loads do not read it.
+        let across = sun.normalize().cross(&Vector3::z()).normalize() * speed;
+        let state = SpacecraftState {
+            orbit: crate::OrbitalState::new(position, across),
+            attitude: crate::attitude::AttitudeState::identity(),
+            mass: 500.0,
+        };
+        let shape = SpacecraftShape::panels(vec![SurfacePanel::at_com(
+            2.0,
+            Vector3::x(),
+            2.2,
+            crate::spacecraft::PanelOptics::absorber(),
+        )]);
+
+        let shadowed = PanelSrp::for_body(KnownBody::Moon, shape.clone())
+            .expect("the Moon is supported")
+            .eval(0.0, &state, Some(&epoch));
+        assert_eq!(
+            shadowed.acceleration_inertial.into_inner(),
+            Vector3::zeros(),
+            "the Earth's umbra reaches a lunar orbit"
+        );
+
+        let unshadowed = PanelSrp::for_body(KnownBody::Moon, shape)
+            .expect("the Moon is supported")
+            .without_shadow()
+            .eval(0.0, &state, Some(&epoch));
+        assert!(
+            unshadowed.acceleration_inertial.into_inner().magnitude() > 0.0,
+            "the same panel is lit with nothing in the way"
+        );
+    }
+
+    /// The geometry a caller asks for reaches the body it names, whichever
+    /// order the two builders are called in.
+    ///
+    /// The three models carry this state separately, so the tests do too: a
+    /// regression in one of them is not caught by the others.
+    #[test]
+    fn the_shadow_model_survives_either_builder_order() {
+        let shape = || {
+            SpacecraftShape::panels(vec![SurfacePanel::at_com(
+                1.0,
+                Vector3::x(),
+                2.2,
+                crate::spacecraft::PanelOptics::absorber(),
+            )])
+        };
+        let model_first = PanelSrp::new(shape())
+            .with_shadow_model(ShadowModel::Conical)
+            .with_shadow_body(1737.4);
+        let body_first = PanelSrp::new(shape())
+            .with_shadow_body(1737.4)
+            .with_shadow_model(ShadowModel::Conical);
+        for srp in [model_first, body_first] {
+            assert_eq!(srp.occulters.len(), 1);
+            assert_eq!(srp.occulters[0].radius(), 1737.4);
+            assert_eq!(srp.occulters[0].shadow_model, ShadowModel::Conical);
+        }
     }
 }

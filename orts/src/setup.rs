@@ -931,9 +931,16 @@ mod tests {
         };
         let moon = KnownBody::Moon.properties();
         let srp = build_srp(KnownBody::Moon, &sat, 0.02).expect("the Moon has a Sun vector");
-        assert_eq!(srp.shadow_body_radius, Some(moon.radius));
+        assert_eq!(srp.occulters[0].radius(), moon.radius);
+        assert_eq!(
+            srp.occulters.len(),
+            2,
+            "a lunar orbiter is shadowed by the Earth as well"
+        );
+        assert_eq!(srp.occulters[1].radius(), arika::earth::R);
         let earth = KnownBody::Earth.properties();
         let srp = build_srp(KnownBody::Earth, &sat, 0.02).expect("Earth has a Sun vector");
-        assert_eq!(srp.shadow_body_radius, Some(earth.radius));
+        assert_eq!(srp.occulters.len(), 1, "the Moon is not worth carrying");
+        assert_eq!(srp.occulters[0].radius(), earth.radius);
     }
 }

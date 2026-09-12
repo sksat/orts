@@ -5,7 +5,16 @@
 //! satellite→Sun unit vector rotated into the body frame.
 
 use arika::earth::transform::EphemerisFrameBridge;
-use arika::eclipse::{self, SUN_RADIUS_KM, ShadowModel};
+use arika::eclipse::ShadowModel;
+
+use crate::eclipse::{OccultingBody, default_occulters};
+
+/// The shadow geometry a sun sensor gives the central body.
+///
+/// Conical, which is what it has always used: a sensor reports the penumbra as
+/// a fraction, and the two SRP models' cylindrical shadow would throw that
+/// away. A distant occulter carries its own model either way.
+pub const SENSOR_CENTRAL_SHADOW_MODEL: ShadowModel = ShadowModel::Conical;
 use std::sync::Arc;
 
 use arika::body::KnownBody;
@@ -30,16 +39,23 @@ use crate::plugin::tick_input::{SunDirectionBody, SunSensorOutput};
 /// d_body = noise(R_bi · d_eci)
 /// ```
 ///
-/// When eclipse support is enabled (`shadow_body_radius` is set),
+/// When any body can block the Sun (`occulters` is not empty),
 /// the sensor also computes the illumination fraction. During total
 /// eclipse (illumination = 0), direction is `None`.
 pub struct SunSensor {
     noise: Vec<Box<dyn NoiseModel>>,
-    /// Central body radius for eclipse computation \[km\].
-    /// `None` disables eclipse (always sunlit, illumination = 1.0).
-    shadow_body_radius: Option<f64>,
-    /// Shadow model for eclipse computation.
-    shadow_model: ShadowModel,
+    /// The bodies that can block the Sun.
+    ///
+    /// Empty means no eclipse is modelled and the illumination is always 1.0.
+    occulters: Vec<OccultingBody>,
+    /// The shadow geometry a body added by
+    /// [`with_shadow_body`](Self::with_shadow_body) is given, and what
+    /// [`with_shadow_model`](Self::with_shadow_model) records.
+    ///
+    /// Held beside the list so the two builders do not depend on the order they
+    /// are called in: setting the geometry before naming the body has to reach
+    /// that body.
+    central_shadow_model: ShadowModel,
     /// Where the Sun is, relative to the central body [km].
     ///
     /// The reading is a direction to the Sun, so it depends on the central body
@@ -57,8 +73,8 @@ impl SunSensor {
     pub fn new() -> Self {
         Self {
             noise: Vec::new(),
-            shadow_body_radius: None,
-            shadow_model: ShadowModel::Conical,
+            occulters: Vec::new(),
+            central_shadow_model: SENSOR_CENTRAL_SHADOW_MODEL,
             sun_position_fn: Arc::new(sun_position_eci),
         }
     }
@@ -77,8 +93,8 @@ impl SunSensor {
         if body == KnownBody::Sun {
             return Ok(Self {
                 noise: Vec::new(),
-                shadow_body_radius: None,
-                shadow_model: ShadowModel::Conical,
+                occulters: Vec::new(),
+                central_shadow_model: SENSOR_CENTRAL_SHADOW_MODEL,
                 sun_position_fn: Arc::new(|_| Vec3::from_raw(Vector3::zeros())),
             });
         }
@@ -87,8 +103,8 @@ impl SunSensor {
         sun::sun_position_from_body(body, &Epoch::j2000().to_tdb())?;
         Ok(Self {
             noise: Vec::new(),
-            shadow_body_radius: Some(body.properties().radius),
-            shadow_model: ShadowModel::Conical,
+            occulters: default_occulters(body, SENSOR_CENTRAL_SHADOW_MODEL),
+            central_shadow_model: SENSOR_CENTRAL_SHADOW_MODEL,
             sun_position_fn: Arc::new(move |epoch: &Epoch<Tdb>| {
                 sun::sun_position_from_body(body, epoch)
                     .expect("the same body was accepted at construction")
@@ -109,19 +125,38 @@ impl SunSensor {
     /// body's conical shadow, and this asks for an unshadowed reading without
     /// going back to the geocentric Sun that `new()` reads.
     pub fn without_shadow(mut self) -> Self {
-        self.shadow_body_radius = None;
+        self.occulters.clear();
         self
     }
 
     /// Set the shadow body radius for eclipse computation.
+    ///
+    /// # Panics
+    /// Panics unless the radius is finite and positive, as
+    /// [`OccultingBody::central`](crate::eclipse::OccultingBody::central) does:
+    /// a body of no radius would silently stop casting a shadow.
     pub fn with_shadow_body(mut self, radius: f64) -> Self {
-        self.shadow_body_radius = Some(radius);
+        self.occulters = vec![OccultingBody::central(radius, self.central_shadow_model)];
         self
     }
 
     /// Set the shadow model.
+    /// Set the shadow geometry of the central body.
+    ///
+    /// A distant occulter keeps its own: the Earth seen from a lunar orbit has
+    /// to stay conical, where a cylindrical shadow would call 6.83 hours a year
+    /// dark against the true 3.67.
     pub fn with_shadow_model(mut self, model: ShadowModel) -> Self {
-        self.shadow_model = model;
+        self.central_shadow_model = model;
+        for occulter in self.occulters.iter_mut().filter(|body| body.is_central()) {
+            occulter.shadow_model = model;
+        }
+        self
+    }
+
+    /// Add a body that can block the Sun, beside those already there.
+    pub fn with_occulter(mut self, occulter: OccultingBody) -> Self {
+        self.occulters.push(occulter);
         self
     }
 
@@ -161,18 +196,13 @@ impl SunSensor {
             sat_to_sun
         };
 
-        // Compute illumination if eclipse is enabled
-        let illumination = if let Some(body_r) = self.shadow_body_radius {
-            eclipse::illumination_central(
-                &sc_pos,
-                &sun_eci,
-                body_r,
-                SUN_RADIUS_KM,
-                self.shadow_model,
-            )
-        } else {
-            1.0
-        };
+        // What every body in the way leaves of the Sun.
+        let illumination = crate::eclipse::illumination::<F>(
+            &self.occulters,
+            &state.orbit.position_vec(),
+            &Vec3::from_raw(sun_eci),
+            epoch,
+        );
 
         // In total eclipse, direction is unmeasurable
         if illumination <= 0.0 {
@@ -691,5 +721,79 @@ mod tests {
             0.0,
             "the same point is inside the umbra of a body Earth's size (6378.137 km)"
         );
+    }
+
+    /// A sun sensor on a lunar orbiter reports the Earth's eclipse.
+    ///
+    /// The sensor keeps its own list of occulters, and its answer is
+    /// categorical rather than scaled: no direction at all while the Sun is
+    /// hidden. Same geometry as the SRP tests — a total lunar eclipse, with the
+    /// spacecraft on the sunward side of the Moon.
+    #[test]
+    fn a_sun_sensor_on_a_lunar_orbiter_sees_the_earths_eclipse() {
+        use arika::body::KnownBody;
+
+        let epoch = Epoch::from_iso8601("2026-03-03T11:30:00Z").expect("a valid epoch");
+        let sun = *arika::sun::sun_position_from_body(KnownBody::Moon, &epoch.to_tdb())
+            .expect("the Moon has a Sun ephemeris")
+            .inner();
+        let radius = KnownBody::Moon.properties().radius + 100.0;
+        let position = sun.normalize() * radius;
+        let speed = (KnownBody::Moon.properties().mu / radius).sqrt();
+        let across = sun.normalize().cross(&Vector3::z()).normalize() * speed;
+        let state = SpacecraftState {
+            orbit: crate::OrbitalState::new(position, across),
+            attitude: crate::attitude::AttitudeState::identity(),
+            mass: 500.0,
+        };
+
+        let mut sensor = SunSensor::for_body(KnownBody::Moon).expect("the Moon is supported");
+        match sensor.measure(&state, &epoch) {
+            SunSensorOutput::Fine {
+                direction,
+                illumination,
+            } => {
+                assert_eq!(illumination, 0.0, "the Earth's umbra hides the Sun");
+                assert!(
+                    direction.is_none(),
+                    "a sensor in the umbra has no direction to report"
+                );
+            }
+            other => panic!("expected a fine sun sensor reading, got {other:?}"),
+        }
+
+        let mut lit = SunSensor::for_body(KnownBody::Moon)
+            .expect("the Moon is supported")
+            .without_shadow();
+        match lit.measure(&state, &epoch) {
+            SunSensorOutput::Fine {
+                direction,
+                illumination,
+            } => {
+                assert_eq!(illumination, 1.0);
+                assert!(direction.is_some());
+            }
+            other => panic!("expected a fine sun sensor reading, got {other:?}"),
+        }
+    }
+
+    /// The geometry a caller asks for reaches the body it names, whichever
+    /// order the two builders are called in.
+    #[test]
+    fn the_shadow_model_survives_either_builder_order() {
+        let model_first = SunSensor::new()
+            .with_shadow_model(ShadowModel::Cylindrical)
+            .with_shadow_body(arika::earth::R);
+        let body_first = SunSensor::new()
+            .with_shadow_body(arika::earth::R)
+            .with_shadow_model(ShadowModel::Cylindrical);
+        for sensor in [model_first, body_first] {
+            assert_eq!(sensor.occulters.len(), 1);
+            assert_eq!(
+                sensor.occulters[0].shadow_model,
+                ShadowModel::Cylindrical,
+                "the sensor's conical default must not override the caller"
+            );
+        }
     }
 }

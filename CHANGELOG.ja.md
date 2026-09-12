@@ -11,6 +11,24 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `orts` (Rust, crates.io)
 
 #### Added
+- `orts::eclipse` を追加。太陽を遮る天体を一覧で持ち、中心天体以外も遮蔽体になれるようにした。
+  `OccultingBody` が天体の位置・半径・遮蔽の幾何を持ち、`default_occulters` が中心天体ごとの
+  標準の一覧を返し、`illumination` が力モデルやセンサが使う 1 つの照射率にまとめる。これで
+  月周回の衛星が地球の影に入る。2026 年で実測すると、100 km の月周回軌道は年 4.0〜7.7 時間を
+  地球の影の中で過ごし、連続では最長 257 分、日付は月食の日である。Orekit 13.1.7 はその
+  幾何で lighting ratio 0.000 を返し、修正前のこのモデルは 1.000 を返していた。
+  互いの視円板が離れている天体は太陽の別の部分を隠すので割合を足す。一方の視円板が他方の
+  内側にあれば手前の天体が奥ごと隠しているので大きい割合を採る。ここまでは厳密である。
+  どちらでもない重なりでは隠す部分を共有する。厳密な答えは 2 円の和集合を第 3 の円で切った
+  面積で、これは計算しておらず `a + b - ab` を代わりに使う。この値は大きい方と和の間に入り、
+  部分食 2 つから皆既を作らない。この場合は月の一覧でも起きる。月食の間に衛星が月の
+  terminator を通るときである。この幾何の規則は 2 天体まで、つまり library が作る一覧の
+  範囲である。3 天体以上では、視円板が触れ合う天体を群にまとめ、群の間は足し (厳密)、
+  群の中は対称な `1 - Π(1 - aᵢ)` で合わせる。並び順に依存せず、1 天体が皆既でなければ
+  皆既にならない。遮蔽の幾何はモデルではなく天体が持つ。円柱近似は
+  周回している天体では食の長さの 0.5% の違いだが、月周回から見た地球のように遠い天体では
+  1.86 倍になるので、遠い遮蔽体は中心天体が何であれ円錐で扱う。
+  ([#469](https://github.com/sksat/orts/pull/469))
 - `SpacecraftDynamics::torque_breakdown` を追加。モデルごとの外乱トルクを機体座標系 [N·m]
   で返す。既存の `acceleration_breakdown` が magnitude を返すのに対しこちらはベクトルを
   返す。magnitude は符号も軸も運ばないので、機体を逆向きに回す外乱と正しい向きに回す外乱が
@@ -122,7 +140,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   J2000 の方向を返すようになったためで、2024 年で 0.335°。Orekit との一致はその分改善し、
   GEO 3 日の third-body oracle は 218 m → 0.33 m、短い Harris-Priester oracle 3 件は
   20-40% 改善する。([#359](https://github.com/sksat/orts/pull/359))
-
+- **破壊的変更**: `SolarRadiationPressure::shadow_body_radius` と `shadow_model` を
+  `occulters: Vec<OccultingBody>` に置き換えた。`PanelSrp` と `SunSensor` も同じ一覧を
+  private に持つ。`without_shadow` / `with_shadow_body` / `with_shadow_model` は引き続き
+  使える (順に、一覧を空にする / 原点の 1 天体で置き換える / 中心天体の幾何を設定する。
+  遠い遮蔽体は必要な円錐のまま残る)。
+  1 つ足すのは `with_occulter`。古いフィールドを名前で書いた struct literal は
+  コンパイルできなくなる。([#469](https://github.com/sksat/orts/pull/469))
 #### Fixed
 - 積分 step より短い燃焼も伝播に入るようになった。`IndependentGroup` と `CoupledGroup` は
   現在時刻から目標時刻まで積分器を 1 回走らせていたので、隣り合う評価点の最大間隔より狭い

@@ -1,5 +1,6 @@
 pub mod attitude;
 pub mod control;
+pub mod eclipse;
 pub mod effector;
 pub mod events;
 pub mod group;
