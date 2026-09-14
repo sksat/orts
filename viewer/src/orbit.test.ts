@@ -70,15 +70,14 @@ describe("lerpPoint quaternion handling", () => {
   });
 
   it("does not spread one endpoint's rotation over a sample that claims nothing", () => {
-    // A refusal is carried through the interpolation; an absent claim is not,
-    // and the difference is what gets invented. Measured while carrying both:
-    // an absent-to-usable pair reported the usable rotation at fractions 0.25,
-    // 0.5 and 1 — a rotation for samples that never named one — and the
-    // reversed pair reported it only at 0, so the answer depended on which end
-    // the caller passed first.
+    // A refusal is carried across the gap; a rotation is not, and the difference
+    // is what gets invented. Measured while carrying both: an absent-to-usable
+    // pair reported the usable rotation at fractions 0.25 and 0.5 — a rotation
+    // for samples that never named one — and only for that ordering, since the
+    // interior takes whichever endpoint the caller passed second.
     const absent = pt();
     const usable = pt({ qw: S, qx: 0, qy: 0, qz: S });
-    for (const frac of [0, 0.25, 0.5, 0.75, 1]) {
+    for (const frac of [0.25, 0.5, 0.75]) {
       for (const [first, second, order] of [
         [absent, usable, "absent→usable"],
         [usable, absent, "usable→absent"],
@@ -86,6 +85,23 @@ describe("lerpPoint quaternion handling", () => {
         const r = lerpPoint(first, second, frac);
         expect(resolveAttitude(r).kind, `${order} at frac ${frac}`).toBe("absent");
       }
+    }
+
+    // The exact endpoints are the sample itself, so each keeps its own claim:
+    // the usable end its rotation, the absent end nothing. Reading the fraction
+    // after the gap policy instead loses a measurement the recording holds —
+    // `TrailBuffer.interpolateAt` asks at fraction 0 for a sample's own time.
+    for (const [first, second, frac, kind] of [
+      [usable, absent, 0, "usable"],
+      [absent, usable, 1, "usable"],
+      [usable, absent, 1, "absent"],
+      [absent, usable, 0, "absent"],
+    ] as const) {
+      const r = lerpPoint(first, second, frac);
+      expect(
+        resolveAttitude(r).kind,
+        `frac ${frac} of ${kind === "usable" ? "its own" : "the other"} end`,
+      ).toBe(kind);
     }
   });
 
