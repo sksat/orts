@@ -158,6 +158,11 @@
           "target": "@components/orbit-viewer/debug/satWorldQuat.ts"
         },
         {
+          "path": "src/debug/spacecraftDrawn.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/debug/spacecraftDrawn.ts"
+        },
+        {
           "path": "src/directionVectors.ts",
           "type": "registry:lib",
           "target": "@components/orbit-viewer/directionVectors.ts"

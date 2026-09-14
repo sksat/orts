@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from "react";
+import { type AttitudeState, resolveAttitude } from "../attitude.js";
 import { getBodyRadius, resolveBodyDefinitions } from "../bodies.js";
 import { OrbitSceneContents } from "../components/OrbitSceneContents.js";
 import { IS_DEV } from "../env.js";
@@ -91,6 +92,27 @@ export function OrbitScene({
     return map;
   }, [satellites, time]);
 
+  // What each satellite says about its orientation, resolved at the boundary.
+  // A claim the viewer cannot use has no spelling inside an `OrbitPoint`, so
+  // it travels beside the positions rather than being encoded into one.
+  const satelliteAttitudes = useMemo(() => {
+    const map = new Map<string, AttitudeState>();
+    for (const sat of satellites) {
+      map.set(
+        sat.id,
+        sat.attitudeRefused
+          ? { kind: "refused" }
+          : resolveAttitude({
+              qw: sat.attitude?.[0],
+              qx: sat.attitude?.[1],
+              qy: sat.attitude?.[2],
+              qz: sat.attitude?.[3],
+            }),
+      );
+    }
+    return map;
+  }, [satellites]);
+
   const satelliteNames = useMemo(() => {
     const map = new Map<string, string | null>();
     for (const sat of satellites) map.set(sat.id, sat.name ?? null);
@@ -177,6 +199,7 @@ export function OrbitScene({
       time={time}
       trailBuffers={trailBuffers}
       satellitePositions={satellitePositions}
+      satelliteAttitudes={satelliteAttitudes}
       satelliteNames={satelliteNames}
       satelliteColors={satelliteColors}
       satelliteShapes={satelliteShapes}
