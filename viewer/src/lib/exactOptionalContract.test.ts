@@ -16,39 +16,58 @@ describe("the public attitude contract under exactOptionalPropertyTypes", () => 
   const configName = "tsconfig.exactOptional.json";
   const FIXTURE = "src/lib/exactOptionalContract.fixture.ts";
 
-  /** Every error `tsc` reported, one line each, with the colours stripped. */
-  function compileWithExactOptional(): string[] {
+  /** `tsc` output, split into lines with the colours stripped. */
+  function tsc(args: string[]): { failed: boolean; lines: string[] } {
+    const strip = (text: string) =>
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: tsc colours its output
+      text.replace(/\x1b\[[0-9;]*m/g, "").split("\n");
     try {
-      execFileSync("node_modules/.bin/tsc", ["-p", configName], {
+      const out = execFileSync("node_modules/.bin/tsc", ["-p", configName, ...args], {
         cwd: viewerDir,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
       });
-      return [];
+      return { failed: false, lines: strip(out) };
     } catch (e) {
       const err = e as { stdout?: string; stderr?: string };
-      // biome-ignore lint/suspicious/noControlCharactersInRegex: tsc colours its output
-      const plain = `${err.stdout ?? ""}${err.stderr ?? ""}`.replace(/\x1b\[[0-9;]*m/g, "");
-      return plain.split("\n").filter((l) => / error TS\d+:/.test(l));
+      return { failed: true, lines: strip(`${err.stdout ?? ""}${err.stderr ?? ""}`) };
     }
   }
 
-  it("accepts a Quat | undefined and still rejects a rotation beside a refusal", () => {
+  it("compiles the fixture, and the fixture is what it compiles", () => {
     expect(existsSync(path.join(viewerDir, configName)), `${configName} should exist`).toBe(true);
 
-    // Only the fixture's own errors answer the question. The internal modules
-    // the public types pull in are not written against this flag — measured: 4
-    // TS2412s in `src/orbit.ts`, where an optional component is copied from one
-    // point to another — and whether the whole tree could be is a separate
-    // question from what the declarations promise.
+    // The program's own file list, so an include that stops naming the fixture
+    // cannot read as "no errors in the fixture". Without this the assertion
+    // below passes on an empty program.
+    const listed = tsc(["--listFilesOnly"]);
+    expect(listed.failed, `--listFilesOnly failed:\n${listed.lines.join("\n")}`).toBe(false);
+    expect(
+      listed.lines.some((l) => l.includes(FIXTURE)),
+      `${FIXTURE} should be in the compiled program`,
+    ).toBe(true);
+
+    const compiled = tsc([]);
+    const errors = compiled.lines.filter((l) => / error TS\d+:/.test(l));
+
+    // A diagnostic that names no file is the invocation or the config itself
+    // (TS5xxx: a malformed option, no inputs). Those are failures of this check,
+    // not results from it, so they are read before anything is filtered.
+    const configErrors = errors.filter((l) => !/^[^ ].*\(\d+,\d+\)|^\S+:\d+:\d+/.test(l));
+    expect(configErrors.join("\n"), "the config and invocation must be sound").toBe("");
+
+    // Of what remains, only the fixture's own errors answer the question. The
+    // internal modules the public types pull in are not written against this
+    // flag — measured: 4 TS2412s in `src/orbit.ts`, where an optional component
+    // is copied from one point to another — and whether the whole tree could be
+    // is a separate question from what the declarations promise.
     //
     // Reported as the compiler's own lines, since a count says only that
     // something failed. Measured against the two ways this can regress:
     // dropping `| undefined` from the supplying arm gives TS2322 on the
     // fixture's first assignment, and letting a rotation through beside a
-    // refusal gives TS2578 — the `@ts-expect-error` below going unused.
-    const onFixture = compileWithExactOptional().filter((l) => l.includes(FIXTURE));
-
+    // refusal gives TS2578 — the `@ts-expect-error` going unused.
+    const onFixture = errors.filter((l) => l.includes(FIXTURE));
     expect(onFixture.join("\n"), "the fixture must compile with the flag on").toBe("");
   }, 120_000);
 });

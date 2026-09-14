@@ -37,10 +37,18 @@ export const refusedWithUndefined: SatelliteState = {
   attitudeRefused: true,
 };
 
+/** Not refused, said out loud. It means what an absent flag means. */
+export const notRefused: SatelliteState = {
+  id: "sat-e",
+  position: [6778, 0, 0],
+  attitude: computed,
+  attitudeRefused: false,
+};
+
 declare const rotation: Quat;
 
 export const contradictory = {
-  id: "sat-e",
+  id: "sat-f",
   position: [6778, 0, 0] as [number, number, number],
   attitude: rotation,
   attitudeRefused: true as const,
