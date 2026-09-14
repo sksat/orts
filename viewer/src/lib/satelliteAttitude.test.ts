@@ -32,12 +32,22 @@ describe("SatelliteState's attitude", () => {
       ABSENT,
       REFUSED,
       { id: "sat-d", position: [6778, 0, 0], attitude: computed },
-      // Saying the claim was not refused is the same as not saying it, so the
-      // flag's other value belongs in the arm that carries a rotation.
-      { id: "sat-e", position: [6778, 0, 0], attitude: computed, attitudeRefused: false },
     ];
 
-    expect(states).toHaveLength(5);
+    expect(states).toHaveLength(4);
+  });
+
+  it("takes the refusal as the presence of `true`, not as a boolean", () => {
+    // Absence already says "not refused", so `false` would be a second spelling
+    // of it — and every consumer would have to read both.
+    const flagged = {
+      id: "sat-f",
+      position: [6778, 0, 0] as [number, number, number],
+      attitudeRefused: false as const,
+    };
+    // @ts-expect-error — `false` is not one of the three states.
+    const state: SatelliteState = flagged;
+    expect(state.id).toBe("sat-f");
   });
 
   it("refuses a claim and a quaternion at once", () => {

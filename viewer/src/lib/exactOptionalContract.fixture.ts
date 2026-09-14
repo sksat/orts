@@ -37,14 +37,6 @@ export const refusedWithUndefined: SatelliteState = {
   attitudeRefused: true,
 };
 
-/** Not refused, said out loud. It means what an absent flag means. */
-export const notRefused: SatelliteState = {
-  id: "sat-e",
-  position: [6778, 0, 0],
-  attitude: computed,
-  attitudeRefused: false,
-};
-
 declare const rotation: Quat;
 
 export const contradictory = {
@@ -57,3 +49,14 @@ export const contradictory = {
 // @ts-expect-error the two states are exclusive: a rotation cannot arrive beside
 // a refusal, under either setting.
 export const both: SatelliteState = contradictory;
+
+export const flaggedFalse = {
+  id: "sat-g",
+  position: [6778, 0, 0] as [number, number, number],
+  attitude: computed,
+  attitudeRefused: false as const,
+};
+
+// @ts-expect-error a refusal is the presence of literal `true`; saying `false`
+// is a second spelling of what absence already says, and it is not accepted.
+export const notRefused: SatelliteState = flaggedFalse;

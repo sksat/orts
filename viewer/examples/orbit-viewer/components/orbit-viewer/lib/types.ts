@@ -50,8 +50,12 @@ export type SatelliteAttitude =
    * that setting on gets TS2375 for `{ attitude: computed }`, while this repo
    * (which has it off) accepts it. The declarations are checked with the
    * consumer's setting, so the looser one cannot be the guarantee.
+   *
+   * A refusal is the presence of literal `true`. `attitudeRefused: false` is
+   * not a state this accepts — one way to say a thing is enough, and absence
+   * already says it.
    */
-  | { attitude?: Quat | undefined; attitudeRefused?: false | undefined }
+  | { attitude?: Quat | undefined; attitudeRefused?: undefined }
   /** An orientation was claimed and cannot be used. */
   | { attitude?: undefined; attitudeRefused: true };
 
