@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sampleAttitude } from "./displayFrame.js";
+import { resolveAttitude } from "./attitude.js";
 import { lerpPoint, type OrbitPoint } from "./orbit.js";
 
 /** A minimal OrbitPoint with all required fields zeroed; override as needed. */
@@ -23,6 +23,12 @@ function pt(overrides: Partial<OrbitPoint> = {}): OrbitPoint {
 }
 
 const S = Math.SQRT1_2; // sin/cos(45°)
+
+/** The rotation a sample resolves to, or undefined when it is not usable. */
+function usableAttitude(sample: Parameters<typeof resolveAttitude>[0]) {
+  const state = resolveAttitude(sample);
+  return state.kind === "usable" ? state.quaternion : undefined;
+}
 
 describe("lerpPoint quaternion handling", () => {
   it("slerps when both points carry a complete quaternion", () => {
@@ -115,24 +121,24 @@ describe("lerpPoint quaternion handling", () => {
       for (const frac of [0, 0.25, 0.5, 0.75]) {
         const r = lerpPoint(refused, valid, frac);
         expect(
-          sampleAttitude(r),
+          usableAttitude(r),
           `frac ${frac} should carry no usable attitude away from a refused sample`,
         ).toBeUndefined();
       }
       // The far endpoint is exact, which is what a reader at that sample's own
       // timestamp should see. Compared componentwise: normalising a unit
       // quaternion moves its last bit (measured 0.7071067811865475 for `S`).
-      const atFar = sampleAttitude(lerpPoint(refused, valid, 1));
+      const atFar = usableAttitude(lerpPoint(refused, valid, 1));
       expect(atFar, "the valid endpoint keeps its own attitude").not.toBeUndefined();
       for (const [i, want] of [S, 0, 0, S].entries()) {
         expect((atFar as number[])[i]).toBeCloseTo(want, 12);
       }
       // And in the other order, so the refusal is not tied to being first.
       for (const frac of [0.25, 0.5, 0.75, 1]) {
-        expect(sampleAttitude(lerpPoint(valid, refused, frac)), `reversed frac ${frac}`) //
+        expect(usableAttitude(lerpPoint(valid, refused, frac)), `reversed frac ${frac}`) //
           .toBeUndefined();
       }
-      const atNear = sampleAttitude(lerpPoint(valid, refused, 0));
+      const atNear = usableAttitude(lerpPoint(valid, refused, 0));
       expect(atNear, "and in the other order").not.toBeUndefined();
       for (const [i, want] of [S, 0, 0, S].entries()) {
         expect((atNear as number[])[i]).toBeCloseTo(want, 12);

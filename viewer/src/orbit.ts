@@ -1,6 +1,6 @@
 import * as THREE from "three";
+import { resolveAttitude } from "./attitude.js";
 import { TORQUE_AXES, TORQUE_CHART_MODELS } from "./chartMetrics.js";
-import { sampleAttitude } from "./displayFrame.js";
 
 /**
  * Earth radius in km -- used as the scene scale factor.
@@ -172,7 +172,7 @@ export function updateOrbitTrail(line: THREE.Line, visibleCount: number, totalCo
  * A point's quaternion at unit norm, or null when the display frame would refuse
  * it.
  *
- * Asked of `sampleAttitude`, which is what the marker's rotation goes through, so
+ * Asked of `resolveAttitude`, which is what the marker's rotation goes through, so
  * the interpolation and the drawing agree on which samples name a rotation.
  * Dividing by a finite positive norm is not enough on its own: at subnormal
  * magnitudes `Math.hypot` answers the smallest number there is, so
@@ -181,7 +181,8 @@ export function updateOrbitTrail(line: THREE.Line, visibleCount: number, totalCo
  * input, and this now inherits that.
  */
 function unitQuaternion(p: OrbitPoint): THREE.Quaternion | null {
-  const unit = sampleAttitude(p);
+  const resolved = resolveAttitude(p);
+  const unit = resolved.kind === "usable" ? resolved.quaternion : undefined;
   if (unit == null) return null;
   const [w, x, y, z] = unit;
   return new THREE.Quaternion(x, y, z, w);
