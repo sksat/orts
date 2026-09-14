@@ -51,7 +51,7 @@ export type SatelliteAttitude =
    * (which has it off) accepts it. The declarations are checked with the
    * consumer's setting, so the looser one cannot be the guarantee.
    */
-  | { attitude?: Quat | undefined; attitudeRefused?: undefined }
+  | { attitude?: Quat | undefined; attitudeRefused?: false | undefined }
   /** An orientation was claimed and cannot be used. */
   | { attitude?: undefined; attitudeRefused: true };
 

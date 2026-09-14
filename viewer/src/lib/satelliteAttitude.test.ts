@@ -32,9 +32,12 @@ describe("SatelliteState's attitude", () => {
       ABSENT,
       REFUSED,
       { id: "sat-d", position: [6778, 0, 0], attitude: computed },
+      // Saying the claim was not refused is the same as not saying it, so the
+      // flag's other value belongs in the arm that carries a rotation.
+      { id: "sat-e", position: [6778, 0, 0], attitude: computed, attitudeRefused: false },
     ];
 
-    expect(states).toHaveLength(4);
+    expect(states).toHaveLength(5);
   });
 
   it("refuses a claim and a quaternion at once", () => {
