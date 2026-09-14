@@ -118,7 +118,13 @@ function Fixture() {
   const shown =
     override === undefined
       ? satellites
-      : satellites.map((sat) => ({ ...sat, attitude: override ?? undefined }));
+      : satellites.map((sat) => {
+          // A test taking over the attitude replaces *both* states. Spreading a
+          // quaternion over `attRefused=1` would leave the satellite saying two
+          // things at once, and the scene would go on refusing.
+          const { attitude: _urlAttitude, attitudeRefused: _urlRefused, ...rest } = sat;
+          return override == null ? rest : { ...rest, attitude: override };
+        });
 
   return (
     <OrbitViewer
