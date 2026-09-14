@@ -986,6 +986,11 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   収束していた。([#111](https://github.com/sksat/orts/pull/111), [#90](https://github.com/sksat/orts/issues/90))
 
 #### Changed
+- サンプルが姿勢について述べる内容を 1 箇所で解決するようにした。`resolveAttitude` が
+  `absent` / `refused` / `usable` を返し、消費側 6 箇所が組み合わせていた 2 つの述語を置き換える。
+  #451 が挙げる 10 件の欠陥のうち 6 件はこの構造から出ていた (回転・マーカーの形・登録モデルを
+  描くか・拡大率の各帰結がそれぞれ状態を再導出していた)。振る舞いは保存している。
+  ([#478](https://github.com/sksat/orts/pull/478))
 - `./lib` の公開 barrel は意図的に絞っている: Three.js / r3f の構成要素と内部
   frame 配線はエクスポートしない。公開 surface は `OrbitViewer`、`OrbitScene`、
   `TrailBuffer` / `TrailBufferLike`、`toTrailBuffer` / `trailPointToOrbitPoint`、

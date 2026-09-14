@@ -1162,6 +1162,13 @@ section is subdivided by package.
   satellite-centred view always collapsed to LVLH. ([#111](https://github.com/sksat/orts/pull/111), [#90](https://github.com/sksat/orts/issues/90))
 
 #### Changed
+- What a sample says about its orientation is resolved in one place.
+  `resolveAttitude` answers `absent`, `refused` or `usable`, replacing a pair of
+  predicates that six consumers combined — the structure behind six of the ten
+  defects #451 lists, since each consequence (the rotation, the marker shape,
+  whether the registered model is drawn, the amplification) re-derived the
+  state. Behaviour-preserving.
+  ([#478](https://github.com/sksat/orts/pull/478))
 - The `./lib` public barrel is intentionally narrow: the Three.js / r3f building
   blocks and the internal frame wiring are not exported. Supported surface:
   `OrbitViewer`, `OrbitScene`, `TrailBuffer` / `TrailBufferLike`, `toTrailBuffer`
