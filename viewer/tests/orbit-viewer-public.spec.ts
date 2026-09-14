@@ -554,6 +554,18 @@ test("the environment is scaled for the spacecraft that is drawn", async ({ page
     (refused as number) / (marker as number),
     "a refused attitude scales the scene for the marker it draws",
   ).toBeCloseTo(1, 6);
+
+  // The caller's own refusal reaches the same scale. It arrives by a different
+  // route — a state the caller supplies, rather than a quaternion the viewer
+  // judges — and the scale is derived separately from what gets drawn, so each
+  // route has to be measured where it lands.
+  await open(page, `sats=0:${SAT_A}&${centred}&name=ISS&attRefused=1`);
+  await arrowsAt(page, 0, ["nadir", "sun"]);
+  const refusedByCaller = await centralBodyDistance(page, "fixture-sat-0");
+  expect(
+    (refusedByCaller as number) / (marker as number),
+    "a caller's own refusal scales the scene for the marker too",
+  ).toBeCloseTo(1, 6);
 });
 
 /** What the scene drew this satellite as, per the dev-only hook. */
@@ -597,6 +609,15 @@ test("a caller's own refusal suppresses the model, as a refused quaternion does"
     await drawnAs(page, "fixture-sat-0"),
     "and so does a caller that says its claim was refused",
   ).toBe("marker");
+
+  // A refusal can be withdrawn: the next sample names a rotation the viewer can
+  // use, and the model comes back. The two states are exclusive, so supplying
+  // one has to clear the other — carrying the refusal alongside would keep the
+  // marker on screen for a satellite that is now saying where it points.
+  await page.evaluate(() => window.__fixture_set_attitude?.([1, 0, 0, 0]));
+  await expect
+    .poll(async () => await drawnAs(page, "fixture-sat-0"), { timeout: 15000 })
+    .toBe("model");
 });
 
 test("a marker that keeps its cube gives up its rotation with the attitude", async ({ page }) => {
