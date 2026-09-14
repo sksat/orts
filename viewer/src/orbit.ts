@@ -243,26 +243,46 @@ export function lerpPoint(a: OrbitPoint, b: OrbitPoint, frac: number): OrbitPoin
       result.qy = qa.y;
       result.qz = qa.z;
     } else {
-      // An endpoint the display frame refuses cannot be interpolated through.
-      // Slerp from a zero quaternion returns a multiple of the *other* endpoint —
-      // measured at a quarter of the way along, the result normalises to that
-      // endpoint's rotation exactly — so the refused sample would be presented as
-      // a measurement taken next door. The refusal is carried instead, and the
-      // exact endpoints keep their own values, which is what a reader at a
-      // sample's own timestamp should see.
-      const source = frac <= 0 ? a : frac >= 1 ? b : qa == null ? a : b;
-      result.qw = source.qw;
-      result.qx = source.qx;
-      result.qy = source.qy;
-      result.qz = source.qz;
+      carryUnusableClaim(result, a, b, frac);
     }
     // Angular velocity: linear interpolation
     result.wx = (a.wx ?? 0) * inv + (b.wx ?? 0) * frac;
     result.wy = (a.wy ?? 0) * inv + (b.wy ?? 0) * frac;
     result.wz = (a.wz ?? 0) * inv + (b.wz ?? 0) * frac;
+  } else if (resolveAttitude(a).kind === "refused" || resolveAttitude(b).kind === "refused") {
+    // An incomplete claim (qw without qx/qy/qz) leaves nothing to slerp, and
+    // leaving the result quaternion-free would resolve as "nothing claimed" —
+    // measured: endpoints `refused` and `usable` gave `absent` at every
+    // fraction — which draws the registered model the refusal is there to
+    // suppress. It is carried by the same rule as an unusable complete one.
+    //
+    // Only a refusal is carried. A sample that claims nothing has nothing to
+    // hand on, and carrying the *other* endpoint's rotation across the gap
+    // would invent a measurement: measured, that put the later sample's
+    // rotation at fractions 0.25, 0.5 and 1 of an absent-to-usable pair, and
+    // only for that ordering.
+    carryUnusableClaim(result, a, b, frac);
   }
 
   return result;
+}
+
+/** Carries an endpoint's own attitude claim onto an interpolated point.
+ *
+ * For an endpoint the display frame refuses, interpolating through it would
+ * present it as a measurement taken next door: slerp from a zero quaternion
+ * returns a multiple of the *other* endpoint, and a quarter of the way along the
+ * result normalises to that endpoint's rotation exactly (measured). So a claim
+ * is copied rather than mixed — the exact endpoints keep their own values, which
+ * is what a reader at a sample's own timestamp should see, and in between the
+ * refused side is the one carried, so the refusal survives the interpolation.
+ */
+function carryUnusableClaim(result: OrbitPoint, a: OrbitPoint, b: OrbitPoint, frac: number): void {
+  const source = frac <= 0 ? a : frac >= 1 ? b : resolveAttitude(a).kind === "refused" ? a : b;
+  result.qw = source.qw;
+  result.qx = source.qx;
+  result.qy = source.qy;
+  result.qz = source.qz;
 }
 
 /** Models whose whole torque triple appears in these points, per entity.

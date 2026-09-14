@@ -42,21 +42,51 @@ describe("lerpPoint quaternion handling", () => {
     expect(r.qz as number).toBeGreaterThan(0); // rotated partway toward b
   });
 
-  it("skips attitude interpolation when a quaternion is incomplete (qw only)", () => {
-    // Guarding on qw alone would build an un-normalized (0,0,0,qw) rotation.
+  it("carries the refusal when a quaternion is incomplete (qw only)", () => {
+    // Slerping this would build an un-normalized (0,0,0,qw) rotation, so the
+    // interpolation does not. What it hands on is still a refusal: a result with
+    // no quaternion at all resolves as "nothing claimed", which draws the
+    // registered model the incomplete claim is there to suppress.
     const a = pt({ qw: 0.5 }); // qx/qy/qz missing
     const b = pt({ qw: S, qx: 0, qy: 0, qz: S });
     const r = lerpPoint(a, b, 0.5);
-    expect(r.qw).toBeUndefined();
-    expect(r.qx).toBeUndefined();
-    expect(r.qy).toBeUndefined();
-    expect(r.qz).toBeUndefined();
+    expect(resolveAttitude(r).kind).toBe("refused");
+    expect(usableAttitude(r)).toBeUndefined();
+
+    // The incomplete claim is carried as it came, and the exact endpoints keep
+    // their own values — the same rule an unusable complete claim follows.
+    expect(lerpPoint(a, b, 0).qw, "the incomplete endpoint keeps its own qw").toBe(0.5);
+    const atValid = usableAttitude(lerpPoint(a, b, 1));
+    expect(atValid, "the complete endpoint keeps its rotation").not.toBeUndefined();
+    for (const [i, want] of [S, 0, 0, S].entries()) {
+      expect((atValid as number[])[i]).toBeCloseTo(want, 12);
+    }
   });
 
   it("leaves the result quaternion-free when neither point has one", () => {
     const r = lerpPoint(pt(), pt(), 0.5);
     expect(r.qw).toBeUndefined();
     expect(r.qz).toBeUndefined();
+  });
+
+  it("does not spread one endpoint's rotation over a sample that claims nothing", () => {
+    // A refusal is carried through the interpolation; an absent claim is not,
+    // and the difference is what gets invented. Measured while carrying both:
+    // an absent-to-usable pair reported the usable rotation at fractions 0.25,
+    // 0.5 and 1 — a rotation for samples that never named one — and the
+    // reversed pair reported it only at 0, so the answer depended on which end
+    // the caller passed first.
+    const absent = pt();
+    const usable = pt({ qw: S, qx: 0, qy: 0, qz: S });
+    for (const frac of [0, 0.25, 0.5, 0.75, 1]) {
+      for (const [first, second, order] of [
+        [absent, usable, "absent→usable"],
+        [usable, absent, "usable→absent"],
+      ] as const) {
+        const r = lerpPoint(first, second, frac);
+        expect(resolveAttitude(r).kind, `${order} at frac ${frac}`).toBe("absent");
+      }
+    }
   });
 
   it("interpolates the same rotation whatever norms the endpoints drifted to", () => {
@@ -124,6 +154,12 @@ describe("lerpPoint quaternion handling", () => {
           usableAttitude(r),
           `frac ${frac} should carry no usable attitude away from a refused sample`,
         ).toBeUndefined();
+        // Which of the two unusable states it is decides what gets drawn: a
+        // result with no claim at all reads as "nothing claimed" and draws the
+        // registered model, where the refusal suppresses it.
+        expect(resolveAttitude(r).kind, `frac ${frac} should still read as refused`).toBe(
+          "refused",
+        );
       }
       // The far endpoint is exact, which is what a reader at that sample's own
       // timestamp should see. Compared componentwise: normalising a unit
@@ -135,8 +171,9 @@ describe("lerpPoint quaternion handling", () => {
       }
       // And in the other order, so the refusal is not tied to being first.
       for (const frac of [0.25, 0.5, 0.75, 1]) {
-        expect(usableAttitude(lerpPoint(valid, refused, frac)), `reversed frac ${frac}`) //
-          .toBeUndefined();
+        const r = lerpPoint(valid, refused, frac);
+        expect(usableAttitude(r), `reversed frac ${frac}`).toBeUndefined();
+        expect(resolveAttitude(r).kind, `reversed frac ${frac} reads as refused`).toBe("refused");
       }
       const atNear = usableAttitude(lerpPoint(valid, refused, 0));
       expect(atNear, "and in the other order").not.toBeUndefined();
@@ -152,12 +189,15 @@ describe("lerpPoint quaternion handling", () => {
     expect(r.x).toBeCloseTo(30);
   });
 
-  it("does not reject a present-but-NaN component (only missing ones are guarded)", () => {
-    // Characterization: the guard checks presence, not finiteness; a NaN that is
-    // *present* still enters the slerp path (out of scope for the missing-field fix).
+  it("refuses a complete-but-unusable quaternion rather than slerping it", () => {
+    // Every component is present, so the completeness guard passes it; what
+    // stops it is the resolver, which reads NaN as a claim it cannot use. The
+    // distinction matters because a slerp from NaN returns NaN components that
+    // still read as a rotation to a consumer checking presence.
     const a = pt({ qw: Number.NaN, qx: 0, qy: 0, qz: 0 });
     const b = pt({ qw: 1, qx: 0, qy: 0, qz: 0 });
     const r = lerpPoint(a, b, 0.5);
-    expect(r.qw).toBeDefined();
+    expect(resolveAttitude(r).kind).toBe("refused");
+    expect(usableAttitude(r)).toBeUndefined();
   });
 });

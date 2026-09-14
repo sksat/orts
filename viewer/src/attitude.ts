@@ -81,8 +81,24 @@ export function resolveAttitude(sample: AttitudeComponents): AttitudeState {
  */
 export function unitAttitude(attitude: Quat | undefined): Quat | undefined {
   if (attitude == null) return undefined;
-  const [w, x, y, z] = attitude;
-  const n = Math.hypot(w, x, y, z);
+  let [w, x, y, z] = attitude;
+  let n = Math.hypot(w, x, y, z);
+  // `Math.hypot` scales before squaring, but its own result can still overflow:
+  // the norm of `[MAX_VALUE, MAX_VALUE, 0, 0]` comes out Infinity — measured —
+  // though it names a rotation as much as `[1e308, 1e308, 0, 0]`, whose norm is
+  // finite. Retried against the largest component, which leaves every component
+  // within [-1, 1] and the rotation unchanged, since scaling a quaternion
+  // scales its norm and not the rotation it names.
+  //
+  // A retry rather than the first step, so the subnormal case keeps the answer
+  // it has: scaling `[5e-324, 5e-324, 0, 0]` up would normalise it exactly,
+  // where the policy below refuses it.
+  if (n === Number.POSITIVE_INFINITY) {
+    const largest = Math.max(Math.abs(w), Math.abs(x), Math.abs(y), Math.abs(z));
+    if (!Number.isFinite(largest) || largest === 0) return undefined;
+    [w, x, y, z] = [w / largest, x / largest, y / largest, z / largest];
+    n = Math.hypot(w, x, y, z);
+  }
   if (!(Number.isFinite(n) && n > 0)) return undefined;
   const unit: Quat = [w / n, x / n, y / n, z / n];
   // The division has to land on the unit sphere, and at subnormal magnitudes it

@@ -165,10 +165,18 @@ describe("unitAttitude", () => {
   });
 
   it("normalises a quaternion whose components would overflow when squared", () => {
-    // `Math.hypot` scales before squaring, so a large but finite attitude still
-    // normalises instead of dividing by an infinite norm.
-    const q = unitAttitude([1e200, 1e200, 0, 0]);
-    if (q == null) throw new Error("a finite attitude must normalise");
-    expect(Math.hypot(...q)).toBeCloseTo(1, 12);
+    // `Math.hypot` scales before squaring, which covers 1e200; its own result
+    // overflows at the top of the range — measured: the norm of
+    // `[MAX_VALUE, MAX_VALUE, 0, 0]` is Infinity. Both name the same rotation as
+    // `[1, 1, 0, 0]`, since scaling a quaternion scales its norm and not the
+    // rotation, so both normalise, and to that rotation.
+    for (const large of [1e200, Number.MAX_VALUE]) {
+      const q = unitAttitude([large, large, 0, 0]);
+      if (q == null) throw new Error(`a finite attitude must normalise (${large})`);
+      expect(Math.hypot(...q), `norm for ${large}`).toBeCloseTo(1, 12);
+      for (const [i, want] of [Math.SQRT1_2, Math.SQRT1_2, 0, 0].entries()) {
+        expect(q[i], `component ${i} for ${large}`).toBeCloseTo(want, 12);
+      }
+    }
   });
 });
