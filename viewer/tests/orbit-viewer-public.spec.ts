@@ -556,6 +556,49 @@ test("the environment is scaled for the spacecraft that is drawn", async ({ page
   ).toBeCloseTo(1, 6);
 });
 
+/** What the scene drew this satellite as, per the dev-only hook. */
+async function drawnAs(page: Page, satId: string): Promise<string | null> {
+  return await page.evaluate(
+    (id) =>
+      (
+        window as unknown as { __debug_spacecraft_drawn?: Map<string, string> }
+      ).__debug_spacecraft_drawn?.get(id) ?? null,
+    satId,
+  );
+}
+
+test("a caller's own refusal suppresses the model, as a refused quaternion does", async ({
+  page,
+}) => {
+  // Two routes reach the same state. `att=0,0,0,0` is a quaternion the viewer
+  // refuses; `attRefused=1` is a caller that already knows — and that one
+  // carries no quaternion, so a consumer re-deriving the state from the sample
+  // reads "nothing claimed" and draws the registered model anyway.
+  //
+  // Measured on what the visual drew rather than on the environment's scale:
+  // the amplification is derived separately from the same facts, so it agrees
+  // with the marker even when the model is the thing on screen.
+  const centred = `centre=0&frame=localOrbital&epoch=${EPOCH}&arrows=sun,nadir`;
+
+  await open(page, `sats=0:${SAT_A}&${centred}&name=ISS&att=1,0,0,0`);
+  await arrowsAt(page, 0, ["nadir", "sun"]);
+  expect(await drawnAs(page, "fixture-sat-0"), "a usable attitude draws the model").toBe("model");
+
+  await open(page, `sats=0:${SAT_A}&${centred}&name=ISS&att=0,0,0,0`);
+  await arrowsAt(page, 0, ["nadir", "sun"]);
+  expect(
+    await drawnAs(page, "fixture-sat-0"),
+    "a quaternion the viewer refuses draws the marker",
+  ).toBe("marker");
+
+  await open(page, `sats=0:${SAT_A}&${centred}&name=ISS&attRefused=1`);
+  await arrowsAt(page, 0, ["nadir", "sun"]);
+  expect(
+    await drawnAs(page, "fixture-sat-0"),
+    "and so does a caller that says its claim was refused",
+  ).toBe("marker");
+});
+
 test("a marker that keeps its cube gives up its rotation with the attitude", async ({ page }) => {
   // The reset that runs when an attitude stops being usable is only observable
   // where the same object stays on screen across the change. An explicit

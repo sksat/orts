@@ -781,6 +781,7 @@ export function OrbitSceneContents({
                 originPosition={originPosition}
                 lvlhAxes={lvlhAxes}
                 markerShape={shape}
+                attitude={attitudeOf(centeredSatId, pos, satelliteAttitudes)}
               />
               {arrows.length > 0 && (
                 <DirectionArrows
@@ -890,6 +891,7 @@ export function OrbitSceneContents({
                     hasAttitude: attitude.kind === "usable",
                     attitudeRefused: attitude.kind === "refused",
                   })}
+                  attitude={attitude}
                 />
               )}
             </group>
