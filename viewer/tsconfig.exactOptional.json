@@ -1,0 +1,14 @@
+{
+  // The public attitude contract as an embedder with `exactOptionalPropertyTypes`
+  // sees it. Declarations are checked with the consumer's setting, so a contract
+  // that only holds under this repo's looser one is not a contract — measured:
+  // `{ attitude: computed }` is TS2375 when the arms omit `| undefined`.
+  //
+  // Run by src/lib/exactOptionalContract.test.ts, which is how CI reaches it.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "exactOptionalPropertyTypes": true,
+    "noEmit": true
+  },
+  "include": ["src/lib/exactOptionalContract.fixture.ts", "src/lib/types.ts"]
+}
