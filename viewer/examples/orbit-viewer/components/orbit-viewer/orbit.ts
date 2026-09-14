@@ -1,5 +1,6 @@
 import * as THREE from "three";
-import { sampleAttitude } from "./displayFrame.js";
+import { resolveAttitude } from "./attitude.js";
+import { TORQUE_AXES, TORQUE_CHART_MODELS } from "./chartMetrics.js";
 
 /**
  * Earth radius in km -- used as the scene scale factor.
@@ -41,6 +42,22 @@ export interface OrbitPoint {
   accel_srp?: number;
   accel_third_body_sun?: number;
   accel_third_body_moon?: number;
+  /** Per-model body torque [N·m], by model and axis.
+   *
+   * One field per known environmental model rather than a map, because the
+   * chart metrics, the DuckDB columns and the chart definitions all name their
+   * metrics statically. A model the viewer does not know about still reaches
+   * the wire; it just has no chart yet.
+   */
+  torque_gravity_gradient_x?: number;
+  torque_gravity_gradient_y?: number;
+  torque_gravity_gradient_z?: number;
+  torque_panel_srp_x?: number;
+  torque_panel_srp_y?: number;
+  torque_panel_srp_z?: number;
+  torque_panel_drag_x?: number;
+  torque_panel_drag_y?: number;
+  torque_panel_drag_z?: number;
   /** Body-to-inertial quaternion components (Hamilton scalar-first: w,x,y,z). */
   qw?: number;
   qx?: number;
@@ -50,6 +67,17 @@ export interface OrbitPoint {
   wx?: number;
   wy?: number;
   wz?: number;
+}
+
+/** One `torque_<model>_<axis>` component, read by column name.
+ *
+ * The chart layer addresses these by name — DuckDB columns and chart rows are
+ * both keyed by the column name — so reading one back needs an index.
+ * `OrbitPoint` cannot declare a numeric index signature because `entityPath`
+ * is a string, which is what this cast stands in for.
+ */
+export function torqueComponent(p: OrbitPoint, metric: string): number | undefined {
+  return (p as unknown as Record<string, number | undefined>)[metric];
 }
 
 /** Metadata parsed from CSV comment headers. */
@@ -144,7 +172,7 @@ export function updateOrbitTrail(line: THREE.Line, visibleCount: number, totalCo
  * A point's quaternion at unit norm, or null when the display frame would refuse
  * it.
  *
- * Asked of `sampleAttitude`, which is what the marker's rotation goes through, so
+ * Asked of `resolveAttitude`, which is what the marker's rotation goes through, so
  * the interpolation and the drawing agree on which samples name a rotation.
  * Dividing by a finite positive norm is not enough on its own: at subnormal
  * magnitudes `Math.hypot` answers the smallest number there is, so
@@ -153,7 +181,8 @@ export function updateOrbitTrail(line: THREE.Line, visibleCount: number, totalCo
  * input, and this now inherits that.
  */
 function unitQuaternion(p: OrbitPoint): THREE.Quaternion | null {
-  const unit = sampleAttitude(p);
+  const resolved = resolveAttitude(p);
+  const unit = resolved.kind === "usable" ? resolved.quaternion : undefined;
   if (unit == null) return null;
   const [w, x, y, z] = unit;
   return new THREE.Quaternion(x, y, z, w);
@@ -234,4 +263,33 @@ export function lerpPoint(a: OrbitPoint, b: OrbitPoint, frac: number): OrbitPoin
   }
 
   return result;
+}
+
+/** Models whose whole torque triple appears in these points, per entity.
+ *
+ * A recording's columns are the union over its satellites, so the presence of
+ * a column says nothing about a given satellite: what counts is a triple
+ * actually decoded for it. A model reporting `[0, 0, 0]` is a model that was
+ * there, and is counted.
+ */
+export function torqueModelsOf(
+  points: readonly OrbitPoint[],
+  into: Map<string, Set<string>> = new Map(),
+): Map<string, Set<string>> {
+  for (const point of points) {
+    const entity = point.entityPath ?? "default";
+    for (const model of TORQUE_CHART_MODELS) {
+      const complete = TORQUE_AXES.every(
+        (axis) => torqueComponent(point, `torque_${model}_${axis}`) !== undefined,
+      );
+      if (!complete) continue;
+      let models = into.get(entity);
+      if (!models) {
+        models = new Set();
+        into.set(entity, models);
+      }
+      models.add(model);
+    }
+  }
+  return into;
 }

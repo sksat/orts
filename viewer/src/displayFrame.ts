@@ -133,14 +133,6 @@ export function resolveDisplayFrame(
 }
 
 /**
- * How far from unit a normalised quaternion may land and still be used.
- *
- * Above where the division lands for any magnitude a double represents normally —
- * a few multiples of the machine epsilon, 4.4e-16 across the four-component cases
- * measured — and far below the 1.3e-4 of the nearest case it has to reject.
- */
-
-/**
  * Express an inertial position [km] in the display frame, scaled to scene units.
  */
 export function displayPosition(

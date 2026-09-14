@@ -2,6 +2,7 @@ import { OrbitControls, type OrbitControlsProps } from "@react-three/drei";
 import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
+import { resolveAttitude } from "../attitude.js";
 import {
   type BodyDefinitions,
   DEFAULT_BODIES,
@@ -9,13 +10,7 @@ import {
   getBodyRadius,
 } from "../bodies.js";
 import { type DirectionVectorOptions, resolveDirectionVectors } from "../directionVectors.js";
-import {
-  attitudeWasRefused,
-  displayPosition,
-  displayRotation,
-  resolveDisplayFrame,
-  sampleAttitude,
-} from "../displayFrame.js";
+import { displayPosition, displayRotation, resolveDisplayFrame } from "../displayFrame.js";
 import {
   computeSceneAmplification,
   type DisplayScaleProfile,
@@ -459,7 +454,7 @@ export function OrbitSceneContents({
     isSatCentered && centeredSatId != null
       ? (() => {
           const sample = satellitePositions?.get(centeredSatId);
-          return sample != null && attitudeWasRefused(sample);
+          return sample != null && resolveAttitude(sample).kind === "refused";
         })()
       : false;
 
@@ -694,7 +689,7 @@ export function OrbitSceneContents({
             // The same judgement the rotation makes: a sample whose quaternion
             // names no rotation gets the sphere, not the cube that would show an
             // orientation nobody measured.
-            hasAttitude: sampleAttitude(pos) != null,
+            hasAttitude: resolveAttitude(pos).kind === "usable",
           });
           const satName = satelliteNames?.get(centeredSatId);
           // The centred satellite is drawn exactly at the world origin, so the
@@ -809,6 +804,9 @@ export function OrbitSceneContents({
           const isCenteredSat = satId === centeredSatId;
           const trailScale = lvlhActive ? effectiveScaleRadius : centralBodyRadius;
           const bodyId = entityPathToBodyId(satId, bodyDefinitions);
+          // Resolved once for this satellite: the marker's shape and whether a
+          // refused attitude overrides it are two readings of one state.
+          const attitude = pos ? resolveAttitude(pos) : ({ kind: "absent" } as const);
           return (
             <group key={satId}>
               {/* Mount on buffer *existence*, not current length: contents may be
@@ -861,9 +859,10 @@ export function OrbitSceneContents({
                     simShape: satelliteSimShapes?.get(satId),
                     globalDefault: defaultMarkerShape,
                     // See above: the shape follows the usable attitude, and a
-                    // refused one takes the sphere whatever was requested.
-                    hasAttitude: sampleAttitude(pos) != null,
-                    attitudeRefused: attitudeWasRefused(pos),
+                    // refused one takes the sphere whatever was requested. One
+                    // resolved state answers both, so they cannot disagree.
+                    hasAttitude: attitude.kind === "usable",
+                    attitudeRefused: attitude.kind === "refused",
                   })}
                 />
               )}
