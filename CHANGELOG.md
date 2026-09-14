@@ -1167,8 +1167,8 @@ section is subdivided by package.
   predicates that six consumers combined — the structure behind six of the ten
   defects #451 lists, since each consequence (the rotation, the marker shape,
   whether the registered model is drawn, the amplification) re-derived the
-  state. The judgement itself is unchanged; three answers at the edges of its
-  domain are:
+  state. Three of its answers change, all at the edges of the domain, where the
+  two predicates had disagreed with what the display frame did:
   - A quaternion written large enough that the norm itself overflows —
     `[MAX_VALUE, MAX_VALUE, 0, 0]`, whose `Math.hypot` is Infinity — now
     normalises, where it was refused. It names the same rotation as `[1, 1, 0, 0]`.
