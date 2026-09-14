@@ -24,6 +24,37 @@ export interface TrailPoint {
   time?: number;
 }
 
+/**
+ * What a satellite says about its orientation.
+ *
+ * Three states, and they are not interchangeable. A satellite that carries no
+ * attitude is ordinary in the orbit view, where the marker is a position
+ * marker. One that claimed an orientation the viewer cannot use — a
+ * quaternion naming no rotation, or one that arrived non-finite — is drawn
+ * without its registered model and with the marker shape that shows no
+ * orientation. Without a way to say the second, a caller that knows it has to
+ * encode it, and every caller invents the encoding again.
+ *
+ * `attitude` and `attitudeRefused` are exclusive: supplying both is a type
+ * error, and `attitude` still reads as `Quat | undefined`.
+ */
+export type SatelliteAttitude =
+  /**
+   * A body→inertial quaternion `[w, x, y, z]` to draw, or nothing.
+   *
+   * Optional rather than required so a caller can pass a value it computed as
+   * `Quat | undefined` — the viewer's own app does — without narrowing first.
+   * `undefined` is written into the types rather than left to the optional
+   * marker, because the marker alone means "may be absent" and not "may be
+   * undefined" under `exactOptionalPropertyTypes`: measured, an embedder with
+   * that setting on gets TS2375 for `{ attitude: computed }`, while this repo
+   * (which has it off) accepts it. The declarations are checked with the
+   * consumer's setting, so the looser one cannot be the guarantee.
+   */
+  | { attitude?: Quat | undefined; attitudeRefused?: undefined }
+  /** An orientation was claimed and cannot be used. */
+  | { attitude?: undefined; attitudeRefused: true };
+
 /** Per-satellite display state shared by both trail input modes. */
 export interface SatelliteBaseState {
   /** Stable identifier. Used for React keys, default colour, and trail buffers. */
@@ -32,8 +63,6 @@ export interface SatelliteBaseState {
   position: Vec3;
   /** Velocity in km/s. Optional; required for the `localOrbital` frame. */
   velocity?: Vec3;
-  /** Body→inertial attitude quaternion `[w, x, y, z]`. Optional. */
-  attitude?: Quat;
   /**
    * Seconds since the epoch for THIS satellite's current position (the marker),
    * overriding the scene-level {@link OrbitSceneDataProps.time}. Needed when
@@ -106,7 +135,7 @@ export type SatelliteTrailInput =
     };
 
 /** One satellite (or arbitrary point object) to display in the scene. */
-export type SatelliteState = SatelliteBaseState & SatelliteTrailInput;
+export type SatelliteState = SatelliteBaseState & SatelliteAttitude & SatelliteTrailInput;
 
 /** The central body rendered at the scene origin. */
 export interface CentralBody {
