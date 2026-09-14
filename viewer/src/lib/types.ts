@@ -61,10 +61,16 @@ export type SatelliteAttitude =
    *
    * Optional rather than required so a caller can pass a value it computed as
    * `Quat | undefined` — the viewer's own app does — without narrowing first.
+   * `undefined` is written into the types rather than left to the optional
+   * marker, because the marker alone means "may be absent" and not "may be
+   * undefined" under `exactOptionalPropertyTypes`: measured, an embedder with
+   * that setting on gets TS2375 for `{ attitude: computed }`, while this repo
+   * (which has it off) accepts it. The declarations are checked with the
+   * consumer's setting, so the looser one cannot be the guarantee.
    */
-  | { attitude?: Quat; attitudeRefused?: never }
+  | { attitude?: Quat | undefined; attitudeRefused?: undefined }
   /** An orientation was claimed and cannot be used. */
-  | { attitude?: never; attitudeRefused: true };
+  | { attitude?: undefined; attitudeRefused: true };
 
 /** Per-satellite display state shared by both trail input modes. */
 export interface SatelliteBaseState {

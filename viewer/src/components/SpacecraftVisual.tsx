@@ -1,4 +1,5 @@
 import { Suspense, useEffect } from "react";
+import { recordSpacecraftDrawn } from "../debug/spacecraftDrawn.js";
 import type { Quat } from "../displayFrame.js";
 import { getSatelliteModelConfig } from "../satelliteModels.js";
 import { type MarkerShape, resolveMarkerShape } from "../satelliteShapes.js";
@@ -102,17 +103,10 @@ export function SpacecraftVisual({
   attitudeRefused = false,
 }: SpacecraftVisualProps) {
   const modelConfig = !attitudeRefused && satId ? getSatelliteModelConfig(satId, satName) : null;
-  // (dev/E2E only) What this spacecraft was drawn as, per satellite. The
-  // scene's amplification is a separate derivation from the same facts, so
-  // reading it cannot tell a drawn model from a marker standing in for one.
+  // (dev/E2E only) Which of the two this spacecraft was drawn as.
   useEffect(() => {
-    if (!import.meta.env.DEV || !satId) return;
-    const w = window as unknown as { __debug_spacecraft_drawn?: Map<string, string> };
-    const drawn = (w.__debug_spacecraft_drawn ??= new Map());
-    drawn.set(satId, modelConfig ? "model" : "marker");
-    return () => {
-      drawn.delete(satId);
-    };
+    if (!satId) return;
+    return recordSpacecraftDrawn(satId, modelConfig ? "model" : "marker");
   }, [satId, modelConfig]);
   // The default axis length follows the scale the model is *drawn* at, not the
   // registry's: overriding one without the other would silently change the ratio

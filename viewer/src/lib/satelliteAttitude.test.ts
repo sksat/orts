@@ -20,6 +20,11 @@ const ABSENT: SatelliteState = { id: "sat-c", position: [6778, 0, 0] };
 describe("SatelliteState's attitude", () => {
   // The form every embedder already writes, and the one the viewer's own app
   // writes: a value computed as `Quat | undefined`, passed without narrowing.
+  //
+  // This file is compiled with this repo's settings, where an optional property
+  // accepts `undefined` on its own. An embedder with `exactOptionalPropertyTypes`
+  // on is stricter, and the arms in `types.ts` say `| undefined` for it —
+  // measured against that flag, since no assertion here can observe it.
   it("accepts a quaternion, an undefined one, and neither", () => {
     const computed: Quat | undefined = Math.random() < 2 ? [1, 0, 0, 0] : undefined;
     const states: SatelliteState[] = [
