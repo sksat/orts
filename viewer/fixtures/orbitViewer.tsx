@@ -68,6 +68,13 @@ const attitude: Quat | undefined =
     ? [attitudeParam[0], attitudeParam[1], attitudeParam[2], attitudeParam[3]]
     : undefined;
 
+/**
+ * `attRefused=1` states what a caller knows: an orientation was claimed and
+ * cannot be used. The other route is `att=0,0,0,0`, a quaternion the viewer
+ * refuses — this one carries no quaternion at all.
+ */
+const attitudeRefused = params.get("attRefused") === "1";
+
 const satellites: SatelliteState[] = (params.get("sats") ?? "0:7000,0,0:0,7.546,0")
   .split(";")
   .map((group, i) => {
@@ -76,7 +83,7 @@ const satellites: SatelliteState[] = (params.get("sats") ?? "0:7000,0,0:0,7.546,
       id: `fixture-sat-${i}`,
       position: vec3(position ?? "7000,0,0"),
       velocity: velocity == null ? undefined : vec3(velocity),
-      attitude,
+      ...(attitudeRefused ? { attitudeRefused: true as const } : { attitude }),
       markerShape: (params.get("shape") as SatelliteState["markerShape"]) ?? undefined,
       name: params.get("name") ?? undefined,
       time: time === "nan" ? Number.NaN : Number(time ?? 0),
@@ -111,7 +118,13 @@ function Fixture() {
   const shown =
     override === undefined
       ? satellites
-      : satellites.map((sat) => ({ ...sat, attitude: override ?? undefined }));
+      : satellites.map((sat) => {
+          // A test taking over the attitude replaces *both* states. Spreading a
+          // quaternion over `attRefused=1` would leave the satellite saying two
+          // things at once, and the scene would go on refusing.
+          const { attitude: _urlAttitude, attitudeRefused: _urlRefused, ...rest } = sat;
+          return override == null ? rest : { ...rest, attitude: override };
+        });
 
   return (
     <OrbitViewer

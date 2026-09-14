@@ -2,7 +2,7 @@ import { OrbitControls, type OrbitControlsProps } from "@react-three/drei";
 import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
-import { resolveAttitude } from "../attitude.js";
+import { type AttitudeState, resolveAttitude } from "../attitude.js";
 import {
   type BodyDefinitions,
   DEFAULT_BODIES,
@@ -327,6 +327,15 @@ export interface OrbitSceneContentsProps {
   /** Per-satellite positions. */
   satellitePositions?: Map<string, OrbitPoint | null>;
   /**
+   * What each satellite says about its orientation, resolved by the caller.
+   *
+   * Supplied by the public scene, which is where a caller's "claimed but
+   * unusable" reaches the viewer — an `OrbitPoint` cannot carry that. Absent
+   * for a satellite this map has no entry for, and then the point's own
+   * quaternion components are read instead.
+   */
+  satelliteAttitudes?: Map<string, AttitudeState>;
+  /**
    * The scene's elapsed seconds since the epoch — `OrbitSceneDataProps.time`.
    *
    * Where the view has no instant of its own, this is it: the lighting, the
@@ -393,9 +402,26 @@ export interface OrbitSceneContentsProps {
  * Canvas — both the app's {@link Scene} and the embeddable OrbitViewer mount
  * this same graph, so frame/lighting logic lives in exactly one place.
  */
+/** The state a caller supplied for this satellite, or the sample's own.
+ *
+ * A caller that knows its attitude was refused can only say so through the
+ * map: the sample carries loose quaternion components and has no spelling for
+ * a refusal.
+ */
+function attitudeOf(
+  satId: string,
+  sample: OrbitPoint | null | undefined,
+  supplied: Map<string, AttitudeState> | undefined,
+): AttitudeState {
+  const state = supplied?.get(satId);
+  if (state) return state;
+  return sample ? resolveAttitude(sample) : { kind: "absent" };
+}
+
 export function OrbitSceneContents({
   trailBuffers,
   satellitePositions,
+  satelliteAttitudes,
   time = 0,
   trailVisibleCounts,
   trailDrawStarts,
@@ -454,7 +480,7 @@ export function OrbitSceneContents({
     isSatCentered && centeredSatId != null
       ? (() => {
           const sample = satellitePositions?.get(centeredSatId);
-          return sample != null && resolveAttitude(sample).kind === "refused";
+          return attitudeOf(centeredSatId, sample, satelliteAttitudes).kind === "refused";
         })()
       : false;
 
@@ -689,7 +715,7 @@ export function OrbitSceneContents({
             // The same judgement the rotation makes: a sample whose quaternion
             // names no rotation gets the sphere, not the cube that would show an
             // orientation nobody measured.
-            hasAttitude: resolveAttitude(pos).kind === "usable",
+            hasAttitude: attitudeOf(centeredSatId, pos, satelliteAttitudes).kind === "usable",
           });
           const satName = satelliteNames?.get(centeredSatId);
           // The centred satellite is drawn exactly at the world origin, so the
@@ -755,6 +781,7 @@ export function OrbitSceneContents({
                 originPosition={originPosition}
                 lvlhAxes={lvlhAxes}
                 markerShape={shape}
+                attitude={attitudeOf(centeredSatId, pos, satelliteAttitudes)}
               />
               {arrows.length > 0 && (
                 <DirectionArrows
@@ -806,7 +833,7 @@ export function OrbitSceneContents({
           const bodyId = entityPathToBodyId(satId, bodyDefinitions);
           // Resolved once for this satellite: the marker's shape and whether a
           // refused attitude overrides it are two readings of one state.
-          const attitude = pos ? resolveAttitude(pos) : ({ kind: "absent" } as const);
+          const attitude = attitudeOf(satId, pos, satelliteAttitudes);
           return (
             <group key={satId}>
               {/* Mount on buffer *existence*, not current length: contents may be
@@ -864,6 +891,7 @@ export function OrbitSceneContents({
                     hasAttitude: attitude.kind === "usable",
                     attitudeRefused: attitude.kind === "refused",
                   })}
+                  attitude={attitude}
                 />
               )}
             </group>

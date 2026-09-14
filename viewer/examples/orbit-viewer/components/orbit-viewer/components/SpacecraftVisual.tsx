@@ -1,4 +1,5 @@
-import { Suspense } from "react";
+import { Suspense, useEffect } from "react";
+import { recordSpacecraftVisual } from "../debug/spacecraftVisual.js";
 import type { Quat } from "../displayFrame.js";
 import { getSatelliteModelConfig } from "../satelliteModels.js";
 import { type MarkerShape, resolveMarkerShape } from "../satelliteShapes.js";
@@ -102,6 +103,11 @@ export function SpacecraftVisual({
   attitudeRefused = false,
 }: SpacecraftVisualProps) {
   const modelConfig = !attitudeRefused && satId ? getSatelliteModelConfig(satId, satName) : null;
+  // (dev/E2E only) Which of the two visuals this component selected.
+  useEffect(() => {
+    if (!satId) return;
+    return recordSpacecraftVisual(satId, modelConfig ? "model" : "marker");
+  }, [satId, modelConfig]);
   // The default axis length follows the scale the model is *drawn* at, not the
   // registry's: overriding one without the other would silently change the ratio
   // between a spacecraft and its axes.
