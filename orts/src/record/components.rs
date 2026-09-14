@@ -98,6 +98,33 @@ impl Component for BodyRadius {
     }
 }
 
+/// Orbital period of the satellite's initial orbit, in seconds. Static.
+///
+/// Logged on the satellite's own entity path, so a recording of several
+/// satellites says what each one's orbit was. `SimMetadata::period` carries one
+/// number for the whole recording — the first satellite's — which a reader
+/// cannot attribute once there is more than one.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OrbitalPeriod(pub f64);
+
+impl Component for OrbitalPeriod {
+    fn component_name() -> ComponentName {
+        "orts.OrbitalPeriod".into()
+    }
+    fn num_scalars() -> usize {
+        1
+    }
+    fn to_scalars(&self) -> Vec<f64> {
+        vec![self.0]
+    }
+    fn from_scalars(data: &[f64]) -> Option<Self> {
+        data.first().map(|&v| OrbitalPeriod(v))
+    }
+    fn field_names() -> Vec<&'static str> {
+        vec!["period"]
+    }
+}
+
 /// Body-to-inertial quaternion [w, x, y, z] (Hamilton scalar-first).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Quaternion4D(pub nalgebra::Vector4<f64>);

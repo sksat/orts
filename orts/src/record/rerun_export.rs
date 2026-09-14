@@ -365,9 +365,31 @@ pub struct RrdRow {
 
 /// Full data loaded from an .rrd file: trajectory rows + simulation metadata.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
+#[derive(Default)]
 pub struct RrdData {
     pub rows: Vec<RrdRow>,
     pub metadata: SimMetadata,
+    /// Static scalars that belong to an entity rather than to the recording,
+    /// keyed by the entity path with no leading slash — a satellite's period
+    /// sits at `world/sat/<name>/period`.
+    ///
+    /// `metadata` carries what the recording says about itself; this carries
+    /// what it says about each thing in it. Read it through
+    /// [`RrdData::static_scalar`] rather than composing the key.
+    pub statics: BTreeMap<String, f64>,
+}
+
+impl RrdData {
+    /// A static scalar logged on `entity`, by the component field's name.
+    ///
+    /// Owns the shape of the key — the leading slash an entity path may carry,
+    /// and the field name the recorder writes as a child entity — so a reader
+    /// does not repeat it. `data.static_scalar("/world/sat/a", "period")`.
+    pub fn static_scalar(&self, entity: &str, field: &str) -> Option<f64> {
+        let entity = entity.trim_start_matches('/');
+        self.statics.get(&format!("{entity}/{field}")).copied()
+    }
 }
 
 /// Where one scalar value sits on the recording's timelines.
@@ -593,6 +615,8 @@ pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> 
     let mut repeat_counters: RepeatCounters = BTreeMap::new();
     // Collect metadata scalars: entity_path -> f64 (static/timeless)
     let mut meta_scalars: BTreeMap<String, f64> = BTreeMap::new();
+    // Static scalars on the entities themselves: entity_path -> f64
+    let mut statics: BTreeMap<String, f64> = BTreeMap::new();
     // Collect text metadata
     let mut meta_texts: BTreeMap<String, String> = BTreeMap::new();
 
@@ -637,6 +661,29 @@ pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> 
                         {
                             meta_texts.insert(entity_path.clone(), t.to_string());
                         }
+                    }
+                }
+            }
+            continue;
+        }
+
+        // A static scalar belongs to its entity rather than to a moment, and a
+        // satellite's period is logged that way. `chunk_keys` still answers for
+        // such a chunk — the writer gives it the recording's indices — so the
+        // question is asked of the chunk itself.
+        if chunk.is_static() {
+            for comp_id in chunk.components_identifiers() {
+                let comp_name = comp_id.as_str();
+                if !(comp_name.contains("Scalar") || comp_name.contains("scalars")) {
+                    continue;
+                }
+                for row_idx in 0..n {
+                    let batch =
+                        chunk.component_batch::<re_sdk_types::components::Scalar>(comp_id, row_idx);
+                    if let Some(Ok(scalar_vec)) = batch
+                        && let Some(scalar) = scalar_vec.first()
+                    {
+                        statics.insert(normalized_path.to_string(), scalar.0.0);
                     }
                 }
             }
@@ -855,7 +902,11 @@ pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> 
     }
 
     rows.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
-    Ok(RrdData { rows, metadata })
+    Ok(RrdData {
+        rows,
+        metadata,
+        statics,
+    })
 }
 
 /// Load orbital data from an .rrd file and return rows sorted by time.
@@ -1340,6 +1391,126 @@ mod tests {
         assert!(metadata.len() > 0, ".rrd file should not be empty");
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_static_on_a_satellite_survives_the_rrd_round_trip() {
+        use crate::record::components::OrbitalPeriod;
+
+        let mut rec = Recording::new();
+        let a = EntityPath::parse("/world/sat/a");
+        let b = EntityPath::parse("/world/sat/b");
+        rec.log_static(&a, &OrbitalPeriod(5500.0));
+        rec.log_static(&b, &OrbitalPeriod(7000.0));
+
+        // Each satellite also needs a state, since that is what a reader looks
+        // for to find the satellites at all.
+        let r0 = 6778.137;
+        let v0 = (398600.4418_f64 / r0).sqrt();
+        for (i, path) in [&a, &b].into_iter().enumerate() {
+            for step in 0..3u64 {
+                let tp = TimePoint::new()
+                    .with_sim_time(step as f64 * 10.0)
+                    .with_step(step);
+                let os = OrbitalState::new(
+                    Vector3::new(r0 + i as f64, 0.0, 0.0),
+                    Vector3::new(0.0, v0, 0.0),
+                );
+                rec.log_orbital_state(path, &tp, &os);
+            }
+        }
+
+        let path = std::env::temp_dir().join(format!(
+            "orts-period-roundtrip-{}-{:?}.rrd",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let path_str = path.to_str().expect("temp path is utf-8");
+        save_as_rrd(&rec, "test-orts", path_str).expect("saves");
+        let loaded = load_rrd_data(path_str).expect("loads");
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(
+            loaded.statics.get("world/sat/a/period").copied(),
+            Some(5500.0),
+            "statics: {:?}",
+            loaded.statics
+        );
+        assert_eq!(
+            loaded.statics.get("world/sat/b/period").copied(),
+            Some(7000.0)
+        );
+    }
+
+    #[test]
+    fn a_single_sample_series_is_not_mistaken_for_a_static() {
+        // `Chunk::is_static` is "no timelines", not "one row", and a recording
+        // of one sample must keep that sample as a row rather than as an
+        // entity's static value.
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/once");
+        let tp = TimePoint::new().with_sim_time(0.0).with_step(0);
+        let os = OrbitalState::new(
+            Vector3::new(6778.137, 0.0, 0.0),
+            Vector3::new(0.0, 7.668, 0.0),
+        );
+        rec.log_orbital_state(&sat, &tp, &os);
+
+        let path = std::env::temp_dir().join(format!(
+            "orts-single-sample-{}-{:?}.rrd",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let path_str = path.to_str().expect("temp path is utf-8");
+        save_as_rrd(&rec, "test-orts", path_str).expect("saves");
+        let loaded = load_rrd_data(path_str).expect("loads");
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(loaded.rows.len(), 1, "the sample is a row");
+        assert!(
+            loaded.statics.is_empty(),
+            "a timed sample became a static: {:?}",
+            loaded.statics
+        );
+    }
+
+    #[test]
+    fn the_period_static_survives_the_convert_path_too() {
+        use crate::record::components::OrbitalPeriod;
+
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/a");
+        rec.log_static(&sat, &OrbitalPeriod(5500.0));
+        let tp = TimePoint::new().with_sim_time(0.0).with_step(0);
+        let os = OrbitalState::new(
+            Vector3::new(6778.137, 0.0, 0.0),
+            Vector3::new(0.0, 7.668, 0.0),
+        );
+        rec.log_orbital_state(&sat, &tp, &os);
+
+        let path = std::env::temp_dir().join(format!(
+            "orts-period-convert-{}-{:?}.rrd",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let path_str = path.to_str().expect("temp path is utf-8");
+        save_as_rrd(&rec, "test-orts", path_str).expect("saves");
+        let back = load_as_recording(path_str).expect("loads as a recording");
+        let _ = std::fs::remove_file(&path);
+
+        let store = back
+            .entity(&sat)
+            .expect("the satellite is in the recording");
+        let restored = store
+            .static_data
+            .get(&crate::record::components::OrbitalPeriod::component_name())
+            .unwrap_or_else(|| {
+                panic!(
+                    "the period is not among the entity's statics: {:?}",
+                    store.static_data.keys().collect::<Vec<_>>()
+                )
+            });
+        assert_eq!(restored, &vec![5500.0]);
     }
 
     #[test]

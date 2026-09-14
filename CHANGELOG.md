@@ -14,6 +14,19 @@ section is subdivided by package.
 ### `orts` (Rust, crates.io)
 
 #### Added
+- **Breaking**: `orts.OrbitalPeriod` records a satellite's initial orbital period on its own
+  entity path, so a recording of several satellites says what each orbit was.
+  `SimMetadata::period` carries one number for the whole recording — the first
+  satellite in config order — which a reader cannot attribute once there is more
+  than one. `RrdData::statics` answers the per-entity statics a loaded recording
+  holds, keyed by entity path: `load_rrd_data` kept only the `meta/sim/` ones,
+  and a static on an entity was dropped because the writer gives it the
+  recording's time indices, so `chunk_keys` could not tell it apart —
+  `Chunk::is_static` can. The field is an addition to a public struct, which a
+  struct literal or an exhaustive match outside the crate would notice, so
+  `RrdData` is `#[non_exhaustive]` from here on and is read through
+  `RrdData::static_scalar(entity, field)`.
+  ([#441](https://github.com/sksat/orts/issues/441))
 - `SpacecraftDynamics::load_breakdown` answers the acceleration magnitudes and
   the body torques from one evaluation of every model, as a `LoadBreakdown`
   re-exported from `orts::spacecraft`. `ExternalLoads` carries
@@ -646,6 +659,13 @@ section is subdivided by package.
   under RK4 when `output_interval` equals `dt`. ([#466](https://github.com/sksat/orts/pull/466))
 
 #### Fixed
+- `orts replay` reported `period: 0` for every satellite. It now reads the
+  `orts.OrbitalPeriod` static the run logs on each satellite's path. A recording
+  made before that existed carries only `meta/sim/period`, the first satellite in
+  config order, while replay lists satellites in entity-path order — so that
+  number is used only when the recording holds one satellite, where the two
+  orders cannot disagree. Otherwise the period stays 0.
+  ([#441](https://github.com/sksat/orts/issues/441))
 - `mode = "controlled"` ignored `output_interval` whenever the controller was
   slower than it: a span ended only at a controller tick or at `duration`, so
   with a 1 s controller period an `output_interval` of 0.1 still sampled once a

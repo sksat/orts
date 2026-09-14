@@ -621,6 +621,13 @@ where
     // Track entity paths per satellite for recording
     let sat_paths: Vec<EntityPath> = params.satellites.iter().map(|s| s.entity_path()).collect();
 
+    // Each satellite's own period, so a recording of several of them says what
+    // each orbit was. `SimMetadata::period` carries the first satellite's for
+    // the whole recording, which a reader cannot attribute.
+    for (path, sat) in sat_paths.iter().zip(params.satellites.iter()) {
+        rec.log_static(path, &orts::record::components::OrbitalPeriod(sat.period));
+    }
+
     // Ground-station visibility monitors, fed from accepted integrator
     // steps via the propagation observer (independent of output_interval).
     let mut visibility = build_visibility_monitors(params);
@@ -1167,6 +1174,11 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Result<Record
     rec.log_static(&body_path, &BodyRadius(params.body.properties().radius));
 
     let sat_paths: Vec<EntityPath> = params.satellites.iter().map(|s| s.entity_path()).collect();
+
+    // As in the orbit-only path: each satellite's own period.
+    for (path, sat) in sat_paths.iter().zip(params.satellites.iter()) {
+        rec.log_static(path, &orts::record::components::OrbitalPeriod(sat.period));
+    }
 
     // WASM plugin cache（複数衛星で共有する engine + compiled component）。
     #[cfg(feature = "plugin-wasm")]

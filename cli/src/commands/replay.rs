@@ -10,7 +10,7 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpListener;
 
 use orts::record::entity_path::EntityPath;
-use orts::record::rerun_export::load_rrd_data;
+use orts::record::rerun_export::{RrdData, load_rrd_data};
 
 use crate::commands::serve::protocol::{ClientMessage, WsMessage};
 use crate::satellite::SatelliteInfo;
@@ -113,7 +113,7 @@ fn load_replay_data(path: &str) -> ReplayData {
     let entity_count = states_by_entity.len();
     let dt = estimate_dt(&states_by_entity);
 
-    let satellites = satellite_infos(&states_by_entity, body_radius);
+    let satellites = satellite_infos(&states_by_entity, body_radius, &rrd, meta.period);
 
     let info_msg = WsMessage::Info {
         mu,
@@ -143,12 +143,19 @@ fn load_replay_data(path: &str) -> ReplayData {
 
 /// One `SatelliteInfo` per entity, in entity-path order.
 ///
-/// `period` is 0: the RRD's metadata carries the period of the first satellite
-/// only, and replay does not read it yet (see #441).
+/// `period` comes from the `orts.OrbitalPeriod` static the run logs on each
+/// satellite's own path. A recording made before that existed carries only
+/// `meta/sim/period`, which is the first satellite *in config order* — replay
+/// lists satellites in entity-path order, so that number is attributed only
+/// when the recording holds one satellite and the two orders cannot disagree.
+/// Otherwise the period is 0, which is what every satellite got before.
 fn satellite_infos(
     states_by_entity: &BTreeMap<String, Vec<HistoryState>>,
     body_radius: f64,
+    statics: &RrdData,
+    recording_period: Option<f64>,
 ) -> Vec<SatelliteInfo> {
+    let single = states_by_entity.len() == 1;
     states_by_entity
         .iter()
         .map(|(ep_str, states)| {
@@ -157,11 +164,15 @@ fn satellite_infos(
             let r_mag =
                 (first.position[0].powi(2) + first.position[1].powi(2) + first.position[2].powi(2))
                     .sqrt();
+            let period = statics
+                .static_scalar(ep_str, "period")
+                .or(if single { recording_period } else { None })
+                .unwrap_or(0.0);
             SatelliteInfo {
                 id: ep.to_string(),
                 name: Some(ep.name().to_string()),
                 altitude: r_mag - body_radius,
-                period: 0.0,
+                period,
                 perturbations: vec![],
                 shape: None,
             }
@@ -410,10 +421,78 @@ mod tests {
         by_entity
     }
 
+    /// An `RrdData` carrying only the statics a test needs.
+    fn rrd_with_statics(pairs: &[(&str, f64)]) -> RrdData {
+        let mut data = RrdData::default();
+        for (key, value) in pairs {
+            data.statics.insert((*key).to_string(), *value);
+        }
+        data
+    }
+
+    fn two_entities() -> BTreeMap<String, Vec<HistoryState>> {
+        let mut by_entity = BTreeMap::new();
+        for path in ["/world/sat/b", "/world/sat/a"] {
+            by_entity.insert(
+                path.to_string(),
+                vec![make_test_state(path, 0.0), make_test_state(path, 60.0)],
+            );
+        }
+        by_entity
+    }
+
+    #[test]
+    fn each_satellite_reports_the_period_recorded_on_its_own_path() {
+        // A recording-wide period as well: the per-satellite statics win.
+        let statics = rrd_with_statics(&[
+            ("world/sat/a/period", 5500.0),
+            ("world/sat/b/period", 7000.0),
+        ]);
+        let infos = satellite_infos(&two_entities(), 6378.137, &statics, Some(1234.0));
+        let periods: Vec<(String, f64)> = infos.into_iter().map(|i| (i.id, i.period)).collect();
+        assert_eq!(
+            periods,
+            vec![
+                ("/world/sat/a".to_string(), 5500.0),
+                ("/world/sat/b".to_string(), 7000.0)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_recording_wide_period_is_not_handed_to_one_of_several_satellites() {
+        // `meta/sim/period` is the first satellite in config order, which is not
+        // knowable from the RRD: with two satellites it is attributed to none.
+        let infos = satellite_infos(&two_entities(), 6378.137, &RrdData::default(), Some(7000.0));
+        assert!(
+            infos.iter().all(|i| i.period == 0.0),
+            "a period was attributed without evidence: {:?}",
+            infos.iter().map(|i| (&i.id, i.period)).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_single_satellite_recording_keeps_using_the_recording_wide_period() {
+        // One satellite: config order and entity-path order cannot disagree, so
+        // an older recording still reports its orbit.
+        let mut by_entity = BTreeMap::new();
+        by_entity.insert(
+            "/world/sat/only".to_string(),
+            vec![make_test_state("/world/sat/only", 0.0)],
+        );
+        let infos = satellite_infos(&by_entity, 6378.137, &RrdData::default(), Some(5828.5));
+        assert_eq!(infos.len(), 1);
+        assert!(
+            (infos[0].period - 5828.5).abs() < 1e-9,
+            "{}",
+            infos[0].period
+        );
+    }
+
     #[test]
     fn the_info_message_lists_satellites_in_entity_path_order() {
         let by_entity = eight_entities(60.0);
-        let ids: Vec<String> = satellite_infos(&by_entity, 6378.137)
+        let ids: Vec<String> = satellite_infos(&by_entity, 6378.137, &RrdData::default(), None)
             .into_iter()
             .map(|s| s.id)
             .collect();

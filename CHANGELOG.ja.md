@@ -11,6 +11,16 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `orts` (Rust, crates.io)
 
 #### Added
+- **破壊的変更**: `orts.OrbitalPeriod` を追加した。衛星の初期軌道周期をその衛星自身の entity path に static で
+  記録するので、複数機の recording でも各機の軌道が分かる。`SimMetadata::period` は recording
+  全体で 1 つの値(config 順の先頭衛星)しか持たず、2 機以上ではどの衛星の値か読み手に分からない。
+  あわせて `RrdData::statics`(entity path を鍵にした static scalar)を足した。`load_rrd_data` は
+  `meta/sim/` の static だけを拾っていて、entity 上の static は落としていた。書き込み側が static にも
+  recording の時刻 index を与えるため `chunk_keys` では区別できず、`Chunk::is_static` で判定する。
+  公開 struct へのフィールド追加なので、crate 外の struct literal や網羅的な match は影響を受ける。
+  以後同じことが起きないよう `RrdData` を `#[non_exhaustive]` にし、読みは
+  `RrdData::static_scalar(entity, field)` に閉じ込めた。
+  ([#441](https://github.com/sksat/orts/issues/441))
 - `SpacecraftDynamics::load_breakdown` を追加。加速度の magnitude と body torque を、
   全モデル 1 回の評価から `LoadBreakdown` (`orts::spacecraft` から re-export) で返す。`ExternalLoads` が両方を持っているので、両方を欲しい
   呼び出し側 (1 サンプルを報告する telemetry) が全モデルを 2 回評価する理由はない。
@@ -529,6 +539,11 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `dt` と同じなら、モデル評価の作業が 4 分の 1 ほど増える。([#466](https://github.com/sksat/orts/pull/466))
 
 #### Fixed
+- `orts replay` が全衛星の `period` に 0 を入れていた。run が各衛星の path に書く
+  `orts.OrbitalPeriod` の static を読むようにした。それ以前に作られた recording は
+  `meta/sim/period`(config 順の先頭衛星)しか持たず、replay は entity path 順に衛星を並べるので、
+  この値は「衛星が 1 機だけで 2 つの順序が食い違わない」場合にだけ使う。それ以外は 0 のまま。
+  ([#441](https://github.com/sksat/orts/issues/441))
 - `mode = "controlled"` が、controller が `output_interval` より遅いと `output_interval` を
   無視していた。span の終端が controller tick か `duration` だけだったので、controller period 1 s
   に対して `output_interval = 0.1` と書いてもサンプルは 1 s ごとで、しかも記録される時刻は出力
