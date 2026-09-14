@@ -1237,6 +1237,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   収束していた。([#111](https://github.com/sksat/orts/pull/111), [#90](https://github.com/sksat/orts/issues/90))
 
 #### Changed
+- **破壊的変更:** `SatelliteState` が、衛星が姿勢について述べる 3 つの事実のどれかを言えるように
+  した。従来の `attitude` には「姿勢を名乗ったが回転として使えない」を表す方法が無かったため、
+  その事実を持つ呼び出し側は符号化するしかなく (記録経路は 4 成分すべて NaN と綴っていた)、
+  次の呼び出し側は同じ符号化を再発見することになっていた。`attitude` と `attitudeRefused: true` は
+  型で排他にした。`attitude` だけを渡す形 (`Quat | undefined` を含む) は従来どおり通る。
+  scene は境界で状態を解決し、位置と並べて運ぶので、拒否を `OrbitPoint` に符号化しない。
+  ([#479](https://github.com/sksat/orts/pull/479))
 - サンプルが姿勢について述べる内容を 1 箇所で解決するようにした。`resolveAttitude` が
   `absent` / `refused` / `usable` を返し、消費側 6 箇所が組み合わせていた 2 つの述語を置き換える。
   #451 が挙げる 10 件の欠陥のうち 6 件はこの構造から出ていた (回転・マーカーの形・登録モデルを
