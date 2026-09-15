@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { resolveAttitude } from "../attitude.js";
 import type { OrbitPoint } from "../orbit.js";
 import { TrailBuffer } from "./TrailBuffer.js";
 
@@ -124,6 +125,31 @@ describe("TrailBuffer", () => {
 });
 
 describe("TrailBuffer.interpolateAt", () => {
+  it("keeps a sample's own rotation when the next sample carries none", () => {
+    // A recording whose attitude stops partway: the last sample that names a
+    // rotation is asked for at its own timestamp, which reaches `lerpPoint` as
+    // fraction 0 of a pair whose far end claims nothing. Measured before this
+    // was handled: that sample read as "nothing claimed", losing a rotation the
+    // recording holds.
+    const buf = new TrailBuffer(100);
+    const S = Math.SQRT1_2;
+    buf.push({ ...makePoint(0), qw: 1, qx: 0, qy: 0, qz: 0 });
+    buf.push({ ...makePoint(10), qw: S, qx: 0, qy: 0, qz: S });
+    buf.push(makePoint(20));
+
+    const own = buf.interpolateAt(10)!;
+    const state = resolveAttitude(own);
+    expect(state.kind, "at the sample's own timestamp").toBe("usable");
+    if (state.kind !== "usable") throw new Error("unreachable");
+    for (const [i, want] of [S, 0, 0, S].entries()) {
+      expect(state.quaternion[i], `component ${i}`).toBeCloseTo(want, 12);
+    }
+
+    // The gap after it still claims nothing: there is no measurement to spread
+    // across it.
+    expect(resolveAttitude(buf.interpolateAt(15)!).kind, "inside the gap").toBe("absent");
+  });
+
   it("returns null on empty buffer", () => {
     const buf = new TrailBuffer(100);
     expect(buf.interpolateAt(5)).toBeNull();

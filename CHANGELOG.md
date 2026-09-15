@@ -1320,6 +1320,25 @@ section is subdivided by package.
   satellite-centred view always collapsed to LVLH. ([#111](https://github.com/sksat/orts/pull/111), [#90](https://github.com/sksat/orts/issues/90))
 
 #### Changed
+- What a sample says about its orientation is resolved in one place.
+  `resolveAttitude` answers `absent`, `refused` or `usable`, replacing a pair of
+  predicates that six consumers combined — the structure behind six of the ten
+  defects #451 lists, since each consequence (the rotation, the marker shape,
+  whether the registered model is drawn, the amplification) re-derived the
+  state. Three of its answers change, all at the edges of the domain, where the
+  two predicates had disagreed with what the display frame did:
+  - A quaternion written large enough that the norm itself overflows —
+    `[MAX_VALUE, MAX_VALUE, 0, 0]`, whose `Math.hypot` is Infinity — now
+    normalises, where it was refused. It names the same rotation as `[1, 1, 0, 0]`.
+  - An interpolation across a sample whose claim is incomplete (`qw` without
+    `qx`/`qy`/`qz`) now answers `refused` rather than `absent`, so the refusal
+    survives playback instead of letting the registered spacecraft model be drawn
+    from a claim the viewer would not use.
+  - A sample keeps its own rotation when asked for at its own timestamp, even
+    where the next sample carries none. `TrailBuffer.interpolateAt` reaches that
+    case as fraction 0 of a pair, and the rotation the recording holds was
+    dropped.
+  ([#478](https://github.com/sksat/orts/pull/478))
 - The `./lib` public barrel is intentionally narrow: the Three.js / r3f building
   blocks and the internal frame wiring are not exported. Supported surface:
   `OrbitViewer`, `OrbitScene`, `TrailBuffer` / `TrailBufferLike`, `toTrailBuffer`

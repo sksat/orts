@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attitudeWasRefused, sampleAttitude } from "../displayFrame.js";
+import { resolveAttitude } from "../attitude.js";
 import { torqueModelsOf } from "../orbit.js";
 import { type RrdRowIn, rowToPoint } from "./rrdParseLogic.js";
 
@@ -21,8 +21,9 @@ describe("rowToPoint", () => {
   it("carries a complete quaternion through unchanged", () => {
     const point = rowToPoint(row({ quaternion: [1, 0, 0, 0] }));
     expect([point.qw, point.qx, point.qy, point.qz]).toEqual([1, 0, 0, 0]);
-    expect(sampleAttitude(point)).toEqual([1, 0, 0, 0]);
-    expect(attitudeWasRefused(point)).toBe(false);
+    const attitude = resolveAttitude(point);
+    expect(attitude.kind).toBe("usable");
+    expect(attitude.kind === "usable" && attitude.quaternion).toEqual([1, 0, 0, 0]);
   });
 
   it("leaves a row with no attitude column without one", () => {
@@ -33,7 +34,7 @@ describe("rowToPoint", () => {
       undefined,
       undefined,
     ]);
-    expect(attitudeWasRefused(point)).toBe(false);
+    expect(resolveAttitude(point).kind).toBe("absent");
   });
 
   it("carries a non-finite quaternion through as an attitude to refuse", () => {
@@ -43,8 +44,7 @@ describe("rowToPoint", () => {
     // satellite read as having no attitude keeps its registered 3D model, drawn at
     // the model's own orientation with the scene scaled to it.
     const point = rowToPoint(row({ quaternion: [Number.NaN, 0, 0, 0] }));
-    expect(sampleAttitude(point)).toBeUndefined();
-    expect(attitudeWasRefused(point)).toBe(true);
+    expect(resolveAttitude(point).kind).toBe("refused");
   });
 
   it("copies the angular velocity when the row carries one", () => {

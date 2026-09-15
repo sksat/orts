@@ -1107,6 +1107,21 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   収束していた。([#111](https://github.com/sksat/orts/pull/111), [#90](https://github.com/sksat/orts/issues/90))
 
 #### Changed
+- サンプルが姿勢について述べる内容を 1 箇所で解決するようにした。`resolveAttitude` が
+  `absent` / `refused` / `usable` を返し、消費側 6 箇所が組み合わせていた 2 つの述語を置き換える。
+  #451 が挙げる 10 件の欠陥のうち 6 件はこの構造から出ていた (回転・マーカーの形・登録モデルを
+  描くか・拡大率の各帰結がそれぞれ状態を再導出していた)。返る答えが 3 つ変わる。いずれも
+  定義域の端で、2 つの述語が表示側の実際の扱いと食い違っていた場所である:
+  - ノルム自体が overflow する大きさで書かれた quaternion (`Math.hypot` が Infinity になる
+    `[MAX_VALUE, MAX_VALUE, 0, 0]`) を正規化して使うようにした。従来は拒否していた。
+    これは `[1, 1, 0, 0]` と同じ回転を指す。
+  - claim が不完全なサンプル (`qw` があって `qx`/`qy`/`qz` が無い) を挟む補間の結果が
+    `absent` でなく `refused` になる。拒否が再生中も保たれ、viewer が使わないと判断した
+    claim から登録済みの宇宙機モデルが描かれることがなくなる。
+  - サンプル自身の時刻を問われたとき、次のサンプルが姿勢を持たなくても自身の回転を返すように
+    した。`TrailBuffer.interpolateAt` はこの場合を fraction 0 として呼ぶので、記録が持っている
+    回転が落ちていた。
+  ([#478](https://github.com/sksat/orts/pull/478))
 - `./lib` の公開 barrel は意図的に絞っている: Three.js / r3f の構成要素と内部
   frame 配線はエクスポートしない。公開 surface は `OrbitViewer`、`OrbitScene`、
   `TrailBuffer` / `TrailBufferLike`、`toTrailBuffer` / `trailPointToOrbitPoint`、

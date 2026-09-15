@@ -1,10 +1,9 @@
+import { resolveAttitude } from "../attitude.js";
 import {
-  attitudeWasRefused,
   displayPosition,
   displayQuaternion,
   type Quat,
   resolveDisplayFrame,
-  sampleAttitude,
 } from "../displayFrame.js";
 import type { OrbitPoint } from "../orbit.js";
 import { isLegacyEcef, type ReferenceFrame } from "../referenceFrame.js";
@@ -96,13 +95,15 @@ export function Satellite({
   // back as the identity, so the scene would report an orientation nobody
   // measured. What cannot be normalised is reported as no attitude, which draws
   // the marker unrotated — the answer a satellite without attitude already gets.
-  const rawQuaternion: Quat | undefined = sampleAttitude(position);
+  const attitude = resolveAttitude(position);
+  const rawQuaternion: Quat | undefined =
+    attitude.kind === "usable" ? attitude.quaternion : undefined;
   // Whether this sample claimed an orientation the viewer could not use. A model
   // drawn for a satellite with no attitude at all is a position marker and reads
   // as one; the same model drawn after an attitude was refused would sit at its
   // own default orientation and be read as the measurement that was refused. That
   // case gets the marker instead, which looks the same from every side.
-  const attitudeRefused = attitudeWasRefused(position);
+  const attitudeRefused = attitude.kind === "refused";
 
   return (
     <SpacecraftVisual

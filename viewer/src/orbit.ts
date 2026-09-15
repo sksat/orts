@@ -1,6 +1,6 @@
 import * as THREE from "three";
+import { resolveAttitude } from "./attitude.js";
 import { TORQUE_AXES, TORQUE_CHART_MODELS } from "./chartMetrics.js";
-import { sampleAttitude } from "./displayFrame.js";
 
 /**
  * Earth radius in km -- used as the scene scale factor.
@@ -172,7 +172,7 @@ export function updateOrbitTrail(line: THREE.Line, visibleCount: number, totalCo
  * A point's quaternion at unit norm, or null when the display frame would refuse
  * it.
  *
- * Asked of `sampleAttitude`, which is what the marker's rotation goes through, so
+ * Asked of `resolveAttitude`, which is what the marker's rotation goes through, so
  * the interpolation and the drawing agree on which samples name a rotation.
  * Dividing by a finite positive norm is not enough on its own: at subnormal
  * magnitudes `Math.hypot` answers the smallest number there is, so
@@ -181,7 +181,8 @@ export function updateOrbitTrail(line: THREE.Line, visibleCount: number, totalCo
  * input, and this now inherits that.
  */
 function unitQuaternion(p: OrbitPoint): THREE.Quaternion | null {
-  const unit = sampleAttitude(p);
+  const resolved = resolveAttitude(p);
+  const unit = resolved.kind === "usable" ? resolved.quaternion : undefined;
   if (unit == null) return null;
   const [w, x, y, z] = unit;
   return new THREE.Quaternion(x, y, z, w);
@@ -242,26 +243,55 @@ export function lerpPoint(a: OrbitPoint, b: OrbitPoint, frac: number): OrbitPoin
       result.qy = qa.y;
       result.qz = qa.z;
     } else {
-      // An endpoint the display frame refuses cannot be interpolated through.
-      // Slerp from a zero quaternion returns a multiple of the *other* endpoint —
-      // measured at a quarter of the way along, the result normalises to that
-      // endpoint's rotation exactly — so the refused sample would be presented as
-      // a measurement taken next door. The refusal is carried instead, and the
-      // exact endpoints keep their own values, which is what a reader at a
-      // sample's own timestamp should see.
-      const source = frac <= 0 ? a : frac >= 1 ? b : qa == null ? a : b;
-      result.qw = source.qw;
-      result.qx = source.qx;
-      result.qy = source.qy;
-      result.qz = source.qz;
+      carryClaimWithoutSlerp(result, a, b, frac);
     }
     // Angular velocity: linear interpolation
     result.wx = (a.wx ?? 0) * inv + (b.wx ?? 0) * frac;
     result.wy = (a.wy ?? 0) * inv + (b.wy ?? 0) * frac;
     result.wz = (a.wz ?? 0) * inv + (b.wz ?? 0) * frac;
+  } else {
+    // One endpoint's claim is incomplete (qw without qx/qy/qz), so there is
+    // nothing to slerp — but the result still has to say what the samples say.
+    carryClaimWithoutSlerp(result, a, b, frac);
   }
 
   return result;
+}
+
+/** Carries an attitude claim onto a point that could not be slerped.
+ *
+ * Two rules, in this order.
+ *
+ * An exact endpoint answers with that sample's own claim, whatever it is, which
+ * is what a reader at that sample's timestamp should see. Skipping this loses a
+ * measurement the recording holds: `TrailBuffer.interpolateAt` calls with
+ * `frac = 0` at a sample's own timestamp, and measured on a buffer whose
+ * attitude stops partway, the last sample carrying a rotation read as `absent`
+ * because its successor carried none.
+ *
+ * In between, only a refusal is carried. Interpolating through a refused
+ * endpoint would present it as a measurement taken next door — slerp from a zero
+ * quaternion returns a multiple of the *other* endpoint, and a quarter of the
+ * way along the result normalises to that endpoint's rotation exactly
+ * (measured) — so the refusal is copied instead and survives the gap. A sample
+ * that claims nothing has nothing to hand on: carrying the other endpoint's
+ * rotation there put the later sample's rotation at fractions 0.25 and 0.5 of an
+ * absent-to-usable pair (measured), for one ordering only.
+ */
+function carryClaimWithoutSlerp(
+  result: OrbitPoint,
+  a: OrbitPoint,
+  b: OrbitPoint,
+  frac: number,
+): void {
+  const refusedSide = (p: OrbitPoint) => resolveAttitude(p).kind === "refused";
+  const source =
+    frac <= 0 ? a : frac >= 1 ? b : refusedSide(a) ? a : refusedSide(b) ? b : undefined;
+  if (source == null) return;
+  result.qw = source.qw;
+  result.qx = source.qx;
+  result.qy = source.qy;
+  result.qz = source.qz;
 }
 
 /** Models whose whole torque triple appears in these points, per entity.
