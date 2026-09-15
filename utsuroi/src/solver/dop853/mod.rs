@@ -400,8 +400,10 @@ impl<'a, S: DynamicalSystem> AdaptiveStepper853<'a, S> {
     /// the step's own start with the same first-stage derivative until the
     /// bracket is narrower than
     /// [`RootSearch::t_tolerance`](crate::RootSearch::t_tolerance), and the
-    /// state at the boundary is what the stepper commits. The callback is
-    /// called there and nowhere else in the search.
+    /// state at the boundary is what the stepper commits. Neither the trials
+    /// nor the state a root stopped at reach the callback, which sees ordinary
+    /// committed steps only: a boundary state is not final until the caller has
+    /// handled the root, so it reads that one from the stepper.
     ///
     /// The trials cannot move the step size: it is grown or shrunk from the
     /// error of the step that was accepted, exactly as in
@@ -419,11 +421,11 @@ impl<'a, S: DynamicalSystem> AdaptiveStepper853<'a, S> {
     /// resumption from reporting the root it is standing on is
     /// [`RootGuard`](crate::RootGuard), which the same `roots` carries: the step
     /// starting at that root's own time does not report that event again.
-    pub fn advance_to_roots<F, const N: usize>(
+    pub fn advance_to_roots<F>(
         &mut self,
         t_target: f64,
         mut callback: F,
-        roots: &mut RootSet<'_, S::State, N>,
+        roots: &mut RootSet<'_, S::State>,
     ) -> Result<RootOutcome, IntegrationError>
     where
         F: FnMut(f64, &S::State),
@@ -514,12 +516,19 @@ impl<'a, S: DynamicalSystem> AdaptiveStepper853<'a, S> {
                 // value out of range that the raw candidate had in range, and a
                 // walk that fails must leave the caller on the last state it
                 // accepted.
-                let values = roots.check(t_committed, &y)?;
+                roots.check(t_committed, &y)?;
                 self.state = y;
                 self.t = t_committed;
-                roots.apply(self.t, &values);
+                roots.apply(self.t);
 
-                callback(self.t, &self.state);
+                // A state the walk stopped at a boundary is not the final one:
+                // the caller updates the mode it just crossed into, and corrects
+                // whatever the overshoot took, before anything records it. So the
+                // callback runs for ordinary steps only, and a caller handling a
+                // root reads the state from the stepper.
+                if outcome.is_none() {
+                    callback(self.t, &self.state);
+                }
 
                 // From the error of the step that was accepted, whether or not a
                 // root cut it short: the trials never touch this, and a walk

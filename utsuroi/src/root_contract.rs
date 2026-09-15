@@ -15,6 +15,7 @@ use core::cell::Cell;
 
 use nalgebra::Vector1;
 
+use crate::root::root_set;
 use crate::{
     AdaptiveStepper, AdaptiveStepper853, Crossing, Dop853, DormandPrince, DynamicalSystem,
     FixedStepper, IntegrationError, Integrator, OdeState, Projection, Rk4, RootEvent, RootOutcome,
@@ -281,7 +282,7 @@ fn case_a_refused_trial_leaves_the_walk_where_it_started<W: Walker<Sys = Forcing
     mut walker: W,
 ) {
     let event = ClampedLevel { level: 0.02 };
-    let mut roots = RootSet::new([&event as &dyn RootEvent<Forced>], SEARCH).expect("valid search");
+    root_set!(roots, SEARCH, &event as &dyn RootEvent<Forced>);
     let mut reported = Vec::new();
 
     let err = walker
@@ -297,7 +298,12 @@ fn case_a_refused_trial_leaves_the_walk_where_it_started<W: Walker<Sys = Forcing
         0.0,
         "{label}: the state is the one it started from"
     );
-    assert!(roots.hits().is_empty(), "{label}: hits {:?}", roots.hits());
+    assert_eq!(
+        roots.hit_count(),
+        0,
+        "{label}: hits {:?}",
+        roots.hits().collect::<Vec<_>>()
+    );
     assert!(reported.is_empty(), "{label}: nothing was reported");
 }
 
@@ -354,11 +360,11 @@ impl Scalar for State<1, 1> {
 trait Walker {
     type Sys: DynamicalSystem;
 
-    fn advance<const N: usize>(
+    fn advance(
         &mut self,
         t_target: f64,
         reported: &mut Vec<(f64, f64)>,
-        roots: &mut RootSet<'_, <Self::Sys as DynamicalSystem>::State, N>,
+        roots: &mut RootSet<'_, <Self::Sys as DynamicalSystem>::State>,
     ) -> Result<RootOutcome, IntegrationError>;
 
     fn t(&self) -> f64;
@@ -372,11 +378,11 @@ where
 {
     type Sys = S;
 
-    fn advance<const N: usize>(
+    fn advance(
         &mut self,
         t_target: f64,
         reported: &mut Vec<(f64, f64)>,
-        roots: &mut RootSet<'_, S::State, N>,
+        roots: &mut RootSet<'_, S::State>,
     ) -> Result<RootOutcome, IntegrationError> {
         self.advance_to_roots(t_target, |t, y| reported.push((t, y.scalar())), roots)
     }
@@ -395,11 +401,11 @@ where
 {
     type Sys = S;
 
-    fn advance<const N: usize>(
+    fn advance(
         &mut self,
         t_target: f64,
         reported: &mut Vec<(f64, f64)>,
-        roots: &mut RootSet<'_, S::State, N>,
+        roots: &mut RootSet<'_, S::State>,
     ) -> Result<RootOutcome, IntegrationError> {
         self.advance_to_roots(t_target, |t, y| reported.push((t, y.scalar())), roots)
     }
@@ -418,11 +424,11 @@ where
 {
     type Sys = S;
 
-    fn advance<const N: usize>(
+    fn advance(
         &mut self,
         t_target: f64,
         reported: &mut Vec<(f64, f64)>,
-        roots: &mut RootSet<'_, S::State, N>,
+        roots: &mut RootSet<'_, S::State>,
     ) -> Result<RootOutcome, IntegrationError> {
         self.advance_to_roots(t_target, |t, y| reported.push((t, y.scalar())), roots)
     }
@@ -474,10 +480,32 @@ fn assert_reported_walk(label: &str, reported: &[(f64, f64)], end_t: f64) {
     }
 }
 
+/// The reported times of a walk that stopped at a root: increasing, and every
+/// one of them before the boundary, which the callback does not see at all. The
+/// state there is the caller's to handle first, so it reads it from the stepper.
+///
+/// A root inside the first step reports nothing, which is why this does not ask
+/// for a state the way `assert_reported_walk` does.
+fn assert_reported_up_to_root(label: &str, reported: &[(f64, f64)], root_t: f64) {
+    for pair in reported.windows(2) {
+        assert!(
+            pair[1].0 > pair[0].0,
+            "{label}: reported times must increase: {:?}",
+            reported.iter().map(|s| s.0).collect::<Vec<_>>()
+        );
+    }
+    for (t, _) in reported {
+        assert!(
+            *t < root_t,
+            "{label}: the boundary at {root_t} is not reported, and neither is \
+             anything past it: {t}"
+        );
+    }
+}
+
 fn case_locates_the_analytic_crossing<W: Walker<Sys = Ramp>>(label: &str, mut walker: W) {
     let event = AtLevel::rising(LEVEL);
-    let mut roots =
-        RootSet::new([&event as &dyn RootEvent<State<1, 1>>], SEARCH).expect("valid search");
+    root_set!(roots, SEARCH, &event as &dyn RootEvent<State<1, 1>>);
     let mut reported = Vec::new();
 
     let outcome = walker
@@ -501,19 +529,23 @@ fn case_locates_the_analytic_crossing<W: Walker<Sys = Ramp>>(label: &str, mut wa
                 "{label}: the committed state is on the boundary: y = {}",
                 walker.y()
             );
-            assert_eq!(roots.hits().len(), 1, "{label}: hits {:?}", roots.hits());
-            assert_eq!(roots.hits()[0].event, 0);
+            assert_eq!(
+                roots.hit_count(),
+                1,
+                "{label}: hits {:?}",
+                roots.hits().collect::<Vec<_>>()
+            );
+            assert_eq!(roots.hit_at(0).expect("one hit").event, 0);
+            assert_reported_up_to_root(label, &reported, t);
         }
         RootOutcome::Reached => panic!("{label}: the ramp crosses {LEVEL} before {T_END}"),
     }
-    assert_reported_walk(label, &reported, walker.t());
 }
 
 fn case_a_level_out_of_reach_is_not_a_root<W: Walker<Sys = Ramp>>(label: &str, mut walker: W) {
     // `y(3) = 4.5`, so this level is never reached.
     let event = AtLevel::rising(10.0);
-    let mut roots =
-        RootSet::new([&event as &dyn RootEvent<State<1, 1>>], SEARCH).expect("valid search");
+    root_set!(roots, SEARCH, &event as &dyn RootEvent<State<1, 1>>);
     let mut reported = Vec::new();
 
     let outcome = walker
@@ -524,7 +556,12 @@ fn case_a_level_out_of_reach_is_not_a_root<W: Walker<Sys = Ramp>>(label: &str, m
         RootOutcome::Reached,
         "{label}: nothing crosses, so the walk reaches its target"
     );
-    assert!(roots.hits().is_empty(), "{label}: hits {:?}", roots.hits());
+    assert_eq!(
+        roots.hit_count(),
+        0,
+        "{label}: hits {:?}",
+        roots.hits().collect::<Vec<_>>()
+    );
     assert_eq!(walker.t(), T_END, "{label}: the walk ends at its target");
     assert_reported_walk(label, &reported, T_END);
 }
@@ -534,8 +571,7 @@ fn case_the_wrong_direction_is_ignored<W: Walker<Sys = Ramp>>(label: &str, mut w
         crossing: Crossing::Falling,
         ..AtLevel::rising(LEVEL)
     };
-    let mut roots =
-        RootSet::new([&event as &dyn RootEvent<State<1, 1>>], SEARCH).expect("valid search");
+    root_set!(roots, SEARCH, &event as &dyn RootEvent<State<1, 1>>);
     let mut reported = Vec::new();
 
     let outcome = walker
@@ -559,8 +595,7 @@ fn case_a_resumed_walk_does_not_refind_the_boundary<W: Walker<Sys = Ramp>>(
         terminal: false,
         ..AtLevel::rising(LEVEL)
     };
-    let mut roots =
-        RootSet::new([&event as &dyn RootEvent<State<1, 1>>], SEARCH).expect("valid search");
+    root_set!(roots, SEARCH, &event as &dyn RootEvent<State<1, 1>>);
     let mut reported = Vec::new();
 
     let first = walker
@@ -585,9 +620,9 @@ fn case_a_resumed_walk_does_not_refind_the_boundary<W: Walker<Sys = Ramp>>(
     );
     assert_eq!(walker.t(), T_END, "{label}: the resumed walk reaches T_END");
     assert!(
-        roots.hits().is_empty(),
+        roots.hit_count() == 0,
         "{label}: the second walk found nothing: {:?}",
-        roots.hits()
+        roots.hits().collect::<Vec<_>>()
     );
     assert!(
         resumed.first().expect("the resumed walk reports states").0 > t_root,
@@ -608,14 +643,12 @@ fn case_simultaneous_roots_are_one_group<W: Walker<Sys = Ramp>>(label: &str, mut
         terminal: false,
         ..AtLevel::rising(LEVEL)
     };
-    let mut roots = RootSet::new(
-        [
-            &registered_first as &dyn RootEvent<State<1, 1>>,
-            &registered_second,
-        ],
+    root_set!(
+        roots,
         SEARCH,
-    )
-    .expect("valid search");
+        &registered_first as &dyn RootEvent<State<1, 1>>,
+        &registered_second,
+    );
     let mut reported = Vec::new();
 
     let outcome = walker
@@ -625,7 +658,7 @@ fn case_simultaneous_roots_are_one_group<W: Walker<Sys = Ramp>>(label: &str, mut
         RootOutcome::Roots { t, terminal, .. } => {
             assert!((t - ROOT_T).abs() <= SLACK, "{label}: located {t}");
             assert!(terminal, "{label}: one of the two asked to stop");
-            let order: Vec<usize> = roots.hits().iter().map(|hit| hit.event).collect();
+            let order: Vec<usize> = roots.hits().map(|hit| hit.event).collect();
             assert_eq!(
                 order,
                 vec![1, 0],
@@ -649,8 +682,7 @@ fn case_the_earlier_crossing_wins<W: Walker<Sys = Ramp>>(label: &str, mut walker
         terminal: false,
         ..AtLevel::rising(0.03125)
     };
-    let mut roots =
-        RootSet::new([&early as &dyn RootEvent<State<1, 1>>, &late], SEARCH).expect("valid search");
+    root_set!(roots, SEARCH, &early as &dyn RootEvent<State<1, 1>>, &late);
     let mut reported = Vec::new();
 
     let outcome = walker
@@ -660,12 +692,12 @@ fn case_the_earlier_crossing_wins<W: Walker<Sys = Ramp>>(label: &str, mut walker
         RootOutcome::Roots { t, .. } => {
             assert!((t - 0.2).abs() <= SLACK, "{label}: located {t}, want 0.2");
             assert_eq!(
-                roots.hits().len(),
+                roots.hit_count(),
                 1,
                 "{label}: only the earlier event crossed: {:?}",
-                roots.hits()
+                roots.hits().collect::<Vec<_>>()
             );
-            assert_eq!(roots.hits()[0].event, 0);
+            assert_eq!(roots.hit_at(0).expect("one hit").event, 0);
         }
         RootOutcome::Reached => panic!("{label}: both levels are below y(T_END)"),
     }
@@ -680,7 +712,7 @@ fn case_the_earlier_crossing_wins<W: Walker<Sys = Ramp>>(label: &str, mut walker
                 (t - 0.25).abs() <= SLACK,
                 "{label}: the later crossing is at 0.25, located {t}"
             );
-            assert_eq!(roots.hits()[0].event, 1);
+            assert_eq!(roots.hit_at(0).expect("one hit").event, 1);
         }
         RootOutcome::Reached => panic!("{label}: the later crossing is still ahead"),
     }
@@ -696,8 +728,7 @@ fn case_the_earlier_crossing_wins<W: Walker<Sys = Ramp>>(label: &str, mut walker
 /// outside the span.
 fn case_a_crossing_on_the_last_step_is_found<W: Walker<Sys = Ramp>>(label: &str, mut walker: W) {
     let event = AtLevel::rising(4.0);
-    let mut roots =
-        RootSet::new([&event as &dyn RootEvent<State<1, 1>>], SEARCH).expect("valid search");
+    root_set!(roots, SEARCH, &event as &dyn RootEvent<State<1, 1>>);
     let mut reported = Vec::new();
 
     match walker
@@ -714,10 +745,10 @@ fn case_a_crossing_on_the_last_step_is_found<W: Walker<Sys = Ramp>>(label: &str,
                 t < T_END,
                 "{label}: the boundary is before the target, not on it"
             );
+            assert_reported_up_to_root(label, &reported, t);
         }
         RootOutcome::Reached => panic!("{label}: y reaches 4.0 inside the last step"),
     }
-    assert_reported_walk(label, &reported, walker.t());
 }
 
 /// A boundary the fixed grid lands on exactly is reported at that step's end,
@@ -728,8 +759,7 @@ fn case_a_crossing_on_the_last_step_is_found<W: Walker<Sys = Ramp>>(label: &str,
 /// is the case a detection asking for a strict sign change would miss.
 fn case_a_crossing_on_a_grid_time_is_found<W: Walker<Sys = Ramp>>(label: &str, mut walker: W) {
     let event = AtLevel::rising(2.0);
-    let mut roots =
-        RootSet::new([&event as &dyn RootEvent<State<1, 1>>], SEARCH).expect("valid search");
+    root_set!(roots, SEARCH, &event as &dyn RootEvent<State<1, 1>>);
     let mut reported = Vec::new();
 
     match walker
@@ -741,15 +771,51 @@ fn case_a_crossing_on_a_grid_time_is_found<W: Walker<Sys = Ramp>>(label: &str, m
                 (t - 2.0).abs() <= SLACK,
                 "{label}: located {t}, analytic crossing is 2.0"
             );
+            assert_reported_up_to_root(label, &reported, t);
         }
         RootOutcome::Reached => panic!("{label}: y reaches 2.0 at t = 2.0"),
     }
-    assert_reported_walk(label, &reported, walker.t());
+}
+
+/// A boundary inside the first step leaves the callback untouched.
+///
+/// `y = 0.02` is crossed at `t = 0.2`, inside the first `0.25` step of every
+/// solver here, so the walk commits one state and it is the boundary's. The
+/// caller reads it from the stepper, which is where a state it still has to
+/// handle belongs.
+fn case_a_root_in_the_first_step_reports_nothing<W: Walker<Sys = Ramp>>(
+    label: &str,
+    mut walker: W,
+) {
+    let event = AtLevel::rising(0.02);
+    root_set!(roots, SEARCH, &event as &dyn RootEvent<State<1, 1>>);
+    let mut reported = Vec::new();
+
+    match walker
+        .advance(T_END, &mut reported, &mut roots)
+        .expect("the walk succeeds")
+    {
+        RootOutcome::Roots { t, .. } => {
+            let analytic = 0.04_f64.sqrt();
+            assert!(
+                (t - analytic).abs() <= SLACK,
+                "{label}: located {t}, analytic crossing is {analytic}"
+            );
+            assert!(
+                reported.is_empty(),
+                "{label}: the only state the walk committed is the boundary's: {:?}",
+                reported.iter().map(|s| s.0).collect::<Vec<_>>()
+            );
+            assert_eq!(walker.t(), t, "{label}: the stepper holds the boundary");
+        }
+        RootOutcome::Reached => panic!("{label}: y reaches 0.02 inside the first step"),
+    }
 }
 
 /// A walk over an empty set steps as it always would and reports nothing found.
 fn case_no_events_walks_the_span<W: Walker<Sys = Ramp>>(label: &str, mut walker: W) {
-    let mut roots: RootSet<'_, State<1, 1>, 0> = RootSet::new([], SEARCH).expect("valid search");
+    let events: [&dyn RootEvent<State<1, 1>>; 0] = [];
+    let mut roots = RootSet::new(&events, &mut [], SEARCH).expect("valid search");
     let mut reported = Vec::new();
 
     assert_eq!(
@@ -792,8 +858,7 @@ fn case_the_search_does_not_project_its_trials<W: Walker<Sys = Unit>>(label: &st
     let event = ClampedLevel {
         level: CLAMPED_LEVEL,
     };
-    let mut roots =
-        RootSet::new([&event as &dyn RootEvent<Clamped>], SEARCH).expect("valid search");
+    root_set!(roots, SEARCH, &event as &dyn RootEvent<Clamped>);
     let mut reported = Vec::new();
 
     let before = projections();
@@ -808,9 +873,10 @@ fn case_the_search_does_not_project_its_trials<W: Walker<Sys = Unit>>(label: &st
     );
     assert_eq!(
         spent,
-        reported.len(),
-        "{label}: the projection runs once per state the walk reported, and on nothing \
-         else; reported {:?}",
+        reported.len() + 1,
+        "{label}: the projection runs once per state the walk committed — the reported \
+         steps plus the boundary, which the callback does not see — and on nothing else; \
+         reported {:?}",
         reported.iter().map(|s| s.0).collect::<Vec<_>>()
     );
 }
@@ -831,8 +897,7 @@ fn case_a_crossing_only_the_raw_candidate_has<W: Walker<Sys = Unit>>(label: &str
     let event = ClampedLevel {
         level: CLAMPED_LEVEL,
     };
-    let mut roots =
-        RootSet::new([&event as &dyn RootEvent<Clamped>], SEARCH).expect("valid search");
+    root_set!(roots, SEARCH, &event as &dyn RootEvent<Clamped>);
     let mut reported = Vec::new();
 
     match walker
@@ -888,8 +953,7 @@ fn case_a_projection_that_breaks_the_value_leaves_the_walk_where_it_was<W: Walke
     }
 
     let event = Reciprocal;
-    let mut roots =
-        RootSet::new([&event as &dyn RootEvent<Clamped>], SEARCH).expect("valid search");
+    root_set!(roots, SEARCH, &event as &dyn RootEvent<Clamped>);
     let mut reported = Vec::new();
 
     let err = walker
@@ -926,8 +990,7 @@ fn case_a_root_still_moves_the_step_size<W: Walker<Sys = Ramp> + HasStepSize>(
     mut walker: W,
 ) {
     let event = AtLevel::rising(0.02);
-    let mut roots =
-        RootSet::new([&event as &dyn RootEvent<State<1, 1>>], SEARCH).expect("valid search");
+    root_set!(roots, SEARCH, &event as &dyn RootEvent<State<1, 1>>);
     let mut reported = Vec::new();
 
     assert_eq!(
@@ -970,8 +1033,7 @@ fn case_the_step_size_after_a_root_matches_a_walk_without_one<
     mut without: W,
 ) {
     let event = AtLevel::rising(0.02);
-    let mut roots =
-        RootSet::new([&event as &dyn RootEvent<State<1, 1>>], SEARCH).expect("valid search");
+    root_set!(roots, SEARCH, &event as &dyn RootEvent<State<1, 1>>);
     let mut reported = Vec::new();
     assert!(
         matches!(
@@ -985,7 +1047,8 @@ fn case_the_step_size_after_a_root_matches_a_walk_without_one<
 
     // One step of the same width, with nothing to find: the target is the end of
     // that step, so the stepper takes it and stops.
-    let mut empty: RootSet<'_, State<1, 1>, 0> = RootSet::new([], SEARCH).expect("valid search");
+    let events: [&dyn RootEvent<State<1, 1>>; 0] = [];
+    let mut empty = RootSet::new(&events, &mut [], SEARCH).expect("valid search");
     let mut plain = Vec::new();
     assert_eq!(
         without
@@ -1089,6 +1152,11 @@ macro_rules! contract_for {
             }
 
             #[test]
+            fn a_root_in_the_first_step_reports_nothing() {
+                case_a_root_in_the_first_step_reports_nothing(stringify!($solver), $walker);
+            }
+
+            #[test]
             fn no_events_walks_the_span() {
                 case_no_events_walks_the_span(stringify!($solver), $walker);
             }
@@ -1113,8 +1181,7 @@ fn case_a_projection_that_breaks_the_state_leaves_no_hits<W: Walker<Sys = Broken
     let event = ClampedLevel {
         level: CLAMPED_LEVEL,
     };
-    let mut roots =
-        RootSet::new([&event as &dyn RootEvent<Breaking>], SEARCH).expect("valid search");
+    root_set!(roots, SEARCH, &event as &dyn RootEvent<Breaking>);
     let mut reported = Vec::new();
 
     let err = walker
@@ -1125,9 +1192,9 @@ fn case_a_projection_that_breaks_the_state_leaves_no_hits<W: Walker<Sys = Broken
         "{label}: {err:?}"
     );
     assert!(
-        roots.hits().is_empty(),
+        roots.hit_count() == 0,
         "{label}: the root the walk gave up on stays out of hits(): {:?}",
-        roots.hits()
+        roots.hits().collect::<Vec<_>>()
     );
 }
 
@@ -1326,14 +1393,14 @@ fn a_mode_that_switches_at_the_boundary_is_located_late() {
             dt,
         );
         let event = Reaches;
-        let mut roots = RootSet::new(
-            [&event as &dyn RootEvent<State<1, 1>>],
+        root_set!(
+            roots,
             RootSearch {
                 t_tolerance: 1e-12,
                 max_iterations: 200,
             },
-        )
-        .expect("valid search");
+            &event as &dyn RootEvent<State<1, 1>>
+        );
 
         match stepper
             .advance_to_roots(2.0, |_, _| {}, &mut roots)

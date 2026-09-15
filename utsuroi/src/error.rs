@@ -123,6 +123,12 @@ pub enum IntegrationError {
     /// again; a non-finite one never re-arms it, so the event fires once and
     /// then never again.
     InvalidBoundaryTolerance { event: usize, tolerance: f64 },
+    /// A root set was built from an event slice and a slot slice of different
+    /// lengths.
+    ///
+    /// One slot carries one event's search state across steps, so the pairing
+    /// is by index and a mismatch would leave an event without one.
+    RootSlotCount { events: usize, slots: usize },
 }
 
 impl IntegrationError {
@@ -150,7 +156,8 @@ impl IntegrationError {
             Self::InvalidStepSize { .. }
             | Self::InvalidTolerances { .. }
             | Self::InvalidRootSearch { .. }
-            | Self::InvalidBoundaryTolerance { .. } => None,
+            | Self::InvalidBoundaryTolerance { .. }
+            | Self::RootSlotCount { .. } => None,
         }
     }
 }
@@ -262,6 +269,13 @@ impl core::fmt::Display for IntegrationError {
                     f,
                     "the root search from t = {t} ran out of iterations with the bracket \
                      still {bracket} wide"
+                )
+            }
+            Self::RootSlotCount { events, slots } => {
+                write!(
+                    f,
+                    "a root set needs one slot per event, but got {events} events \
+                     and {slots} slots"
                 )
             }
             Self::InvalidBoundaryTolerance { event, tolerance } => {
@@ -512,6 +526,13 @@ mod tests {
                 },
                 "boundary tolerance",
             ),
+            (
+                IntegrationError::RootSlotCount {
+                    events: 3,
+                    slots: 2,
+                },
+                "one slot per event",
+            ),
         ] {
             let msg = err.to_string();
             assert!(msg.contains(needle), "{err:?} display was {msg:?}");
@@ -592,6 +613,13 @@ mod tests {
                 IntegrationError::InvalidBoundaryTolerance {
                     event: 0,
                     tolerance: f64::NAN,
+                },
+                None,
+            ),
+            (
+                IntegrationError::RootSlotCount {
+                    events: 1,
+                    slots: 0,
                 },
                 None,
             ),

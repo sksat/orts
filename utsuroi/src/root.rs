@@ -19,10 +19,13 @@
 //! # What a walk with root events guarantees
 //!
 //! The state and time a stepper holds afterwards are the ones at the boundary,
-//! projected, and the callback is called there. States tried during the search
-//! reach neither the callback nor the projection. [`RootSet::hits`] lists every
-//! event that crossed within the final bracket, so a caller that has to break a
-//! tie between two wheels saturating together sees both.
+//! projected. The callback does not see them: a boundary state is not final
+//! until the caller has updated the mode it crossed into, so the caller reads
+//! that state from the stepper and records it when it is done. States tried
+//! during the search reach neither the callback nor the projection.
+//! [`RootSet::hits`] lists every event that crossed within the final bracket,
+//! so a caller that has to break a tie between two wheels saturating together
+//! sees both.
 //!
 //! # What the caller owes
 //!
@@ -59,11 +62,12 @@
 //!
 //! # Storage
 //!
-//! utsuroi does not allocate, so [`RootSet`] carries its own fixed-size
-//! storage: the event count is a const parameter, and the guards and hits live
-//! in the set. The caller holds the set across resumptions, which is what stops
-//! a non-terminal root from being found again while the state sits on its
-//! boundary.
+//! utsuroi does not allocate, so a [`RootSet`] borrows its storage: one
+//! [`RootSlot`] per event, owned by the caller — which is also what lets the
+//! event count be whatever that caller's configuration builds, one per wheel or
+//! per thruster. A slot carries its event's guard, so the caller holds the slots
+//! across resumptions, and that is what stops a non-terminal root from being
+//! found again while the state sits on its boundary.
 
 use crate::IntegrationError;
 
@@ -237,7 +241,7 @@ pub enum RootOutcome {
         /// The time the walk stopped at, which is where the state now is. Every
         /// hit shares it.
         t: f64,
-        /// Width of the bracket the search ended with [s]. The time is
+        /// Width of the bracket the search ended with, in seconds. The time is
         /// uncertain by about this much numerically; how far it is from the
         /// true crossing also depends on the state error and on how flat the
         /// value is there.
@@ -251,9 +255,9 @@ pub enum RootOutcome {
 /// How hard to look for a crossing.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RootSearch {
-    /// Bracket width to stop at [s]. The search ends once the interval holding
-    /// the crossing is this narrow, or once halving it no longer changes the
-    /// bracket in f64.
+    /// Bracket width to stop at, in seconds. The search ends once the interval
+    /// holding the crossing is this narrow, or once halving it no longer
+    /// changes the bracket in f64.
     pub t_tolerance: f64,
     /// Cap on bisection iterations. A value that behaves unlike a continuous
     /// function cannot make the search spin: the walk fails with
@@ -285,43 +289,101 @@ impl RootSearch {
     }
 }
 
+/// The search state of one root event, owned by the caller.
+///
+/// A set borrows a slice of these, so the number of events is a runtime
+/// quantity: the caller — which knows how many wheels or thrusters its model
+/// has — owns the storage, and this crate allocates nothing. A slot pairs with
+/// the event at the same index for the life of the walk, since it carries that
+/// event's guard across steps and resumptions.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RootSlot {
+    guard: RootGuard,
+    /// The event's boundary tolerance, read and checked once when the set is
+    /// built, so the width a guard re-arms on cannot change under the walk.
+    boundary: f64,
+    /// The value at the state the stepper has committed: the "before" of the
+    /// next step. Read afresh at the start of every walk, because the caller is
+    /// free to change the state between them.
+    start: f64,
+    /// The value at the far end of the bracket the search is narrowing.
+    hi: f64,
+    /// The value at whichever state was evaluated last: a trial of the search,
+    /// or the state the stepper is about to commit.
+    trial: f64,
+    /// Whether this event changed sign over the step being examined. The search
+    /// narrows on these and leaves the rest alone.
+    candidate: bool,
+    /// The raw value at the located root, for an event that fired. A projection
+    /// can move the state back across the boundary, so the value at the
+    /// committed state says nothing about which side the crossing went to.
+    located: f64,
+    /// What this event reported at the located root.
+    hit: Option<RootHit>,
+    /// Where this event comes in the order the caller handles that bracket's
+    /// roots, counting from zero.
+    rank: Option<usize>,
+    /// Whether the search looks at this event at all. A mode that makes an
+    /// event meaningless — the release of a constraint that is not held —
+    /// switches it off, rather than feeding the search a stand-in value.
+    active: bool,
+}
+
+impl RootSlot {
+    /// A slot for an event no step has examined yet, switched on.
+    pub const fn new() -> Self {
+        Self {
+            guard: RootGuard::new(),
+            boundary: 0.0,
+            start: 0.0,
+            hi: 0.0,
+            trial: 0.0,
+            candidate: false,
+            located: 0.0,
+            hit: None,
+            rank: None,
+            active: true,
+        }
+    }
+}
+
+impl Default for RootSlot {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// The root events of a walk, with the state each one carries between steps.
 ///
 /// Built once and handed to `advance_to_roots` for every target, so the guards
 /// survive a resumption: a non-terminal root leaves the state on its boundary,
 /// and the guard is what keeps the next step from reporting the departure as a
 /// new crossing.
-pub struct RootSet<'a, Y, const N: usize> {
-    events: [&'a dyn RootEvent<Y>; N],
-    guards: [RootGuard; N],
-    /// Each event's boundary tolerance, read once and checked. Held here rather
-    /// than asked for per step, so the width a guard re-arms on cannot change
-    /// under the walk.
-    boundary: [f64; N],
+pub struct RootSet<'a, Y> {
+    events: &'a [&'a dyn RootEvent<Y>],
+    slots: &'a mut [RootSlot],
     search: RootSearch,
-    /// Values at the state the stepper has committed. Refreshed at the start of
-    /// every walk, because the caller is free to change the state between them.
-    values: [f64; N],
-    /// Events that crossed over the step being examined.
-    candidates: [bool; N],
-    hits: [RootHit; N],
-    hit_count: usize,
-    /// The raw value each event had at the located root, for the events that
-    /// fired. A projection can move the state back across the boundary, so the
-    /// value at the committed state says nothing about which side the crossing
-    /// went to.
-    located: [f64; N],
 }
 
-impl<'a, Y, const N: usize> RootSet<'a, Y, N> {
-    /// Pair events with fresh guards.
+impl<'a, Y> RootSet<'a, Y> {
+    /// Pair events with the slots that carry their search state.
+    ///
+    /// The slots start as [`RootSlot::new`] and stay with the caller, which is
+    /// what lets the number of events be whatever the caller's model has. Each
+    /// event's boundary tolerance is read here and not again.
     pub fn new(
-        events: [&'a dyn RootEvent<Y>; N],
+        events: &'a [&'a dyn RootEvent<Y>],
+        slots: &'a mut [RootSlot],
         search: RootSearch,
     ) -> Result<Self, IntegrationError> {
         search.validate()?;
-        let mut boundary = [0.0; N];
-        for (index, event) in events.iter().enumerate() {
+        if events.len() != slots.len() {
+            return Err(IntegrationError::RootSlotCount {
+                events: events.len(),
+                slots: slots.len(),
+            });
+        }
+        for (index, (event, slot)) in events.iter().zip(slots.iter_mut()).enumerate() {
             let tolerance = event.boundary_tolerance();
             if !(tolerance.is_finite() && tolerance >= 0.0) {
                 return Err(IntegrationError::InvalidBoundaryTolerance {
@@ -329,60 +391,122 @@ impl<'a, Y, const N: usize> RootSet<'a, Y, N> {
                     tolerance,
                 });
             }
-            boundary[index] = tolerance;
+            slot.boundary = tolerance;
         }
         Ok(Self {
             events,
-            guards: [RootGuard::new(); N],
-            boundary,
+            slots,
             search,
-            values: [0.0; N],
-            candidates: [false; N],
-            hits: [RootHit {
-                event: 0,
-                terminal: false,
-                priority: 0,
-            }; N],
-            hit_count: 0,
-            located: [0.0; N],
         })
     }
 
     /// The events that crossed within the bracket the last walk ended on, in
     /// the order they should be handled: by priority, then by registration.
     ///
-    /// Empty after a walk that reached its target.
-    pub fn hits(&self) -> &[RootHit] {
-        &self.hits[..self.hit_count]
+    /// Empty after a walk that reached its target. The iterator borrows the
+    /// set, so a caller that switches events off while handling the roots reads
+    /// them one at a time with [`hit_at`](Self::hit_at) instead.
+    pub fn hits(&self) -> impl Iterator<Item = RootHit> + '_ {
+        (0..self.hit_count()).filter_map(|rank| self.hit_at(rank))
+    }
+
+    /// How many events crossed within that bracket.
+    pub fn hit_count(&self) -> usize {
+        self.slots.iter().filter(|slot| slot.hit.is_some()).count()
+    }
+
+    /// The root to handle `rank`th, counting from the one to handle first.
+    ///
+    /// Switching events on or off leaves these alone: they describe a boundary
+    /// the walk has already committed to.
+    pub fn hit_at(&self, rank: usize) -> Option<RootHit> {
+        self.slots
+            .iter()
+            .find(|slot| slot.rank == Some(rank))
+            .and_then(|slot| slot.hit)
     }
 
     /// One event's guard, for a caller checking whether the state is sitting on
     /// that boundary.
     pub fn guard(&self, event: usize) -> RootGuard {
-        self.guards[event]
+        self.slots[event].guard
     }
 
-    /// How many events are in the set.
+    /// How many events are in the set, switched on or off.
     pub fn len(&self) -> usize {
-        N
+        self.slots.len()
     }
 
     /// Whether the set has no events, in which case a walk over it is the plain
     /// one.
     pub fn is_empty(&self) -> bool {
-        N == 0
+        self.slots.is_empty()
     }
 
-    /// Values at a state, written into `out`.
-    fn values_at(&self, t: f64, y: &Y, out: &mut [f64; N]) -> Result<(), IntegrationError> {
-        for (index, event) in self.events.iter().enumerate() {
-            let value = event.value(t, y);
+    /// Whether the search looks at this event.
+    pub fn is_active(&self, event: usize) -> bool {
+        self.slots[event].active
+    }
+
+    /// Start looking at this event again, with a fresh guard.
+    ///
+    /// The guard is re-armed because the value has been unobserved: the side it
+    /// was last seen on says nothing about where it is now. The next walk reads
+    /// the value at its own start, and a crossing that happened while the event
+    /// was switched off is not reported. An event that is already on is left
+    /// alone, guard included.
+    ///
+    /// Switch events while the walk is not running — between the calls to
+    /// `advance_to_roots` — so that the value each event is compared against is
+    /// the one read at a step's start.
+    pub fn activate(&mut self, event: usize) {
+        let slot = &mut self.slots[event];
+        if slot.active {
+            return;
+        }
+        slot.active = true;
+        slot.guard = RootGuard::new();
+        slot.candidate = false;
+    }
+
+    /// Stop looking at this event.
+    ///
+    /// Its value is not evaluated while it is off, so an event whose meaning
+    /// depends on a mode — the release of a constraint that is not held — costs
+    /// nothing in the modes where it says nothing.
+    pub fn deactivate(&mut self, event: usize) {
+        let slot = &mut self.slots[event];
+        slot.active = false;
+        slot.candidate = false;
+    }
+
+    /// Whether any event is switched on.
+    fn any_active(&self) -> bool {
+        self.slots.iter().any(|slot| slot.active)
+    }
+
+    /// Read every switched-on event's value at a state into its slot.
+    fn eval(&mut self, t: f64, y: &Y) -> Result<(), IntegrationError> {
+        for index in 0..self.events.len() {
+            if !self.slots[index].active {
+                continue;
+            }
+            let value = self.events[index].value(t, y);
             if !value.is_finite() {
                 return Err(IntegrationError::NonFiniteRootValue { t, event: index });
             }
-            out[index] = value;
+            self.slots[index].trial = value;
         }
         Ok(())
+    }
+
+    /// Keep the values just evaluated as the far end of the bracket.
+    fn keep_trial(&mut self) {
+        for slot in self.slots.iter_mut() {
+            if slot.active {
+                slot.hi = slot.trial;
+            }
+        }
     }
 
     /// Read the values at the state a walk starts from, and re-arm the sliding
@@ -394,32 +518,33 @@ impl<'a, Y, const N: usize> RootSet<'a, Y, N> {
     /// time is this walk's start keeps it — that is the resumption the guard
     /// exists for; one from an earlier time is dropped, since the walk has
     /// moved on and the accessor would otherwise name a root it has left.
+    ///
+    /// The hits of the previous walk are dropped here, and every event is
+    /// evaluated before any guard is touched: a walk that cannot start leaves
+    /// the guards as they were rather than re-arming the first few.
     pub(crate) fn begin(&mut self, t: f64, y: &Y) -> Result<(), IntegrationError> {
-        let mut values = [0.0; N];
-        self.values_at(t, y, &mut values)?;
-        self.values = values;
-        self.hit_count = 0;
-        for (index, &value) in values.iter().enumerate() {
-            if self.guards[index].at != Some(t) {
-                self.guards[index].at = None;
+        self.discard_hits();
+        self.eval(t, y)?;
+        for slot in self.slots.iter_mut() {
+            if !slot.active {
+                continue;
             }
-            if self.off_boundary(index, value) {
-                self.guards[index].on_boundary = false;
+            slot.start = slot.trial;
+            if slot.guard.at != Some(t) {
+                slot.guard.at = None;
+            }
+            if slot.trial.abs() > slot.boundary {
+                slot.guard.on_boundary = false;
             }
         }
         Ok(())
     }
 
-    /// Whether a value is far enough from zero for the event's guard to re-arm.
-    fn off_boundary(&self, index: usize, value: f64) -> bool {
-        value.abs() > self.boundary[index]
-    }
-
     /// Whether the event at `index` counts a move from `before` to `after` over
     /// a step starting at `t_start`, with its guard taken into account.
     fn crossed(&self, index: usize, t_start: f64, before: f64, after: f64) -> bool {
-        let guard = &self.guards[index];
-        if guard.at == Some(t_start) && same_side(before, guard.left) {
+        let slot = &self.slots[index];
+        if slot.guard.at == Some(t_start) && same_side(before, slot.guard.left) {
             // This step starts on a root of this very event, with the value
             // still on the side that root left it. The search stops on the far
             // side of a bracket, so that value is a small non-zero rather than
@@ -427,7 +552,7 @@ impl<'a, Y, const N: usize> RootSet<'a, Y, N> {
             // reported.
             return false;
         }
-        if self.guards[index].on_boundary && !self.off_boundary(index, before) {
+        if slot.guard.on_boundary && before.abs() <= slot.boundary {
             // The state has been moving along the boundary since a root of this
             // event, within the width the event calls "still on it".
             return false;
@@ -435,56 +560,76 @@ impl<'a, Y, const N: usize> RootSet<'a, Y, N> {
         self.events[index].crossing().matches(before, after)
     }
 
-    /// Whether any event crosses over a step landing on `values`, recording
-    /// which ones so the search can ignore the rest.
-    fn mark_candidates(&mut self, t_start: f64, values: &[f64; N]) -> bool {
+    /// Whether any event crosses over the step whose far end is in the slots,
+    /// recording which ones so the search can ignore the rest.
+    fn mark_candidates(&mut self, t_start: f64) -> bool {
         let mut any = false;
-        for (index, &after) in values.iter().enumerate() {
-            let crossed = self.crossed(index, t_start, self.values[index], after);
-            self.candidates[index] = crossed;
+        for index in 0..self.slots.len() {
+            let slot = self.slots[index];
+            let crossed = slot.active && self.crossed(index, t_start, slot.start, slot.hi);
+            self.slots[index].candidate = crossed;
             any |= crossed;
         }
         any
     }
 
-    /// Whether any of the events already marked as candidates crosses over a
-    /// shorter step landing on `values`.
-    fn any_candidate_crosses(&self, t_start: f64, values: &[f64; N]) -> bool {
-        (0..N).any(|index| {
-            self.candidates[index]
-                && self.crossed(index, t_start, self.values[index], values[index])
+    /// Whether any of the events already marked as candidates crosses over the
+    /// shorter step just evaluated.
+    fn any_candidate_crosses(&self, t_start: f64) -> bool {
+        (0..self.slots.len()).any(|index| {
+            let slot = &self.slots[index];
+            slot.candidate && self.crossed(index, t_start, slot.start, slot.trial)
         })
     }
 
     /// Record the events that cross over the located step, ordered by priority
     /// and then by registration, and report whether any is terminal.
-    fn record_hits(&mut self, t_start: f64, values: &[f64; N]) -> bool {
-        self.hit_count = 0;
-        self.located = *values;
-        for (index, &after) in values.iter().enumerate() {
-            if self.candidates[index] && self.crossed(index, t_start, self.values[index], after) {
-                let event = self.events[index];
-                self.hits[self.hit_count] = RootHit {
-                    event: index,
-                    terminal: event.terminal(),
-                    priority: event.priority(),
-                };
-                self.hit_count += 1;
-            }
+    fn record_hits(&mut self, t_start: f64) -> bool {
+        for slot in self.slots.iter_mut() {
+            slot.hit = None;
+            slot.rank = None;
+            slot.located = slot.hi;
         }
-        // Insertion sort on priority, which keeps registration order among
-        // equals. The set is small and no allocation is available.
-        for i in 1..self.hit_count {
-            let mut j = i;
-            while j > 0 && self.hits[j - 1].priority > self.hits[j].priority {
-                self.hits.swap(j - 1, j);
-                j -= 1;
+        for index in 0..self.slots.len() {
+            let slot = self.slots[index];
+            if !(slot.candidate && self.crossed(index, t_start, slot.start, slot.hi)) {
+                continue;
             }
+            let event = self.events[index];
+            self.slots[index].hit = Some(RootHit {
+                event: index,
+                terminal: event.terminal(),
+                priority: event.priority(),
+            });
         }
-        self.hits[..self.hit_count].iter().any(|hit| hit.terminal)
+        // Rank by priority, keeping registration order among equals: a
+        // selection pass, since the set is small and no allocation is
+        // available.
+        let total = self.hit_count();
+        let mut terminal = false;
+        for rank in 0..total {
+            let mut best: Option<(usize, i32)> = None;
+            for index in 0..self.slots.len() {
+                let slot = &self.slots[index];
+                let Some(hit) = slot.hit else { continue };
+                if slot.rank.is_some() {
+                    continue;
+                }
+                if best.is_none_or(|(_, priority)| hit.priority < priority) {
+                    best = Some((index, hit.priority));
+                }
+            }
+            let (index, _) = best.expect("an unranked hit for every rank below the count");
+            self.slots[index].rank = Some(rank);
+            terminal |= self.slots[index]
+                .hit
+                .expect("the slot just ranked holds a hit")
+                .terminal;
+        }
+        terminal
     }
 
-    /// The values at a state the stepper is about to commit.
+    /// Read the values at a state the stepper is about to commit.
     ///
     /// Separate from [`apply`](Self::apply) so a non-finite value here is
     /// reported while the stepper still holds its previous state: a projection
@@ -492,49 +637,51 @@ impl<'a, Y, const N: usize> RootSet<'a, Y, N> {
     /// not leave the walk standing on a state it also refused. A failure here
     /// also drops the hits the search had recorded, so [`hits`](Self::hits)
     /// describes a root the walk committed rather than one it gave up on.
-    pub(crate) fn check(&mut self, t: f64, y: &Y) -> Result<[f64; N], IntegrationError> {
-        let mut values = [0.0; N];
-        if let Err(e) = self.values_at(t, y, &mut values) {
-            self.hit_count = 0;
+    pub(crate) fn check(&mut self, t: f64, y: &Y) -> Result<(), IntegrationError> {
+        if let Err(e) = self.eval(t, y) {
+            self.discard_hits();
             return Err(e);
         }
-        Ok(values)
+        Ok(())
     }
 
     /// Drop the hits the search recorded, for a stepper that refuses the state
     /// they belong to before it asks for their values.
     pub(crate) fn discard_hits(&mut self) {
-        self.hit_count = 0;
+        for slot in self.slots.iter_mut() {
+            slot.hit = None;
+            slot.rank = None;
+        }
     }
 
     /// Record where the walk now is: the events that just fired are on their
     /// boundary at `t`, and the rest have moved on.
     ///
-    /// `values` are the ones [`check`](Self::check) returned for the same state,
+    /// The values are the ones [`check`](Self::check) read for the same state,
     /// so this cannot fail and the stepper can update itself first.
-    pub(crate) fn apply(&mut self, t: f64, values: &[f64; N]) {
-        let mut fired = [false; N];
-        for hit in &self.hits[..self.hit_count] {
-            fired[hit.event] = true;
-        }
-        for (index, &value) in values.iter().enumerate() {
-            if fired[index] {
-                self.guards[index].at = Some(t);
-                // The raw value at the crossing, not `value`: a projection can
-                // put the committed state back on the side the walk came from,
-                // and resuming from there is not a departure from this root.
-                self.guards[index].left = self.located[index];
-                self.guards[index].on_boundary = true;
+    pub(crate) fn apply(&mut self, t: f64) {
+        for slot in self.slots.iter_mut() {
+            if !slot.active {
+                continue;
+            }
+            if slot.hit.is_some() {
+                slot.guard.at = Some(t);
+                // The raw value at the crossing, not the committed one: a
+                // projection can put the state back on the side the walk came
+                // from, and resuming from there is not a departure from this
+                // root.
+                slot.guard.left = slot.located;
+                slot.guard.on_boundary = true;
             } else {
                 // The walk has taken a step that did not end on this event's
                 // boundary, so it is no longer standing on the root it reported.
-                self.guards[index].at = None;
-                if self.off_boundary(index, value) {
-                    self.guards[index].on_boundary = false;
+                slot.guard.at = None;
+                if slot.trial.abs() > slot.boundary {
+                    slot.guard.on_boundary = false;
                 }
             }
+            slot.start = slot.trial;
         }
-        self.values = *values;
     }
 }
 
@@ -552,7 +699,7 @@ pub(crate) enum StepRoots<Y> {
     },
 }
 
-impl<Y: Clone, const N: usize> RootSet<'_, Y, N> {
+impl<Y: Clone> RootSet<'_, Y> {
     /// Examine one step, from the committed `(t0, y0)` to the raw candidate
     /// `y_end` of width `h`, and locate the earliest crossing in it.
     ///
@@ -571,12 +718,12 @@ impl<Y: Clone, const N: usize> RootSet<'_, Y, N> {
     where
         R: FnMut(f64) -> Result<Y, IntegrationError>,
     {
-        if N == 0 {
+        if !self.any_active() {
             return Ok(StepRoots::None);
         }
-        let mut values_hi = [0.0; N];
-        self.values_at(t0 + h, y_end, &mut values_hi)?;
-        if !self.mark_candidates(t0, &values_hi) {
+        self.eval(t0 + h, y_end)?;
+        self.keep_trial();
+        if !self.mark_candidates(t0) {
             return Ok(StepRoots::None);
         }
 
@@ -609,12 +756,11 @@ impl<Y: Clone, const N: usize> RootSet<'_, Y, N> {
                 break;
             }
             let y_mid = raw_step(mid)?;
-            let mut values_mid = [0.0; N];
-            self.values_at(t0 + mid, &y_mid, &mut values_mid)?;
-            if self.any_candidate_crosses(t0, &values_mid) {
+            self.eval(t0 + mid, &y_mid)?;
+            if self.any_candidate_crosses(t0) {
                 hi = mid;
                 y_hi = y_mid;
-                values_hi = values_mid;
+                self.keep_trial();
             } else {
                 lo = mid;
             }
@@ -627,7 +773,7 @@ impl<Y: Clone, const N: usize> RootSet<'_, Y, N> {
         if t0 + hi == t0 {
             return Err(IntegrationError::TimeStagnated { t: t0, dt: hi });
         }
-        let terminal = self.record_hits(t0, &values_hi);
+        let terminal = self.record_hits(t0);
         Ok(StepRoots::Found {
             t: t0 + hi,
             state: y_hi,
@@ -636,6 +782,22 @@ impl<Y: Clone, const N: usize> RootSet<'_, Y, N> {
         })
     }
 }
+
+/// Build a set over the given events, declaring the storage it borrows.
+///
+/// The slots belong to the caller, so a test that wants a set has to hold them
+/// somewhere: this declares both in the caller's scope and names the set.
+#[cfg(test)]
+macro_rules! root_set {
+    ($name:ident, $search:expr, $($event:expr),+ $(,)?) => {
+        let events = [$($event),+];
+        let mut storage = [$crate::RootSlot::new(); 8];
+        let slots = &mut storage[..events.len()];
+        let mut $name = $crate::RootSet::new(&events, slots, $search).expect("valid search");
+    };
+}
+#[cfg(test)]
+pub(crate) use root_set;
 
 #[cfg(test)]
 mod tests {
@@ -692,14 +854,14 @@ mod tests {
             }
         }
         let event = Arch;
-        let mut set = RootSet::new(
-            [&event as &dyn RootEvent<f64>],
+        root_set!(
+            set,
             RootSearch {
                 t_tolerance: 1e-9,
                 max_iterations: 60,
             },
-        )
-        .expect("valid");
+            &event as &dyn RootEvent<f64>
+        );
         set.begin(0.0, &0.0).expect("finite value");
         match set.scan_step(0.0, 1.0, &1.0, ramp).expect("located") {
             StepRoots::Found { t, .. } => {
@@ -759,22 +921,22 @@ mod tests {
 
     /// What a stepper does after it has projected and stored a state: read the
     /// values, then record where the walk is.
-    fn commit<const N: usize>(set: &mut RootSet<'_, f64, N>, t: f64, y: &f64) {
-        let values = set.check(t, y).expect("finite value");
-        set.apply(t, &values);
+    fn commit(set: &mut RootSet<'_, f64>, t: f64, y: &f64) {
+        set.check(t, y).expect("finite value");
+        set.apply(t);
     }
 
     #[test]
     fn the_located_time_is_the_analytic_crossing_within_the_tolerance() {
         let level = Level::at(0.25);
-        let mut set = RootSet::new(
-            [&level as &dyn RootEvent<f64>],
+        root_set!(
+            set,
             RootSearch {
                 t_tolerance: 1e-9,
                 max_iterations: 60,
             },
-        )
-        .expect("valid search");
+            &level as &dyn RootEvent<f64>
+        );
         set.begin(0.0, &0.0).expect("finite value");
 
         match set.scan_step(0.0, 1.0, &1.0, ramp).expect("located") {
@@ -789,7 +951,7 @@ mod tests {
                 assert!(bracket <= 1e-9, "bracket = {bracket}");
                 assert!(terminal);
                 assert_eq!(
-                    set.hits(),
+                    set.hits().collect::<Vec<_>>(),
                     &[RootHit {
                         event: 0,
                         terminal: true,
@@ -804,14 +966,13 @@ mod tests {
     #[test]
     fn a_level_the_step_does_not_reach_is_not_a_root() {
         let level = Level::at(2.0);
-        let mut set =
-            RootSet::new([&level as &dyn RootEvent<f64>], RootSearch::default()).expect("valid");
+        root_set!(set, RootSearch::default(), &level as &dyn RootEvent<f64>);
         set.begin(0.0, &0.0).expect("finite value");
         assert!(matches!(
             set.scan_step(0.0, 1.0, &1.0, ramp).expect("no error"),
             StepRoots::None
         ));
-        assert!(set.hits().is_empty());
+        assert_eq!(set.hit_count(), 0);
     }
 
     /// Two levels inside one step: the search converges on the earlier one, and
@@ -820,21 +981,27 @@ mod tests {
     fn the_earlier_of_two_crossings_is_the_one_located() {
         let early = Level::at(0.25);
         let late = Level::at(0.75);
-        let mut set = RootSet::new(
-            [&early as &dyn RootEvent<f64>, &late],
+        root_set!(
+            set,
             RootSearch {
                 t_tolerance: 1e-9,
                 max_iterations: 60,
             },
-        )
-        .expect("valid");
+            &early as &dyn RootEvent<f64>,
+            &late
+        );
         set.begin(0.0, &0.0).expect("finite value");
 
         match set.scan_step(0.0, 1.0, &1.0, ramp).expect("located") {
             StepRoots::Found { t, .. } => {
                 assert!((t - 0.25).abs() <= 1e-9, "located t = {t}");
-                assert_eq!(set.hits().len(), 1, "hits: {:?}", set.hits());
-                assert_eq!(set.hits()[0].event, 0);
+                assert_eq!(
+                    set.hit_count(),
+                    1,
+                    "hits: {:?}",
+                    set.hits().collect::<Vec<_>>()
+                );
+                assert_eq!(set.hit_at(0).expect("one hit").event, 0);
             }
             StepRoots::None => panic!("both levels are inside the step"),
         }
@@ -853,18 +1020,19 @@ mod tests {
             terminal: false,
             ..Level::at(0.5)
         };
-        let mut set = RootSet::new(
-            [&first as &dyn RootEvent<f64>, &second],
+        root_set!(
+            set,
             RootSearch::default(),
-        )
-        .expect("valid");
+            &first as &dyn RootEvent<f64>,
+            &second
+        );
         set.begin(0.0, &0.0).expect("finite value");
 
         match set.scan_step(0.0, 1.0, &1.0, ramp).expect("located") {
             StepRoots::Found { terminal, .. } => {
                 assert!(terminal, "one of the two asked to stop");
                 assert_eq!(
-                    set.hits(),
+                    set.hits().collect::<Vec<_>>(),
                     &[
                         RootHit {
                             event: 1,
@@ -889,8 +1057,7 @@ mod tests {
             crossing: Crossing::Falling,
             ..Level::at(0.5)
         };
-        let mut set =
-            RootSet::new([&level as &dyn RootEvent<f64>], RootSearch::default()).expect("valid");
+        root_set!(set, RootSearch::default(), &level as &dyn RootEvent<f64>);
         set.begin(0.0, &0.0).expect("finite value");
         assert!(matches!(
             set.scan_step(0.0, 1.0, &1.0, ramp).expect("no error"),
@@ -907,14 +1074,14 @@ mod tests {
             terminal: false,
             ..Level::at(0.5)
         };
-        let mut set = RootSet::new(
-            [&level as &dyn RootEvent<f64>],
+        root_set!(
+            set,
             RootSearch {
                 t_tolerance: 1e-12,
                 max_iterations: 200,
             },
-        )
-        .expect("valid");
+            &level as &dyn RootEvent<f64>
+        );
         set.begin(0.0, &0.0).expect("finite value");
         let t_root = match set.scan_step(0.0, 1.0, &1.0, ramp).expect("located") {
             StepRoots::Found { t, state, .. } => {
@@ -946,8 +1113,7 @@ mod tests {
             boundary: 1e-6,
             ..Level::at(0.0)
         };
-        let mut set =
-            RootSet::new([&sliding as &dyn RootEvent<f64>], RootSearch::default()).expect("valid");
+        root_set!(set, RootSearch::default(), &sliding as &dyn RootEvent<f64>);
         // Reach the boundary from below and commit there, as a non-terminal root
         // leaves the state.
         set.begin(0.0, &-1.0).expect("finite value");
@@ -994,8 +1160,7 @@ mod tests {
             }
         }
         let event = Blows;
-        let mut set =
-            RootSet::new([&event as &dyn RootEvent<f64>], RootSearch::default()).expect("valid");
+        root_set!(set, RootSearch::default(), &event as &dyn RootEvent<f64>);
         set.begin(0.0, &0.0).expect("the start is finite");
         assert!(matches!(
             set.scan_step(0.0, 1.0, &1.0, ramp),
@@ -1016,14 +1181,14 @@ mod tests {
             }
         }
         let event = Endpoint;
-        let mut set = RootSet::new(
-            [&event as &dyn RootEvent<f64>],
+        root_set!(
+            set,
             RootSearch {
                 t_tolerance: 1e-9,
                 max_iterations: 4,
             },
-        )
-        .expect("valid");
+            &event as &dyn RootEvent<f64>
+        );
         set.begin(0.0, &0.0).expect("finite value");
         assert!(matches!(
             set.scan_step(0.0, 1.0, &1.0, ramp),
@@ -1057,7 +1222,12 @@ mod tests {
             },
         ] {
             assert!(
-                RootSet::new([&level as &dyn RootEvent<f64>], search).is_err(),
+                RootSet::new(
+                    &[&level as &dyn RootEvent<f64>],
+                    &mut [RootSlot::new()],
+                    search
+                )
+                .is_err(),
                 "{search:?} was accepted"
             );
         }
@@ -1077,14 +1247,14 @@ mod tests {
             terminal: false,
             ..Level::at(1.0 / 3.0)
         };
-        let mut set = RootSet::new(
-            [&level as &dyn RootEvent<f64>],
+        root_set!(
+            set,
             RootSearch {
                 t_tolerance: 1e-12,
                 max_iterations: 200,
             },
-        )
-        .expect("valid");
+            &level as &dyn RootEvent<f64>
+        );
         set.begin(0.0, &0.0).expect("finite value");
         let (t_root, y_root) = match set.scan_step(0.0, 1.0, &1.0, ramp).expect("located") {
             StepRoots::Found { t, state, .. } => {
@@ -1135,14 +1305,14 @@ mod tests {
             crossing: Crossing::Rising,
             ..Level::at(1.0 / 3.0)
         };
-        let mut set = RootSet::new(
-            [&level as &dyn RootEvent<f64>],
+        root_set!(
+            set,
             RootSearch {
                 t_tolerance: 1e-12,
                 max_iterations: 200,
             },
-        )
-        .expect("valid");
+            &level as &dyn RootEvent<f64>
+        );
         set.begin(0.0, &0.0).expect("finite value");
         let t_root = match set.scan_step(0.0, 1.0, &1.0, ramp).expect("located") {
             StepRoots::Found { t, state, .. } => {
@@ -1183,14 +1353,14 @@ mod tests {
             crossing: Crossing::Falling,
             ..Level::at(0.5)
         };
-        let mut set = RootSet::new(
-            [&level as &dyn RootEvent<f64>],
+        root_set!(
+            set,
             RootSearch {
                 t_tolerance: 1e-12,
                 max_iterations: 200,
             },
-        )
-        .expect("valid");
+            &level as &dyn RootEvent<f64>
+        );
 
         // Fall from 1.0 and land on the level exactly: the value at the root is
         // exactly zero.
@@ -1233,14 +1403,14 @@ mod tests {
             crossing: Crossing::Rising,
             ..Level::at(0.5)
         };
-        let mut set = RootSet::new(
-            [&level as &dyn RootEvent<f64>],
+        root_set!(
+            set,
             RootSearch {
                 t_tolerance: 1e-12,
                 max_iterations: 200,
             },
-        )
-        .expect("valid");
+            &level as &dyn RootEvent<f64>
+        );
         set.begin(0.0, &0.0).expect("finite value");
         let t_root = match set.scan_step(0.0, 1.0, &1.0, ramp).expect("located") {
             StepRoots::Found { t, .. } => {
@@ -1278,14 +1448,14 @@ mod tests {
     fn a_root_the_clock_cannot_place_is_refused() {
         const T0: f64 = 1e15;
         let level = Level::at(0.03);
-        let mut set = RootSet::new(
-            [&level as &dyn RootEvent<f64>],
+        root_set!(
+            set,
             RootSearch {
                 t_tolerance: 1e-9,
                 max_iterations: 200,
             },
-        )
-        .expect("valid");
+            &level as &dyn RootEvent<f64>
+        );
         set.begin(T0, &0.0).expect("finite value");
         assert!(
             T0 + 0.03125 == T0,
@@ -1319,14 +1489,14 @@ mod tests {
         );
 
         let level = Level::at(0.06);
-        let mut set = RootSet::new(
-            [&level as &dyn RootEvent<f64>],
+        root_set!(
+            set,
             RootSearch {
                 t_tolerance: 1e-9,
                 max_iterations: 200,
             },
-        )
-        .expect("valid");
+            &level as &dyn RootEvent<f64>
+        );
         set.begin(T0, &0.0).expect("finite value");
         match set.scan_step(T0, H, &H, ramp).expect("located") {
             StepRoots::Found { t, .. } => assert_eq!(t, T0 + H),
@@ -1342,8 +1512,7 @@ mod tests {
             terminal: false,
             ..Level::at(0.5)
         };
-        let mut set =
-            RootSet::new([&level as &dyn RootEvent<f64>], RootSearch::default()).expect("valid");
+        root_set!(set, RootSearch::default(), &level as &dyn RootEvent<f64>);
         set.begin(0.0, &0.0).expect("finite value");
         let t_root = match set.scan_step(0.0, 1.0, &1.0, ramp).expect("located") {
             StepRoots::Found { t, state, .. } => {
@@ -1376,14 +1545,13 @@ mod tests {
             }
         }
         let event = Breaks;
-        let mut set =
-            RootSet::new([&event as &dyn RootEvent<f64>], RootSearch::default()).expect("valid");
+        root_set!(set, RootSearch::default(), &event as &dyn RootEvent<f64>);
         set.begin(0.0, &0.0).expect("finite value");
         // A step from 0 to 1 passes the pole, so the value changes sign and the
         // search locates it.
         match set.scan_step(0.0, 1.0, &1.0, ramp).expect("located") {
             StepRoots::Found { .. } => {
-                assert_eq!(set.hits().len(), 1, "the search recorded a hit");
+                assert_eq!(set.hit_count(), 1, "the search recorded a hit");
             }
             StepRoots::None => panic!("the value changes sign across the pole"),
         }
@@ -1394,9 +1562,9 @@ mod tests {
             Err(IntegrationError::NonFiniteRootValue { .. })
         ));
         assert!(
-            set.hits().is_empty(),
+            set.hit_count() == 0,
             "a hit the walk gave up on stays out of hits(): {:?}",
-            set.hits()
+            set.hits().collect::<Vec<_>>()
         );
     }
 
@@ -1409,7 +1577,11 @@ mod tests {
             };
             assert!(
                 matches!(
-                    RootSet::new([&event as &dyn RootEvent<f64>], RootSearch::default()),
+                    RootSet::new(
+                        &[&event as &dyn RootEvent<f64>],
+                        &mut [RootSlot::new()],
+                        RootSearch::default()
+                    ),
                     Err(IntegrationError::InvalidBoundaryTolerance { event: 0, .. })
                 ),
                 "a boundary tolerance of {bad} was accepted"
@@ -1434,14 +1606,14 @@ mod tests {
             }
         }
         let event = Cubic;
-        let mut set = RootSet::new(
-            [&event as &dyn RootEvent<f64>],
+        root_set!(
+            set,
             RootSearch {
                 t_tolerance: 1e-9,
                 max_iterations: 60,
             },
-        )
-        .expect("valid");
+            &event as &dyn RootEvent<f64>
+        );
         set.begin(0.0, &0.0).expect("finite value");
         match set.scan_step(0.0, 1.0, &1.0, ramp).expect("located") {
             StepRoots::Found { t, .. } => {
@@ -1462,8 +1634,7 @@ mod tests {
             }
         }
         let event = Dip;
-        let mut set =
-            RootSet::new([&event as &dyn RootEvent<f64>], RootSearch::default()).expect("valid");
+        root_set!(set, RootSearch::default(), &event as &dyn RootEvent<f64>);
         set.begin(0.0, &0.0).expect("finite value");
         assert!(matches!(
             set.scan_step(0.0, 1.0, &1.0, ramp).expect("no error"),
@@ -1486,19 +1657,17 @@ mod tests {
             terminal: false,
             ..Level::at(0.5)
         };
-        let mut set = RootSet::new(
-            [
-                &first as &dyn RootEvent<f64>,
-                &second as &dyn RootEvent<f64>,
-                &third as &dyn RootEvent<f64>,
-            ],
+        root_set!(
+            set,
             RootSearch::default(),
-        )
-        .expect("valid");
+            &first as &dyn RootEvent<f64>,
+            &second as &dyn RootEvent<f64>,
+            &third as &dyn RootEvent<f64>,
+        );
         set.begin(0.0, &0.0).expect("finite value");
         match set.scan_step(0.0, 1.0, &1.0, ramp).expect("located") {
             StepRoots::Found { .. } => {
-                let order: Vec<usize> = set.hits().iter().map(|hit| hit.event).collect();
+                let order: Vec<usize> = set.hits().map(|hit| hit.event).collect();
                 assert_eq!(order, vec![0, 1, 2]);
             }
             StepRoots::None => panic!("all three are on the level the step crosses"),
@@ -1509,7 +1678,8 @@ mod tests {
     /// step.
     #[test]
     fn a_set_with_no_events_finds_nothing() {
-        let mut set: RootSet<'_, f64, 0> = RootSet::new([], RootSearch::default()).expect("valid");
+        let events: [&dyn RootEvent<f64>; 0] = [];
+        let mut set = RootSet::new(&events, &mut [], RootSearch::default()).expect("valid");
         assert!(set.is_empty());
         set.begin(0.0, &0.0).expect("nothing to evaluate");
         assert!(matches!(
@@ -1517,5 +1687,260 @@ mod tests {
                 .expect("no error"),
             StepRoots::None
         ));
+    }
+
+    /// A set pairs one slot with one event, so a caller that brings the wrong
+    /// number of slots is refused rather than leaving an event unwatched.
+    #[test]
+    fn a_set_needs_one_slot_per_event() {
+        let level = Level::at(0.5);
+        let events = [&level as &dyn RootEvent<f64>];
+        assert!(matches!(
+            RootSet::new(&events, &mut [], RootSearch::default()),
+            Err(IntegrationError::RootSlotCount {
+                events: 1,
+                slots: 0
+            })
+        ));
+    }
+
+    /// An event switched off does not fire, and the search locates the next one
+    /// that is on.
+    #[test]
+    fn a_switched_off_event_does_not_fire() {
+        let early = Level::at(0.25);
+        let late = Level::at(0.75);
+        root_set!(
+            set,
+            RootSearch {
+                t_tolerance: 1e-9,
+                max_iterations: 60,
+            },
+            &early as &dyn RootEvent<f64>,
+            &late
+        );
+        set.deactivate(0);
+        set.begin(0.0, &0.0).expect("finite value");
+        match set.scan_step(0.0, 1.0, &1.0, ramp).expect("located") {
+            StepRoots::Found { t, .. } => {
+                assert!(
+                    (t - 0.75).abs() < 1e-6,
+                    "the search passes the switched-off boundary: {t}"
+                );
+                assert_eq!(set.hit_count(), 1);
+                assert_eq!(set.hit_at(0).expect("one hit").event, 1);
+            }
+            _ => panic!("expected the later boundary to be located"),
+        }
+    }
+
+    /// A switched-off event is never asked for its value.
+    ///
+    /// That is the point of switching one off: the release of a constraint that
+    /// is not held has no meaning to evaluate, and a stand-in value would be
+    /// read as a crossing when the event comes back.
+    #[test]
+    fn a_switched_off_event_is_not_evaluated() {
+        use core::cell::Cell;
+
+        struct Counted<'a>(&'a Cell<usize>);
+        impl RootEvent<f64> for Counted<'_> {
+            fn value(&self, _t: f64, y: &f64) -> f64 {
+                self.0.set(self.0.get() + 1);
+                y - 0.5
+            }
+        }
+
+        let calls = Cell::new(0);
+        let event = Counted(&calls);
+        root_set!(set, RootSearch::default(), &event as &dyn RootEvent<f64>);
+        set.deactivate(0);
+        set.begin(0.0, &0.0).expect("finite value");
+        assert!(matches!(
+            set.scan_step(0.0, 1.0, &1.0, ramp).expect("no error"),
+            StepRoots::None
+        ));
+        assert_eq!(calls.get(), 0, "a switched-off event is left unevaluated");
+    }
+
+    /// Switching an event back on does not report the crossing it missed.
+    ///
+    /// Its value is read afresh at the start of the next walk, so the side it
+    /// is on then is what the next step is compared against. A caller that
+    /// needs the boundary honoured at the moment it switches an event on acts
+    /// on it there, rather than waiting for a crossing that has been passed.
+    #[test]
+    fn a_reactivated_event_does_not_report_the_crossing_it_missed() {
+        let level = Level::at(0.5);
+        root_set!(set, RootSearch::default(), &level as &dyn RootEvent<f64>);
+        set.deactivate(0);
+
+        // The walk passes 0.5 with the event switched off.
+        set.begin(0.0, &0.0).expect("finite value");
+        commit(&mut set, 1.0, &1.0);
+
+        set.activate(0);
+        set.begin(1.0, &1.0).expect("finite value");
+        assert!(
+            matches!(
+                set.scan_step(1.0, 1.0, &2.0, |width| Ok(1.0 + width))
+                    .expect("no error"),
+                StepRoots::None
+            ),
+            "the crossing at 0.5 is behind the state the event came back on"
+        );
+        assert_eq!(set.hit_count(), 0);
+    }
+
+    /// Switching on an event that is already on leaves its guard alone.
+    ///
+    /// The guard is what keeps the step that leaves a root from reporting it
+    /// again, so re-arming it on every mode change would report a boundary
+    /// twice.
+    #[test]
+    fn switching_on_an_event_that_is_on_keeps_its_guard() {
+        let level = Level::at(0.5);
+        root_set!(set, RootSearch::default(), &level as &dyn RootEvent<f64>);
+        set.begin(0.0, &0.0).expect("finite value");
+        let located = match set.scan_step(0.0, 1.0, &1.0, ramp).expect("located") {
+            StepRoots::Found { t, state, .. } => {
+                commit(&mut set, t, &state);
+                t
+            }
+            _ => panic!("expected a located root"),
+        };
+        assert_eq!(set.guard(0).at(), Some(located));
+        assert!(set.guard(0).is_on_boundary());
+
+        set.activate(0);
+        assert_eq!(
+            set.guard(0).at(),
+            Some(located),
+            "the event was already on, so it still stands on the root it reported"
+        );
+        assert!(set.guard(0).is_on_boundary());
+    }
+
+    /// An event switched off after a walk failed does not fire from the values
+    /// that walk left behind.
+    ///
+    /// A failed walk keeps the values it was comparing — the crossing pair the
+    /// search had found — and the caller is free to switch the event off before
+    /// resuming. Switching one off has to stop the search reading them, since
+    /// nothing else refreshes them while the event is off.
+    #[test]
+    fn a_switched_off_event_does_not_fire_from_a_failed_walks_values() {
+        /// Finite everywhere the walk starts and steps to, except at the state
+        /// the stepper would commit.
+        struct Brittle;
+        impl RootEvent<f64> for Brittle {
+            fn value(&self, _t: f64, y: &f64) -> f64 {
+                if *y == 0.6 { f64::NAN } else { y - 0.5 }
+            }
+        }
+
+        // A second event, switched on throughout and never crossing, so the
+        // search still runs once the first one is switched off.
+        let event = Brittle;
+        let far = Level::at(1.5);
+        root_set!(
+            set,
+            RootSearch::default(),
+            &event as &dyn RootEvent<f64>,
+            &far
+        );
+        set.begin(0.0, &0.0).expect("finite value");
+        let located = match set.scan_step(0.0, 1.0, &1.0, ramp).expect("located") {
+            StepRoots::Found { t, .. } => t,
+            _ => panic!("expected a located root"),
+        };
+        assert!(
+            set.check(located, &0.6).is_err(),
+            "the state the stepper would commit has no finite value"
+        );
+        assert_eq!(set.hit_count(), 0, "a walk that failed reports no roots");
+
+        set.deactivate(0);
+        set.begin(0.0, &0.0).expect("finite value");
+        assert!(matches!(
+            set.scan_step(0.0, 1.0, &1.0, ramp).expect("no error"),
+            StepRoots::None
+        ));
+        assert_eq!(
+            set.hit_count(),
+            0,
+            "a switched-off event does not fire from the values it kept"
+        );
+    }
+
+    /// Switching an event off and on again re-arms its guard, so the boundary
+    /// the walk is standing on can be reported again.
+    ///
+    /// While the event is off its value goes unread, and the side a root left
+    /// it on says nothing about where it is when it comes back. The step that
+    /// the guard would have suppressed — "this is the root already reported" —
+    /// is a crossing again.
+    #[test]
+    fn switching_an_event_off_and_on_re_arms_its_guard() {
+        let level = Level::at(0.5);
+        root_set!(set, RootSearch::default(), &level as &dyn RootEvent<f64>);
+        set.begin(0.0, &0.0).expect("finite value");
+        let (root_t, root_y) = match set.scan_step(0.0, 1.0, &1.0, ramp).expect("located") {
+            StepRoots::Found { t, state, .. } => {
+                commit(&mut set, t, &state);
+                (t, state)
+            }
+            _ => panic!("expected a located root"),
+        };
+        assert_eq!(set.guard(0).at(), Some(root_t));
+        assert!(set.guard(0).is_on_boundary());
+
+        // A step back across the boundary from the root's own time is the root
+        // already reported, so the guard suppresses it.
+        let back_down = |width: f64| Ok(root_y - width * 0.2);
+        let end = root_y - 0.2;
+        set.begin(root_t, &root_y).expect("finite value");
+        assert!(matches!(
+            set.scan_step(root_t, 1.0, &end, back_down)
+                .expect("no error"),
+            StepRoots::None
+        ));
+
+        set.deactivate(0);
+        set.activate(0);
+        assert_eq!(set.guard(0).at(), None, "coming back re-arms the guard");
+        assert!(!set.guard(0).is_on_boundary());
+
+        set.begin(root_t, &root_y).expect("finite value");
+        assert!(
+            matches!(
+                set.scan_step(root_t, 1.0, &end, back_down)
+                    .expect("located"),
+                StepRoots::Found { .. }
+            ),
+            "the same step is a crossing for an event that has just come back"
+        );
+    }
+
+    /// The roots of the bracket the walk committed to stay readable while the
+    /// caller switches events, which is what it does while handling them.
+    #[test]
+    fn switching_events_leaves_the_located_roots_readable() {
+        let level = Level::at(0.5);
+        root_set!(set, RootSearch::default(), &level as &dyn RootEvent<f64>);
+        set.begin(0.0, &0.0).expect("finite value");
+        match set.scan_step(0.0, 1.0, &1.0, ramp).expect("located") {
+            StepRoots::Found { t, state, .. } => commit(&mut set, t, &state),
+            _ => panic!("expected a located root"),
+        }
+        assert_eq!(set.hit_count(), 1);
+
+        set.deactivate(0);
+        assert_eq!(
+            set.hit_count(),
+            1,
+            "switching the event off does not erase the root it just reported"
+        );
+        assert_eq!(set.hit_at(0).expect("one hit").event, 0);
     }
 }

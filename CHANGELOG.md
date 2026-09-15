@@ -1100,17 +1100,26 @@ section is subdivided by package.
 
   Detection reads the raw candidate, before `OdeState::project`: a projection
   pulls the state back onto its constraint surface and can erase the sign change
-  that shows the crossing. Localization is bisection re-stepping from the step's
-  own start, since neither adaptive solver carries a dense output, and the states
-  it tries reach neither the callback nor the projection. The set is fixed-size —
-  the event count is a const parameter — so the crate still allocates nothing.
+  that shows the crossing. Localization is a binary search re-stepping from the
+  step's own start, since neither adaptive solver carries a dense output. Neither
+  the states it tries nor the one a root stops at reaches the callback: a
+  boundary state is not final until the caller has updated the mode it crossed
+  into, so the caller reads that state from the stepper and records it when it is
+  done.
+
+  A set pairs `&[&dyn RootEvent<Y>]` with a `&mut [RootSlot]` the caller owns, so
+  how many events it holds is whatever the caller's configuration builds and the
+  crate still allocates nothing. Each event switches off and on with
+  `deactivate` / `activate`, for a one-sided constraint whose release has nothing
+  to say while the constraint is not held; switching one on re-arms its guard,
+  and switching on one that is already on leaves it alone.
 
   Two things the caller owes, both in DESIGN.md: a step may hold at most one
   change of sign of each event's value, and the discrete mode has to stay frozen
   for the whole search. Re-stepping RK4 across a mode switch returns a width of
   `6r/5` for a remaining distance `r`, reporting the arrival `0.2 r` late —
   measured across eight step sizes, and pinned by a test.
-  ([#508](https://github.com/sksat/orts/pull/508))
+  ([#508](https://github.com/sksat/orts/pull/508), [#509](https://github.com/sksat/orts/pull/509))
 - `Integrator::stepper`, returning a `FixedStepper` that holds its state and the
   time it belongs to and is driven towards one target time after another —
   `stepper` / `from_checked_state` / `advance_to`, the three calls the adaptive

@@ -116,9 +116,20 @@ event で、既存の終了 event (`ControlFlow` を返す checker、受理し�
   幾何的な性質は保証できない。root のために刻みを縮めると合成の対称性が崩れる。root event API は
   まず `Integrator` を実装する solver (RK4 / DP45 / DOP853) の stepper に置く。Verlet / Yoshida は
   専用ループを持つので未対応
+- **event の個数は実行時に決まってよい。** 利用者の event 数はホイール数や thruster 数、つまり設定で
+  決まる。探索の作業領域は event ごとの slot にまとめ、呼び出し側が所有する領域を借用する
+  (`&[&dyn RootEvent]` と `&mut [RootSlot]`)。alloc は要求しない
+- **有効な event はモードで切り替える。** 一方向拘束では「境界への到達」と「拘束の解除」が別の event で、
+  拘束していない間は解除を見る意味がない。無効な event は値を評価しない。無効な event の値を定数に
+  置き換える形は採らない (有効化した瞬間の値の跳びを交差と誤認する)。切り替えは walk の呼び出しの外で
+  だけ行い、切り替えた event の guard は再武装する。既に有効な event を有効化するのは何もしない
+- **root で終わったステップでは callback を呼ばない。** 境界で確定した state は、呼び出し側がモードの
+  更新と境界の補正を済ませるまで最終ではない。呼び出し側は `RootOutcome::Roots` を受けて処理し、
+  記録はその後に行う (state は stepper から読める)
 
-非 terminal な root の後は、呼び出し側が state とモードを更新してから積分を再開する。再開の手続き
-(guard の再評価、FSAL キャッシュの破棄) は API の一部として決める。
+非 terminal な root の後は、呼び出し側が state とモードを更新してから積分を再開する。境界の処理は
+順序が決まっている: 旧モードのまま局所化 → 同時 root の適用と保存量の補正 → 同時刻の指令変更 →
+即時遷移をモードが整合するまで → RHS キャッシュの破棄 → 確定した state の観測。
 [#446](https://github.com/sksat/orts/issues/446) の 3 分類のうち、RW 飽和と推進剤の枯渇がこの
 契約の利用者になる。
 

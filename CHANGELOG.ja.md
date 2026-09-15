@@ -922,16 +922,23 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   その時刻の状態を残す。
 
   検出は `OdeState::project` の前、生の候補で行う。projection は状態を制約面に戻す操作で、
-  交差を示す符号変化を消してしまうことがある。局所化は確定済みの始点から刻みを縮めて
-  再計算する二分法で、adaptive solver がどちらも dense output を持たないためである。
-  探索が試す状態は callback にも projection にも渡らない。event 数は const parameter なので
-  crate は引き続き allocation を行わない。
+  交差を示す符号変化を消してしまうことがある。局所化は確定済みの始点から幅を変えて
+  再計算する二分探索で、adaptive solver がどちらも dense output を持たないためである。
+  探索が試す状態も、root で止まった状態も callback には渡らない。境界の状態は、呼び出し側が
+  越えたモードを更新するまで最終ではないので、呼び出し側が stepper から読み、処理を終えてから
+  記録する。
+
+  set は event の slice と、呼び出し側が所有する `RootSlot` の slice を借りる。そのため event の
+  個数は呼び出し側の設定で決まる数でよく、crate は引き続き allocation を行わない。各 event は
+  `deactivate` / `activate` で切り替えられる。一方向拘束の「解除」は、拘束していない間は意味を
+  持たないためである。切り替えて on にすると guard は再武装し、既に on の event を on にするのは
+  何もしない。
 
   呼び手が守るべき点は DESIGN.md に 2 つ書いた。1 つのステップが含んでよい符号変化は各 event の
   値について 1 回まで。もう 1 つは、探索の間は離散モードを凍結すること。モードの切り替わりを
-  跨いで RK4 を再ステップすると、境界までの残り $r$ に対して二分法は $6r/5$ の刻みを返し、
+  跨いで RK4 を再ステップすると、境界までの残り $r$ に対して二分探索は $6r/5$ の刻みを返し、
   到達時刻を $0.2r$ 遅く報告する (刻み 8 通りで実測し、テストで固定した)。
-  ([#508](https://github.com/sksat/orts/pull/508))
+  ([#508](https://github.com/sksat/orts/pull/508), [#509](https://github.com/sksat/orts/pull/509))
 - `Integrator::stepper` を追加。状態とその時刻を保持し、目標時刻を次々に与えて進める
   `FixedStepper` を返す。`stepper` / `from_checked_state` / `advance_to` という 3 つの呼び出しは
   adaptive solver が既に持っていたもので、どこで止まるかを進みながら決める伝播ループは、
