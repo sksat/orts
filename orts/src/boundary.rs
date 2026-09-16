@@ -305,9 +305,15 @@ fn settle_what_is_already_past<Sys: HasBoundaries>(
             if !system.boundary_is_active(declared, state) {
                 continue;
             }
-            // The value is a margin, so at or below zero is at or past the
-            // boundary — the one side there is to be past.
-            if system.boundary_value(declared, t, state) <= 0.0 {
+            // The value is a margin, so past the boundary is below zero — the
+            // one side there is to be past. A state *on* the boundary is not
+            // past it, and the width that says so is the effector's own: a
+            // wheel resting on its bound with the motor asking for nothing has
+            // both its bound's margin and its release margin at zero, and
+            // treating either as crossed would move the mode back and forth
+            // for as long as this loop runs.
+            let tolerance = declared.boundary.boundary_tolerance;
+            if system.boundary_value(declared, t, state) < -tolerance {
                 system.settle_boundary(declared, state);
                 moved = true;
                 settled_any = true;

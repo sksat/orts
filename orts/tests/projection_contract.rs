@@ -20,7 +20,7 @@
 use nalgebra::{Matrix3, Vector3};
 use utsuroi::{Integrator, Rk4, Tolerances};
 
-use orts::effector::AugmentedState;
+use orts::effector::{AugmentedState, ConstraintMode};
 use orts::group::{IndependentGroup, IntegratorConfig};
 use orts::orbital::gravity::PointMass;
 use orts::spacecraft::{ReactionWheelAssembly, RwCommand, SpacecraftDynamics, SpacecraftState};
@@ -47,6 +47,14 @@ fn saturating_system() -> Dynamics {
     let inertia = Matrix3::from_diagonal(&Vector3::repeat(BODY_INERTIA));
     let mut rw = ReactionWheelAssembly::three_axis(WHEEL_INERTIA, MAX_MOMENTUM, MAX_TORQUE);
     rw.command = RwCommand::Torques(rw.core().allocate(&Vector3::new(0.0, 0.0, MAX_TORQUE)));
+    SpacecraftDynamics::new(arika::earth::MU, PointMass, inertia).with_effector(rw)
+}
+
+/// The same spacecraft with its wheels commanded to hold still.
+fn idle_system() -> Dynamics {
+    let inertia = Matrix3::from_diagonal(&Vector3::repeat(BODY_INERTIA));
+    let mut rw = ReactionWheelAssembly::three_axis(WHEEL_INERTIA, MAX_MOMENTUM, MAX_TORQUE);
+    rw.command = RwCommand::Torques(vec![0.0; 3]);
     SpacecraftDynamics::new(arika::earth::MU, PointMass, inertia).with_effector(rw)
 }
 
@@ -204,4 +212,44 @@ fn a_direct_integration_has_no_boundary_to_stop_at() {
         "the wheel ends at {}, not at the {expected} the motor asks for",
         ended.aux[2]
     );
+}
+
+/// A wheel resting on its bound with the motor asking for nothing has two
+/// margins at zero at once: the bound it is sitting on, and the release that a
+/// torque turning inward would bring. Neither is a crossing — the state is on
+/// the boundary, not past it — so the walk leaves the mode where it is and
+/// reports nothing but its steps. Read as crossings, the two would hand the
+/// mode back and forth for as long as the settling loop runs, once per walk.
+#[test]
+fn a_wheel_resting_on_its_bound_is_not_a_crossing() {
+    let system = idle_system();
+    let mut initial = system.initial_augmented_state(initial_plant());
+    // Exactly on the lower bound, and still running free.
+    initial.aux[2] = -MAX_MOMENTUM;
+
+    let mut group: IndependentGroup<Dynamics> =
+        IndependentGroup::new(IntegratorConfig::Rk4 { dt: DT }).add_satellite(
+            "sat",
+            initial,
+            idle_system(),
+        );
+    let mut samples: Vec<(f64, ConstraintMode, f64)> = Vec::new();
+    group
+        .propagate_to_with(4.0 * DT, |_id, t, state| {
+            samples.push((t, state.modes[2], state.aux[2]));
+        })
+        .expect("the walk succeeds");
+
+    assert_eq!(
+        samples.len(),
+        4,
+        "four steps and nothing else, at {samples:?}"
+    );
+    for (t, mode, h) in samples {
+        assert_eq!(mode, ConstraintMode::Free, "the mode stays put, at t = {t}");
+        assert!(
+            (h + MAX_MOMENTUM).abs() < 1e-12,
+            "and so does the wheel, at {h} at t = {t}"
+        );
+    }
 }
