@@ -71,9 +71,12 @@ fn gravity_flags_given(sim: &SimArgs) -> Vec<&'static str> {
 /// gravity flag next to `--config` (or an auto-detected `orts.toml`) would be
 /// dropped in silence and the run would use the zonal model behind an explicit
 /// request. Refuse it, the way `serve` refuses every unhonored sim arg.
-// TODO: the other tuning flags (`--dt`, `--atmosphere`, …) are still dropped
-// silently on this path; extending `serve`'s `unhonored_sim_args` to `run` is
-// a behaviour change for existing command lines and is left to its own change.
+// TODO: the other tuning flags (`--dt`, `--atol`, `--root-t-tolerance`,
+// `--atmosphere`, …) are still dropped silently on this path, and their values
+// are not validated there either — the config's own `validate` checks the
+// config's. Extending `serve`'s `unhonored_sim_args` to `run` is a behaviour
+// change for existing command lines and is left to its own change; singling
+// out one flag would leave the rest inconsistent with it.
 fn reject_frame_and_gravity_flags_with_config(
     sim: &SimArgs,
     config_path: &str,
@@ -2508,9 +2511,6 @@ mod tests {
         );
     }
 
-    /// `--gravity-field` gets the `[gravity_field]` structural rules on the
-    /// direct-CLI path too, phrased as flags, before any file is opened.
-    #[test]
     /// The config path rejects a tolerance the search cannot narrow to, and a
     /// command line says the same thing: reaching `RootSearch` with it fails
     /// only once a walk starts, which for a long run is after the output file
@@ -2533,6 +2533,8 @@ mod tests {
         }
     }
 
+    /// `--gravity-field` gets the `[gravity_field]` structural rules on the
+    /// direct-CLI path too, phrased as flags, before any file is opened.
     #[test]
     fn validate_sim_args_applies_gravity_field_rules() {
         assert!(validate_sim_args(&args(&["--gravity-field", "x.gfc"])).is_ok());
