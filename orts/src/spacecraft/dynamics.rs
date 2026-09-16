@@ -1,5 +1,6 @@
 use std::marker::PhantomData;
 
+use crate::boundary::{DeclaredBoundary, HasBoundaries};
 use crate::effector::{AugmentedState, AuxRegistry, ConstraintMode, EffectorInput, StateEffector};
 use crate::model::{EvalSegment, Model, eval_maybe_in_segment};
 use crate::orbital::gravity::GravityField;

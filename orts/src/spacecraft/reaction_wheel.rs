@@ -18,7 +18,7 @@ use nalgebra::Vector3;
 
 use super::ExternalLoads;
 use crate::effector::{
-    BoundaryKind, ConstraintMode, EffectorBoundary, EffectorInput, StateEffector,
+    BoundaryExchange, BoundaryKind, ConstraintMode, EffectorBoundary, EffectorInput, StateEffector,
 };
 
 /// Margin within which a wheel counts as still on its momentum bound
@@ -576,6 +576,27 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
                 },
             })
             .collect()
+    }
+
+    fn settle_boundary(&self, kind: BoundaryKind, aux: &mut [f64]) -> Option<BoundaryExchange> {
+        let index = kind.index();
+        let wheel = &self.core.wheels[index];
+        let limit = wheel.momentum_limit();
+        let bound = match kind {
+            BoundaryKind::ReachedUpper { .. } => limit,
+            BoundaryKind::ReachedLower { .. } => -limit,
+            // A release moves nothing: the wheel is where it was, and only the
+            // mode changes.
+            BoundaryKind::Released { .. } => return None,
+        };
+        // What the wheel took past its bound goes back to the body, along the
+        // spin axis: the exchange that carried it there was momentum leaving
+        // the body, and the total is conserved.
+        let overshoot = aux[index] - bound;
+        aux[index] = bound;
+        Some(BoundaryExchange {
+            angular_momentum_body: overshoot * wheel.axis(),
+        })
     }
 
     fn boundary_value(&self, kind: BoundaryKind, input: EffectorInput<'_, S>) -> f64 {

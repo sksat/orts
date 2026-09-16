@@ -1,4 +1,5 @@
 pub mod attitude;
+pub mod boundary;
 pub mod control;
 pub mod eclipse;
 pub mod effector;

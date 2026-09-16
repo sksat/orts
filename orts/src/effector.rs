@@ -7,6 +7,7 @@
 //! plant state.
 
 use arika::epoch::Epoch;
+use nalgebra::Vector3;
 use utsuroi::{Crossing, OdeState, Projection, Tolerances};
 
 use crate::model::{ExternalLoads, HasFrame};
@@ -80,6 +81,19 @@ pub trait StateEffector<S: HasFrame>: Send + Sync + std::any::Any {
     /// where [`BoundaryKind::is_active`] holds.
     fn boundary_value(&self, _kind: BoundaryKind, _input: EffectorInput<'_, S>) -> f64 {
         0.0
+    }
+
+    /// Put this effector's state exactly on a boundary it just reached, and
+    /// report what the overshoot gives back to the plant.
+    ///
+    /// The quantity is a little past its bound — by the rate times the width of
+    /// the bracket the search ended on — and the plant has already integrated
+    /// the exchange that carried it there. Moving the quantity back without
+    /// returning that much would lose it from a total that is conserved.
+    ///
+    /// `None` for a boundary that moves nothing, such as a release.
+    fn settle_boundary(&self, _kind: BoundaryKind, _aux: &mut [f64]) -> Option<BoundaryExchange> {
+        None
     }
 
     /// Number of discrete modes this effector carries.
@@ -219,6 +233,18 @@ impl BoundaryKind {
             Self::Released { .. } => ConstraintMode::Free,
         }
     }
+}
+
+/// What the plant takes back when an effector's state is put on a boundary.
+///
+/// The search stops on the far side of a bracket, so the quantity is a little
+/// past its bound and the plant has already felt the exchange that carried it
+/// there. Putting the quantity back on the bound without this would destroy
+/// that much of a conserved total.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BoundaryExchange {
+    /// Body-frame angular momentum to return to the plant [N·m·s].
+    pub angular_momentum_body: Vector3<f64>,
 }
 
 /// A boundary an effector's state can reach, for the propagation to stop at.
