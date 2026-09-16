@@ -177,6 +177,10 @@ fn unhonored_sim_args(sim: &SimArgs) -> Vec<&'static str> {
         ("--integrator", sim.integrator != default.integrator),
         ("--atol", sim.atol != default.atol),
         ("--rtol", sim.rtol != default.rtol),
+        (
+            "--root-t-tolerance",
+            sim.root_t_tolerance != default.root_t_tolerance,
+        ),
         ("--atmosphere", sim.atmosphere != default.atmosphere),
         ("--f107", sim.f107 != default.f107),
         ("--ap", sim.ap != default.ap),
@@ -480,6 +484,13 @@ mod tests {
         assert_eq!(
             unhonored_sim_args(&args(&["--duration", "600"])),
             vec!["--duration"]
+        );
+        // Every path that walks with boundaries takes the search from
+        // `SimParams`, and `serve` idle or with `--config` never builds one
+        // from these args: a written tolerance would be dropped in silence.
+        assert_eq!(
+            unhonored_sim_args(&args(&["--root-t-tolerance", "1e-6"])),
+            vec!["--root-t-tolerance"]
         );
         assert_eq!(
             unhonored_sim_args(&args(&["--integrator", "rk4", "--rtol", "1e-6"])),

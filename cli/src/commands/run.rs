@@ -41,6 +41,7 @@ pub(crate) fn validate_sim_args(sim: &SimArgs) -> Result<(), String> {
         sim.duration,
     )?;
     crate::config::validate_tolerances(sim.integrator, sim.atol, sim.rtol)?;
+    crate::config::validate_root_t_tolerance(sim.root_t_tolerance)?;
     // The frame rules need the fleet's attitude configs, which the direct-CLI
     // path cannot express at all (`--sat` has no attitude), so an empty slice
     // states exactly that.
@@ -2509,6 +2510,29 @@ mod tests {
 
     /// `--gravity-field` gets the `[gravity_field]` structural rules on the
     /// direct-CLI path too, phrased as flags, before any file is opened.
+    #[test]
+    /// The config path rejects a tolerance the search cannot narrow to, and a
+    /// command line says the same thing: reaching `RootSearch` with it fails
+    /// only once a walk starts, which for a long run is after the output file
+    /// exists.
+    #[test]
+    fn validate_sim_args_rejects_an_unusable_search_tolerance() {
+        assert!(validate_sim_args(&args(&["--root-t-tolerance", "1e-6"])).is_ok());
+        // Joined with `=`, so a negative value is a value rather than a flag.
+        for bad in [
+            "--root-t-tolerance=0",
+            "--root-t-tolerance=-1e-3",
+            "--root-t-tolerance=NaN",
+            "--root-t-tolerance=inf",
+        ] {
+            let err = validate_sim_args(&args(&[bad])).unwrap_err();
+            assert!(
+                err.contains("root_t_tolerance"),
+                "{bad} is named by the error, which said: {err}"
+            );
+        }
+    }
+
     #[test]
     fn validate_sim_args_applies_gravity_field_rules() {
         assert!(validate_sim_args(&args(&["--gravity-field", "x.gfc"])).is_ok());
