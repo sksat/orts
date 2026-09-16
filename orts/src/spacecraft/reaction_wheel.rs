@@ -564,6 +564,27 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
         self.core.num_wheels()
     }
 
+    /// # What the step has to be small enough for
+    ///
+    /// A crossing is found from the sign of a margin at a step's ends, so a
+    /// step that holds two sign changes of the same margin holds none the
+    /// search can report — an obligation on the caller's step size that
+    /// `DESIGN.md` states and no search can check.
+    ///
+    /// A wheel with motor lag can hold such a pair: braking a wheel that is
+    /// still accelerating outward, from just inside its limit, sends the
+    /// momentum past the limit and brings it back as the realized torque
+    /// decays through zero. Measured with `h = 0.999`, a limit of 1, a
+    /// realized torque of +0.1 N·m against a command of -0.1, and a time
+    /// constant of 50 ms: the momentum peaks at 1.0005 N·m·s after 35 ms and
+    /// is back under the limit by 100 ms, so a 100 ms step reports nothing
+    /// while a 10 ms step holds the wheel. Resolving the lag — a step well
+    /// inside the time constant, which its own exponential needs anyway — is
+    /// what keeps each step to one sign change.
+    ///
+    /// [#516](https://github.com/sksat/orts/issues/516) would take the
+    /// obligation off the caller, by declaring the momentum's turning point as
+    /// a boundary that splits the step.
     fn boundaries(&self) -> Vec<EffectorBoundary> {
         // Three per wheel: either bound, and one release whose value the mode
         // signs.

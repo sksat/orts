@@ -335,3 +335,79 @@ fn a_tumbling_spacecraft_keeps_its_inertial_momentum_across_the_bound() {
          {DRIFT_ALLOWED:.0e} rounding accounts for"
     );
 }
+
+/// What the search can and cannot see is decided by the step: a root is found
+/// from the sign of the value at the step's ends, so a step holding two sign
+/// changes of the same margin holds none the search can report.
+///
+/// A wheel with motor lag can produce exactly that. Braking a wheel that is
+/// still accelerating outward, from just inside its limit, sends it past the
+/// limit and brings it back as the realized torque decays through zero: with
+/// `h = 0.999`, a limit of 1, a realized torque of +0.1 N·m against a command
+/// of -0.1, and a time constant of 50 ms, the momentum peaks at 1.0005 N·m·s
+/// after 35 ms and is back under the limit by 100 ms. A 100 ms step sees
+/// 0.9957 at its end and reports nothing; a 10 ms step catches the crossing
+/// and holds the wheel.
+///
+/// The obligation is the caller's, and `DESIGN.md` says so: the search cannot
+/// check what a step contains. It is the same step the lag itself needs — two
+/// steps per time constant is not a resolution the exponential is integrated
+/// at either.
+#[test]
+fn a_step_coarser_than_the_motor_lag_misses_a_brief_excursion() {
+    const LIMIT: f64 = 1.0;
+    const T_M: f64 = 0.05;
+    const TORQUE: f64 = 0.1;
+
+    let inertia = Matrix3::from_diagonal(&Vector3::repeat(BODY_INERTIA));
+    let build = || {
+        let wheel =
+            orts::spacecraft::reaction_wheel::Rw::new(Vector3::z(), WHEEL_INERTIA, LIMIT, TORQUE)
+                .with_motor_lag(T_M);
+        let mut rw = ReactionWheelAssembly::new(vec![wheel]);
+        // The motor is asked to brake, from a state where it is still pushing
+        // the wheel out.
+        rw.command = RwCommand::Torques(vec![-TORQUE]);
+        SpacecraftDynamics::new(arika::earth::MU, PointMass, inertia).with_effector(rw)
+    };
+
+    let walk_with =
+        |dt: f64| {
+            let system = build();
+            let mut initial = system.initial_augmented_state(initial_plant());
+            initial.aux[0] = 0.999;
+            // Still accelerating outward when the reversal arrives.
+            initial.aux[1] = TORQUE;
+
+            let mut group: IndependentGroup<Dynamics> = IndependentGroup::new(
+                IntegratorConfig::Rk4 { dt },
+            )
+            .add_satellite("sat", initial, build());
+            let mut peak = f64::NEG_INFINITY;
+            let mut held = false;
+            group
+                .propagate_to_with(0.2, |_id, _t, state| {
+                    peak = peak.max(state.aux[0]);
+                    held |= state.modes[0] != ConstraintMode::Free;
+                })
+                .expect("the walk succeeds");
+            (peak, held)
+        };
+
+    let (coarse_peak, coarse_held) = walk_with(0.1);
+    assert!(
+        !coarse_held,
+        "a 100 ms step reports no crossing, so the wheel is never held"
+    );
+    assert!(
+        (coarse_peak - 0.995_667).abs() < 1e-6,
+        "and the states it does report stay under the limit, at {coarse_peak}"
+    );
+
+    let (fine_peak, fine_held) = walk_with(0.01);
+    assert!(fine_held, "a 10 ms step catches the crossing");
+    assert!(
+        (fine_peak - LIMIT).abs() < 1e-9,
+        "and holds the wheel on its bound, not at {fine_peak}"
+    );
+}
