@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { unitAttitude } from "../attitude.js";
 import { AttitudeSceneContents } from "../components/AttitudeSceneContents.js";
 import { useSunLighting } from "../components/SunLighting.js";
 import { type DirectionVectorOptions, resolveDirectionVectors } from "../directionVectors.js";
@@ -7,7 +8,6 @@ import {
   displayQuaternion,
   type Quat,
   resolveDisplayOrientation,
-  unitAttitude,
   type Vec3,
 } from "../displayFrame.js";
 import { computeLvlhAxes } from "../sceneFrame.js";

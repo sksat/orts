@@ -18,6 +18,11 @@
       ],
       "files": [
         {
+          "path": "src/attitude.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/attitude.ts"
+        },
+        {
           "path": "src/axisTriad.ts",
           "type": "registry:lib",
           "target": "@components/orbit-viewer/axisTriad.ts"
