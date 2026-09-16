@@ -207,6 +207,19 @@ impl ThrusterSpec {
             return ExternalLoads::zeros();
         }
 
+        // `F/m` has a singularity at zero mass, and a trial step of a boundary
+        // search can reach it: the search re-steps an interval under the mode
+        // that held before the crossing, so it steps past the propellant floor
+        // on purpose, and a step wide enough can take a stage below zero. What
+        // it needs back from such a state is a finite number — nothing there
+        // is physical, and the bisection is on its way to an interval that is
+        // — so a state with no mass gets zero loads rather than an infinity
+        // that fails the walk. This is not the depletion decision, which is the
+        // pool's mode: it is the domain of `F/m`.
+        if !(state.mass > 0.0) {
+            return ExternalLoads::zeros();
+        }
+
         // Force in body frame [N]
         let f_body_n = self.thrust_n * throttle * self.direction_body;
 
@@ -649,6 +662,30 @@ mod tests {
         assert_eq!(loads.acceleration_inertial, arika::frame::Vec3::zeros());
         assert_eq!(loads.torque_body, arika::frame::Vec3::zeros());
         assert_eq!(loads.mass_rate, 0.0);
+    }
+
+    /// `F/m` has a singularity at zero mass, and a boundary search reaches it
+    /// on purpose: it re-steps an interval under the mode that held before the
+    /// crossing, so it steps past the propellant floor, and a wide enough step
+    /// takes a stage below zero. A positive floor puts the *boundary* away
+    /// from the singularity; it does not keep a trial from reaching it. What
+    /// the search needs back from there is a finite number.
+    ///
+    /// Measured with a floor of 1 kg, an initial mass of 1.1 and a flow of
+    /// 2.2 kg/s, RK4's midpoint mass is exactly zero at `dt = 1`.
+    #[test]
+    fn a_state_with_no_mass_gets_finite_loads() {
+        let t = Thruster::new(1.0, 300.0, Vector3::x());
+        for mass in [0.0, -1.0, -1e-9] {
+            let loads = t.loads(0.0, &state_with_mass(mass), None);
+            assert_eq!(loads.mass_rate, 0.0, "at a mass of {mass}");
+            assert_eq!(
+                loads.acceleration_inertial,
+                arika::frame::Vec3::zeros(),
+                "at a mass of {mass}"
+            );
+            assert_eq!(loads.torque_body, arika::frame::Vec3::zeros());
+        }
     }
 
     /// A thruster with propellant behind it fires whatever its mass: running

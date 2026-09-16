@@ -114,15 +114,8 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     ///
     /// Panics if a pool is already registered. Two pools would be two floors,
     /// which is what this exists to prevent.
-    pub fn with_propellant(mut self, pool: PropellantPool) -> Self {
-        assert!(
-            self.pool.is_none(),
-            "a spacecraft has one propellant pool, and this one already has one"
-        );
-        let index = self.effectors.len();
-        self = self.with_effector(pool);
-        self.pool = Some((pool, index));
-        self
+    pub fn with_propellant(self, pool: PropellantPool) -> Self {
+        self.with_effector(pool)
     }
 
     /// Add a model that burns propellant (builder pattern).
@@ -175,6 +168,11 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
 
     /// Add a state effector (builder pattern).
     ///
+    /// A [`PropellantPool`] registered here is registered as the pool, exactly
+    /// as [`with_propellant`](Self::with_propellant) would: it declares a
+    /// boundary and carries the mode the propulsion is gated on, and a pool
+    /// the system did not know about would declare a floor that stops nothing.
+    ///
     /// Effectors have auxiliary state (e.g. RW angular momentum) that
     /// is integrated alongside the plant state. The effector must produce
     /// its loads in this system's inertial frame `F` (its
@@ -188,7 +186,20 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
         let mode_dim = effector.mode_dim();
         crate::effector::check_declared_modes(effector.name(), &effector.boundaries(), mode_dim);
         self.registry.register(effector.name(), dim, mode_dim);
-        self.effectors.push(Box::new(effector));
+        let index = self.effectors.len();
+        let boxed: Box<dyn StateEffector<SpacecraftState<F>>> = Box::new(effector);
+        // A pool is the pool wherever it was registered. Recognised here so
+        // that the generic path cannot leave one the system does not know
+        // about: its floor would be a boundary that stops no thruster, and no
+        // state would carry the mode it needs.
+        if let Some(pool) = (&*boxed as &dyn std::any::Any).downcast_ref::<PropellantPool>() {
+            assert!(
+                self.pool.is_none(),
+                "a spacecraft has one propellant pool, and this one already has one"
+            );
+            self.pool = Some((*pool, index));
+        }
+        self.effectors.push(boxed);
         self
     }
 
@@ -896,6 +907,48 @@ mod tests {
             with_thrust.contains(&"thruster"),
             "while there is propellant it is there, and named {with_thrust:?}"
         );
+    }
+
+    /// A pool is the pool wherever a caller registered it. `with_effector` is
+    /// public and `PropellantPool` is an effector, so the generic path could
+    /// otherwise leave a pool the system does not know about: its floor would
+    /// declare a boundary that stops no thruster, and no state would carry the
+    /// mode it needs.
+    #[test]
+    fn a_pool_registered_as_a_plain_effector_is_still_the_pool() {
+        use crate::spacecraft::{PropellantPool, Thruster};
+
+        const FLOOR: f64 = 100.0;
+        let dynamics = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
+            .with_effector(PropellantPool::new(FLOOR))
+            .with_propulsion(Thruster::new(10.0, 300.0, Vector3::x()));
+
+        assert_eq!(
+            dynamics.pool().map(|p| p.dry_mass()),
+            Some(FLOOR),
+            "the system knows the pool it was handed"
+        );
+
+        // And it gates on it: on the floor from the start, so nothing burns.
+        let empty = SpacecraftState {
+            mass: FLOOR,
+            ..sample_spacecraft()
+        };
+        let dry = dynamics.derivatives(0.0, &dynamics.initial_augmented_state(empty));
+        assert_eq!(dry.plant.mass, 0.0);
+    }
+
+    /// Two floors are what one pool exists to prevent, whichever door they
+    /// came through.
+    #[test]
+    #[should_panic(expected = "one propellant pool")]
+    fn a_second_pool_is_refused() {
+        use crate::spacecraft::PropellantPool;
+
+        let _: SpacecraftDynamics<PointMass> =
+            SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
+                .with_propellant(PropellantPool::new(100.0))
+                .with_effector(PropellantPool::new(200.0));
     }
 
     /// A propulsion model with no pool behind it would thrust forever: the
