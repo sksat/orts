@@ -1039,7 +1039,6 @@ mod tests {
                     effector: 0,
                     boundary: crate::effector::EffectorBoundary {
                         kind: crate::effector::BoundaryKind::ReachedLower { index: 0 },
-                        crossing: utsuroi::Crossing::Falling,
                         boundary_tolerance: 0.0,
                     },
                     aux_offset: 0,

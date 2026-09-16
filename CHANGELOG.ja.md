@@ -113,6 +113,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `AuxRegistry::register` は第 3 引数に effector の `mode_dim` を取り、group が
   伝播する `DynamicalSystem` は `HasBoundaries` も実装する必要がある (全 method が
   既定実装なので、境界のない系は `impl HasBoundaries for X {}` で足りる)。
+  境界の値は残余である: 境界の手前で正、境界上で 0、越えると負。到達は残余が尽きる 1 方向なので
+  `EffectorBoundary` は交差の向きを持たず、上がって境界に入る量は符号を反転して書く。越えた側が
+  1 つに決まることが、「歩き始めの state が既に境界を越えている」場合 (探索では見つけられない) を
+  判定して刻む前に境界へ載せる根拠になる。
   ホイールの角運動量の上限を守るのは伝播になり、`orts::boundary::walk_to_target` を走らせる
   経路 — group、CLI の制御付き経路、あるいはこの関数を直接呼ぶ経路 — でだけ守られる。
   `Integrator::integrate` で直接刻む呼び出し側では全てのホイールが `Free` のままで、

@@ -119,7 +119,9 @@ impl<Sys: HasBoundaries> RootEvent<Sys::State> for BoundaryEvent<'_, Sys> {
     }
 
     fn crossing(&self) -> Crossing {
-        self.declared.boundary.crossing
+        // A boundary value is a margin, so reaching one is the margin running
+        // out. See [`EffectorBoundary`](crate::effector::EffectorBoundary).
+        Crossing::Falling
     }
 
     fn terminal(&self) -> bool {
@@ -220,11 +222,30 @@ where
     // check; every state this walk hands back has, since it offers each
     // boundary to the check before resuming.
     let mut checked = start_is_checked;
+    // Set by a root, and read at the top of the next pass: the state a root
+    // produced is reported once every transition it set off has been applied,
+    // rather than between two of them. The only way back to the top of this
+    // loop is through a root, so nothing has to clear it.
+    let mut resumed_from_a_boundary = false;
     loop {
         // A boundary can already be crossed at the state the walk starts from:
         // a command applied between walks can turn a held wheel loose, and a
         // crossing that has already happened is not one a search will find.
-        settle_what_is_already_past(system, boundaries, &mut state, t);
+        // Settling one can open another, so this runs until the state is in a
+        // mode that agrees with itself.
+        let moved = settle_what_is_already_past(system, boundaries, &mut state, t);
+
+        // The state the caller last saw is not this one, so it is reported and
+        // offered to the check before the walk carries it any further. A
+        // boundary that stops the walk here stops it on the settled state, at
+        // the time the transition happened.
+        if moved || resumed_from_a_boundary {
+            observer(t, &state);
+            if let ControlFlow::Break(reason) = check(t, &state) {
+                return Ok((BoundaryWalk::Stopped(reason), t, state));
+            }
+            checked = true;
+        }
 
         // Only the boundaries that mean something in the modes the state now
         // has. Switched outside the walk, which is where a set allows it.
@@ -256,18 +277,17 @@ where
                 for hit in roots.hits() {
                     system.settle_boundary(&boundaries[hit.event], &mut settled);
                 }
-                observer(t, &settled);
-                if let ControlFlow::Break(reason) = check(t, &settled) {
-                    return Ok((BoundaryWalk::Stopped(reason), t, settled));
-                }
+                // Reported at the top of the loop, after whatever these
+                // transitions opened has been settled too.
                 state = settled;
-                checked = true;
+                resumed_from_a_boundary = true;
             }
         }
     }
 }
 
-/// Settle every boundary the state is already past, until none is.
+/// Settle every boundary the state is already past, until none is, and answer
+/// whether anything moved.
 ///
 /// One pass can open another — a wheel let loose by a command can be past the
 /// other bound — so this repeats, bounded by the number of boundaries there
@@ -277,24 +297,27 @@ fn settle_what_is_already_past<Sys: HasBoundaries>(
     boundaries: &[DeclaredBoundary],
     state: &mut Sys::State,
     t: f64,
-) {
+) -> bool {
+    let mut settled_any = false;
     for _ in 0..=boundaries.len() {
         let mut moved = false;
         for declared in boundaries {
             if !system.boundary_is_active(declared, state) {
                 continue;
             }
-            // The value is a margin: at or below zero is at or past the
-            // boundary.
+            // The value is a margin, so at or below zero is at or past the
+            // boundary — the one side there is to be past.
             if system.boundary_value(declared, t, state) <= 0.0 {
                 system.settle_boundary(declared, state);
                 moved = true;
+                settled_any = true;
             }
         }
         if !moved {
-            return;
+            break;
         }
     }
+    settled_any
 }
 
 // The three solvers, each forwarding the same three questions. Written out
@@ -415,7 +438,6 @@ mod tests {
                 effector: 0,
                 boundary: EffectorBoundary {
                     kind,
-                    crossing: Crossing::Falling,
                     boundary_tolerance: 0.0,
                 },
                 aux_offset: 0,
@@ -472,6 +494,38 @@ mod tests {
         }
     }
 
+    /// Walk `from` to `t_target` through the boundary handling, with a
+    /// termination check of the caller's and a record of what it observed.
+    ///
+    /// `start_is_checked` is true, as it is for a segment continuing from one
+    /// the caller already checked: a state the walk has not changed owes the
+    /// check nothing.
+    fn walk_watching(
+        system: &Ramped,
+        from: Ramp,
+        t_target: f64,
+        check: &dyn Fn(f64, &Ramp) -> ControlFlow<&'static str>,
+    ) -> (BoundaryWalk<&'static str>, f64, Ramp, Vec<(f64, Ramp)>) {
+        let boundaries = system.boundaries();
+        let mut slots = vec![RootSlot::new(); boundaries.len()];
+        let mut seen: Vec<(f64, Ramp)> = Vec::new();
+        let (walked, t, state) = walk_to_target(
+            system,
+            &boundaries,
+            &mut slots,
+            RootSearch::default(),
+            from,
+            0.0,
+            t_target,
+            true,
+            |state, t, _checked| Rk4.stepper(system, state, t, DT),
+            &mut |t: f64, s: &Ramp| seen.push((t, s.clone())),
+            &check,
+        )
+        .expect("the walk succeeds");
+        (walked, t, state, seen)
+    }
+
     /// Walk `from` to `t_target` through the boundary handling.
     fn walk(system: &Ramped, from: Ramp, t_target: f64) -> (f64, Ramp) {
         let boundaries = system.boundaries();
@@ -525,6 +579,47 @@ mod tests {
                 "asked about {kind:?} while held={held}"
             );
         }
+    }
+
+    /// Settling a boundary the state was already past changes the state after
+    /// the caller last looked at it, so the walk reports it and offers it to
+    /// the caller's check before stepping. A caller whose check breaks on what
+    /// the transition produced — a mode that ends the run — would otherwise be
+    /// told about it a whole step late, or not until the target.
+    #[test]
+    fn a_state_settled_before_the_first_step_is_reported_and_checked() {
+        let system = Ramped::new();
+        let (walked, t, state, seen) = walk_watching(
+            &system,
+            Ramp {
+                x: -0.5,
+                held: false,
+            },
+            1.0,
+            &|_t, s| {
+                if s.held {
+                    ControlFlow::Break("held")
+                } else {
+                    ControlFlow::Continue(())
+                }
+            },
+        );
+
+        assert!(
+            matches!(walked, BoundaryWalk::Stopped("held")),
+            "the check sees the settled state"
+        );
+        assert_eq!(t, 0.0, "at the time the transition happened");
+        assert_eq!(
+            state,
+            Ramp { x: 0.0, held: true },
+            "and the walk hands back what it settled"
+        );
+        assert_eq!(
+            seen,
+            vec![(0.0, Ramp { x: 0.0, held: true })],
+            "reported once, after the transition"
+        );
     }
 
     /// A walk can start from a state that is already past a boundary — a

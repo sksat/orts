@@ -141,6 +141,12 @@ section is subdivided by package.
   `mode_dim` as a third argument, and a `DynamicalSystem` propagated by a group
   must also implement `HasBoundaries` (every method defaulted, so
   `impl HasBoundaries for X {}` is enough for a system with no boundaries).
+  A boundary's value is a margin: positive while the boundary is ahead, zero on
+  it, negative past it, so `EffectorBoundary` carries no crossing direction —
+  reaching one is the margin running out, and a bound a value would rise into
+  is written with its sign flipped. One side being the crossed side is what
+  lets the propagation recognise a state that is *already* past a boundary,
+  which no search can find, and settle it before it steps.
   A wheel's momentum limit is now the propagation's to keep, and only a path
   that runs `orts::boundary::walk_to_target` — the groups, the CLI's controlled
   path, or that function called directly — keeps it. A caller stepping such a

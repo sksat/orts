@@ -34,7 +34,6 @@ const MOMENTUM_TOLERANCE: f64 = 1e-12;
 /// still holding it [N·m].
 const RELEASE_TOLERANCE: f64 = 1e-12;
 use crate::model::{HasAttitude, HasFrame};
-use utsuroi::Crossing;
 
 /// A single reaction wheel with physical limits.
 #[derive(Debug, Clone)]
@@ -567,8 +566,7 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
 
     fn boundaries(&self) -> Vec<EffectorBoundary> {
         // Three per wheel: either bound, and one release whose value the mode
-        // signs. Every value is a margin that runs out, so every crossing is
-        // falling.
+        // signs.
         (0..self.core.num_wheels())
             .flat_map(|index| {
                 [
@@ -579,7 +577,6 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
             })
             .map(|kind| EffectorBoundary {
                 kind,
-                crossing: Crossing::Falling,
                 // A held wheel sits on its bound for many steps, and the
                 // momentum jitters around it. The width is in the value's own
                 // units: newton-metre-seconds of margin for a bound, and
@@ -753,10 +750,6 @@ mod tests {
         let rw = RwAssembly::three_axis(0.01, 1.0, 0.1);
         let declared = StateEffector::<AttitudeState>::boundaries(&rw);
         assert_eq!(declared.len(), 9, "three per wheel");
-        assert!(
-            declared.iter().all(|b| b.crossing == Crossing::Falling),
-            "every value is a margin that runs out"
-        );
         assert_eq!(
             declared.iter().map(|b| b.kind).take(3).collect::<Vec<_>>(),
             vec![

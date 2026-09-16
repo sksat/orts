@@ -8,7 +8,7 @@
 
 use arika::epoch::Epoch;
 use nalgebra::Vector3;
-use utsuroi::{Crossing, OdeState, Projection, Tolerances};
+use utsuroi::{OdeState, Projection, Tolerances};
 
 use crate::model::{ExternalLoads, HasFrame};
 
@@ -265,14 +265,16 @@ pub struct BoundaryExchange {
 /// A boundary an effector's state can reach, for the propagation to stop at.
 ///
 /// The value it is found in is the effector's to compute
-/// ([`StateEffector::boundary_value`]); this says which boundary it is and how
-/// the search should read that value.
+/// ([`StateEffector::boundary_value`]), and it is a *margin*: positive while
+/// the boundary is still ahead, zero on it, negative past it. Reaching a
+/// boundary is therefore one direction — the margin running out — and a bound
+/// whose value would rise into it is written with its sign flipped. That is
+/// what lets the propagation recognise a state that is *already* past a
+/// boundary, which no search can find: there is one side to be past.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EffectorBoundary {
     /// Which boundary of which constrained quantity.
     pub kind: BoundaryKind,
-    /// Which direction across zero counts as reaching it.
-    pub crossing: Crossing,
     /// Width of the value within which the state still counts as being on the
     /// boundary, in the value's own units.
     ///
