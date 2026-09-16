@@ -694,11 +694,12 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
         }
 
         // The mode decides what the wheel exchanges. A set built without modes
-        // — a state assembled by hand rather than by the system that registered
-        // this effector — falls back to the per-stage comparison, which is what
-        // a walk with no boundary handling has always done. Such a state ends
-        // up sitting one step's overshoot past the limit, since the momentum is
-        // no longer an `aux_bounds` entry for the projection to clamp.
+        // falls back to the per-stage comparison, which is what a walk with no
+        // boundary handling has always done, and such a state ends up sitting
+        // one step's overshoot past the limit since the momentum is no longer
+        // an `aux_bounds` entry for the projection to clamp. A system that
+        // registered this effector rejects such a state before evaluating it,
+        // so this arm is for a caller driving the effector directly.
         let applied: Vec<f64> = if modes.len() == n {
             nu.iter()
                 .zip(modes)

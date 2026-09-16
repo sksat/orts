@@ -182,6 +182,21 @@ impl AugmentedAttitudeSystem {
             self.registry.total_dim()
         );
 
+        // A state whose mode vector does not match what the effectors
+        // registered cannot say which constraints are held, and every boundary
+        // declared for them would read as inactive: the propagation would walk
+        // past a wheel's limit with the walk running and nothing to stop it.
+        // Rejected here, on the first evaluation, rather than silently opting
+        // out of the constraints. `initial_augmented_state` builds the vector
+        // this expects.
+        assert_eq!(
+            state.modes.len(),
+            self.registry.total_modes(),
+            "mode vector length ({}) does not match registry ({})",
+            state.modes.len(),
+            self.registry.total_modes()
+        );
+
         // 1. Construct context with prescribed orbit and mass
         let context = DecoupledContext {
             attitude: state.plant.clone(),

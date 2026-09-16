@@ -85,17 +85,16 @@ fn main() {
         sun_sensors: vec![],
     };
 
-    let mut state = AugmentedState {
-        plant: initial,
-        aux: vec![0.0, 0.0, 0.0],
-        aux_bounds: vec![],
-        // No modes: this example steps with `Rk4.integrate`, which locates no
-        // boundaries, and a wheel with no mode falls back to the comparison
-        // each stage makes against its own limit. A propagation that holds a
-        // wheel on its limit goes through a group or
-        // `orts::boundary::walk_to_target`.
-        modes: vec![],
-    };
+    // Built through a system carrying the same effector, so the auxiliary
+    // state and the modes match what it registered. The loop below rebuilds
+    // the system every control tick to carry the new command; the state it
+    // steps is this one. Stepping with `Rk4.integrate` locates no boundaries,
+    // so the wheels stay `Free` and their limits are not enforced — a
+    // propagation that holds a wheel on its limit goes through a group or
+    // `orts::boundary::walk_to_target`.
+    let mut state = AugmentedAttitudeSystem::circular_orbit(inertia, mu, radius, MASS)
+        .with_effector(rw.clone())
+        .initial_augmented_state(initial);
     let mut t = 0.0;
 
     let mut rows: Vec<CsvRow> = Vec::new();

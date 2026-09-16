@@ -155,6 +155,12 @@ section is subdivided by package.
   is written with its sign flipped. One side being the crossed side is what
   lets the propagation recognise a state that is *already* past a boundary,
   which no search can find, and settle it before it steps.
+  A state handed to one of these systems must carry a mode for every one its
+  effectors registered; the first evaluation panics otherwise, as it already
+  does for an auxiliary vector of the wrong length. A state without them could
+  not say which constraints hold, so every boundary declared for those
+  effectors would read as inactive and a group would walk a wheel past its
+  limit with the walk running. `initial_augmented_state` builds the vector.
   A wheel's momentum limit is now the propagation's to keep, and only a path
   that runs `orts::boundary::walk_to_target` — the groups, the CLI's controlled
   path, or that function called directly — keeps it. A caller stepping such a

@@ -327,6 +327,21 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
         t: f64,
         state: &AugmentedState<SpacecraftState<F>>,
     ) -> AugmentedState<SpacecraftState<F>> {
+        // A state whose mode vector does not match what the effectors
+        // registered cannot say which constraints are held, and every boundary
+        // declared for them would read as inactive: the propagation would walk
+        // past a wheel's limit with the walk running and nothing to stop it.
+        // Rejected here, on the first evaluation, rather than silently opting
+        // out of the constraints. `initial_augmented_state` builds the vector
+        // this expects.
+        assert_eq!(
+            state.modes.len(),
+            self.registry.total_modes(),
+            "mode vector length ({}) does not match registry ({})",
+            state.modes.len(),
+            self.registry.total_modes()
+        );
+
         let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
 
         // Gravitational acceleration
@@ -594,6 +609,29 @@ mod tests {
         assert!(
             dynamics.boundary_is_active(&find(BoundaryKind::ReachedUpper { index: 1 }), &state)
         );
+    }
+
+    /// A hand-built state can carry auxiliary values without the modes that
+    /// say which constraints hold, and `AugmentedState`'s fields are public, so
+    /// nothing stops one from reaching a group. Every boundary declared for
+    /// those effectors would then read as inactive and the propagation would
+    /// walk a wheel past its limit with the walk running — so the first
+    /// evaluation rejects it instead.
+    #[test]
+    #[should_panic(expected = "mode vector length")]
+    fn a_state_without_the_modes_its_effectors_registered_is_rejected() {
+        use crate::spacecraft::ReactionWheelAssembly;
+
+        let dynamics = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
+            .with_effector(ReactionWheelAssembly::three_axis(0.01, 0.5, 0.1));
+        let state = AugmentedState {
+            plant: sample_spacecraft(),
+            aux: vec![0.0; 3],
+            aux_bounds: vec![],
+            modes: vec![],
+        };
+
+        dynamics.derivatives(0.0, &state);
     }
 
     /// Wrap a plant state as an augmented state with no effectors.

@@ -123,6 +123,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `EffectorBoundary` は交差の向きを持たず、上がって境界に入る量は符号を反転して書く。越えた側が
   1 つに決まることが、「歩き始めの state が既に境界を越えている」場合 (探索では見つけられない) を
   判定して刻む前に境界へ載せる根拠になる。
+  これらの系に渡す state は、effector が登録した分のモードを必ず持つ。持たない state は最初の
+  評価で panic する (長さの合わない aux vector と同じ扱い)。モードのない state はどの拘束が
+  held かを言えないので、その effector が申告した境界は全て inactive と読まれ、group は walk を
+  走らせたままホイールを上限の外へ運んでしまう。`initial_augmented_state` がこの vector を作る。
   ホイールの角運動量の上限を守るのは伝播になり、`orts::boundary::walk_to_target` を走らせる
   経路 — group、CLI の制御付き経路、あるいはこの関数を直接呼ぶ経路 — でだけ守られる。
   `Integrator::integrate` で直接刻む呼び出し側では全てのホイールが `Free` のままで、
