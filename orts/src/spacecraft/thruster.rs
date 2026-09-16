@@ -216,7 +216,13 @@ impl ThrusterSpec {
         // — so a state with no mass gets zero loads rather than an infinity
         // that fails the walk. This is not the depletion decision, which is the
         // pool's mode: it is the domain of `F/m`.
-        if !(state.mass > 0.0) {
+        // `partial_cmp`, so that a mass that is no number is covered too: a
+        // NaN is comparable to nothing, and what it means here is the same as
+        // no mass.
+        if !matches!(
+            state.mass.partial_cmp(&0.0),
+            Some(core::cmp::Ordering::Greater)
+        ) {
             return ExternalLoads::zeros();
         }
 
