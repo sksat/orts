@@ -424,7 +424,13 @@ impl<G: GravityField, F: Eci + 'static> HasBoundaries for SpacecraftDynamics<G, 
             .collect()
     }
 
-    fn boundary_value(&self, declared: &DeclaredBoundary, t: f64, state: &Self::State) -> f64 {
+    fn boundary_value(
+        &self,
+        declared: &DeclaredBoundary,
+        segment: Option<&SegmentContext>,
+        t: f64,
+        state: &Self::State,
+    ) -> f64 {
         let effector = &self.effectors[declared.effector];
         let aux = &state.aux[declared.aux_offset..declared.aux_offset + declared.aux_dim];
         let modes = state
@@ -432,6 +438,8 @@ impl<G: GravityField, F: Eci + 'static> HasBoundaries for SpacecraftDynamics<G, 
             .get(declared.mode_offset..declared.mode_offset + declared.mode_dim)
             .unwrap_or(&[]);
         let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
+        let segment_epoch = segment.and_then(|s| self.epoch_0.map(|e| e.add_si_seconds(s.start)));
+        let eval_segment = segment.map(|s| EvalSegment::new(s, segment_epoch.as_ref()));
         effector.boundary_value(
             declared.boundary.kind,
             EffectorInput {
@@ -440,10 +448,11 @@ impl<G: GravityField, F: Eci + 'static> HasBoundaries for SpacecraftDynamics<G, 
                 aux,
                 modes,
                 epoch: epoch.as_ref(),
-                // The search re-steps inside one segment, so a switch in time
-                // is already the segment's own end rather than something a
-                // boundary value has to hold.
-                segment: None,
+                // The same segment the derivatives were taken in, with the
+                // absolute time at its start, so an effector holding a value
+                // for the segment answers the boundary with the one the state
+                // was integrated under.
+                segment: eval_segment.as_ref(),
             },
         )
     }

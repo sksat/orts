@@ -273,7 +273,13 @@ impl crate::boundary::HasBoundaries for AugmentedAttitudeSystem {
             .collect()
     }
 
-    fn boundary_value(&self, declared: &DeclaredBoundary, t: f64, state: &Self::State) -> f64 {
+    fn boundary_value(
+        &self,
+        declared: &DeclaredBoundary,
+        segment: Option<&SegmentContext>,
+        t: f64,
+        state: &Self::State,
+    ) -> f64 {
         // The same context the derivatives are taken in: the orbit and mass
         // this system prescribes at `t`, around the attitude being examined.
         let context = DecoupledContext {
@@ -282,6 +288,8 @@ impl crate::boundary::HasBoundaries for AugmentedAttitudeSystem {
             mass: (self.mass_fn)(t),
         };
         let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
+        let segment_epoch = segment.and_then(|s| self.epoch_0.map(|e| e.add_si_seconds(s.start)));
+        let eval_segment = segment.map(|s| EvalSegment::new(s, segment_epoch.as_ref()));
         self.effectors[declared.effector].boundary_value(
             declared.boundary.kind,
             EffectorInput {
@@ -293,7 +301,9 @@ impl crate::boundary::HasBoundaries for AugmentedAttitudeSystem {
                     .get(declared.mode_offset..declared.mode_offset + declared.mode_dim)
                     .unwrap_or(&[]),
                 epoch: epoch.as_ref(),
-                segment: None,
+                // The same segment the derivatives were taken in; see
+                // [`HasBoundaries::boundary_value`].
+                segment: eval_segment.as_ref(),
             },
         )
     }
@@ -382,7 +392,7 @@ mod tests {
     /// says so, and the body keeps the momentum the wheel stopped taking.
     #[test]
     fn a_wheel_saturating_under_this_system_keeps_the_bodys_momentum() {
-        use crate::boundary::{HasBoundaries, walk_to_target};
+        use crate::boundary::{Boundaries, HasBoundaries, Span, walk_to_target};
         use crate::effector::ConstraintMode;
         use crate::spacecraft::{ReactionWheelAssembly, RwCommand};
         use core::ops::ControlFlow;
@@ -420,14 +430,19 @@ mod tests {
         let boundaries = system.boundaries();
         let mut slots = vec![RootSlot::new(); boundaries.len()];
         let (_, _, ended) = walk_to_target(
-            &system,
-            &boundaries,
-            &mut slots,
-            RootSearch::default(),
+            Boundaries {
+                system: &system,
+                declared: &boundaries,
+                slots: &mut slots,
+                search: RootSearch::default(),
+                segment: None,
+            },
+            Span {
+                from: 0.0,
+                to: 20.0,
+                start_is_checked: false,
+            },
             initial,
-            0.0,
-            20.0,
-            false,
             |state, t, _checked| Rk4.stepper(&system, state, t, DT),
             &mut |_: f64, _: &AugmentedState<AttitudeState>| {},
             &|_: f64, _: &AugmentedState<AttitudeState>| -> ControlFlow<()> {

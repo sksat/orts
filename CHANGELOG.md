@@ -141,6 +141,10 @@ section is subdivided by package.
   `mode_dim` as a third argument, and a `DynamicalSystem` propagated by a group
   must also implement `HasBoundaries` (every method defaulted, so
   `impl HasBoundaries for X {}` is enough for a system with no boundaries).
+  A boundary's value is read in the segment the step belongs to, the one the
+  derivatives were taken in, so a part that holds a value across a segment — a
+  commanded burn — answers the boundary with what the state was integrated
+  under rather than with the value from the other side of a switch.
   A boundary's value is a margin: positive while the boundary is ahead, zero on
   it, negative past it, so `EffectorBoundary` carries no crossing direction —
   reaching one is the margin running out, and a bound a value would rise into

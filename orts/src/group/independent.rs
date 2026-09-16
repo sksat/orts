@@ -2,10 +2,10 @@ use std::ops::ControlFlow;
 
 use utsuroi::{
     Dop853, DormandPrince, DynamicalSystem, IntegrationError, Integrator, OdeState, Rk4,
-    RootSearch, RootSlot, Segments, Tolerances, validate_step_size,
+    RootSearch, RootSlot, SegmentContext, Segments, Tolerances, validate_step_size,
 };
 
-use crate::boundary::{BoundaryWalk, HasBoundaries, walk_to_target};
+use crate::boundary::{Boundaries, BoundaryWalk, HasBoundaries, Span, walk_to_target};
 
 use super::HasPosition;
 use super::prop_group::{GroupSnapshot, PropGroupOutcome, SatId, SatelliteTermination};
@@ -388,17 +388,23 @@ where
                 // previous segment ended on, and the loop checked it after that
                 // segment's last accepted step.
                 let started_checked = segment.is_continuation();
+                let segment_times = SegmentContext::new(segment.start(), segment_end);
                 let mut observe = |t: f64, s: &D::State| observer(&entry.id, t, s);
                 let walk = match &integrator {
                     IntegratorConfig::Dp45 { dt, tolerances } => walk_to_target(
-                        &*dynamics,
-                        &boundaries,
-                        &mut slots,
-                        search,
+                        Boundaries {
+                            system: &*dynamics,
+                            declared: &boundaries,
+                            slots: &mut slots,
+                            search,
+                            segment: Some(&segment_times),
+                        },
+                        Span {
+                            from: entry.t,
+                            to: segment_end,
+                            start_is_checked: started_checked,
+                        },
                         entry.state.clone(),
-                        entry.t,
-                        segment_end,
-                        started_checked,
                         |state, t, checked| {
                             let stepper =
                                 DormandPrince.stepper(bound, state, t, *dt, tolerances.clone());
@@ -412,14 +418,19 @@ where
                         &check,
                     ),
                     IntegratorConfig::Dop853 { dt, tolerances } => walk_to_target(
-                        &*dynamics,
-                        &boundaries,
-                        &mut slots,
-                        search,
+                        Boundaries {
+                            system: &*dynamics,
+                            declared: &boundaries,
+                            slots: &mut slots,
+                            search,
+                            segment: Some(&segment_times),
+                        },
+                        Span {
+                            from: entry.t,
+                            to: segment_end,
+                            start_is_checked: started_checked,
+                        },
                         entry.state.clone(),
-                        entry.t,
-                        segment_end,
-                        started_checked,
                         |state, t, checked| {
                             let stepper = Dop853.stepper(bound, state, t, *dt, tolerances.clone());
                             if checked {
@@ -432,14 +443,19 @@ where
                         &check,
                     ),
                     IntegratorConfig::Rk4 { dt } => walk_to_target(
-                        &*dynamics,
-                        &boundaries,
-                        &mut slots,
-                        search,
+                        Boundaries {
+                            system: &*dynamics,
+                            declared: &boundaries,
+                            slots: &mut slots,
+                            search,
+                            segment: Some(&segment_times),
+                        },
+                        Span {
+                            from: entry.t,
+                            to: segment_end,
+                            start_is_checked: started_checked,
+                        },
                         entry.state.clone(),
-                        entry.t,
-                        segment_end,
-                        started_checked,
                         |state, t, checked| {
                             let stepper = Rk4.stepper(bound, state, t, *dt);
                             if checked {

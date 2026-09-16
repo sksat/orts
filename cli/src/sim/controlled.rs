@@ -18,7 +18,7 @@ use orts::setup::default_third_bodies;
 use crate::sim::core::spacecraft_dynamics_for;
 use core::ops::ControlFlow;
 use nalgebra::Vector3;
-use orts::boundary::{BoundaryWalk, HasBoundaries, walk_to_target};
+use orts::boundary::{Boundaries, BoundaryWalk, HasBoundaries, Span, walk_to_target};
 use orts::group::IntegratorConfig;
 use orts::spacecraft::{
     MtqAssembly, ReactionWheelAssembly, SpacecraftDynamics, SpacecraftState, ThrusterAssembly,
@@ -26,7 +26,8 @@ use orts::spacecraft::{
 };
 use tobari::magnetic::igrf::Igrf;
 use utsuroi::{
-    Dop853, DormandPrince, IntegrationError, Integrator, Rk4, RootSearch, RootSlot, Segments,
+    Dop853, DormandPrince, IntegrationError, Integrator, Rk4, RootSearch, RootSlot, SegmentContext,
+    Segments,
 };
 
 use crate::config::{ControllerConfig, MtqConfig, ReactionWheelConfig, SensorChoice};
@@ -582,6 +583,7 @@ where
         // accepted, and the steppers document that asking again about the same
         // `(t, state)` can change what a stateful predicate answers.
         let started_checked = segment.is_continuation();
+        let segment_times = SegmentContext::new(t, segment_end);
         let mut observe = |_: f64, _: &AugmentedState<SpacecraftState>| {};
 
         // The walk rather than `try_integrate`: the same steps, but it takes
@@ -594,14 +596,19 @@ where
         // needs.
         let (walk, reached_t, next_state) = match integrator {
             IntegratorConfig::Rk4 { dt } => walk_to_target(
-                &sat.dynamics,
-                &boundaries,
-                &mut slots,
-                search,
+                Boundaries {
+                    system: &sat.dynamics,
+                    declared: &boundaries,
+                    slots: &mut slots,
+                    search,
+                    segment: Some(&segment_times),
+                },
+                Span {
+                    from: t,
+                    to: segment_end,
+                    start_is_checked: started_checked,
+                },
                 state.clone(),
-                t,
-                segment_end,
-                started_checked,
                 |state, t, checked| {
                     let stepper = Rk4.stepper(bound, state, t, *dt);
                     if checked {
@@ -614,14 +621,19 @@ where
                 event_check,
             ),
             IntegratorConfig::Dp45 { dt, tolerances } => walk_to_target(
-                &sat.dynamics,
-                &boundaries,
-                &mut slots,
-                search,
+                Boundaries {
+                    system: &sat.dynamics,
+                    declared: &boundaries,
+                    slots: &mut slots,
+                    search,
+                    segment: Some(&segment_times),
+                },
+                Span {
+                    from: t,
+                    to: segment_end,
+                    start_is_checked: started_checked,
+                },
                 state.clone(),
-                t,
-                segment_end,
-                started_checked,
                 |state, t, checked| {
                     let stepper = DormandPrince.stepper(bound, state, t, *dt, tolerances.clone());
                     if checked {
@@ -634,14 +646,19 @@ where
                 event_check,
             ),
             IntegratorConfig::Dop853 { dt, tolerances } => walk_to_target(
-                &sat.dynamics,
-                &boundaries,
-                &mut slots,
-                search,
+                Boundaries {
+                    system: &sat.dynamics,
+                    declared: &boundaries,
+                    slots: &mut slots,
+                    search,
+                    segment: Some(&segment_times),
+                },
+                Span {
+                    from: t,
+                    to: segment_end,
+                    start_is_checked: started_checked,
+                },
                 state.clone(),
-                t,
-                segment_end,
-                started_checked,
                 |state, t, checked| {
                     let stepper = Dop853.stepper(bound, state, t, *dt, tolerances.clone());
                     if checked {

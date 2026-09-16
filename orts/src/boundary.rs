@@ -12,7 +12,7 @@ use core::ops::ControlFlow;
 
 use utsuroi::{
     AdaptiveStepper, AdaptiveStepper853, Crossing, DynamicalSystem, FixedStepper, IntegrationError,
-    RootEvent, RootOutcome, RootSearch, RootSet, RootSlot,
+    RootEvent, RootOutcome, RootSearch, RootSet, RootSlot, SegmentContext,
 };
 
 use crate::effector::{ConstraintMode, EffectorBoundary};
@@ -75,8 +75,22 @@ pub trait HasBoundaries: DynamicalSystem {
     /// The signed value a boundary lives in, at a state the search is
     /// examining.
     ///
+    /// `segment` is the interval the step being examined belongs to, and it is
+    /// the same one the derivatives were taken in: a part that holds a value
+    /// for the length of a segment — a commanded burn, a held throttle —
+    /// answers for the segment's start, and a boundary read without it would
+    /// see the value from the other side of a switch that the state being
+    /// examined never felt. A root function with a step in it is one the
+    /// search can converge on the wrong side of, or fail to localize at all.
+    ///
     /// Only asked about boundaries this system declared.
-    fn boundary_value(&self, _declared: &DeclaredBoundary, _t: f64, _state: &Self::State) -> f64 {
+    fn boundary_value(
+        &self,
+        _declared: &DeclaredBoundary,
+        _segment: Option<&SegmentContext>,
+        _t: f64,
+        _state: &Self::State,
+    ) -> f64 {
         0.0
     }
 
@@ -103,19 +117,29 @@ pub trait HasBoundaries: DynamicalSystem {
 pub struct BoundaryEvent<'a, Sys> {
     system: &'a Sys,
     declared: DeclaredBoundary,
+    segment: Option<&'a SegmentContext>,
 }
 
 impl<'a, Sys: HasBoundaries> BoundaryEvent<'a, Sys> {
     /// Read `declared` through `system`, which knows where its effector's state
-    /// is and how to evaluate it.
-    pub fn new(system: &'a Sys, declared: DeclaredBoundary) -> Self {
-        Self { system, declared }
+    /// is and how to evaluate it, in the segment the steps belong to.
+    pub fn new(
+        system: &'a Sys,
+        declared: DeclaredBoundary,
+        segment: Option<&'a SegmentContext>,
+    ) -> Self {
+        Self {
+            system,
+            declared,
+            segment,
+        }
     }
 }
 
 impl<Sys: HasBoundaries> RootEvent<Sys::State> for BoundaryEvent<'_, Sys> {
     fn value(&self, t: f64, y: &Sys::State) -> f64 {
-        self.system.boundary_value(&self.declared, t, y)
+        self.system
+            .boundary_value(&self.declared, self.segment, t, y)
     }
 
     fn crossing(&self) -> Crossing {
@@ -184,16 +208,45 @@ pub enum BoundaryWalk<B> {
 /// and only then is the state observed and offered to the check. A caller's
 /// observer therefore never sees the state as it was before the mode it just
 /// crossed into was applied.
-#[allow(clippy::too_many_arguments)]
+/// Everything a walk looks for boundaries with.
+///
+/// One value rather than a row of arguments, as
+/// [`EffectorInput`](crate::effector::EffectorInput) is: the search state and
+/// the segment belong to the boundaries, not to the state being propagated.
+pub struct Boundaries<'a, Sys: HasBoundaries> {
+    /// The system that declared them and answers about them.
+    pub system: &'a Sys,
+    /// What it declared, in the order the events are built in.
+    pub declared: &'a [DeclaredBoundary],
+    /// One guard per boundary, living across the walks of a propagation: a
+    /// guard is what keeps a boundary reported at one segment's end from being
+    /// reported again at the next one's start.
+    pub slots: &'a mut [RootSlot],
+    /// How closely a crossing's time is located.
+    pub search: RootSearch,
+    /// The interval the steps belong to, for the boundary values that hold a
+    /// value across it. `None` where the caller walks no segments.
+    pub segment: Option<&'a SegmentContext>,
+}
+
+/// The interval a walk is given: where it runs, and what the caller has
+/// already done with the state at its start.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Span {
+    /// Time the state belongs to.
+    pub from: f64,
+    /// Time to walk to, which a boundary can stop the walk short of.
+    pub to: f64,
+    /// Whether the caller's check has already seen the state at `from`. True
+    /// for a segment continuing from one this walk finished, since every state
+    /// a walk hands back has been through the check.
+    pub start_is_checked: bool,
+}
+
 pub fn walk_to_target<Sys, Mk, W, F, E, B>(
-    system: &Sys,
-    boundaries: &[DeclaredBoundary],
-    slots: &mut [RootSlot],
-    search: RootSearch,
+    boundaries: Boundaries<'_, Sys>,
+    span: Span,
     state: Sys::State,
-    t: f64,
-    t_target: f64,
-    start_is_checked: bool,
     mut make: Mk,
     observer: &mut F,
     check: &E,
@@ -206,9 +259,16 @@ where
     F: FnMut(f64, &Sys::State),
     E: Fn(f64, &Sys::State) -> ControlFlow<B>,
 {
-    let events: Vec<BoundaryEvent<'_, Sys>> = boundaries
+    let Boundaries {
+        system,
+        declared,
+        slots,
+        search,
+        segment,
+    } = boundaries;
+    let events: Vec<BoundaryEvent<'_, Sys>> = declared
         .iter()
-        .map(|declared| BoundaryEvent::new(system, *declared))
+        .map(|boundary| BoundaryEvent::new(system, *boundary, segment))
         .collect();
     let refs: Vec<&dyn RootEvent<Sys::State>> = events
         .iter()
@@ -216,8 +276,13 @@ where
         .collect();
     let mut roots = RootSet::new(&refs, slots, search)?;
 
+    let Span {
+        from,
+        to: t_target,
+        start_is_checked,
+    } = span;
     let mut state = state;
-    let mut t = t;
+    let mut t = from;
     // The caller says whether the state it handed over has been through the
     // check; every state this walk hands back has, since it offers each
     // boundary to the check before resuming.
@@ -233,7 +298,7 @@ where
         // crossing that has already happened is not one a search will find.
         // Settling one can open another, so this runs until the state is in a
         // mode that agrees with itself.
-        let moved = settle_what_is_already_past(system, boundaries, &mut state, t);
+        let moved = settle_what_is_already_past(system, declared, segment, &mut state, t);
 
         // The state the caller last saw is not this one, so it is reported and
         // offered to the check before the walk carries it any further. A
@@ -249,8 +314,8 @@ where
 
         // Only the boundaries that mean something in the modes the state now
         // has. Switched outside the walk, which is where a set allows it.
-        for (index, declared) in boundaries.iter().enumerate() {
-            if system.boundary_is_active(declared, &state) {
+        for (index, boundary) in declared.iter().enumerate() {
+            if system.boundary_is_active(boundary, &state) {
                 roots.activate(index);
             } else {
                 roots.deactivate(index);
@@ -275,7 +340,7 @@ where
                 t = t_root;
                 let mut settled = stepper.into_state();
                 for hit in roots.hits() {
-                    system.settle_boundary(&boundaries[hit.event], &mut settled);
+                    system.settle_boundary(&declared[hit.event], &mut settled);
                 }
                 // Reported at the top of the loop, after whatever these
                 // transitions opened has been settled too.
@@ -295,6 +360,7 @@ where
 fn settle_what_is_already_past<Sys: HasBoundaries>(
     system: &Sys,
     boundaries: &[DeclaredBoundary],
+    segment: Option<&SegmentContext>,
     state: &mut Sys::State,
     t: f64,
 ) -> bool {
@@ -313,7 +379,7 @@ fn settle_what_is_already_past<Sys: HasBoundaries>(
             // treating either as crossed would move the mode back and forth
             // for as long as this loop runs.
             let tolerance = declared.boundary.boundary_tolerance;
-            if system.boundary_value(declared, t, state) < -tolerance {
+            if system.boundary_value(declared, segment, t, state) < -tolerance {
                 system.settle_boundary(declared, state);
                 moved = true;
                 settled_any = true;
@@ -473,7 +539,13 @@ mod tests {
             ]
         }
 
-        fn boundary_value(&self, declared: &DeclaredBoundary, _t: f64, state: &Ramp) -> f64 {
+        fn boundary_value(
+            &self,
+            declared: &DeclaredBoundary,
+            _segment: Option<&SegmentContext>,
+            _t: f64,
+            state: &Ramp,
+        ) -> f64 {
             self.asked
                 .borrow_mut()
                 .push((declared.boundary.kind, state.held));
@@ -516,14 +588,19 @@ mod tests {
         let mut slots = vec![RootSlot::new(); boundaries.len()];
         let mut seen: Vec<(f64, Ramp)> = Vec::new();
         let (walked, t, state) = walk_to_target(
-            system,
-            &boundaries,
-            &mut slots,
-            RootSearch::default(),
+            Boundaries {
+                system: system,
+                declared: &boundaries,
+                slots: &mut slots,
+                search: RootSearch::default(),
+                segment: None,
+            },
+            Span {
+                from: 0.0,
+                to: t_target,
+                start_is_checked: true,
+            },
             from,
-            0.0,
-            t_target,
-            true,
             |state, t, _checked| Rk4.stepper(system, state, t, DT),
             &mut |t: f64, s: &Ramp| seen.push((t, s.clone())),
             &check,
@@ -537,14 +614,19 @@ mod tests {
         let boundaries = system.boundaries();
         let mut slots = vec![RootSlot::new(); boundaries.len()];
         let (_, t, state) = walk_to_target(
-            system,
-            &boundaries,
-            &mut slots,
-            RootSearch::default(),
+            Boundaries {
+                system: system,
+                declared: &boundaries,
+                slots: &mut slots,
+                search: RootSearch::default(),
+                segment: None,
+            },
+            Span {
+                from: 0.0,
+                to: t_target,
+                start_is_checked: false,
+            },
             from,
-            0.0,
-            t_target,
-            false,
             |state, t, _checked| Rk4.stepper(system, state, t, DT),
             &mut |_: f64, _: &Ramp| {},
             &|_: f64, _: &Ramp| -> ControlFlow<()> { ControlFlow::Continue(()) },

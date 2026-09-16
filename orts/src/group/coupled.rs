@@ -7,7 +7,9 @@ use utsuroi::{
     RootSearch, RootSlot, SegmentContext, Segments, Tolerances, derivatives_maybe_in_segment,
 };
 
-use crate::boundary::{BoundaryWalk, DeclaredBoundary, HasBoundaries, walk_to_target};
+use crate::boundary::{
+    Boundaries, BoundaryWalk, DeclaredBoundary, HasBoundaries, Span, walk_to_target,
+};
 
 use super::prop_group::{GroupSnapshot, PropGroupOutcome, SatId, SatelliteTermination};
 use super::state::GroupState;
@@ -257,9 +259,16 @@ where
             .collect()
     }
 
-    fn boundary_value(&self, declared: &DeclaredBoundary, t: f64, state: &Self::State) -> f64 {
+    fn boundary_value(
+        &self,
+        declared: &DeclaredBoundary,
+        segment: Option<&SegmentContext>,
+        t: f64,
+        state: &Self::State,
+    ) -> f64 {
         self.dynamics[declared.satellite].boundary_value(
             declared,
+            segment,
             t,
             &state.states[declared.satellite],
         )
@@ -530,17 +539,23 @@ where
                 // previous segment ended on, already checked after its last
                 // accepted step.
                 let started_checked = segment.is_continuation();
+                let segment_times = SegmentContext::new(segment.start(), segment_end);
                 let mut observe = |_: f64, _: &GroupState<D::State>| {};
                 match &self.integrator {
                     IntegratorConfig::Dp45 { dt, tolerances } => walk_to_target(
-                        &self.dynamics,
-                        &boundaries,
-                        &mut slots,
-                        search,
+                        Boundaries {
+                            system: &self.dynamics,
+                            declared: &boundaries,
+                            slots: &mut slots,
+                            search,
+                            segment: Some(&segment_times),
+                        },
+                        Span {
+                            from: self.t,
+                            to: segment_end,
+                            start_is_checked: started_checked,
+                        },
                         self.state.clone(),
-                        self.t,
-                        segment_end,
-                        started_checked,
                         |state, t, checked| {
                             let stepper =
                                 DormandPrince.stepper(bound, state, t, *dt, tolerances.clone());
@@ -554,14 +569,19 @@ where
                         &check,
                     ),
                     IntegratorConfig::Dop853 { dt, tolerances } => walk_to_target(
-                        &self.dynamics,
-                        &boundaries,
-                        &mut slots,
-                        search,
+                        Boundaries {
+                            system: &self.dynamics,
+                            declared: &boundaries,
+                            slots: &mut slots,
+                            search,
+                            segment: Some(&segment_times),
+                        },
+                        Span {
+                            from: self.t,
+                            to: segment_end,
+                            start_is_checked: started_checked,
+                        },
                         self.state.clone(),
-                        self.t,
-                        segment_end,
-                        started_checked,
                         |state, t, checked| {
                             let stepper = Dop853.stepper(bound, state, t, *dt, tolerances.clone());
                             if checked {
@@ -574,14 +594,19 @@ where
                         &check,
                     ),
                     IntegratorConfig::Rk4 { dt } => walk_to_target(
-                        &self.dynamics,
-                        &boundaries,
-                        &mut slots,
-                        search,
+                        Boundaries {
+                            system: &self.dynamics,
+                            declared: &boundaries,
+                            slots: &mut slots,
+                            search,
+                            segment: Some(&segment_times),
+                        },
+                        Span {
+                            from: self.t,
+                            to: segment_end,
+                            start_is_checked: started_checked,
+                        },
                         self.state.clone(),
-                        self.t,
-                        segment_end,
-                        started_checked,
                         |state, t, checked| {
                             let stepper = Rk4.stepper(bound, state, t, *dt);
                             if checked {
@@ -1048,7 +1073,13 @@ mod tests {
                 }]
             }
 
-            fn boundary_value(&self, _: &DeclaredBoundary, _: f64, state: &OrbitalState) -> f64 {
+            fn boundary_value(
+                &self,
+                _: &DeclaredBoundary,
+                _: Option<&SegmentContext>,
+                _: f64,
+                state: &OrbitalState,
+            ) -> f64 {
                 // How far it still has to travel.
                 state.position().x - WALL
             }
