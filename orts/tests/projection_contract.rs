@@ -253,3 +253,85 @@ fn a_wheel_resting_on_its_bound_is_not_a_crossing() {
         );
     }
 }
+
+/// The body-frame cases above are the degenerate ones: an isotropic inertia
+/// with one wheel axis driven keeps `ω` parallel to the total, so the vector in
+/// body axes is constant and the gyroscopic term `-ω × H` never contributes.
+/// With a non-isotropic inertia and a tumbling body the body-frame vector
+/// turns, and only the inertial one is conserved — which is where [#446] asked
+/// for the check. This walks a wheel to its limit under those conditions and
+/// reads `R_bi (Iω + Σ aᵢ hᵢ)` at every step.
+///
+/// [#446]: https://github.com/sksat/orts/issues/446
+#[test]
+fn a_tumbling_spacecraft_keeps_its_inertial_momentum_across_the_bound() {
+    // Distinct principal moments [kg·m²], so the body-frame total turns.
+    const INERTIA: [f64; 3] = [8.0, 12.0, 20.0];
+    let inertia = Matrix3::from_diagonal(&Vector3::new(INERTIA[0], INERTIA[1], INERTIA[2]));
+
+    let mut rw = ReactionWheelAssembly::three_axis(WHEEL_INERTIA, MAX_MOMENTUM, MAX_TORQUE);
+    rw.command = RwCommand::Torques(rw.core().allocate(&Vector3::new(0.0, 0.0, MAX_TORQUE)));
+    let system = SpacecraftDynamics::new(arika::earth::MU, PointMass, inertia).with_effector(rw);
+
+    let mut plant = initial_plant();
+    // Tumbling on all three axes, fast enough that the body-frame total turns
+    // through a large angle over the span.
+    plant.attitude.angular_velocity = Vector3::new(0.05, -0.03, 0.02);
+    let initial = system.initial_augmented_state(plant);
+
+    let body_total = |state: &AugmentedState<SpacecraftState>| {
+        Vector3::new(
+            INERTIA[0] * state.plant.attitude.angular_velocity[0],
+            INERTIA[1] * state.plant.attitude.angular_velocity[1],
+            INERTIA[2] * state.plant.attitude.angular_velocity[2],
+        ) + Vector3::new(state.aux[0], state.aux[1], state.aux[2])
+    };
+    let inertial_total = |state: &AugmentedState<SpacecraftState>| {
+        state.plant.attitude.orientation() * body_total(state)
+    };
+    let started_with = inertial_total(&initial);
+    let started_in_body = body_total(&initial);
+
+    let rebuilt = || {
+        let mut rw = ReactionWheelAssembly::three_axis(WHEEL_INERTIA, MAX_MOMENTUM, MAX_TORQUE);
+        rw.command = RwCommand::Torques(rw.core().allocate(&Vector3::new(0.0, 0.0, MAX_TORQUE)));
+        SpacecraftDynamics::new(arika::earth::MU, PointMass, inertia).with_effector(rw)
+    };
+    let mut group: IndependentGroup<Dynamics> = IndependentGroup::new(IntegratorConfig::Dop853 {
+        dt: DT,
+        tolerances: Tolerances {
+            atol: 1e-12,
+            rtol: 1e-12,
+        },
+    })
+    .add_satellite("sat", initial, rebuilt());
+
+    let mut worst_drift: f64 = 0.0;
+    let mut turned_by: f64 = 0.0;
+    let mut held = false;
+    group
+        .propagate_to_with(T_END, |_id, _t, state| {
+            worst_drift = worst_drift.max((inertial_total(state) - started_with).magnitude());
+            // How far the body-frame vector has moved since the start, which
+            // is what makes the inertial comparison the meaningful one here.
+            turned_by = turned_by.max((body_total(state) - started_in_body).magnitude());
+            held |= state.modes[2] == ConstraintMode::Lower;
+        })
+        .expect("the walk succeeds");
+
+    assert!(held, "the z wheel reaches its limit inside the span");
+    assert!(
+        turned_by > 1e-3,
+        "the body-frame total moves by {turned_by:.3e} N·m·s, so this is not the \
+         degenerate case"
+    );
+    // Measured 7.3e-16 N·m·s over the span, against a body-frame vector that
+    // moves 1.4e-1: the inertial total is conserved to rounding, and the
+    // threshold leaves room for the platform's own last bits.
+    const DRIFT_ALLOWED: f64 = 1e-12;
+    assert!(
+        worst_drift < DRIFT_ALLOWED,
+        "the inertial total drifted {worst_drift:.3e} N·m·s, more than the \
+         {DRIFT_ALLOWED:.0e} rounding accounts for"
+    );
+}
