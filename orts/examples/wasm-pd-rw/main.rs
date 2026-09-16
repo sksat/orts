@@ -89,6 +89,12 @@ fn main() {
         plant: initial,
         aux: vec![0.0, 0.0, 0.0],
         aux_bounds: vec![],
+        // No modes: this example steps with `Rk4.integrate`, which locates no
+        // boundaries, and a wheel with no mode falls back to the comparison
+        // each stage makes against its own limit. A propagation that holds a
+        // wheel on its limit goes through a group or
+        // `orts::boundary::walk_to_target`.
+        modes: vec![],
     };
     let mut t = 0.0;
 

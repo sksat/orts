@@ -648,8 +648,6 @@ mod event_checks {
     use std::ops::ControlFlow;
     use std::sync::{Arc, Mutex};
 
-    use orts::spacecraft::SpacecraftDynamics;
-
     fn times_checked(windows: Vec<BurnWindow>, integrator: IntegratorConfig) -> Vec<f64> {
         let seen: Arc<Mutex<Vec<f64>>> = Arc::new(Mutex::new(Vec::new()));
         let recorder = {
