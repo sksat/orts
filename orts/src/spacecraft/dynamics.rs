@@ -395,6 +395,65 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     }
 }
 
+impl<G: GravityField, F: Eci + 'static> HasBoundaries for SpacecraftDynamics<G, F> {
+    fn boundaries(&self) -> Vec<DeclaredBoundary> {
+        self.effectors
+            .iter()
+            .enumerate()
+            .flat_map(|(index, eff)| {
+                let entry = &self.registry.entries()[index];
+                eff.boundaries()
+                    .into_iter()
+                    .map(move |boundary| DeclaredBoundary {
+                        effector: index,
+                        boundary,
+                        aux_offset: entry.offset,
+                        aux_dim: entry.dim,
+                        mode_offset: entry.mode_offset,
+                        mode_dim: entry.mode_dim,
+                    })
+            })
+            .collect()
+    }
+
+    fn boundary_value(&self, declared: &DeclaredBoundary, t: f64, state: &Self::State) -> f64 {
+        let effector = &self.effectors[declared.effector];
+        let aux = &state.aux[declared.aux_offset..declared.aux_offset + declared.aux_dim];
+        let modes = &state.modes[declared.mode_offset..declared.mode_offset + declared.mode_dim];
+        let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
+        effector.boundary_value(
+            declared.boundary.kind,
+            EffectorInput {
+                t,
+                state: &state.plant,
+                aux,
+                modes,
+                epoch: epoch.as_ref(),
+                // The search re-steps inside one segment, so a switch in time
+                // is already the segment's own end rather than something a
+                // boundary value has to hold.
+                segment: None,
+            },
+        )
+    }
+
+    fn settle_boundary(&self, declared: &DeclaredBoundary, state: &mut Self::State) {
+        let effector = &self.effectors[declared.effector];
+        let aux = &mut state.aux[declared.aux_offset..declared.aux_offset + declared.aux_dim];
+        if let Some(exchange) = effector.settle_boundary(declared.boundary.kind, aux) {
+            // What the effector gave up goes back to the body, through the
+            // inertia that turns angular momentum into a rate.
+            state.plant.attitude.angular_velocity +=
+                self.inertia_inv * exchange.angular_momentum_body;
+        }
+        state.modes[declared.mode_index()] = declared.boundary.kind.mode_after();
+    }
+
+    fn modes<'s>(&self, state: &'s Self::State) -> &'s [ConstraintMode] {
+        &state.modes
+    }
+}
+
 impl<G: GravityField, F: Eci + 'static> DynamicalSystem for SpacecraftDynamics<G, F> {
     type State = AugmentedState<SpacecraftState<F>>;
 
