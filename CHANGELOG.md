@@ -129,6 +129,23 @@ section is subdivided by package.
   ([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
+- **BREAKING**: a `StateEffector` is evaluated with one `EffectorInput` rather
+  than four arguments, and it declares the boundaries its own state can reach.
+  `derivatives(&self, input, aux_rates)` replaces
+  `derivatives(&self, t, state, aux, aux_rates, epoch)`; the input also carries
+  the state's discrete `modes` and the segment being stepped. The new trait
+  methods — `boundaries`, `boundary_value`, `settle_boundary`, `mode_dim` — are
+  all defaulted, so an effector with no boundaries declares none. Alongside
+  them, `AugmentedState` gains a `modes: Vec<ConstraintMode>` field that a
+  struct literal has to name, `AuxRegistry::register` takes the effector's
+  `mode_dim` as a third argument, and a `DynamicalSystem` propagated by a group
+  must also implement `HasBoundaries` (every method defaulted, so
+  `impl HasBoundaries for X {}` is enough for a system with no boundaries).
+  A saturating constraint cannot be a comparison inside the right-hand side: the
+  root search re-steps the same interval with different widths, and a comparison
+  that flips mid-step mixes modes across the RK stages, which makes the search
+  converge on a time `0.2r` late (measured, `DESIGN.md`). The mode therefore
+  lives in the state, and nothing in the integration writes it.
 - `IndependentGroup` and `CoupledGroup` advance every solver through the same
   three calls (`stepper`, `from_checked_state`, `advance_to`), where the RK4
   branch used to run a step loop of its own. Two things that loop did
@@ -226,6 +243,22 @@ section is subdivided by package.
   ([#469](https://github.com/sksat/orts/pull/469))
 
 #### Fixed
+- A reaction wheel that reached its momentum limit took angular momentum out of
+  the spacecraft: over a 20 s run of a 0.53 N·m·s wheel driven at 0.1 N·m, the
+  body-frame total `I·ω + Σ aᵢ hᵢ` lost 7.5e-3 N·m·s under RK4 at `dt = 0.25`
+  and 8.4e-2 N·m·s — 16% of the wheel's own limit — under DP45 at
+  `atol = rtol = 1e-3`. The wheel's momentum was an `aux_bounds` entry, so the
+  projection clamped it back to the limit after every step, while the body had
+  already integrated the reaction that carried it past: the clamp destroyed
+  exactly that much of a conserved total, and the looser the step, the more
+  there was to destroy. Reaching the limit is now a boundary the propagation
+  locates by bisection, and `settle_boundary` puts the momentum on the limit and
+  returns the overshoot to the body as `ω += I⁻¹ (δh a)`. While a wheel is held
+  at its limit it exchanges no torque with the body but keeps its gyroscopic
+  term `−ω × H_RW`, and it comes loose when the torque the motor asks for turns
+  inward. The same run now conserves the total to 1e-9 N·m·s under every
+  integrator the configuration offers.
+  ([#446](https://github.com/sksat/orts/issues/446))
 - **Breaking**: `SunSensor` reported a direction that was not a unit vector
   once noise was enabled, and `SunDirectionBody::new` now returns
   `Option<SunDirectionBody>` rather than `SunDirectionBody`. A caller that built
@@ -703,6 +736,11 @@ section is subdivided by package.
   under RK4 when `output_interval` equals `dt`. ([#466](https://github.com/sksat/orts/pull/466))
 
 #### Fixed
+- The angular momentum a saturating reaction wheel used to lose (see `orts`
+  above) was lost on the `mode = "controlled"` path too — `orts run
+  --controller` and `orts serve` — which stepped with `advance_to` and so had no
+  boundary to stop at. It now runs the same walk the groups do, with one guard
+  per declared boundary kept across the segments of a span.
 - With `--duration` omitted, a `mode = "controlled"` run lasted one orbit of
   whichever satellite the config listed first, so a fleet of a 5500 s and a
   7000 s orbit ran for 5500 s or 7000 s depending on the order they were
