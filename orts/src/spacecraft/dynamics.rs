@@ -540,6 +540,53 @@ mod tests {
         }
     }
 
+    /// A wheel's two bounds and its release are not all live at once: the
+    /// search looks for a bound to be reached only while the wheel is running
+    /// free, and for a release only while it is held against one. The
+    /// propagation switches the set from what this answers, so a boundary that
+    /// stayed live would be searched for in a mode where its value says
+    /// nothing.
+    #[test]
+    fn a_held_wheels_bound_is_no_longer_one_to_search_for() {
+        use crate::effector::{BoundaryKind, ConstraintMode};
+        use crate::spacecraft::ReactionWheelAssembly;
+
+        let dynamics = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
+            .with_effector(ReactionWheelAssembly::three_axis(0.01, 0.5, 0.1));
+        let boundaries = dynamics.boundaries();
+        let mut state = dynamics.initial_augmented_state(sample_spacecraft());
+
+        let find = |kind: BoundaryKind| {
+            *boundaries
+                .iter()
+                .find(|d| d.boundary.kind == kind)
+                .expect("the wheel declared it")
+        };
+        let upper = find(BoundaryKind::ReachedUpper { index: 0 });
+        let lower = find(BoundaryKind::ReachedLower { index: 0 });
+        let release = find(BoundaryKind::Released { index: 0 });
+
+        // A wheel that is running: either bound is still ahead of it, and
+        // there is nothing to release.
+        assert!(dynamics.boundary_is_active(&upper, &state));
+        assert!(dynamics.boundary_is_active(&lower, &state));
+        assert!(!dynamics.boundary_is_active(&release, &state));
+
+        state.modes[0] = ConstraintMode::Upper;
+
+        // Held against the upper bound: that bound is where it already is, the
+        // other one is not reachable without coming off this one first, and
+        // the release is what the search now looks for.
+        assert!(!dynamics.boundary_is_active(&upper, &state));
+        assert!(!dynamics.boundary_is_active(&lower, &state));
+        assert!(dynamics.boundary_is_active(&release, &state));
+
+        // The other wheels are untouched by the first one's mode.
+        assert!(
+            dynamics.boundary_is_active(&find(BoundaryKind::ReachedUpper { index: 1 }), &state)
+        );
+    }
+
     /// Wrap a plant state as an augmented state with no effectors.
     fn augment(plant: SpacecraftState) -> AugmentedState<SpacecraftState> {
         AugmentedState {

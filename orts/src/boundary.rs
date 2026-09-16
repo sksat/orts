@@ -339,3 +339,214 @@ macro_rules! root_walk {
 root_walk!(I ; FixedStepper<'_, I, S>, FixedStepper);
 root_walk!( ; AdaptiveStepper<'_, S>, AdaptiveStepper);
 root_walk!( ; AdaptiveStepper853<'_, S>, AdaptiveStepper853);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::effector::{BoundaryKind, EffectorBoundary};
+    use core::cell::RefCell;
+    use utsuroi::{Integrator, OdeState, Projection, Rk4, Tolerances};
+
+    const RATE: f64 = -1.0;
+    const DT: f64 = 0.25;
+
+    /// A scalar that runs down at [`RATE`] until it is held, carrying the one
+    /// mode that says which of the two it is doing.
+    #[derive(Clone, Debug, PartialEq)]
+    struct Ramp {
+        x: f64,
+        held: bool,
+    }
+
+    impl OdeState for Ramp {
+        fn zero_like(&self) -> Self {
+            // The mode is carried, as `AugmentedState` carries its own: a
+            // derivative belongs to the mode the state is in.
+            Ramp {
+                x: 0.0,
+                held: self.held,
+            }
+        }
+
+        fn axpy(&self, scale: f64, other: &Self) -> Self {
+            Ramp {
+                x: self.x + scale * other.x,
+                held: self.held,
+            }
+        }
+
+        fn scale(&self, factor: f64) -> Self {
+            Ramp {
+                x: self.x * factor,
+                held: self.held,
+            }
+        }
+
+        fn is_finite(&self) -> bool {
+            self.x.is_finite()
+        }
+
+        fn error_norm(&self, y_next: &Self, error: &Self, tol: &Tolerances) -> f64 {
+            let sc = tol.atol + tol.rtol * self.x.abs().max(y_next.x.abs());
+            (error.x / sc).abs()
+        }
+
+        fn project(&mut self, _t: f64) -> Projection {
+            Projection::Unchanged
+        }
+    }
+
+    /// Runs a [`Ramp`] down to a floor at zero, and records every boundary
+    /// question it is asked together with the mode it was asked in.
+    struct Ramped {
+        asked: RefCell<Vec<(BoundaryKind, bool)>>,
+    }
+
+    impl Ramped {
+        fn new() -> Self {
+            Ramped {
+                asked: RefCell::new(Vec::new()),
+            }
+        }
+
+        fn declared(kind: BoundaryKind) -> DeclaredBoundary {
+            DeclaredBoundary {
+                satellite: 0,
+                effector: 0,
+                boundary: EffectorBoundary {
+                    kind,
+                    crossing: Crossing::Falling,
+                    boundary_tolerance: 0.0,
+                },
+                aux_offset: 0,
+                aux_dim: 0,
+                mode_offset: 0,
+                mode_dim: 1,
+            }
+        }
+    }
+
+    impl DynamicalSystem for Ramped {
+        type State = Ramp;
+
+        fn derivatives(&self, _t: f64, state: &Ramp) -> Ramp {
+            Ramp {
+                x: if state.held { 0.0 } else { RATE },
+                held: state.held,
+            }
+        }
+    }
+
+    impl HasBoundaries for Ramped {
+        fn boundaries(&self) -> Vec<DeclaredBoundary> {
+            vec![
+                Self::declared(BoundaryKind::ReachedLower { index: 0 }),
+                Self::declared(BoundaryKind::Released { index: 0 }),
+            ]
+        }
+
+        fn boundary_value(&self, declared: &DeclaredBoundary, _t: f64, state: &Ramp) -> f64 {
+            self.asked
+                .borrow_mut()
+                .push((declared.boundary.kind, state.held));
+            match declared.boundary.kind {
+                // How far the scalar still has to fall.
+                BoundaryKind::ReachedLower { .. } => state.x,
+                // Nothing ever lets it go again.
+                _ => 1.0,
+            }
+        }
+
+        fn settle_boundary(&self, declared: &DeclaredBoundary, state: &mut Ramp) {
+            if let BoundaryKind::ReachedLower { .. } = declared.boundary.kind {
+                state.x = 0.0;
+                state.held = true;
+            }
+        }
+
+        fn boundary_is_active(&self, declared: &DeclaredBoundary, state: &Ramp) -> bool {
+            match declared.boundary.kind {
+                BoundaryKind::ReachedLower { .. } => !state.held,
+                _ => state.held,
+            }
+        }
+    }
+
+    /// Walk `from` to `t_target` through the boundary handling.
+    fn walk(system: &Ramped, from: Ramp, t_target: f64) -> (f64, Ramp) {
+        let boundaries = system.boundaries();
+        let mut slots = vec![RootSlot::new(); boundaries.len()];
+        let (_, t, state) = walk_to_target(
+            system,
+            &boundaries,
+            &mut slots,
+            RootSearch::default(),
+            from,
+            0.0,
+            t_target,
+            false,
+            |state, t, _checked| Rk4.stepper(system, state, t, DT),
+            &mut |_: f64, _: &Ramp| {},
+            &|_: f64, _: &Ramp| -> ControlFlow<()> { ControlFlow::Continue(()) },
+        )
+        .expect("the walk succeeds");
+        (t, state)
+    }
+
+    /// The mode decides which boundaries the search looks at, and the walk asks
+    /// for no others: a bound cannot be reached while it is already held
+    /// against one, and an inactive boundary's value is not a number the search
+    /// may read (it is what the mode leaves undefined).
+    #[test]
+    fn only_the_boundaries_the_mode_allows_are_asked_about() {
+        let system = Ramped::new();
+        let (_, ended) = walk(
+            &system,
+            Ramp {
+                x: 0.6,
+                held: false,
+            },
+            2.0,
+        );
+        assert!(ended.held, "the scalar reaches its floor within the walk");
+
+        let asked = system.asked.borrow();
+        assert!(
+            asked
+                .iter()
+                .any(|(kind, held)| matches!(kind, BoundaryKind::ReachedLower { .. }) && !held),
+            "the floor is what the search looks for while the scalar is running"
+        );
+        for (kind, held) in asked.iter() {
+            let expected_release = *held;
+            let is_release = matches!(kind, BoundaryKind::Released { .. });
+            assert_eq!(
+                is_release, expected_release,
+                "asked about {kind:?} while held={held}"
+            );
+        }
+    }
+
+    /// A walk can start from a state that is already past a boundary — a
+    /// command applied between walks, or a caller handing over a state it built
+    /// — and a crossing that has already happened is not one a search can find:
+    /// the value never changes sign inside the walk. The walk settles what is
+    /// already past before it steps.
+    #[test]
+    fn a_boundary_already_crossed_at_the_start_is_settled_first() {
+        let system = Ramped::new();
+        let (_, ended) = walk(
+            &system,
+            Ramp {
+                x: -0.5,
+                held: false,
+            },
+            1.0,
+        );
+        assert_eq!(
+            ended,
+            Ramp { x: 0.0, held: true },
+            "the state is put on the boundary and the mode moved, at the start"
+        );
+    }
+}
