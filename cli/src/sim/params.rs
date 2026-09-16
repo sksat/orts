@@ -13,14 +13,25 @@ use crate::config::SimConfig;
 use crate::satellite::{OrbitSpec, SatelliteSpec, parse_body, parse_sat_spec};
 use crate::tle::{fetch_tle_by_norad_id, try_fetch_tle_by_norad_id};
 
+/// Halvings allowed beyond what the configured step needs, for the step the
+/// adaptive solvers grow it into: 2³² times the first step.
+const HALVINGS_SPARE: u32 = 32;
+
 /// The boundary search for a step of `dt` narrowed to `t_tolerance`.
 ///
-/// The halvings follow from the two: an accepted step is at most `dt` wide, so
-/// `⌈log₂(dt / t_tolerance)⌉` of them bring the interval holding a crossing
-/// inside the tolerance, and the count is what a tolerance costs rather than a
-/// limit on what it may be. A few spare cover a bracket the step-size control
-/// opened slightly wider than `dt` and the rounding in the logarithm, and
-/// `utsuroi::RootSearch::default`'s 60 stays the floor so an ordinary
+/// The halvings follow from the two: `⌈log₂(dt / t_tolerance)⌉` of them bring
+/// an interval of `dt` inside the tolerance, and the count is what a tolerance
+/// costs rather than a limit on what it may be.
+///
+/// `dt` is the fixed step for RK4 and the *first* step for the adaptive pair,
+/// which grows what it accepts — by up to 5× per step for DP45, 6× for DOP853
+/// — so the interval a search actually narrows can be far wider than `dt`.
+/// [`HALVINGS_SPARE`] covers that: 32 more allows a step four billion times
+/// the first one. Spending them is not the same as asking for them, since the
+/// search stops at the tolerance or at f64 resolution, whichever comes first;
+/// the count only has to be past what a legitimate search needs, so that what
+/// it stops is a value behaving unlike a continuous function.
+/// `utsuroi::RootSearch::default`'s 60 stays the floor, so an ordinary
 /// tolerance keeps the library's own count.
 ///
 /// The search stops early anyway once halving no longer changes the interval in
@@ -31,7 +42,7 @@ pub fn root_search(dt: f64, t_tolerance: f64) -> RootSearch {
     let needed = if dt.is_finite() && dt > 0.0 && t_tolerance.is_finite() && t_tolerance > 0.0 {
         let halvings = (dt / t_tolerance).log2().ceil();
         // `as u32` saturates, and a non-finite ratio cannot get here.
-        (halvings.max(0.0) as u32).saturating_add(4)
+        (halvings.max(0.0) as u32).saturating_add(HALVINGS_SPARE)
     } else {
         // A pair `validate_root_t_tolerance` and `validate_time_params` refuse;
         // the walk refuses it too, and says so with its own error.
@@ -823,8 +834,8 @@ mod tests {
         let tight = root_search(1.0, 1e-30);
         assert_eq!(tight.t_tolerance, 1e-30);
         assert!(
-            (100..=110).contains(&tight.max_iterations),
-            "log2(1e30) is about 100, and a few spare: got {}",
+            (132..=142).contains(&tight.max_iterations),
+            "log2(1e30) is about 100, plus the spare for a grown step: got {}",
             tight.max_iterations
         );
 
