@@ -11,7 +11,9 @@ use utsuroi::{DynamicalSystem, SegmentContext};
 use crate::OrbitalState;
 use crate::attitude::DecoupledContext;
 use crate::attitude::state::AttitudeState;
-use crate::effector::{AugmentedState, AuxRegistry, StateEffector, effector_derivatives};
+use crate::effector::{
+    AugmentedState, AuxRegistry, ConstraintMode, StateEffector, effector_derivatives,
+};
 use crate::model::ExternalLoads;
 use crate::model::{EvalSegment, Model, eval_maybe_in_segment};
 
@@ -95,7 +97,8 @@ impl AugmentedAttitudeSystem {
         effector: impl StateEffector<DecoupledContext> + 'static,
     ) -> Self {
         let dim = effector.state_dim();
-        self.registry.register(effector.name(), dim);
+        self.registry
+            .register(effector.name(), dim, effector.mode_dim());
         self.effectors.push(Box::new(effector));
         self
     }
@@ -132,6 +135,7 @@ impl AugmentedAttitudeSystem {
             plant,
             aux: self.initial_aux_state(),
             aux_bounds: self.initial_aux_bounds(),
+            modes: vec![ConstraintMode::default(); self.registry.total_modes()],
         }
     }
 
@@ -235,6 +239,7 @@ impl AugmentedAttitudeSystem {
             plant: AttitudeState::from_derivative(q_dot, alpha),
             aux: aux_rates,
             aux_bounds: state.aux_bounds.clone(),
+            modes: state.modes.clone(),
         }
     }
 }
@@ -315,6 +320,7 @@ mod tests {
             },
             aux: vec![],
             aux_bounds: vec![],
+            modes: vec![],
         };
         let deriv = system.derivatives(0.0, &state);
         // For symmetric body: ω × (I·ω) = I * (ω × ω) = 0

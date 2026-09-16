@@ -56,6 +56,15 @@ pub trait StateEffector<S: HasFrame>: Send + Sync + std::any::Any {
     /// Number of scalar state variables this effector contributes.
     fn state_dim(&self) -> usize;
 
+    /// Number of discrete modes this effector carries.
+    ///
+    /// One per one-sided constraint it can be held against — a reaction wheel
+    /// assembly has one per wheel. Zero, unless overridden, for an effector
+    /// whose right-hand side is the same whatever the state is.
+    fn mode_dim(&self) -> usize {
+        0
+    }
+
     /// Compute loads on spacecraft and derivatives of auxiliary state.
     ///
     /// `aux` is the current auxiliary state slice (length = `state_dim()`).
@@ -131,6 +140,32 @@ pub(crate) fn effector_derivatives<S: HasFrame>(
     }
 }
 
+// ConstraintMode
+
+/// Which side of a one-sided constraint an effector is held against.
+///
+/// A reaction wheel at its momentum bound cannot be driven further out, and a
+/// tank that has run dry cannot deliver propellant: the right-hand side changes
+/// when the boundary is reached, and changes back when the thing pushing
+/// against it turns around. That switch is discrete, so it belongs to the
+/// state rather than to a comparison inside the right-hand side — a comparison
+/// would flip mid-step, and a root search re-stepping across the flip converges
+/// on the wrong time (see the root-event contract in DESIGN.md).
+///
+/// Nothing in the integration writes a mode. It changes where the walk stops:
+/// at a boundary a [`RootEvent`](utsuroi::RootEvent) located, or at a time the
+/// caller reconciles the modes with a command it just applied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConstraintMode {
+    /// Inside the bounds: the unconstrained right-hand side holds.
+    #[default]
+    Free,
+    /// Held at the upper bound.
+    Upper,
+    /// Held at the lower bound.
+    Lower,
+}
+
 // AugmentedState
 
 /// Plant state augmented with auxiliary effector state.
@@ -150,6 +185,12 @@ pub struct AugmentedState<S: OdeState> {
     /// Per-element (min, max) bounds for auxiliary state projection.
     /// Empty means no bounds (unconstrained).
     pub aux_bounds: Vec<(f64, f64)>,
+    /// Concatenated discrete modes from all registered effectors.
+    ///
+    /// Carried through every state operation as it is: a mode is not a quantity
+    /// to scale or add, and a trajectory that mixed two of them would be a
+    /// trajectory of neither.
+    pub modes: Vec<ConstraintMode>,
 }
 
 impl<S: OdeState> From<S> for AugmentedState<S> {
@@ -159,6 +200,7 @@ impl<S: OdeState> From<S> for AugmentedState<S> {
             plant,
             aux: vec![],
             aux_bounds: vec![],
+            modes: vec![],
         }
     }
 }
@@ -169,6 +211,7 @@ impl<S: OdeState> OdeState for AugmentedState<S> {
             plant: self.plant.zero_like(),
             aux: vec![0.0; self.aux.len()],
             aux_bounds: self.aux_bounds.clone(),
+            modes: self.modes.clone(),
         }
     }
 
@@ -181,6 +224,7 @@ impl<S: OdeState> OdeState for AugmentedState<S> {
             plant: self.plant.axpy(scale, &other.plant),
             aux,
             aux_bounds: self.aux_bounds.clone(),
+            modes: self.modes.clone(),
         }
     }
 
@@ -189,6 +233,7 @@ impl<S: OdeState> OdeState for AugmentedState<S> {
             plant: self.plant.scale(factor),
             aux: self.aux.iter().map(|v| v * factor).collect(),
             aux_bounds: self.aux_bounds.clone(),
+            modes: self.modes.clone(),
         }
     }
 
@@ -239,6 +284,10 @@ pub struct AuxEntry {
     pub offset: usize,
     /// Number of scalar variables in this block.
     pub dim: usize,
+    /// Starting index within the concatenated mode vector.
+    pub mode_offset: usize,
+    /// Number of discrete modes in this block.
+    pub mode_dim: usize,
 }
 
 /// Registry mapping [`StateEffector`]s to their auxiliary state slices.
@@ -249,6 +298,7 @@ pub struct AuxEntry {
 pub struct AuxRegistry {
     entries: Vec<AuxEntry>,
     total_dim: usize,
+    total_modes: usize,
 }
 
 impl AuxRegistry {
@@ -258,20 +308,28 @@ impl AuxRegistry {
     }
 
     /// Register a new effector and return its offset into the aux vector.
-    pub fn register(&mut self, name: &str, dim: usize) -> usize {
+    pub fn register(&mut self, name: &str, dim: usize, mode_dim: usize) -> usize {
         let offset = self.total_dim;
         self.entries.push(AuxEntry {
             name: name.to_string(),
             offset,
             dim,
+            mode_offset: self.total_modes,
+            mode_dim,
         });
         self.total_dim += dim;
+        self.total_modes += mode_dim;
         offset
     }
 
     /// Total number of auxiliary state variables across all effectors.
     pub fn total_dim(&self) -> usize {
         self.total_dim
+    }
+
+    /// Total number of discrete modes across all effectors.
+    pub fn total_modes(&self) -> usize {
+        self.total_modes
     }
 
     /// All registered entries.
@@ -291,7 +349,7 @@ mod tests {
     #[test]
     fn registry_single_effector() {
         let mut reg = AuxRegistry::new();
-        let offset = reg.register("rw", 3);
+        let offset = reg.register("rw", 3, 0);
         assert_eq!(offset, 0);
         assert_eq!(reg.total_dim(), 3);
         assert_eq!(reg.entries().len(), 1);
@@ -303,8 +361,8 @@ mod tests {
     #[test]
     fn registry_multiple_effectors() {
         let mut reg = AuxRegistry::new();
-        let o1 = reg.register("rw", 3);
-        let o2 = reg.register("gimbal", 2);
+        let o1 = reg.register("rw", 3, 0);
+        let o2 = reg.register("gimbal", 2, 0);
         assert_eq!(o1, 0);
         assert_eq!(o2, 3);
         assert_eq!(reg.total_dim(), 5);
@@ -321,6 +379,7 @@ mod tests {
             },
             aux: vec![1.0, 2.0, 3.0],
             aux_bounds: vec![],
+            modes: vec![],
         }
     }
 
@@ -347,11 +406,13 @@ mod tests {
             plant: AttitudeState::identity(),
             aux: vec![1.0, 2.0],
             aux_bounds: vec![],
+            modes: vec![],
         };
         let other = AugmentedState {
             plant: AttitudeState::identity(),
             aux: vec![10.0, 20.0],
             aux_bounds: vec![],
+            modes: vec![],
         };
         let result = s.axpy(0.5, &other);
         assert!((result.aux[0] - 6.0).abs() < 1e-15);
@@ -387,6 +448,34 @@ mod tests {
         assert!(!s.is_finite());
     }
 
+    /// A mode is carried through every state operation as it is.
+    ///
+    /// A solver combines stages with `axpy` and `scale`, and a mode is not a
+    /// quantity to add or scale: a state holding the modes of two different
+    /// right-hand sides would describe neither. `axpy` keeps the modes of the
+    /// state being stepped from, since the increment is a derivative and
+    /// carries the modes it was taken at. `project` leaves them alone too —
+    /// which side a constraint is held against is not something to clamp.
+    #[test]
+    fn a_mode_is_carried_through_every_state_operation() {
+        let mut s = sample_augmented();
+        s.modes = vec![ConstraintMode::Upper, ConstraintMode::Free];
+        let mut other = sample_augmented();
+        other.modes = vec![ConstraintMode::Lower, ConstraintMode::Lower];
+
+        assert_eq!(s.zero_like().modes, s.modes);
+        assert_eq!(s.scale(0.5).modes, s.modes);
+        assert_eq!(
+            s.axpy(2.0, &other).modes,
+            s.modes,
+            "the modes of the state being stepped from, not the increment's"
+        );
+
+        let before = s.modes.clone();
+        s.project(0.0);
+        assert_eq!(s.modes, before, "the projection does not touch a mode");
+    }
+
     #[test]
     fn project_normalizes_quaternion() {
         let mut s = AugmentedState {
@@ -396,6 +485,7 @@ mod tests {
             },
             aux: vec![5.0, 10.0],
             aux_bounds: vec![],
+            modes: vec![],
         };
         assert_eq!(s.project(0.0), Projection::Changed);
         let norm = s.plant.quaternion.magnitude();
@@ -410,6 +500,7 @@ mod tests {
             plant: AttitudeState::identity(),
             aux: vec![15.0, -5.0, 3.0],
             aux_bounds: vec![(-10.0, 10.0), (-2.0, 2.0), (0.0, 100.0)],
+            modes: vec![],
         };
         assert_eq!(s.project(0.0), Projection::Changed);
         assert!((s.aux[0] - 10.0).abs() < 1e-15); // clamped from 15 to 10
@@ -423,6 +514,7 @@ mod tests {
             plant: AttitudeState::identity(),
             aux: vec![3.0, -1.0],
             aux_bounds: vec![(-10.0, 10.0), (-2.0, 2.0)],
+            modes: vec![],
         };
         assert_eq!(s.project(0.0), Projection::Unchanged);
         assert_eq!(s.aux, vec![3.0, -1.0]);
@@ -434,6 +526,7 @@ mod tests {
             plant: AttitudeState::identity(),
             aux: vec![],
             aux_bounds: vec![],
+            modes: vec![],
         };
         let y_next = s.clone();
         let error = AugmentedState {
@@ -443,6 +536,7 @@ mod tests {
             },
             aux: vec![],
             aux_bounds: vec![],
+            modes: vec![],
         };
         let tol = Tolerances {
             atol: 1e-10,
@@ -464,6 +558,7 @@ mod tests {
             },
             aux: vec![1e-8, 1e-8, 1e-8],
             aux_bounds: vec![],
+            modes: vec![],
         };
         let tol = Tolerances {
             atol: 1e-10,

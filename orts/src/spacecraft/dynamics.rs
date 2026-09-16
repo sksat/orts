@@ -1,6 +1,8 @@
 use std::marker::PhantomData;
 
-use crate::effector::{AugmentedState, AuxRegistry, StateEffector, effector_derivatives};
+use crate::effector::{
+    AugmentedState, AuxRegistry, ConstraintMode, StateEffector, effector_derivatives,
+};
 use crate::model::{EvalSegment, Model, eval_maybe_in_segment};
 use crate::orbital::gravity::GravityField;
 use arika::epoch::Epoch;
@@ -96,7 +98,8 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
         effector: impl StateEffector<SpacecraftState<F>> + 'static,
     ) -> Self {
         let dim = effector.state_dim();
-        self.registry.register(effector.name(), dim);
+        self.registry
+            .register(effector.name(), dim, effector.mode_dim());
         self.effectors.push(Box::new(effector));
         self
     }
@@ -129,6 +132,7 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
             plant,
             aux: vec![0.0; self.registry.total_dim()],
             aux_bounds: bounds,
+            modes: vec![ConstraintMode::default(); self.registry.total_modes()],
         }
     }
 
@@ -386,6 +390,7 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
             ),
             aux: aux_rates,
             aux_bounds: state.aux_bounds.clone(),
+            modes: state.modes.clone(),
         }
     }
 }
@@ -471,6 +476,7 @@ mod tests {
             plant,
             aux: vec![],
             aux_bounds: vec![],
+            modes: vec![],
         }
     }
 
