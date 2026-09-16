@@ -17,8 +17,24 @@
 use nalgebra::Vector3;
 
 use super::ExternalLoads;
-use crate::effector::{ConstraintMode, EffectorInput, StateEffector};
+use crate::effector::{
+    BoundaryKind, ConstraintMode, EffectorBoundary, EffectorInput, StateEffector,
+};
+
+/// Margin within which a wheel counts as still on its momentum bound
+/// [N·m·s].
+///
+/// A held wheel exchanges nothing, so its momentum stays where the boundary
+/// handling put it and only rounding moves it. The width is what keeps that
+/// rounding from reading as a fresh crossing; it is far below any momentum a
+/// wheel is built to hold.
+const MOMENTUM_TOLERANCE: f64 = 1e-12;
+
+/// Margin within which the torque holding a wheel against its bound counts as
+/// still holding it [N·m].
+const RELEASE_TOLERANCE: f64 = 1e-12;
 use crate::model::{HasAttitude, HasFrame};
+use utsuroi::Crossing;
 
 /// A single reaction wheel with physical limits.
 #[derive(Debug, Clone)]
@@ -271,6 +287,20 @@ impl RwAssemblyCore {
             .collect()
     }
 
+    /// The torque the motor is being commanded to produce, after the driver's
+    /// own range.
+    ///
+    /// The constraint is not in it: what a held wheel does with this torque is
+    /// [`constrained_rate`](Self::constrained_rate)'s answer.
+    pub fn commanded_torques(&self, command: &RwCommand, aux: &[f64], gain: f64) -> Vec<f64> {
+        let momentum = self.momentum_slice(aux);
+        let effective = match command {
+            RwCommand::Torques(t) => t.clone(),
+            RwCommand::Speeds(s) => self.speed_to_torque(s, momentum, gain),
+        };
+        self.clamp_command(&effective)
+    }
+
     /// The rate a wheel exchanges, given the mode its constraint is in.
     ///
     /// `nu` is what `dh/dt` would be with no constraint: the torque the motor
@@ -462,6 +492,36 @@ impl RwAssembly {
 // reaction + gyroscopic torque, and the inertial acceleration is identically
 // zero. The loads come back in whatever frame the state is propagated in, so
 // `RwAssembly` works in any of them without naming one.
+impl RwAssembly {
+    /// What `dh/dt` would be for each wheel with nothing in the way.
+    ///
+    /// The torque the motor asks for: the realized one where the wheel has a
+    /// motor lag, and the command itself where it does not. The boundary that
+    /// releases a held wheel is a crossing of this, and the derivatives apply
+    /// the mode to it, so both read the same quantity.
+    pub fn unconstrained_rates(&self, aux: &[f64]) -> Vec<f64> {
+        let commanded = self
+            .core
+            .commanded_torques(&self.command, aux, self.speed_control_gain);
+        match self.core.realized_torque_slice(aux) {
+            Some(realized) => self
+                .core
+                .wheels
+                .iter()
+                .enumerate()
+                .map(|(i, w)| {
+                    if w.motor_time_constant.is_some() {
+                        realized[i]
+                    } else {
+                        commanded[i]
+                    }
+                })
+                .collect(),
+            None => commanded,
+        }
+    }
+}
+
 impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
     fn name(&self) -> &str {
         "reaction_wheels"
@@ -491,6 +551,56 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
         self.core.num_wheels()
     }
 
+    fn boundaries(&self) -> Vec<EffectorBoundary> {
+        // Three per wheel: either bound, and one release whose value the mode
+        // signs. Every value is a margin that runs out, so every crossing is
+        // falling.
+        (0..self.core.num_wheels())
+            .flat_map(|index| {
+                [
+                    BoundaryKind::ReachedUpper { index },
+                    BoundaryKind::ReachedLower { index },
+                    BoundaryKind::Released { index },
+                ]
+            })
+            .map(|kind| EffectorBoundary {
+                kind,
+                crossing: Crossing::Falling,
+                // A held wheel sits on its bound for many steps, and the
+                // momentum jitters around it. The width is in the value's own
+                // units: newton-metre-seconds of margin for a bound, and
+                // newton-metres of torque for a release.
+                boundary_tolerance: match kind {
+                    BoundaryKind::Released { .. } => RELEASE_TOLERANCE,
+                    _ => MOMENTUM_TOLERANCE,
+                },
+            })
+            .collect()
+    }
+
+    fn boundary_value(&self, kind: BoundaryKind, input: EffectorInput<'_, S>) -> f64 {
+        let momentum = self.core.momentum_slice(input.aux);
+        let index = kind.index();
+        let limit = self.core.wheels[index].momentum_limit();
+        match kind {
+            // The margin left before the wheel can take no more.
+            BoundaryKind::ReachedUpper { .. } => limit - momentum[index],
+            BoundaryKind::ReachedLower { .. } => momentum[index] + limit,
+            // The rate that has to turn around for the wheel to come off its
+            // bound, signed so that it too is a margin running out.
+            BoundaryKind::Released { .. } => {
+                let nu = self.unconstrained_rates(input.aux);
+                match input.modes.get(index).copied().unwrap_or_default() {
+                    ConstraintMode::Upper => nu[index],
+                    ConstraintMode::Lower => -nu[index],
+                    // Asked about a release with nothing held: no boundary to
+                    // reach, and `is_active` keeps the search from looking.
+                    ConstraintMode::Free => 1.0,
+                }
+            }
+        }
+    }
+
     fn derivatives(
         &self,
         input: EffectorInput<'_, S>,
@@ -503,54 +613,32 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
         let omega = &state.attitude().angular_velocity;
         let momentum = self.core.momentum_slice(aux);
 
-        // Resolve the command variant into effective torques.
-        let effective_torques = match &self.command {
-            RwCommand::Torques(t) => t.clone(),
-            RwCommand::Speeds(s) => self
-                .core
-                .speed_to_torque(s, momentum, self.speed_control_gain),
-        };
+        // The torque the motor asks for, and what the wheel would do with it if
+        // nothing were in the way.
+        let accepted = self
+            .core
+            .commanded_torques(&self.command, aux, self.speed_control_gain);
+        let nu = self.unconstrained_rates(aux);
 
-        // Command acceptance clamp (motor driver range)
-        let accepted = self.core.clamp_command(&effective_torques);
-
-        // What `dh/dt` would be with no constraint. The motor follows the
-        // command it was given, whether or not the wheel can take the momentum:
-        // holding the lag's own target at the bound instead would make the
-        // realized torque lag the release as well.
-        let nu = if self.core.has_motor_lag() {
-            let tau_realized = self.core.realized_torque_slice(aux).unwrap();
-
-            // Motor lag ODE: dτ_realized/dt = (τ_target - τ_realized) / T_m
+        if let Some(tau_realized) = self.core.realized_torque_slice(aux) {
+            // Motor lag ODE: dτ_realized/dt = (τ_target - τ_realized) / T_m.
+            // The target is the command, not the command held at the bound:
+            // holding it there would make the realized torque lag the release
+            // as well.
             for (i, wheel) in self.core.wheels.iter().enumerate() {
                 if let Some(t_m) = wheel.motor_time_constant {
                     aux_rates[n + i] = (accepted[i] - tau_realized[i]) / t_m;
                 } else {
                     // Instantaneous wheel in 2n layout: snap realized to the
-                    // command via a fast tracking rate. The rate below uses the
-                    // command directly, so this only affects telemetry
+                    // command via a fast tracking rate. `nu` uses the command
+                    // directly for such a wheel, so this only affects telemetry
                     // convergence. Effective T_m ≈ 0.01s; stable with
                     // dt ≤ 0.028s (RK4). For larger dt the aux_bounds
                     // projection keeps it bounded.
                     aux_rates[n + i] = (accepted[i] - tau_realized[i]) * 100.0;
                 }
             }
-
-            self.core
-                .wheels
-                .iter()
-                .enumerate()
-                .map(|(i, w)| {
-                    if w.motor_time_constant.is_some() {
-                        tau_realized[i]
-                    } else {
-                        accepted[i]
-                    }
-                })
-                .collect()
-        } else {
-            accepted.clone()
-        };
+        }
 
         // The mode decides what the wheel exchanges. A set built without modes
         // — a state assembled by hand rather than by the system that registered
@@ -619,6 +707,95 @@ mod tests {
             },
             rates,
         )
+    }
+
+    /// Three boundaries per wheel, and which of them the mode makes worth
+    /// looking at.
+    #[test]
+    fn a_wheel_declares_two_bounds_and_one_release() {
+        let rw = RwAssembly::three_axis(0.01, 1.0, 0.1);
+        let declared = StateEffector::<AttitudeState>::boundaries(&rw);
+        assert_eq!(declared.len(), 9, "three per wheel");
+        assert!(
+            declared.iter().all(|b| b.crossing == Crossing::Falling),
+            "every value is a margin that runs out"
+        );
+        assert_eq!(
+            declared.iter().map(|b| b.kind).take(3).collect::<Vec<_>>(),
+            vec![
+                BoundaryKind::ReachedUpper { index: 0 },
+                BoundaryKind::ReachedLower { index: 0 },
+                BoundaryKind::Released { index: 0 },
+            ]
+        );
+
+        let free = [ConstraintMode::Free; 3];
+        let held = [
+            ConstraintMode::Upper,
+            ConstraintMode::Free,
+            ConstraintMode::Free,
+        ];
+        let active = |modes: &[ConstraintMode]| {
+            declared
+                .iter()
+                .filter(|b| b.kind.is_active(modes))
+                .map(|b| b.kind)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            active(&free).len(),
+            6,
+            "a free wheel can reach either bound and has nothing to release"
+        );
+        assert!(
+            active(&held).contains(&BoundaryKind::Released { index: 0 }),
+            "a held wheel is watched for its release"
+        );
+        assert!(
+            !active(&held).contains(&BoundaryKind::ReachedUpper { index: 0 }),
+            "and cannot reach a bound it is already on"
+        );
+    }
+
+    /// The value of a bound is the margin left, and of a release the torque
+    /// that has to turn around.
+    #[test]
+    fn a_boundary_value_is_a_margin_that_runs_out() {
+        let wheel = Rw::new(Vector3::x(), 0.01, 1.0, 0.1);
+        let mut rw = RwAssembly::new(vec![wheel]);
+        rw.command = RwCommand::Torques(vec![0.05]);
+        let state = test_state_at_rest();
+
+        let value = |kind, aux: &[f64], modes: &[ConstraintMode]| {
+            rw.boundary_value(
+                kind,
+                EffectorInput {
+                    t: 0.0,
+                    state: &state,
+                    aux,
+                    modes,
+                    epoch: None,
+                    segment: None,
+                },
+            )
+        };
+
+        let free = [ConstraintMode::Free];
+        assert!(
+            (value(BoundaryKind::ReachedUpper { index: 0 }, &[0.6], &free) - 0.4).abs() < 1e-15
+        );
+        assert!(
+            (value(BoundaryKind::ReachedLower { index: 0 }, &[0.6], &free) - 1.6).abs() < 1e-15
+        );
+
+        // Held up, pushing further out: the release is still 0.05 away.
+        let up = [ConstraintMode::Upper];
+        assert!((value(BoundaryKind::Released { index: 0 }, &[1.0], &up) - 0.05).abs() < 1e-15);
+
+        // The same command read from the lower bound is already past the
+        // release, which is why the value is signed by the mode.
+        let down = [ConstraintMode::Lower];
+        assert!((value(BoundaryKind::Released { index: 0 }, &[-1.0], &down) + 0.05).abs() < 1e-15);
     }
 
     /// A wheel held against its bound exchanges nothing, and the body keeps

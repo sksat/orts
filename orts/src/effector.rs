@@ -7,7 +7,7 @@
 //! plant state.
 
 use arika::epoch::Epoch;
-use utsuroi::{OdeState, Projection, Tolerances};
+use utsuroi::{Crossing, OdeState, Projection, Tolerances};
 
 use crate::model::{ExternalLoads, HasFrame};
 
@@ -55,6 +55,32 @@ pub trait StateEffector<S: HasFrame>: Send + Sync + std::any::Any {
 
     /// Number of scalar state variables this effector contributes.
     fn state_dim(&self) -> usize;
+
+    /// The boundaries this effector's state can reach.
+    ///
+    /// One per side of each one-sided constraint, plus one for its release: a
+    /// reaction wheel assembly declares three per wheel. Empty, unless
+    /// overridden.
+    ///
+    /// The propagation turns these into root events, so the modes change only
+    /// where a walk stopped — which is what keeps the right-hand side fixed
+    /// for the search that found the stopping point.
+    fn boundaries(&self) -> Vec<EffectorBoundary> {
+        Vec::new()
+    }
+
+    /// The signed value one declared boundary is found in, at this stage.
+    ///
+    /// Zero is the boundary, and the sign says which side of it the state is
+    /// on. For a bound this is the margin left — the quantity against its
+    /// limit — and for a release it is the rate that has to turn around, so
+    /// that both are crossings of zero from the side the mode was entered on.
+    ///
+    /// Only asked about boundaries this effector declared, and only in a mode
+    /// where [`BoundaryKind::is_active`] holds.
+    fn boundary_value(&self, _kind: BoundaryKind, _input: EffectorInput<'_, S>) -> f64 {
+        0.0
+    }
 
     /// Number of discrete modes this effector carries.
     ///
@@ -131,6 +157,89 @@ impl<S> Clone for EffectorInput<'_, S> {
 }
 
 impl<S> Copy for EffectorInput<'_, S> {}
+
+// Boundaries
+
+/// Which boundary of a one-sided constraint an effector declared.
+///
+/// Reaching a bound and releasing from it are separate boundaries, because they
+/// are found in different quantities: the first in the constrained quantity
+/// itself, the second in the rate whatever pushes against the bound is asking
+/// for. Only one of them means anything in a given mode, which is what
+/// [`is_active`](Self::is_active) answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoundaryKind {
+    /// The constrained quantity `index` reaches its upper bound.
+    ReachedUpper {
+        /// Which of this effector's constrained quantities.
+        index: usize,
+    },
+    /// The constrained quantity `index` reaches its lower bound.
+    ReachedLower {
+        /// Which of this effector's constrained quantities.
+        index: usize,
+    },
+    /// The constraint held at `index` releases: what pushed it against the
+    /// bound has turned around.
+    Released {
+        /// Which of this effector's constrained quantities.
+        index: usize,
+    },
+}
+
+impl BoundaryKind {
+    /// Which of this effector's constrained quantities this boundary belongs
+    /// to.
+    pub fn index(self) -> usize {
+        match self {
+            Self::ReachedUpper { index }
+            | Self::ReachedLower { index }
+            | Self::Released { index } => index,
+        }
+    }
+
+    /// Whether this boundary is one the search should look at, in the mode the
+    /// state is in.
+    ///
+    /// A bound cannot be reached while the constraint is already held against
+    /// one, and there is nothing to release while it is free.
+    pub fn is_active(self, modes: &[ConstraintMode]) -> bool {
+        let mode = modes.get(self.index()).copied().unwrap_or_default();
+        match self {
+            Self::ReachedUpper { .. } | Self::ReachedLower { .. } => mode == ConstraintMode::Free,
+            Self::Released { .. } => mode != ConstraintMode::Free,
+        }
+    }
+
+    /// The mode the constraint is in once this boundary has been handled.
+    pub fn mode_after(self) -> ConstraintMode {
+        match self {
+            Self::ReachedUpper { .. } => ConstraintMode::Upper,
+            Self::ReachedLower { .. } => ConstraintMode::Lower,
+            Self::Released { .. } => ConstraintMode::Free,
+        }
+    }
+}
+
+/// A boundary an effector's state can reach, for the propagation to stop at.
+///
+/// The value it is found in is the effector's to compute
+/// ([`StateEffector::boundary_value`]); this says which boundary it is and how
+/// the search should read that value.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EffectorBoundary {
+    /// Which boundary of which constrained quantity.
+    pub kind: BoundaryKind,
+    /// Which direction across zero counts as reaching it.
+    pub crossing: Crossing,
+    /// Width of the value within which the state still counts as being on the
+    /// boundary, in the value's own units.
+    ///
+    /// A constraint the state moves *along* — a wheel held at its bound — has
+    /// its value jittering around zero for many steps, and each change of sign
+    /// in that jitter would otherwise be a fresh crossing.
+    pub boundary_tolerance: f64,
+}
 
 // ConstraintMode
 
