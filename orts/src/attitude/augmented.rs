@@ -374,6 +374,85 @@ mod tests {
         Matrix3::from_diagonal(&Vector3::new(i, i, i))
     }
 
+    /// This system answers for its effectors' boundaries itself — it flattens
+    /// its own declarations and gives a wheel's overshoot back through its own
+    /// inertia — and its state carries no position, so no group can propagate
+    /// it. `walk_to_target` is the path such a caller takes, and this walks a
+    /// wheel to its limit through it: the wheel is held on the bound, its mode
+    /// says so, and the body keeps the momentum the wheel stopped taking.
+    #[test]
+    fn a_wheel_saturating_under_this_system_keeps_the_bodys_momentum() {
+        use crate::boundary::{HasBoundaries, walk_to_target};
+        use crate::effector::ConstraintMode;
+        use crate::spacecraft::{ReactionWheelAssembly, RwCommand};
+        use core::ops::ControlFlow;
+        use utsuroi::{Integrator, Rk4, RootSearch, RootSlot};
+
+        const BODY_INERTIA: f64 = 10.0;
+        const MAX_MOMENTUM: f64 = 0.53;
+        const MAX_TORQUE: f64 = 0.1;
+        // The z wheel takes a torque about z alone and reaches its limit at
+        // t = 5.3 s, between the ticks of this grid.
+        const DT: f64 = 0.25;
+
+        let mut rw = ReactionWheelAssembly::three_axis(0.01, MAX_MOMENTUM, MAX_TORQUE);
+        rw.command = RwCommand::Torques(rw.core().allocate(&Vector3::new(0.0, 0.0, MAX_TORQUE)));
+        let system = AugmentedAttitudeSystem::circular_orbit(
+            symmetric_inertia(BODY_INERTIA),
+            398600.4418,
+            7000.0,
+            100.0,
+        )
+        .with_effector(rw);
+
+        let initial = system.initial_augmented_state(AttitudeState {
+            quaternion: Vector4::new(1.0, 0.0, 0.0, 0.0),
+            angular_velocity: Vector3::zeros(),
+        });
+        // Isotropic inertia with one wheel axis driven, so the body-frame total
+        // is constant rather than merely constant in magnitude.
+        let total = |state: &AugmentedState<AttitudeState>| {
+            BODY_INERTIA * state.plant.angular_velocity
+                + Vector3::new(state.aux[0], state.aux[1], state.aux[2])
+        };
+        let started_with = total(&initial);
+
+        let boundaries = system.boundaries();
+        let mut slots = vec![RootSlot::new(); boundaries.len()];
+        let (_, _, ended) = walk_to_target(
+            &system,
+            &boundaries,
+            &mut slots,
+            RootSearch::default(),
+            initial,
+            0.0,
+            20.0,
+            false,
+            |state, t, _checked| Rk4.stepper(&system, state, t, DT),
+            &mut |_: f64, _: &AugmentedState<AttitudeState>| {},
+            &|_: f64, _: &AugmentedState<AttitudeState>| -> ControlFlow<()> {
+                ControlFlow::Continue(())
+            },
+        )
+        .expect("the walk succeeds");
+
+        assert!(
+            (ended.aux[2] + MAX_MOMENTUM).abs() < 1e-6,
+            "the z wheel ends held at its lower bound, not at {}",
+            ended.aux[2]
+        );
+        assert_eq!(
+            ended.modes[2],
+            ConstraintMode::Lower,
+            "and its mode says which bound holds it"
+        );
+        let lost = (total(&ended) - started_with).magnitude();
+        assert!(
+            lost < 1e-9,
+            "{lost:.3e} N·m·s of the body-frame total went missing"
+        );
+    }
+
     #[test]
     fn torque_free_symmetric_body_zero_acceleration() {
         let system = AugmentedAttitudeSystem::circular_orbit(
