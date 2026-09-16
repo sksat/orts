@@ -41,7 +41,7 @@ pub(crate) fn validate_sim_args(sim: &SimArgs) -> Result<(), String> {
         sim.duration,
     )?;
     crate::config::validate_tolerances(sim.integrator, sim.atol, sim.rtol)?;
-    crate::config::validate_root_t_tolerance(sim.root_t_tolerance)?;
+    crate::config::validate_root_t_tolerance(sim.root_t_tolerance, sim.dt)?;
     // The frame rules need the fleet's attitude configs, which the direct-CLI
     // path cannot express at all (`--sat` has no attitude), so an empty slice
     // states exactly that.
