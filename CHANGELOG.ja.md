@@ -1024,6 +1024,11 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `utsuroi` (Rust, crates.io)
 
 #### Added
+- `IntegrationError::BoundaryUnsettled` を追加した。持っているモードが 1 度ずつ動いても
+  なお境界の越えた側に残っている state を報告する。境界を settle することが state を境界の上に
+  載せる操作なので、モードの数だけ回せば自分と整合する state に到達する。settle が値を越えた側に
+  残す呼び出し側では到達せず、そこから walk は続けられない (探索は符号の変化から交差を見つけるが、
+  既に越えた側にある値には残っていない)。続けると、その span の残りをずっと拘束の外で伝播する。
 - `RootEvent` を追加。時刻ではなく状態が決める境界を表す。燃焼窓の端は既知の時刻なので
   `Segments` で span を刻めるが、reaction wheel の飽和や推進剤の枯渇は時刻が分からず、
   それを起こすステップの内側で交差を見つける必要がある。event は符号付き関数の零点で、

@@ -61,15 +61,10 @@ fn angular_momentum_conservation_with_rw() {
     let system = AugmentedAttitudeSystem::circular_orbit(inertia, 398600.4418, 7000.0, 100.0)
         .with_effector(rw);
 
-    let initial = AugmentedState {
-        plant: AttitudeState {
-            quaternion: Vector4::new(1.0, 0.0, 0.0, 0.0),
-            angular_velocity: Vector3::new(0.01, -0.02, 0.03),
-        },
-        aux: system.initial_aux_state(),
-        aux_bounds: system.initial_aux_bounds(),
-        modes: vec![],
-    };
+    let initial = system.initial_augmented_state(AttitudeState {
+        quaternion: Vector4::new(1.0, 0.0, 0.0, 0.0),
+        angular_velocity: Vector3::new(0.01, -0.02, 0.03),
+    });
 
     let l0 = total_angular_momentum(&initial, &inertia, &wheel_axes);
 
@@ -114,12 +109,7 @@ fn rw_torque_produces_opposite_spacecraft_rotation() {
     let system = AugmentedAttitudeSystem::circular_orbit(inertia, 398600.4418, 7000.0, 100.0)
         .with_effector(rw);
 
-    let initial = AugmentedState {
-        plant: AttitudeState::identity(), // at rest
-        aux: system.initial_aux_state(),  // wheels at zero momentum
-        aux_bounds: system.initial_aux_bounds(),
-        modes: vec![],
-    };
+    let initial = system.initial_augmented_state(AttitudeState::identity());
 
     let dt = 0.01;
     let t_end = 10.0;
@@ -191,12 +181,7 @@ fn momentum_saturation_stops_acceleration() {
     let system = AugmentedAttitudeSystem::circular_orbit(inertia, 398600.4418, 7000.0, 100.0)
         .with_effector(rw);
 
-    let initial = AugmentedState {
-        plant: AttitudeState::identity(),
-        aux: system.initial_aux_state(),
-        aux_bounds: system.initial_aux_bounds(),
-        modes: vec![],
-    };
+    let initial = system.initial_augmented_state(AttitudeState::identity());
 
     // Time to saturation: h_max / tau_max = 0.5 / 0.1 = 5.0 s
     let dt = 0.01;
@@ -245,12 +230,7 @@ fn torque_rate_limiting_clamps_acceleration() {
     let system = AugmentedAttitudeSystem::circular_orbit(inertia, 398600.4418, 7000.0, 100.0)
         .with_effector(rw);
 
-    let initial = AugmentedState {
-        plant: AttitudeState::identity(),
-        aux: system.initial_aux_state(),
-        aux_bounds: system.initial_aux_bounds(),
-        modes: vec![],
-    };
+    let initial = system.initial_augmented_state(AttitudeState::identity());
 
     let dt = 0.01;
     let t_end = 10.0;

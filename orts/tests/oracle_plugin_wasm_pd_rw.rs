@@ -29,7 +29,7 @@ use wasmtime::component::Component;
 use orts::OrbitalState;
 use orts::SpacecraftState;
 use orts::attitude::{AttitudeState, AugmentedAttitudeSystem, GravityGradientTorque};
-use orts::effector::AugmentedState;
+use orts::effector::{AugmentedState, ConstraintMode};
 use orts::plugin::wasm::{WasmController, WasmEngine, WasmPluginCache};
 use orts::plugin::{ActuatorBundle, ActuatorTelemetry, PluginController, RwTelemetry, TickInput};
 use orts::sensor::{Gyroscope, SensorBundle, StarTracker};
@@ -78,7 +78,8 @@ fn run_native(initial: AttitudeState) -> AugmentedState<AttitudeState> {
         plant: initial,
         aux: vec![0.0, 0.0, 0.0],
         aux_bounds: vec![],
-        modes: vec![],
+        // One mode per wheel, as the assembly registers.
+        modes: vec![ConstraintMode::Free; 3],
     };
     let mut t = 0.0;
 
@@ -200,7 +201,8 @@ fn drive_wasm(
         plant: initial,
         aux: vec![0.0, 0.0, 0.0],
         aux_bounds: vec![],
-        modes: vec![],
+        // One mode per wheel, as the assembly registers.
+        modes: vec![ConstraintMode::Free; 3],
     };
     let mut t = 0.0;
 

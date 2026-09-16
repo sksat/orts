@@ -1224,6 +1224,14 @@ section is subdivided by package.
 ### `utsuroi` (Rust, crates.io)
 
 #### Added
+- `IntegrationError::BoundaryUnsettled` reports a state still on a boundary's
+  crossed side after every mode it holds could have moved once. Settling a
+  boundary is what puts the state on it, so one pass per mode is enough to
+  reach a state that agrees with itself; a caller whose settle leaves the value
+  past the boundary never does, and a walk cannot go on from there — the search
+  reads a crossing from a change of sign, and a value already on the crossed
+  side has none left to give. The alternative was to walk on with it, which
+  propagates a state past a constraint for the rest of the span.
 - `RootEvent`, for a boundary the state decides rather than the clock. A burn
   window's edges are known times, so a `Segments` walk cuts the span at them; a
   reaction wheel saturating or a tank running dry has no known time, and the

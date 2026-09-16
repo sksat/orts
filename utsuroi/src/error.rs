@@ -104,6 +104,16 @@ pub enum IntegrationError {
     /// the tolerance, so the crossing was never pinned down. A value that
     /// changes sign without being continuous in `t` does this.
     RootNotLocalized { t: f64, bracket: f64 },
+    /// A state still on a boundary's crossed side after every mode it holds
+    /// could have moved once.
+    ///
+    /// Settling a boundary is what puts the state on it, so one pass per mode
+    /// is enough for a state to reach one that agrees with itself. A caller
+    /// whose settle leaves the state past the boundary — or moves it past
+    /// another — never reaches one, and a walk cannot go on: the search finds a
+    /// crossing from a change of sign, and a value already on the crossed side
+    /// has none left to give.
+    BoundaryUnsettled { t: f64, boundary: usize },
     /// A step of width `h` taken while narrowing a bracket failed the adaptive
     /// solver's own error control, with error norm `err`.
     ///
@@ -151,7 +161,8 @@ impl IntegrationError {
             | Self::LandingUnreachable { t, .. }
             | Self::NonFiniteRootValue { t, .. }
             | Self::RootNotLocalized { t, .. }
-            | Self::RootTrialRejected { t, .. } => Some(*t),
+            | Self::RootTrialRejected { t, .. }
+            | Self::BoundaryUnsettled { t, .. } => Some(*t),
             Self::InvalidTimeSpan { t0, .. } => Some(*t0),
             Self::InvalidStepSize { .. }
             | Self::InvalidTolerances { .. }
@@ -269,6 +280,14 @@ impl core::fmt::Display for IntegrationError {
                     f,
                     "the root search from t = {t} ran out of iterations with the bracket \
                      still {bracket} wide"
+                )
+            }
+            Self::BoundaryUnsettled { t, boundary } => {
+                write!(
+                    f,
+                    "boundary {boundary} is still on its crossed side at t = {t} after \
+                     every mode could have moved once: settling it is what puts the \
+                     state on it"
                 )
             }
             Self::RootSlotCount { events, slots } => {

@@ -298,7 +298,7 @@ where
         // crossing that has already happened is not one a search will find.
         // Settling one can open another, so this runs until the state is in a
         // mode that agrees with itself.
-        let moved = settle_what_is_already_past(system, declared, segment, &mut state, t);
+        let moved = settle_what_is_already_past(system, declared, segment, &mut state, t)?;
 
         // The state the caller last saw is not this one, so it is reported and
         // offered to the check before the walk carries it any further. A
@@ -357,13 +357,19 @@ where
 /// One pass can open another — a wheel let loose by a command can be past the
 /// other bound — so this repeats, bounded by the number of boundaries there
 /// are, which is how many modes could still move.
+///
+/// Settling is what puts the state on a boundary, so that bound is enough for
+/// a state to reach a mode that agrees with itself. Where it is not, the state
+/// is still past a boundary the search cannot find — a value already on the
+/// crossed side has no change of sign left to give — so this reports
+/// [`IntegrationError::BoundaryUnsettled`] rather than walking on with it.
 fn settle_what_is_already_past<Sys: HasBoundaries>(
     system: &Sys,
     boundaries: &[DeclaredBoundary],
     segment: Option<&SegmentContext>,
     state: &mut Sys::State,
     t: f64,
-) -> bool {
+) -> Result<bool, IntegrationError> {
     let mut settled_any = false;
     for _ in 0..=boundaries.len() {
         let mut moved = false;
@@ -393,10 +399,23 @@ fn settle_what_is_already_past<Sys: HasBoundaries>(
             }
         }
         if !moved {
-            break;
+            return Ok(settled_any);
         }
     }
-    settled_any
+
+    // Every pass moved something, so the state never came to rest. Name the
+    // first boundary it is still past.
+    let unsettled = boundaries
+        .iter()
+        .position(|declared| {
+            system.boundary_is_active(declared, state)
+                && system.boundary_value(declared, segment, t, state) < 0.0
+        })
+        .unwrap_or(0);
+    Err(IntegrationError::BoundaryUnsettled {
+        t,
+        boundary: unsettled,
+    })
 }
 
 // The three solvers, each forwarding the same three questions. Written out
@@ -640,6 +659,94 @@ mod tests {
         )
         .expect("the walk succeeds");
         (t, state)
+    }
+
+    /// Settling is what puts the state on a boundary, and a system whose settle
+    /// does not — it moves the mode and leaves the value where it was — never
+    /// reaches a state that agrees with itself. The walk cannot go on from
+    /// there: the search reads a crossing from a change of sign, and a value
+    /// already on the crossed side has none left. It reports rather than
+    /// walking past the boundary for the whole span.
+    #[test]
+    fn a_settle_that_never_comes_to_rest_is_an_error() {
+        /// Two boundaries that hand the mode back and forth, each leaving the
+        /// scalar where it was.
+        struct NeverRests;
+
+        impl DynamicalSystem for NeverRests {
+            type State = Ramp;
+            fn derivatives(&self, _t: f64, state: &Ramp) -> Ramp {
+                Ramp {
+                    x: RATE,
+                    held: state.held,
+                }
+            }
+        }
+
+        impl HasBoundaries for NeverRests {
+            fn boundaries(&self) -> Vec<DeclaredBoundary> {
+                vec![
+                    Ramped::declared(BoundaryKind::ReachedLower { index: 0 }),
+                    Ramped::declared(BoundaryKind::Released { index: 0 }),
+                ]
+            }
+
+            fn boundary_value(
+                &self,
+                _declared: &DeclaredBoundary,
+                _segment: Option<&SegmentContext>,
+                _t: f64,
+                state: &Ramp,
+            ) -> f64 {
+                // Past whichever boundary is live, always.
+                state.x
+            }
+
+            fn settle_boundary(&self, _declared: &DeclaredBoundary, state: &mut Ramp) {
+                // Only the mode moves, so the value stays on the crossed side.
+                state.held = !state.held;
+            }
+
+            fn boundary_is_active(&self, declared: &DeclaredBoundary, state: &Ramp) -> bool {
+                match declared.boundary.kind {
+                    BoundaryKind::ReachedLower { .. } => !state.held,
+                    _ => state.held,
+                }
+            }
+        }
+
+        let system = NeverRests;
+        let boundaries = system.boundaries();
+        let mut slots = vec![RootSlot::new(); boundaries.len()];
+        let outcome = walk_to_target(
+            Boundaries {
+                system: &system,
+                declared: &boundaries,
+                slots: &mut slots,
+                search: RootSearch::default(),
+                segment: None,
+            },
+            Span {
+                from: 0.0,
+                to: 1.0,
+                start_is_checked: false,
+            },
+            Ramp {
+                x: -0.5,
+                held: false,
+            },
+            |state, t, _checked| Rk4.stepper(&system, state, t, DT),
+            &mut |_: f64, _: &Ramp| {},
+            &|_: f64, _: &Ramp| -> ControlFlow<()> { ControlFlow::Continue(()) },
+        );
+
+        assert!(
+            matches!(
+                outcome,
+                Err(IntegrationError::BoundaryUnsettled { t, boundary: 0 }) if t == 0.0
+            ),
+            "the walk reports which boundary it is still past, at the time it gave up"
+        );
     }
 
     /// The mode decides which boundaries the search looks at, and the walk asks

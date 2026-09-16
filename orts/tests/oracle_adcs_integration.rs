@@ -14,7 +14,7 @@ use nalgebra::{Matrix3, UnitQuaternion, Vector3};
 use utsuroi::{Integrator, Rk4};
 
 use orts::attitude::{AttitudeState, AugmentedAttitudeSystem, GravityGradientTorque};
-use orts::effector::AugmentedState;
+use orts::effector::{AugmentedState, ConstraintMode};
 use orts::spacecraft::ReactionWheelAssembly;
 
 fn symmetric_inertia(i: f64) -> Matrix3<f64> {
@@ -99,7 +99,8 @@ fn pd_rw_stabilization_with_gravity_gradient() {
         plant: initial_att,
         aux: vec![0.0, 0.0, 0.0],
         aux_bounds: vec![],
-        modes: vec![],
+        // One mode per wheel, as the assembly registers.
+        modes: vec![ConstraintMode::Free; 3],
     };
     let mut t: f64 = 0.0;
 
@@ -182,7 +183,8 @@ fn rw_momentum_buildup_under_gravity_gradient() {
         plant: initial_att,
         aux: vec![0.0, 0.0, 0.0],
         aux_bounds: vec![],
-        modes: vec![],
+        // One mode per wheel, as the assembly registers.
+        modes: vec![ConstraintMode::Free; 3],
     };
     let mut t: f64 = 0.0;
 
@@ -283,7 +285,8 @@ fn pd_rw_matches_direct_pd_symmetric_body() {
         plant: initial_att.clone(),
         aux: vec![0.0, 0.0, 0.0],
         aux_bounds: vec![],
-        modes: vec![],
+        // One mode per wheel, as the assembly registers.
+        modes: vec![ConstraintMode::Free; 3],
     };
     let mut t: f64 = 0.0;
 
