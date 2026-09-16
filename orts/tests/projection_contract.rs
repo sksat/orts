@@ -411,3 +411,50 @@ fn a_step_coarser_than_the_motor_lag_misses_a_brief_excursion() {
         "and holds the wheel on its bound, not at {fine_peak}"
     );
 }
+
+/// A state can arrive a hair past a boundary — a caller restoring a state it
+/// saved, a command applied between walks — and however small the overshoot,
+/// the search cannot find it: the margin is already negative and only goes
+/// further negative, so there is no sign change left to report. Such a wheel
+/// would run on past its limit for the whole span.
+///
+/// Settling before the first step is what catches it, and the test to be sure
+/// is the one whose overshoot is smaller than the tolerance the wheel declares
+/// for sitting on its bound (1e-12 N·m·s): the tolerance suppresses a second
+/// report of a crossing already located, and being on the crossed side is not
+/// that.
+#[test]
+fn a_wheel_a_hair_past_its_bound_is_settled_before_it_runs_further() {
+    let system = saturating_system();
+    let mut initial = system.initial_augmented_state(initial_plant());
+    // Past the lower bound by less than the wheel's own boundary tolerance,
+    // and still running free, with the motor driving it further out.
+    initial.aux[2] = -MAX_MOMENTUM - 1e-13;
+
+    let mut group: IndependentGroup<Dynamics> =
+        IndependentGroup::new(IntegratorConfig::Rk4 { dt: DT }).add_satellite(
+            "sat",
+            initial,
+            saturating_system(),
+        );
+    group
+        .propagate_to_with(T_END, |_id, _t, _state| {})
+        .expect("the walk succeeds");
+
+    let ended = group
+        .satellites()
+        .next()
+        .expect("one satellite")
+        .state
+        .clone();
+    assert!(
+        (ended.aux[2] + MAX_MOMENTUM).abs() < 1e-12,
+        "the wheel is put on its bound and held there, not left at {}",
+        ended.aux[2]
+    );
+    assert_eq!(
+        ended.modes[2],
+        ConstraintMode::Lower,
+        "and its mode says which bound holds it"
+    );
+}

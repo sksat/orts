@@ -145,8 +145,12 @@ section is subdivided by package.
   derivatives were taken in, so a part that holds a value across a segment — a
   commanded burn — answers the boundary with what the state was integrated
   under rather than with the value from the other side of a switch.
-  A boundary's value is a margin: positive while the boundary is ahead, zero on
-  it, negative past it, so `EffectorBoundary` carries no crossing direction —
+  A boundary's value is a margin: positive while the boundary is ahead, exactly
+  zero on it, negative past it — and a state the walk starts from is settled
+  onto the boundary whenever that margin is negative at all, since from there
+  the margin only goes further negative and no sign change is left for the
+  search to report. What an effector's `boundary_tolerance` suppresses is a
+  second report of a crossing already located, which is the search's own guard, so `EffectorBoundary` carries no crossing direction —
   reaching one is the margin running out, and a bound a value would rise into
   is written with its sign flipped. One side being the crossed side is what
   lets the propagation recognise a state that is *already* past a boundary,

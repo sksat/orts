@@ -372,14 +372,21 @@ fn settle_what_is_already_past<Sys: HasBoundaries>(
                 continue;
             }
             // The value is a margin, so past the boundary is below zero — the
-            // one side there is to be past. A state *on* the boundary is not
-            // past it, and the width that says so is the effector's own: a
-            // wheel resting on its bound with the motor asking for nothing has
-            // both its bound's margin and its release margin at zero, and
-            // treating either as crossed would move the mode back and forth
-            // for as long as this loop runs.
-            let tolerance = declared.boundary.boundary_tolerance;
-            if system.boundary_value(declared, segment, t, state) < -tolerance {
+            // one side there is to be past — and a state *on* the boundary,
+            // at exactly zero, is not past it. A wheel resting on its bound
+            // with the motor asking for nothing has both its bound's margin
+            // and its release margin at zero, and reading either as crossed
+            // would move the mode back and forth for as long as this loop
+            // runs.
+            //
+            // No tolerance band here: a margin that is negative at all is on
+            // the crossed side, and the search cannot find it — the value only
+            // goes further negative from there, so there is no sign change
+            // left to report and the state would run on past its bound. What
+            // the effector's `boundary_tolerance` suppresses is a second
+            // report at a root already located, which is the search's own
+            // guard.
+            if system.boundary_value(declared, segment, t, state) < 0.0 {
                 system.settle_boundary(declared, state);
                 moved = true;
                 settled_any = true;
