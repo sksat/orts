@@ -140,9 +140,9 @@ impl Rw {
     /// two bound the same quantity and the smaller one binds.
     /// [`with_max_speed`](Self::with_max_speed) already tightens
     /// `max_momentum` to match, but the fields are public: reading the bound
-    /// here keeps the value the projection clamps at, the torque the assembly
-    /// refuses, and the boundary a root event watches from drifting apart when
-    /// a caller sets one of them by hand.
+    /// here keeps the momentum the boundary handling settles on, the torque
+    /// the assembly refuses, and the boundary a root event watches from
+    /// drifting apart when a caller sets one of them by hand.
     pub fn momentum_limit(&self) -> f64 {
         self.max_momentum.min(self.inertia * self.max_speed)
     }

@@ -1012,6 +1012,98 @@ mod tests {
         );
     }
 
+    /// A coupled group keeps one state per satellite, so a boundary belongs to
+    /// one of them. The declaration carries whose it is, and the value, the
+    /// activation and the settling all go to that satellite's own system and
+    /// state: answered for the wrong satellite, the group would put a state on
+    /// a boundary it never reached and leave the one that did past it.
+    #[test]
+    fn a_boundary_is_settled_on_the_satellite_that_reached_it() {
+        /// A particle that stops dead where it meets a wall at `WALL` on x,
+        /// travelling in from above it.
+        struct Wall;
+        const WALL: f64 = 7000.0;
+
+        impl DynamicalSystem for Wall {
+            type State = OrbitalState;
+            fn derivatives(&self, _t: f64, state: &OrbitalState) -> OrbitalState {
+                OrbitalState::from_derivative(*state.velocity(), Vector3::zeros())
+            }
+        }
+
+        impl HasBoundaries for Wall {
+            fn boundaries(&self) -> Vec<DeclaredBoundary> {
+                vec![DeclaredBoundary {
+                    // Overwritten by the group with whose satellite it is.
+                    satellite: usize::MAX,
+                    effector: 0,
+                    boundary: crate::effector::EffectorBoundary {
+                        kind: crate::effector::BoundaryKind::ReachedLower { index: 0 },
+                        crossing: utsuroi::Crossing::Falling,
+                        boundary_tolerance: 0.0,
+                    },
+                    aux_offset: 0,
+                    aux_dim: 0,
+                    mode_offset: 0,
+                    mode_dim: 0,
+                }]
+            }
+
+            fn boundary_value(&self, _: &DeclaredBoundary, _: f64, state: &OrbitalState) -> f64 {
+                // How far it still has to travel.
+                state.position().x - WALL
+            }
+
+            fn settle_boundary(&self, _: &DeclaredBoundary, state: &mut OrbitalState) {
+                *state = OrbitalState::new(Vector3::new(WALL, 0.0, 0.0), Vector3::zeros());
+            }
+
+            fn boundary_is_active(&self, _: &DeclaredBoundary, state: &OrbitalState) -> bool {
+                // Standing still on the wall is not on its way to one, which is
+                // the mode this system has instead of a stored one.
+                state.velocity().x < 0.0
+            }
+        }
+
+        // The second one meets the wall half a second in; the first is still
+        // 1900 km away when the span ends.
+        let far = OrbitalState::new(
+            Vector3::new(9000.0, 0.0, 0.0),
+            Vector3::new(-100.0, 0.0, 0.0),
+        );
+        let near = OrbitalState::new(
+            Vector3::new(7050.0, 0.0, 0.0),
+            Vector3::new(-100.0, 0.0, 0.0),
+        );
+
+        let mut group: CoupledGroup<Wall> = CoupledGroup::rk4(0.25)
+            .add_satellite("far", far, Wall)
+            .add_satellite("near", near, Wall);
+        group.propagate_to(1.0).expect("the walk succeeds");
+
+        let states = group.group_state();
+        assert!(
+            (states.states[1].position().x - WALL).abs() < 1e-9,
+            "the satellite that met the wall stands on it, at {}",
+            states.states[1].position().x
+        );
+        assert!(
+            states.states[1].velocity().x.abs() < 1e-9,
+            "and stopped, at {}",
+            states.states[1].velocity().x
+        );
+        assert!(
+            (states.states[0].position().x - 8900.0).abs() < 1e-9,
+            "the other one travelled its whole second, to {}",
+            states.states[0].position().x
+        );
+        assert!(
+            (states.states[0].velocity().x + 100.0).abs() < 1e-9,
+            "at the speed it started with, not {}",
+            states.states[0].velocity().x
+        );
+    }
+
     #[test]
     fn spring_energy_conservation_rk4() {
         // Two equal-mass bodies connected by spring, no other forces

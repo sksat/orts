@@ -125,9 +125,18 @@ pub trait StateEffector<S: HasFrame>: Send + Sync + std::any::Any {
 
     /// Per-element (min, max) bounds for auxiliary state projection.
     ///
-    /// By default returns unbounded `(-INF, +INF)` for each element.
-    /// Override to enforce physical constraints (e.g., reaction wheel
-    /// momentum saturation).
+    /// By default returns unbounded `(-INF, +INF)` for each element. Override
+    /// for a quantity whose bound can be imposed by moving that element alone
+    /// — a reaction wheel's realized motor torque, which tracks a command the
+    /// driver already limits.
+    ///
+    /// A bound that a conserved total is shared across does not belong here:
+    /// clamping one side of an exchange the rest of the state has already
+    /// integrated destroys that much of the total. Such a bound is a boundary
+    /// the propagation locates, through
+    /// [`boundaries`](Self::boundaries) and
+    /// [`settle_boundary`](Self::settle_boundary), which is where a wheel's
+    /// momentum limit is kept.
     fn aux_bounds(&self) -> Vec<(f64, f64)> {
         vec![(f64::NEG_INFINITY, f64::INFINITY); self.state_dim()]
     }

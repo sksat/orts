@@ -1058,6 +1058,67 @@ mod tests {
         (sat, ticks)
     }
 
+    /// The controlled path walks with the boundaries the effectors declare, so
+    /// a wheel that saturates inside a span is held at its limit and what it
+    /// stops taking stays with the spacecraft. Stepping without that handling
+    /// would carry the wheel past its limit for the rest of the span, and the
+    /// body would keep the reaction.
+    #[test]
+    fn a_saturating_wheel_is_held_on_the_controlled_path() {
+        use orts::spacecraft::{ReactionWheelAssembly, RwCommand};
+
+        const MAX_MOMENTUM: f64 = 0.53;
+        const MAX_TORQUE: f64 = 0.1;
+        const BODY_INERTIA: f64 = 10.0;
+
+        // The z wheel takes a torque about z alone, and reaches its limit at
+        // t = 5.3 s: between the ticks of the 0.25 s grid below.
+        let (mut sat, _ticks) = satellite_with(1000.0, 0.0);
+        let mut rw = ReactionWheelAssembly::three_axis(0.01, MAX_MOMENTUM, MAX_TORQUE);
+        rw.command = RwCommand::Torques(rw.core().allocate(&Vector3::new(0.0, 0.0, MAX_TORQUE)));
+        sat.dynamics = std::mem::replace(
+            &mut sat.dynamics,
+            orts::spacecraft::SpacecraftDynamics::new(
+                arika::body::KnownBody::Earth.properties().mu,
+                Box::new(orts::orbital::gravity::PointMass) as Box<dyn GravityField>,
+                nalgebra::Matrix3::identity(),
+            ),
+        )
+        .with_effector(rw);
+        sat.state = sat
+            .dynamics
+            .initial_augmented_state(sat.state.plant.clone());
+
+        // Body-frame total: the body's own plus the three wheels', which spin
+        // about x, y and z. With an isotropic inertia and one axis driven, the
+        // vector itself is constant.
+        let total = |state: &AugmentedState<SpacecraftState>| {
+            BODY_INERTIA * state.plant.attitude.angular_velocity
+                + Vector3::new(state.aux[0], state.aux[1], state.aux[2])
+        };
+        let started_with = total(&sat.state);
+
+        propagate_controlled(
+            &mut sat,
+            0.0,
+            20.0,
+            &IntegratorConfig::Rk4 { dt: 0.25 },
+            &|_: f64, _: &AugmentedState<SpacecraftState>| ControlFlow::Continue(()),
+        )
+        .expect("the span is finite");
+
+        assert!(
+            (sat.state.aux[2] + MAX_MOMENTUM).abs() < 1e-6,
+            "the z wheel ends held at its lower bound, not at {}",
+            sat.state.aux[2]
+        );
+        let lost = (total(&sat.state) - started_with).magnitude();
+        assert!(
+            lost < 1e-9,
+            "{lost:.3e} N·m·s of the body-frame total went missing"
+        );
+    }
+
     #[test]
     fn every_integrator_stops_a_falling_satellite() {
         // The detection time is the first step end past the line, so it is the
