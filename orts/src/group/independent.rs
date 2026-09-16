@@ -357,6 +357,10 @@ where
             // from being reported again at the next one's start.
             let boundaries = dynamics.boundaries();
             let mut slots = vec![RootSlot::new(); boundaries.len()];
+            // TODO: the default 1 ms tolerance. It bounds how late a boundary is
+            // reported, and so how much momentum `settle_boundary` hands back in
+            // one go; a knob for it belongs beside the integrator's own
+            // tolerances in `IntegratorConfig`.
             let search = RootSearch::default();
 
             // One segment at a time, so that no switch of the right-hand side

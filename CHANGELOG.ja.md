@@ -113,6 +113,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `AuxRegistry::register` は第 3 引数に effector の `mode_dim` を取り、group が
   伝播する `DynamicalSystem` は `HasBoundaries` も実装する必要がある (全 method が
   既定実装なので、境界のない系は `impl HasBoundaries for X {}` で足りる)。
+  ホイールの角運動量の上限を守るのは伝播になり、`orts::boundary::walk_to_target` を走らせる
+  経路 — group、CLI の制御付き経路、あるいはこの関数を直接呼ぶ経路 — でだけ守られる。
+  `Integrator::integrate` で直接刻む呼び出し側では全てのホイールが `Free` のままで、
+  0.53 N·m·s のホイールを 0.1 N·m で 20 秒駆動すると 2.0 N·m·s に達する。
   飽和のような拘束を RHS の中の比較で表すことはできない: root の探索は同じ区間を
   幅を変えて再計算するので、ステップの途中で切り替わる比較は RK のステージ間でモードを
   混ぜ、到達時刻を `0.2r` 遅く報告する (実測、`DESIGN.md`)。モードは state が持ち、

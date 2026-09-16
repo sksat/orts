@@ -567,6 +567,10 @@ where
     // segment's end is not reported again at the next one's start.
     let boundaries = sat.dynamics.boundaries();
     let mut slots = vec![RootSlot::new(); boundaries.len()];
+    // TODO: the default 1 ms tolerance. It bounds how late a boundary is
+    // reported, and so how much momentum `settle_boundary` hands back in
+    // one go; a knob for it belongs beside the integrator's own
+    // tolerances in `IntegratorConfig`.
     let search = RootSearch::default();
 
     for segment in Segments::new(&sat.dynamics, t0, t1).map_err(span)? {

@@ -66,6 +66,12 @@ pub trait StateEffector<S: HasFrame>: Send + Sync + std::any::Any {
     /// The propagation turns these into root events, so the modes change only
     /// where a walk stopped — which is what keeps the right-hand side fixed
     /// for the search that found the stopping point.
+    ///
+    /// Declaring a boundary binds nothing by itself: the constraint it stands
+    /// for holds on the paths that run
+    /// [`walk_to_target`](crate::boundary::walk_to_target) — the groups and the
+    /// CLI's controlled path — and a plain `Integrator::integrate` steps
+    /// straight past it with every mode left as it was.
     fn boundaries(&self) -> Vec<EffectorBoundary> {
         Vec::new()
     }

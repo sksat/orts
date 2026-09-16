@@ -18,7 +18,7 @@
 //! [#446]: https://github.com/sksat/orts/issues/446
 
 use nalgebra::{Matrix3, Vector3};
-use utsuroi::Tolerances;
+use utsuroi::{Integrator, Rk4, Tolerances};
 
 use orts::effector::AugmentedState;
 use orts::group::{IndependentGroup, IntegratorConfig};
@@ -28,8 +28,11 @@ use orts::spacecraft::{ReactionWheelAssembly, RwCommand, SpacecraftDynamics, Spa
 const MAX_MOMENTUM: f64 = 0.53;
 const MAX_TORQUE: f64 = 0.1;
 const WHEEL_INERTIA: f64 = 0.01;
-/// Isotropic, so the body-frame total is the conserved one: with no external
-/// torque and no off-diagonal terms, `I·ω + Σ aᵢ hᵢ` holds still.
+/// Isotropic, and only the z wheel is driven, so the body's rate stays along z
+/// with the total. `dH_body/dt = -ω × H_body` then vanishes and the body-frame
+/// vector itself is constant, not just its magnitude — which is what lets these
+/// cases compare it component by component. There is no external torque: the
+/// gravity-gradient model is not installed.
 const BODY_INERTIA: f64 = 10.0;
 /// A torque about z is allocated to the z wheel alone, which therefore spins
 /// down to `-MAX_MOMENTUM` at `t = MAX_MOMENTUM / MAX_TORQUE = 5.3 s`: between
@@ -179,4 +182,26 @@ fn the_spacecraft_keeps_the_momentum_the_wheel_stopped_taking() {
              (started {started_with:?}, ended {ended_with:?})"
         );
     }
+}
+
+/// The limit is the boundary handling's to keep, and a walk that handles no
+/// boundaries keeps nothing: `Integrator::integrate` steps to the end of the
+/// span with no root search in it, so the mode of every wheel stays `Free` and
+/// the motor drives the wheel as far as the span allows. A caller who wants the
+/// limit enforced propagates through a path that runs the walk — a group, the
+/// CLI's controlled path, or `orts::boundary::walk_to_target` directly.
+#[test]
+fn a_direct_integration_has_no_boundary_to_stop_at() {
+    let system = saturating_system();
+    let initial = system.initial_augmented_state(initial_plant());
+    let ended = Rk4.integrate(&system, initial, 0.0, T_END, DT, |_, _| {});
+
+    // MAX_TORQUE for the whole span, unimpeded: 2.0 N·m·s, which is 3.8 times
+    // the wheel's own limit.
+    let expected = -MAX_TORQUE * T_END;
+    assert!(
+        (ended.aux[2] - expected).abs() < 1e-9,
+        "the wheel ends at {}, not at the {expected} the motor asks for",
+        ended.aux[2]
+    );
 }

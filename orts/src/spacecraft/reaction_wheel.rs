@@ -439,6 +439,18 @@ const DEFAULT_SPEED_CONTROL_BANDWIDTH: f64 = 10.0;
 ///
 /// Aux state: angular momentum `h_i` [N·m·s] for each wheel.
 /// Reaction torque on spacecraft: `τ_body = -Σ (dh_i/dt · axis_i) − ω × H_rw`.
+///
+/// # The momentum limit is the propagation's to keep
+///
+/// A wheel holds its limit through the boundaries it declares, which only a
+/// propagation that runs [`walk_to_target`](crate::boundary::walk_to_target)
+/// locates: the groups, the CLI's controlled path, or that function called
+/// directly. Stepping a system that holds this effector through
+/// `Integrator::integrate` instead leaves every wheel in
+/// [`crate::effector::ConstraintMode::Free`] — a 0.53 N·m·s wheel driven at
+/// 0.1 N·m for 20 s ends at 2.0 N·m·s. The body still receives the matching
+/// reaction, so the total is conserved; it is held by a wheel that cannot spin
+/// that fast.
 #[derive(Clone)]
 pub struct RwAssembly {
     core: RwAssemblyCore,
@@ -666,7 +678,9 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
         // The mode decides what the wheel exchanges. A set built without modes
         // — a state assembled by hand rather than by the system that registered
         // this effector — falls back to the per-stage comparison, which is what
-        // a walk with no boundary handling has always done.
+        // a walk with no boundary handling has always done. Such a state ends
+        // up sitting one step's overshoot past the limit, since the momentum is
+        // no longer an `aux_bounds` entry for the projection to clamp.
         let applied: Vec<f64> = if modes.len() == n {
             nu.iter()
                 .zip(modes)

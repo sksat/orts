@@ -141,6 +141,11 @@ section is subdivided by package.
   `mode_dim` as a third argument, and a `DynamicalSystem` propagated by a group
   must also implement `HasBoundaries` (every method defaulted, so
   `impl HasBoundaries for X {}` is enough for a system with no boundaries).
+  A wheel's momentum limit is now the propagation's to keep, and only a path
+  that runs `orts::boundary::walk_to_target` — the groups, the CLI's controlled
+  path, or that function called directly — keeps it. A caller stepping such a
+  system through `Integrator::integrate` leaves every wheel in `Free`, and a
+  0.53 N·m·s wheel driven at 0.1 N·m for 20 s ends at 2.0 N·m·s.
   A saturating constraint cannot be a comparison inside the right-hand side: the
   root search re-steps the same interval with different widths, and a comparison
   that flips mid-step mixes modes across the RK stages, which makes the search
