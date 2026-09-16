@@ -9,7 +9,7 @@ use arika::frame::{Eci, SimpleEci};
 use nalgebra::Matrix3;
 use utsuroi::{DynamicalSystem, SegmentContext};
 
-use super::{ExternalLoads, SpacecraftState};
+use super::{ExternalLoads, PropellantPool, SpacecraftState};
 
 /// Coupled orbit-attitude dynamics for a rigid spacecraft.
 ///
@@ -36,6 +36,15 @@ pub struct SpacecraftDynamics<G: GravityField, F: Eci = SimpleEci> {
     inertia: Matrix3<f64>,
     inertia_inv: Matrix3<f64>,
     models: Vec<Box<dyn Model<SpacecraftState<F>>>>,
+    /// Models that draw on the propellant, kept apart from the rest so that
+    /// running dry stops them and nothing else. Which models those are is the
+    /// caller's to say — guessing from a negative mass rate or from a name
+    /// would stop drag or a wheel too.
+    propulsion: Vec<Box<dyn Model<SpacecraftState<F>>>>,
+    /// The propellant every one of them draws from, with the floor under the
+    /// spacecraft's mass. `None` for a spacecraft that carries none, which is
+    /// every spacecraft with no propulsion registered.
+    pool: Option<PropellantPool>,
     effectors: Vec<Box<dyn StateEffector<SpacecraftState<F>>>>,
     registry: AuxRegistry,
     epoch_0: Option<Epoch>,
@@ -71,6 +80,8 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
             inertia,
             inertia_inv,
             models: Vec::new(),
+            propulsion: Vec::new(),
+            pool: None,
             effectors: Vec::new(),
             registry: AuxRegistry::new(),
             epoch_0: None,
@@ -83,6 +94,44 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     pub fn with_model(mut self, model: impl Model<SpacecraftState<F>> + 'static) -> Self {
         self.models.push(Box::new(model));
         self
+    }
+
+    /// The propellant this spacecraft carries, as a floor under its mass.
+    ///
+    /// One pool per spacecraft: every model registered with
+    /// [`with_propulsion`](Self::with_propulsion) draws from it, and what is
+    /// left is the mass the state carries above the floor. Calling this twice
+    /// replaces the pool rather than adding a second one.
+    pub fn with_propellant(mut self, pool: PropellantPool) -> Self {
+        self.pool = Some(pool);
+        self
+    }
+
+    /// Add a model that burns propellant (builder pattern).
+    ///
+    /// Its loads are evaluated exactly as [`with_model`](Self::with_model)'s
+    /// are, until the pool is empty — then this one is not asked at all, and
+    /// neither is any other that draws on the same propellant. A propulsion
+    /// model registered through `with_model` would keep thrusting on an empty
+    /// tank.
+    ///
+    /// # Panics
+    ///
+    /// Panics without a pool to draw from: the floor is what says when the
+    /// spacecraft is empty, and thrust with no floor has no end.
+    pub fn with_propulsion(mut self, model: impl Model<SpacecraftState<F>> + 'static) -> Self {
+        assert!(
+            self.pool.is_some(),
+            "a propulsion model needs the propellant it burns: call \
+             `with_propellant` first"
+        );
+        self.propulsion.push(Box::new(model));
+        self
+    }
+
+    /// The propellant pool, if this spacecraft carries any.
+    pub fn pool(&self) -> Option<PropellantPool> {
+        self.pool
     }
 
     /// Add a state effector (builder pattern).
@@ -202,21 +251,31 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     /// This is used to swap in a model with updated commanded state
     /// between integration segments (e.g., `MtqAssembly` with a new
     /// `command`).
+    ///
+    /// A propulsion model is replaced where it was registered, so a rebuilt
+    /// thruster assembly stays propulsion and the pool it draws from is
+    /// untouched: the propellant is the spacecraft's, and a command does not
+    /// refill it.
     pub fn replace_model(
         &mut self,
         name: &str,
         new_model: Box<dyn Model<SpacecraftState<F>>>,
     ) -> Option<Box<dyn Model<SpacecraftState<F>>>> {
-        if let Some(slot) = self.models.iter_mut().find(|m| m.name() == name) {
-            Some(std::mem::replace(slot, new_model))
-        } else {
-            None
-        }
+        let slot = self
+            .models
+            .iter_mut()
+            .chain(self.propulsion.iter_mut())
+            .find(|m| m.name() == name);
+        slot.map(|slot| std::mem::replace(slot, new_model))
     }
 
-    /// Names of active models.
+    /// Names of active models, propulsion last.
     pub fn model_names(&self) -> Vec<&str> {
-        self.models.iter().map(|m| m.name()).collect()
+        self.models
+            .iter()
+            .chain(self.propulsion.iter())
+            .map(|m| m.name())
+            .collect()
     }
 
     /// Per-model load breakdown at the given state.
@@ -226,10 +285,24 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
         state: &SpacecraftState<F>,
     ) -> Vec<(&str, ExternalLoads<F>)> {
         let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
-        self.models
-            .iter()
+        // The same set the right-hand side evaluates, so a record cannot show
+        // thrust the trajectory never felt.
+        self.models_to_evaluate(state)
             .map(|m| (m.name(), m.eval(t, state, epoch.as_ref())))
             .collect()
+    }
+
+    /// The models that act on a spacecraft in this state: all of them, and the
+    /// propulsion too while there is propellant left to burn.
+    fn models_to_evaluate(
+        &self,
+        state: &SpacecraftState<F>,
+    ) -> impl Iterator<Item = &Box<dyn Model<SpacecraftState<F>>>> {
+        let burning = self
+            .pool
+            .is_some_and(|pool| !pool.is_empty(state.mass))
+            .then_some(&self.propulsion);
+        self.models.iter().chain(burning.into_iter().flatten())
     }
 
     /// Per-model disturbance torque in the body frame [N·m], for telemetry.
@@ -352,7 +425,7 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
 
         // Accumulate external loads from models
         let mut total = ExternalLoads::<F>::zeros();
-        for model in &self.models {
+        for model in self.models_to_evaluate(&state.plant) {
             total += eval_maybe_in_segment(model, segment, t, &state.plant, epoch.as_ref());
         }
 
@@ -686,6 +759,90 @@ mod tests {
         let dynamics: SpacecraftDynamics<PointMass> =
             SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0));
         let _ = dynamics.with_effector(OneModeTwoBoundaries);
+    }
+
+    /// One pool, one floor, and the system is what reads them: a thruster
+    /// fires whatever it is asked to, so a spacecraft with nothing left to
+    /// burn has to not be asked. Both places that used to compare
+    /// `mass <= dry_mass` inside the right-hand side are gone — a comparison
+    /// there flips between the stages of a re-stepped boundary search.
+    ///
+    /// Everything that is not propulsion keeps being evaluated: drag and a
+    /// wheel do not stop because a tank ran dry.
+    #[test]
+    fn a_spacecraft_with_nothing_left_to_burn_is_not_asked_for_thrust() {
+        use crate::spacecraft::{PropellantPool, Thruster};
+
+        const FLOOR: f64 = 100.0;
+        let drag_like = ConstantAcceleration(Vector3::new(1e-6, 0.0, 0.0));
+        let dynamics = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
+            .with_model(drag_like)
+            .with_propellant(PropellantPool::new(FLOOR))
+            .with_propulsion(Thruster::new(10.0, 300.0, Vector3::x()));
+
+        let with_fuel = SpacecraftState {
+            mass: FLOOR + 1.0,
+            ..sample_spacecraft()
+        };
+        let burning = dynamics.derivatives(0.0, &augment(with_fuel.clone()));
+        assert!(
+            burning.plant.mass < 0.0,
+            "with propellant left the thruster burns it, at {}",
+            burning.plant.mass
+        );
+
+        // Exactly on the floor is empty: the propellant is what is above it.
+        let empty = SpacecraftState {
+            mass: FLOOR,
+            ..sample_spacecraft()
+        };
+        let dry = dynamics.derivatives(0.0, &augment(empty.clone()));
+        assert_eq!(
+            dry.plant.mass, 0.0,
+            "nothing left to burn, so nothing burns"
+        );
+
+        // The drag-like model is still evaluated, so the acceleration is its
+        // own and the thrust is gone rather than everything being gone.
+        let others_only = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
+            .with_model(ConstantAcceleration(Vector3::new(1e-6, 0.0, 0.0)));
+        let expected = others_only.derivatives(0.0, &augment(empty.clone()));
+        assert!(
+            (dry.plant.orbit.velocity() - expected.plant.orbit.velocity()).magnitude() < 1e-15,
+            "an empty tank leaves the other models where they were"
+        );
+
+        // And the record says the same, so a sample cannot show thrust the
+        // trajectory never felt.
+        let named: Vec<&str> = dynamics
+            .model_breakdown(0.0, &empty)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        assert!(
+            !named.contains(&"thruster"),
+            "the breakdown drops it too, and named {named:?}"
+        );
+        let with_thrust: Vec<&str> = dynamics
+            .model_breakdown(0.0, &with_fuel)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        assert!(
+            with_thrust.contains(&"thruster"),
+            "while there is propellant it is there, and named {with_thrust:?}"
+        );
+    }
+
+    /// A propulsion model with no pool behind it would thrust forever: the
+    /// floor is what says when the spacecraft is empty.
+    #[test]
+    #[should_panic(expected = "needs the propellant it burns")]
+    fn propulsion_without_a_pool_is_refused() {
+        use crate::spacecraft::Thruster;
+
+        SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
+            .with_propulsion(Thruster::new(10.0, 300.0, Vector3::x()));
     }
 
     /// Wrap a plant state as an augmented state with no effectors.

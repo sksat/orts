@@ -14,6 +14,15 @@ section is subdivided by package.
 ### `orts` (Rust, crates.io)
 
 #### Added
+- `PropellantPool` is the propellant a spacecraft carries: one pool, one floor,
+  and what is left is the mass the state carries above it. A floor of zero is
+  refused — it would sit on the singularity of `F/m`, and a boundary search
+  steps past the floor by design, re-stepping an interval under the mode that
+  held before the crossing. `SpacecraftDynamics::with_propellant` registers it
+  and `with_propulsion` registers a model that draws on it; a propulsion model
+  is evaluated exactly as any other until the pool is empty, and then it is not
+  asked at all. Which models burn propellant is the caller's to say: guessing
+  from a negative mass rate or from a name would stop drag or a wheel too.
 - `SpacecraftDynamics::load_breakdown` answers the acceleration magnitudes and
   the body torques from one evaluation of every model, as a `LoadBreakdown`
   re-exported from `orts::spacecraft`. `ExternalLoads` carries
@@ -129,6 +138,17 @@ section is subdivided by package.
   ([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
+- **BREAKING**: a thruster no longer carries a dry mass, and neither does an
+  assembly: `ThrusterSpec::dry_mass`, `Thruster::with_dry_mass`,
+  `ThrusterSpec::with_dry_mass` and `ThrusterAssemblyCore::new`'s second
+  argument are gone, and the floor is the spacecraft's — `PropellantPool`,
+  registered with the dynamics. Two thrusters carrying their own floor could
+  disagree about when the spacecraft is empty, and the comparison they each
+  made inside the right-hand side (`state.mass <= dry_mass`) is what a
+  boundary search cannot have: it flips between the stages of a re-stepped
+  interval, which reports a crossing at the wrong time. `orts.toml` grows the
+  same requirement — `[satellites.thruster] dry_mass` is required and must be
+  positive, where it used to default to zero.
 - **BREAKING**: how closely the propagation locates the time a state reaches a
   limit is a setting rather than the 1 ms default every path hard-coded.
   `IndependentGroup::with_root_search` and `CoupledGroup::with_root_search` take

@@ -12,7 +12,7 @@ use orts::OrbitalState;
 use orts::attitude::AttitudeState;
 use orts::orbital::gravity::PointMass;
 use orts::spacecraft::{
-    BurnWindow, G0, ScheduledBurn, SpacecraftDynamics, SpacecraftState, Thruster,
+    BurnWindow, G0, PropellantPool, ScheduledBurn, SpacecraftDynamics, SpacecraftState, Thruster,
 };
 use utsuroi::{Integrator, Rk4};
 
@@ -20,7 +20,24 @@ use utsuroi::{Integrator, Rk4};
 ///
 /// Uses a tiny μ so gravity is effectively zero, letting us isolate thrust effects.
 fn free_space_dynamics(inertia: Matrix3<f64>, thruster: Thruster) -> SpacecraftDynamics<PointMass> {
-    SpacecraftDynamics::new(1e-30, PointMass, inertia).with_model(thruster)
+    // A floor low enough that these cases never reach it; the one case about
+    // reaching it sets its own.
+    free_space_with_floor(inertia, thruster, 1e-6)
+}
+
+/// Free space with a thruster drawing on a pool whose floor is `dry_mass`.
+///
+/// The floor is the spacecraft's, so it is registered with the dynamics rather
+/// than with the thruster, and the thruster is registered as propulsion —
+/// which is what stops it once the pool is empty.
+fn free_space_with_floor(
+    inertia: Matrix3<f64>,
+    thruster: Thruster,
+    dry_mass: f64,
+) -> SpacecraftDynamics<PointMass> {
+    SpacecraftDynamics::new(1e-30, PointMass, inertia)
+        .with_propellant(PropellantPool::new(dry_mass))
+        .with_propulsion(thruster)
 }
 
 fn free_space_multi(
@@ -138,8 +155,8 @@ fn propellant_exhaustion_stops_thrust() {
     // Burn time to reach dry_mass: (m0 - dry_mass) / mass_rate
     let burn_time = (m0 - dry_mass) / mass_rate;
 
-    let thruster = Thruster::new(thrust, isp, Vector3::x()).with_dry_mass(dry_mass);
-    let dynamics = free_space_dynamics(symmetric_inertia(10.0), thruster);
+    let thruster = Thruster::new(thrust, isp, Vector3::x());
+    let dynamics = free_space_with_floor(symmetric_inertia(10.0), thruster, dry_mass);
 
     // Integrate well past the expected exhaustion time
     let total_time = burn_time * 3.0;
@@ -156,9 +173,10 @@ fn propellant_exhaustion_stops_thrust() {
     );
 
     // Velocity should stop increasing after burn — compare v at 2T vs 3T
-    let dynamics2 = free_space_dynamics(
+    let dynamics2 = free_space_with_floor(
         symmetric_inertia(10.0),
-        Thruster::new(thrust, isp, Vector3::x()).with_dry_mass(dry_mass),
+        Thruster::new(thrust, isp, Vector3::x()),
+        dry_mass,
     );
     let state0b = identity_spacecraft(m0);
     let r2 = Rk4.integrate(

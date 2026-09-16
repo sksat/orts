@@ -101,8 +101,6 @@ pub struct ControlledSatellite {
     /// Thruster specs (空なら thruster なし)。ZOH 境界で ThrusterAssembly を
     /// 作り直すために保持する。
     pub thruster_specs: Vec<ThrusterSpec>,
-    /// Thruster assembly-level propellant floor [kg]。
-    pub thruster_dry_mass: f64,
     /// Sim time this satellite's controller schedule is anchored at [s]: where
     /// the satellite entered the simulation.
     tick_base_t: f64,
@@ -149,7 +147,6 @@ impl ControlledSatellite {
             mtq_max_moment: 0.0,
             body,
             thruster_specs: Vec::new(),
-            thruster_dry_mass: 0.0,
             tick_base_t: 0.0,
             ticks_done: 0,
         }
@@ -291,7 +288,7 @@ pub fn build_controlled_satellite(
     };
 
     // Thruster を追加。
-    let (thruster_specs, thruster_dry_mass) = if let Some(cfg) = &spec.thruster_config {
+    let thruster_specs = if let Some(cfg) = &spec.thruster_config {
         let specs: Vec<ThrusterSpec> = cfg
             .thrusters
             .iter()
@@ -307,11 +304,16 @@ pub fn build_controlled_satellite(
                 s
             })
             .collect();
-        let core = ThrusterAssemblyCore::new(specs.clone(), cfg.dry_mass);
-        dynamics = dynamics.with_model(ThrusterAssembly::new(core));
-        (specs, cfg.dry_mass)
+        let core = ThrusterAssemblyCore::new(specs.clone());
+        // The propellant is the spacecraft's, and the assembly draws on it:
+        // registering it as propulsion is what stops it once the tank is
+        // empty.
+        dynamics = dynamics
+            .with_propellant(orts::spacecraft::PropellantPool::new(cfg.dry_mass))
+            .with_propulsion(ThrusterAssembly::new(core));
+        specs
     } else {
-        (Vec::new(), 0.0)
+        Vec::new()
     };
 
     // 初期状態。`initial_epoch` で評価（動的追加なら epoch + current_t）。
@@ -351,7 +353,6 @@ pub fn build_controlled_satellite(
         mtq_max_moment,
         body: params.body,
         thruster_specs,
-        thruster_dry_mass,
         tick_base_t: start_t,
         ticks_done: 0,
     })
@@ -424,7 +425,7 @@ fn apply_held_commands(sat: &mut ControlledSatellite) -> Result<(), String> {
                 sat.thruster_specs.len()
             ));
         }
-        let core = ThrusterAssemblyCore::new(sat.thruster_specs.clone(), sat.thruster_dry_mass);
+        let core = ThrusterAssemblyCore::new(sat.thruster_specs.clone());
         let mut assembly = ThrusterAssembly::new(core);
         assembly.command = thruster_cmd.clone();
         if sat
@@ -1054,7 +1055,6 @@ mod tests {
             mtq_max_moment: 0.0,
             body: arika::body::KnownBody::Earth,
             thruster_specs: Vec::new(),
-            thruster_dry_mass: 0.0,
             tick_base_t: start_t,
             ticks_done: 0,
         };

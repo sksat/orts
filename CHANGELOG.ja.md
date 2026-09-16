@@ -11,6 +11,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `orts` (Rust, crates.io)
 
 #### Added
+- `PropellantPool` を追加した。宇宙機が積む推進剤をプール 1 つ・床 1 つで表し、残量は state が
+  床より上に持っている質量である。床 0 は拒否する (`F/m` の特異点に床を置くことになる。境界の探索は
+  交差前のモードで区間を刻み直すので、床を越えて試行するのが設計である)。
+  `SpacecraftDynamics::with_propellant` がプールを、`with_propulsion` がそれを消費する model を
+  登録する。推進系の model は他の model と同じに評価され、プールが空になったら一切評価されない。
+  どの model が推進剤を使うかは呼び出し側が言う: 質量流量の符号や名前から推測すると、drag や
+  reaction wheel まで止めてしまう。
 - `SpacecraftDynamics::load_breakdown` を追加。加速度の magnitude と body torque を、
   全モデル 1 回の評価から `LoadBreakdown` (`orts::spacecraft` から re-export) で返す。`ExternalLoads` が両方を持っているので、両方を欲しい
   呼び出し側 (1 サンプルを報告する telemetry) が全モデルを 2 回評価する理由はない。
@@ -102,6 +109,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   variant で表される。([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
+- **BREAKING**: thruster も assembly も dry mass を持たなくなった。
+  `ThrusterSpec::dry_mass` / `Thruster::with_dry_mass` / `ThrusterSpec::with_dry_mass` と
+  `ThrusterAssemblyCore::new` の第 2 引数を削除し、床は宇宙機のもの (`PropellantPool`、dynamics に
+  登録する) にした。推進器がそれぞれ床を持つと、いつ宇宙機が空になるかで食い違える。さらに、
+  それぞれが RHS の中で行っていた比較 (`state.mass <= dry_mass`) は境界の探索と両立しない:
+  刻み直した区間のステージ間で切り替わり、交差の時刻を誤って報告する。`orts.toml` も同じ要求で、
+  `[satellites.thruster] dry_mass` は必須で正の値である (以前は既定値 0)。
 - **BREAKING**: 状態が限界に達する時刻をどこまで詰めて求めるかを設定にした (これまでは
   各経路が既定の 1 ms を埋め込んでいた)。`IndependentGroup::with_root_search` と
   `CoupledGroup::with_root_search` が `RootSearch` を取り、`propagate_controlled` は

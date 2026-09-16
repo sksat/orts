@@ -163,15 +163,13 @@ pub struct ThrusterSpec {
     pub direction_body: Vector3<f64>,
     /// Thruster position offset from CoM [m, body frame].
     pub offset_body: Vector3<f64>,
-    /// Dry mass [kg] — failsafe floor (thrust ceases when mass ≤ dry_mass).
-    pub dry_mass: f64,
 }
 
 impl ThrusterSpec {
     /// Create a thruster spec with the given maximum thrust, specific impulse,
     /// and body-frame direction.
     ///
-    /// Defaults: offset = 0 (CoM), dry_mass = 0.
+    /// Defaults: offset = 0 (CoM).
     ///
     /// # Panics
     /// Panics if `direction_body` is zero-length.
@@ -183,7 +181,6 @@ impl ThrusterSpec {
             isp_s,
             direction_body: dir,
             offset_body: Vector3::zeros(),
-            dry_mass: 0.0,
         }
     }
 
@@ -193,27 +190,18 @@ impl ThrusterSpec {
         self
     }
 
-    /// Set the dry mass floor [kg].
-    pub fn with_dry_mass(mut self, dry_mass: f64) -> Self {
-        self.dry_mass = dry_mass;
-        self
-    }
-
     /// Compute loads for a given throttle level.
     ///
-    /// `throttle` is clamped to \[0, 1\].  Returns zero loads when
-    /// `state.mass ≤ dry_mass` (propellant exhausted).
+    /// `throttle` is clamped to \[0, 1\]. Whether there is propellant left to
+    /// burn is not asked here: the spacecraft's
+    /// [`PropellantPool`](super::PropellantPool) owns that, and the system
+    /// that holds this thruster is what stops asking once the pool is empty.
     pub fn loads_for_throttle(
         &self,
         throttle: f64,
         state: &SpacecraftState,
         _epoch: Option<&Epoch>,
     ) -> ExternalLoads {
-        // Failsafe: propellant exhausted
-        if state.mass <= self.dry_mass {
-            return ExternalLoads::zeros();
-        }
-
         let throttle = throttle.clamp(0.0, 1.0);
         if throttle < 1e-15 {
             return ExternalLoads::zeros();
@@ -262,7 +250,7 @@ impl Thruster {
     /// Create a thruster with the given maximum thrust, specific impulse, and
     /// body-frame direction.
     ///
-    /// Defaults: offset = 0 (CoM), profile = full throttle, dry_mass = 0.
+    /// Defaults: offset = 0 (CoM), profile = full throttle.
     ///
     /// # Panics
     /// Panics if `direction_body` is zero-length.
@@ -276,16 +264,6 @@ impl Thruster {
     /// Set the thruster offset from the spacecraft centre of mass [m, body frame].
     pub fn with_offset(mut self, offset: Vector3<f64>) -> Self {
         self.spec.offset_body = offset;
-        self
-    }
-
-    /// Set the dry mass floor [kg].
-    ///
-    /// When `state.mass ≤ dry_mass`, the thruster produces zero output
-    /// regardless of the profile.  This is a physical failsafe to prevent
-    /// `F/m` singularity when propellant is exhausted.
-    pub fn with_dry_mass(mut self, dry_mass: f64) -> Self {
-        self.spec.dry_mass = dry_mass;
         self
     }
 
@@ -376,15 +354,15 @@ use crate::plugin::command::ThrusterCommand;
 pub struct ThrusterAssemblyCore {
     /// Per-thruster static parameters.
     specs: Vec<ThrusterSpec>,
-    /// Assembly-level dry mass floor [kg].
-    /// All thrusters stop when `state.mass ≤ dry_mass`.
-    dry_mass: f64,
 }
 
 impl ThrusterAssemblyCore {
-    /// Create an assembly from a list of thruster specs and a common dry mass.
-    pub fn new(specs: Vec<ThrusterSpec>, dry_mass: f64) -> Self {
-        Self { specs, dry_mass }
+    /// Create an assembly from a list of thruster specs.
+    ///
+    /// The propellant they draw from is the spacecraft's, so the floor is not
+    /// theirs to carry: see [`PropellantPool`](super::PropellantPool).
+    pub fn new(specs: Vec<ThrusterSpec>) -> Self {
+        Self { specs }
     }
 
     /// Number of thrusters in the assembly.
@@ -394,9 +372,10 @@ impl ThrusterAssemblyCore {
 
     /// Compute aggregate loads from per-thruster throttle values.
     ///
-    /// Each throttle is clamped to \[0, 1\].  Returns zero loads when
-    /// `state.mass ≤ dry_mass` or when `throttles` length does not match
-    /// the number of thrusters.
+    /// Each throttle is clamped to \[0, 1\]. Returns zero loads when
+    /// `throttles` length does not match the number of thrusters. Whether the
+    /// spacecraft has propellant left is its pool's to say, and the system's
+    /// to act on.
     pub fn loads(
         &self,
         throttles: &[f64],
@@ -404,10 +383,6 @@ impl ThrusterAssemblyCore {
         epoch: Option<&Epoch>,
     ) -> ExternalLoads {
         if throttles.len() != self.specs.len() {
-            return ExternalLoads::zeros();
-        }
-        // Assembly-level dry mass check
-        if state.mass <= self.dry_mass {
             return ExternalLoads::zeros();
         }
         let mut total = ExternalLoads::zeros();
@@ -582,13 +557,11 @@ mod tests {
     }
 
     #[test]
-    fn builder_with_offset_profile_dry_mass() {
+    fn builder_with_offset_and_profile() {
         let t = Thruster::new(10.0, 300.0, Vector3::x())
             .with_offset(Vector3::new(0.0, 1.0, 0.0))
-            .with_dry_mass(100.0)
             .with_profile(Box::new(ConstantThrottle(0.5)));
         assert_eq!(t.spec.offset_body, Vector3::new(0.0, 1.0, 0.0));
-        assert_eq!(t.spec.dry_mass, 100.0);
     }
 
     // LoadModel tests (analytical)
@@ -678,13 +651,18 @@ mod tests {
         assert_eq!(loads.mass_rate, 0.0);
     }
 
+    /// A thruster with propellant behind it fires whatever its mass: running
+    /// dry is the spacecraft's condition, not this thruster's, and the system
+    /// that holds the pool is what stops asking.
+    /// `a_spacecraft_with_nothing_left_to_burn_is_not_asked_for_thrust` in
+    /// `dynamics.rs` is where that is checked now; this one pins that a
+    /// thruster no longer decides it.
     #[test]
-    fn zero_when_propellant_exhausted() {
-        // mass=100, dry_mass=100 → should not fire
-        let t = Thruster::new(1.0, 300.0, Vector3::x()).with_dry_mass(100.0);
+    fn a_thruster_does_not_decide_whether_there_is_propellant() {
+        let t = Thruster::new(1.0, 300.0, Vector3::x());
         let loads = t.loads(0.0, &state_with_mass(100.0), None);
-        assert_eq!(loads.mass_rate, 0.0);
-        assert_eq!(loads.acceleration_inertial, arika::frame::Vec3::zeros());
+        assert!(loads.mass_rate < 0.0, "it burns what it is asked to burn");
+        assert!(loads.acceleration_inertial.magnitude() > 0.0);
     }
 
     #[test]
@@ -755,8 +733,7 @@ mod tests {
 
     #[test]
     fn assembly_zero_throttle() {
-        let core =
-            ThrusterAssemblyCore::new(vec![ThrusterSpec::new(10.0, 300.0, Vector3::x())], 0.0);
+        let core = ThrusterAssemblyCore::new(vec![ThrusterSpec::new(10.0, 300.0, Vector3::x())]);
         let loads = core.loads(&[0.0], &sample_state(), None);
         assert_eq!(loads.acceleration_inertial, arika::frame::Vec3::zeros());
         assert_eq!(loads.mass_rate, 0.0);
@@ -765,7 +742,7 @@ mod tests {
     #[test]
     fn assembly_full_throttle_matches_spec() {
         let spec = ThrusterSpec::new(10.0, 300.0, Vector3::x());
-        let core = ThrusterAssemblyCore::new(vec![spec.clone()], 0.0);
+        let core = ThrusterAssemblyCore::new(vec![spec.clone()]);
         let state = sample_state();
         let loads_asm = core.loads(&[1.0], &state, None);
         let loads_spec = spec.loads_for_throttle(1.0, &state, None);
@@ -778,8 +755,7 @@ mod tests {
 
     #[test]
     fn assembly_partial_throttle() {
-        let core =
-            ThrusterAssemblyCore::new(vec![ThrusterSpec::new(10.0, 300.0, Vector3::x())], 0.0);
+        let core = ThrusterAssemblyCore::new(vec![ThrusterSpec::new(10.0, 300.0, Vector3::x())]);
         let state = sample_state();
         let full = core.loads(&[1.0], &state, None);
         let half = core.loads(&[0.5], &state, None);
@@ -791,8 +767,7 @@ mod tests {
 
     #[test]
     fn assembly_throttle_clamp() {
-        let core =
-            ThrusterAssemblyCore::new(vec![ThrusterSpec::new(10.0, 300.0, Vector3::x())], 0.0);
+        let core = ThrusterAssemblyCore::new(vec![ThrusterSpec::new(10.0, 300.0, Vector3::x())]);
         let state = sample_state();
         let clamped = core.loads(&[1.5], &state, None);
         let full = core.loads(&[1.0], &state, None);
@@ -802,28 +777,28 @@ mod tests {
         assert_eq!(neg.acceleration_inertial, arika::frame::Vec3::zeros());
     }
 
+    /// An assembly does not decide whether the spacecraft has propellant
+    /// either: one pool, one floor, and the system that owns them is what
+    /// stops asking. See
+    /// `a_spacecraft_with_nothing_left_to_burn_is_not_asked_for_thrust` in
+    /// `dynamics.rs`.
     #[test]
-    fn assembly_dry_mass_cutoff() {
-        let core =
-            ThrusterAssemblyCore::new(vec![ThrusterSpec::new(10.0, 300.0, Vector3::x())], 100.0);
+    fn an_assembly_does_not_decide_whether_there_is_propellant() {
+        let core = ThrusterAssemblyCore::new(vec![ThrusterSpec::new(10.0, 300.0, Vector3::x())]);
         let loads = core.loads(&[1.0], &state_with_mass(100.0), None);
-        assert_eq!(loads.acceleration_inertial, arika::frame::Vec3::zeros());
-        assert_eq!(loads.mass_rate, 0.0);
+        assert!(loads.acceleration_inertial.magnitude() > 0.0);
+        assert!(loads.mass_rate < 0.0);
     }
 
     #[test]
     fn assembly_multi_thruster_sum() {
         // Two thrusters in +X: force doubles, mass_rate doubles
-        let core = ThrusterAssemblyCore::new(
-            vec![
-                ThrusterSpec::new(10.0, 300.0, Vector3::x()),
-                ThrusterSpec::new(10.0, 300.0, Vector3::x()),
-            ],
-            0.0,
-        );
+        let core = ThrusterAssemblyCore::new(vec![
+            ThrusterSpec::new(10.0, 300.0, Vector3::x()),
+            ThrusterSpec::new(10.0, 300.0, Vector3::x()),
+        ]);
         let state = sample_state();
-        let single =
-            ThrusterAssemblyCore::new(vec![ThrusterSpec::new(10.0, 300.0, Vector3::x())], 0.0);
+        let single = ThrusterAssemblyCore::new(vec![ThrusterSpec::new(10.0, 300.0, Vector3::x())]);
         let loads_single = single.loads(&[1.0], &state, None);
         let loads_double = core.loads(&[1.0, 1.0], &state, None);
         assert!(
@@ -837,13 +812,10 @@ mod tests {
     #[test]
     fn assembly_opposing_thrusters() {
         // +X and -X cancel force but mass_rate adds
-        let core = ThrusterAssemblyCore::new(
-            vec![
-                ThrusterSpec::new(10.0, 300.0, Vector3::x()),
-                ThrusterSpec::new(10.0, 300.0, -Vector3::x()),
-            ],
-            0.0,
-        );
+        let core = ThrusterAssemblyCore::new(vec![
+            ThrusterSpec::new(10.0, 300.0, Vector3::x()),
+            ThrusterSpec::new(10.0, 300.0, -Vector3::x()),
+        ]);
         let loads = core.loads(&[1.0, 1.0], &sample_state(), None);
         assert!(loads.acceleration_inertial.magnitude() < 1e-14);
         // Mass rate should be 2× single thruster
@@ -856,7 +828,7 @@ mod tests {
         // Thruster at offset [0, 1, 0] firing +X: τ = [0,1,0] × [F,0,0] = [0,0,-F]
         let spec =
             ThrusterSpec::new(10.0, 300.0, Vector3::x()).with_offset(Vector3::new(0.0, 1.0, 0.0));
-        let core = ThrusterAssemblyCore::new(vec![spec], 0.0);
+        let core = ThrusterAssemblyCore::new(vec![spec]);
         let loads = core.loads(&[1.0], &sample_state(), None);
         let tb = loads.torque_body.into_inner();
         assert!((tb[2] - (-10.0)).abs() < 1e-12);
@@ -864,7 +836,7 @@ mod tests {
 
     #[test]
     fn assembly_empty() {
-        let core = ThrusterAssemblyCore::new(vec![], 0.0);
+        let core = ThrusterAssemblyCore::new(vec![]);
         let loads = core.loads(&[], &sample_state(), None);
         assert_eq!(loads.acceleration_inertial, arika::frame::Vec3::zeros());
         assert_eq!(loads.mass_rate, 0.0);
@@ -872,8 +844,7 @@ mod tests {
 
     #[test]
     fn assembly_length_mismatch_returns_zero() {
-        let core =
-            ThrusterAssemblyCore::new(vec![ThrusterSpec::new(10.0, 300.0, Vector3::x())], 0.0);
+        let core = ThrusterAssemblyCore::new(vec![ThrusterSpec::new(10.0, 300.0, Vector3::x())]);
         // Too few throttles
         let loads = core.loads(&[], &sample_state(), None);
         assert_eq!(loads.acceleration_inertial, arika::frame::Vec3::zeros());
@@ -886,16 +857,14 @@ mod tests {
 
     #[test]
     fn assembly_model_name() {
-        let core =
-            ThrusterAssemblyCore::new(vec![ThrusterSpec::new(10.0, 300.0, Vector3::x())], 0.0);
+        let core = ThrusterAssemblyCore::new(vec![ThrusterSpec::new(10.0, 300.0, Vector3::x())]);
         let asm = ThrusterAssembly::new(core);
         assert_eq!(Model::<SpacecraftState>::name(&asm), "thruster_assembly");
     }
 
     #[test]
     fn assembly_model_default_off() {
-        let core =
-            ThrusterAssemblyCore::new(vec![ThrusterSpec::new(10.0, 300.0, Vector3::x())], 0.0);
+        let core = ThrusterAssemblyCore::new(vec![ThrusterSpec::new(10.0, 300.0, Vector3::x())]);
         let asm = ThrusterAssembly::new(core);
         let loads = Model::<SpacecraftState>::eval(&asm, 0.0, &sample_state(), None);
         assert_eq!(loads.acceleration_inertial, arika::frame::Vec3::zeros());
@@ -904,8 +873,7 @@ mod tests {
 
     #[test]
     fn assembly_model_with_command() {
-        let core =
-            ThrusterAssemblyCore::new(vec![ThrusterSpec::new(10.0, 300.0, Vector3::x())], 0.0);
+        let core = ThrusterAssemblyCore::new(vec![ThrusterSpec::new(10.0, 300.0, Vector3::x())]);
         let mut asm = ThrusterAssembly::new(core);
         asm.command = ThrusterCommand::Throttles(vec![1.0]);
         let loads = Model::<SpacecraftState>::eval(&asm, 0.0, &sample_state(), None);
