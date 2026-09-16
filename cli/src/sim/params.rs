@@ -13,6 +13,36 @@ use crate::config::SimConfig;
 use crate::satellite::{OrbitSpec, SatelliteSpec, parse_body, parse_sat_spec};
 use crate::tle::{fetch_tle_by_norad_id, try_fetch_tle_by_norad_id};
 
+/// The boundary search for a step of `dt` narrowed to `t_tolerance`.
+///
+/// The halvings follow from the two: an accepted step is at most `dt` wide, so
+/// `⌈log₂(dt / t_tolerance)⌉` of them bring the interval holding a crossing
+/// inside the tolerance, and the count is what a tolerance costs rather than a
+/// limit on what it may be. A few spare cover a bracket the step-size control
+/// opened slightly wider than `dt` and the rounding in the logarithm, and
+/// `utsuroi::RootSearch::default`'s 60 stays the floor so an ordinary
+/// tolerance keeps the library's own count.
+///
+/// The search stops early anyway once halving no longer changes the interval in
+/// f64, so a tolerance below that resolution spends what the resolution needs
+/// and no more: measured, `1e-30` with a 0.25 s step converges after about 48.
+pub fn root_search(dt: f64, t_tolerance: f64) -> RootSearch {
+    let default = RootSearch::default();
+    let needed = if dt.is_finite() && dt > 0.0 && t_tolerance.is_finite() && t_tolerance > 0.0 {
+        let halvings = (dt / t_tolerance).log2().ceil();
+        // `as u32` saturates, and a non-finite ratio cannot get here.
+        (halvings.max(0.0) as u32).saturating_add(4)
+    } else {
+        // A pair `validate_root_t_tolerance` and `validate_time_params` refuse;
+        // the walk refuses it too, and says so with its own error.
+        default.max_iterations
+    };
+    RootSearch {
+        t_tolerance,
+        max_iterations: needed.max(default.max_iterations),
+    }
+}
+
 /// Resolved WASM plugin backend selection.
 ///
 /// Produced by [`SimParams::resolve_plugin_backend`] from the CLI
@@ -404,10 +434,7 @@ impl SimParams {
                 atol: args.atol,
                 rtol: args.rtol,
             },
-            root_search: RootSearch {
-                t_tolerance: args.root_t_tolerance,
-                ..RootSearch::default()
-            },
+            root_search: root_search(args.dt, args.root_t_tolerance),
             atmosphere: args.atmosphere,
             f107: args.f107,
             ap: args.ap,
@@ -486,10 +513,7 @@ impl SimParams {
                 atol: config.integrator.atol,
                 rtol: config.integrator.rtol,
             },
-            root_search: RootSearch {
-                t_tolerance: config.integrator.root_t_tolerance,
-                ..RootSearch::default()
-            },
+            root_search: root_search(config.dt, config.integrator.root_t_tolerance),
             atmosphere: config.atmosphere_choice(),
             f107: config.f107,
             ap: config.ap,
@@ -781,6 +805,37 @@ impl SimParams {
 mod tests {
     use super::*;
     use crate::satellite::OrbitSpec;
+
+    /// The halvings follow from the tolerance, so no positive tolerance is out
+    /// of reach: `RootNotLocalized` was what a caller got for asking for one
+    /// below `dt · 2⁻⁶⁰`, in the middle of a run. An ordinary tolerance keeps
+    /// the library's own count, so nothing about those runs changes.
+    #[test]
+    fn the_halvings_follow_from_the_tolerance() {
+        let default = RootSearch::default();
+
+        // 1 ms from a 10 s step needs 14 halvings, which the floor covers.
+        let ordinary = root_search(10.0, 1e-3);
+        assert_eq!(ordinary.t_tolerance, 1e-3);
+        assert_eq!(ordinary.max_iterations, default.max_iterations);
+
+        // 1e-30 from a 1 s step needs about 100.
+        let tight = root_search(1.0, 1e-30);
+        assert_eq!(tight.t_tolerance, 1e-30);
+        assert!(
+            (100..=110).contains(&tight.max_iterations),
+            "log2(1e30) is about 100, and a few spare: got {}",
+            tight.max_iterations
+        );
+
+        // A pair the validators refuse is carried through as it is, for the
+        // walk to refuse with its own error.
+        for (dt, tol) in [(0.0, 1e-3), (10.0, 0.0), (f64::NAN, 1e-3), (10.0, f64::NAN)] {
+            let search = root_search(dt, tol);
+            assert_eq!(search.max_iterations, default.max_iterations);
+            assert!(search.t_tolerance.is_nan() || search.t_tolerance == tol);
+        }
+    }
 
     /// `duration` is the run's end time, not the satellite's orbital period.
     ///

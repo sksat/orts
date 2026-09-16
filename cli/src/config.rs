@@ -1933,13 +1933,6 @@ pub fn validate_tolerances(
     Ok(())
 }
 
-/// How many times the search may halve an interval, from
-/// `utsuroi::RootSearch::default`.
-///
-/// The CLI does not expose the count: what a caller wants to say is how closely
-/// the time is located, and the halvings are what that costs.
-const ROOT_SEARCH_HALVINGS: i32 = 60;
-
 /// Reject a tolerance the boundary search cannot narrow a step to.
 ///
 /// Zero or negative asks for a bracket no bisection reaches, and a non-finite
@@ -1947,33 +1940,14 @@ const ROOT_SEARCH_HALVINGS: i32 = 60;
 /// rejects both, but only once a walk has started, which for a long run is
 /// after the output file exists.
 ///
-/// A tolerance can also be too tight to reach: the search halves the interval
-/// holding a crossing at most [`ROOT_SEARCH_HALVINGS`] times, so from a step of
-/// `dt` it reaches `dt · 2⁻⁶⁰` and no further — `8.7e-19` for a one-second
-/// step. Asking for less fails with `RootNotLocalized` at the first crossing,
-/// which is somewhere in the middle of a run. The bound is conservative in the
-/// other direction: the search also stops once halving no longer changes the
-/// interval in f64, which for a crossing at an ordinary time arrives first
-/// (measured: a tolerance of `1e-30` with a 0.25 s step reports the crossing at
-/// f64 resolution rather than failing, since the interval stops changing after
-/// about 48 halvings).
-pub fn validate_root_t_tolerance(t_tolerance: f64, dt: f64) -> Result<(), String> {
+/// How many halvings a tolerance needs is not a reason to refuse it: the count
+/// follows from the tolerance, and [`root_search`](crate::sim::root_search)
+/// derives it.
+pub fn validate_root_t_tolerance(t_tolerance: f64) -> Result<(), String> {
     if !t_tolerance.is_finite() || t_tolerance <= 0.0 {
         return Err(format!(
             "integrator.root_t_tolerance must be positive and finite (got {t_tolerance})"
         ));
-    }
-    // A `dt` this cannot read is `validate_time_params`' to refuse.
-    if dt.is_finite() && dt > 0.0 {
-        let reachable = dt * 2.0_f64.powi(-ROOT_SEARCH_HALVINGS);
-        if t_tolerance < reachable {
-            return Err(format!(
-                "integrator.root_t_tolerance ({t_tolerance:e}) is narrower than the \
-                 {ROOT_SEARCH_HALVINGS} halvings of dt = {dt} the boundary search is \
-                 allowed, which reach {reachable:e}. Ask for a wider tolerance, or a \
-                 smaller dt."
-            ));
-        }
     }
     Ok(())
 }
@@ -2000,7 +1974,7 @@ impl SimConfig {
             self.duration,
         )?;
         validate_tolerances(integrator, self.integrator.atol, self.integrator.rtol)?;
-        validate_root_t_tolerance(self.integrator.root_t_tolerance, self.dt)?;
+        validate_root_t_tolerance(self.integrator.root_t_tolerance)?;
         if crate::satellite::try_parse_body(&self.body).is_none() {
             return Err(format!(
                 "unknown body '{}' (expected one of: sun, mercury, venus, earth, \
@@ -3121,21 +3095,15 @@ altitude = -100.0
     /// through a run.
     #[test]
     fn the_search_tolerance_is_validated_for_every_integrator() {
-        assert!(validate_root_t_tolerance(1e-3, 10.0).is_ok());
+        assert!(validate_root_t_tolerance(1e-3).is_ok());
         for bad in [0.0, -1e-3, f64::NAN, f64::INFINITY] {
             assert!(
-                validate_root_t_tolerance(bad, 10.0).is_err(),
+                validate_root_t_tolerance(bad).is_err(),
                 "{bad} is not a width the search can narrow to"
             );
         }
-        // Narrower than 60 halvings of the step reach, so the search would
-        // fail at the first crossing instead of here.
-        let too_tight = validate_root_t_tolerance(1e-30, 1.0).unwrap_err();
-        assert!(
-            too_tight.contains("halvings"),
-            "the error says what the search can reach: {too_tight}"
-        );
-        assert!(validate_root_t_tolerance(1e-18, 1.0).is_ok());
+        // However many halvings it takes is derived, not a reason to refuse.
+        assert!(validate_root_t_tolerance(1e-30).is_ok());
         for kind in ["rk4", "dp45", "dop853"] {
             let config = config_with(&format!(
                 "dt = 10.0\n\n[integrator]\ntype = \"{kind}\"\nroot_t_tolerance = 0.0"

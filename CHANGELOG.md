@@ -136,10 +136,11 @@ section is subdivided by package.
   the event check, and `orts run` / `orts serve` read
   `--root-t-tolerance` / `[integrator] root_t_tolerance`, which is rejected at
   config time — for every integrator, since they all locate a crossing the same
-  way — if it is not positive and finite, or narrower than the 60 halvings of
-  `dt` the search is allowed can reach (`dt · 2⁻⁶⁰`, 8.7e-19 for a one-second
-  step), which would otherwise fail with `RootNotLocalized` at the first
-  crossing. The tolerance is the width the search
+  way — if it is not positive and finite. How many halvings a tolerance needs
+  follows from it rather than bounding it: an accepted step is at most `dt`
+  wide, so the CLI asks for `⌈log₂(dt / t_tolerance)⌉` of them (the library's
+  60 stays the floor, so an ordinary tolerance keeps the count it had). The
+  tolerance is the width the search
   narrows a crossing's interval to, and so what the reported time can be late
   by: a wheel driven at `τ` is held `τ · t_tolerance` past its limit, and a
   spacecraft burning at `ṁ` stops `ṁ · t_tolerance` below its propellant floor

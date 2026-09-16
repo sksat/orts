@@ -107,9 +107,9 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `CoupledGroup::with_root_search` が `RootSearch` を取り、`propagate_controlled` は
   積分器と event check の間で受け取る。`orts run` / `orts serve` は
   `--root-t-tolerance` / `[integrator] root_t_tolerance` を読み、正の有限値でなければ
-  config の時点で拒否する (どの積分器も同じ探索を通るので、全てに適用する)。探索に許された
-  60 回の半分割が dt から届く幅 (`dt · 2⁻⁶⁰`、1 秒の刻みで 8.7e-19) より狭い値も拒否する。
-  これを許すと最初の交差で `RootNotLocalized` になる。この許容は探索が
+  config の時点で拒否する (どの積分器も同じ探索を通るので、全てに適用する)。半分割の回数は許容から導く (許容を縛らない):
+  受理されるステップは高々 `dt` なので、CLI は `⌈log₂(dt / t_tolerance)⌉` 回を要求する
+  (library の 60 が下限なので、普通の許容ではこれまでと同じ回数になる)。この許容は探索が
   交差を含む区間を詰める幅であり、報告される時刻が遅れうる量そのものである: $\tau$ で駆動される
   ホイールは上限を $\tau \cdot \varepsilon_t$ 超えた状態で保持され、$\dot m$ で噴射している
   宇宙機は推進剤の床を $\dot m \cdot \varepsilon_t$ 割ったところで止まり、その推進剤ぶんの
