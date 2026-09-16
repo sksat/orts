@@ -526,7 +526,9 @@ impl ServeEngine {
                     ControlFlow::Continue(())
                 }
             };
-            let mut sc_group = IndependentGroup::new(config).with_event_checker(sc_event_checker);
+            let mut sc_group = IndependentGroup::new(config)
+                .with_root_search(params.root_search)
+                .with_event_checker(sc_event_checker);
 
             for spec in &params.satellites {
                 let att = spec.attitude_config.as_ref().unwrap();
@@ -572,8 +574,9 @@ impl ServeEngine {
                     ControlFlow::Continue(())
                 }
             };
-            let mut orbit_group =
-                IndependentGroup::new(config).with_event_checker(orbit_event_checker);
+            let mut orbit_group = IndependentGroup::new(config)
+                .with_root_search(params.root_search)
+                .with_event_checker(orbit_event_checker);
 
             for spec in &params.satellites {
                 let system = build_orbital_system(

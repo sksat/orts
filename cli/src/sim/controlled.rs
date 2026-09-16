@@ -479,6 +479,7 @@ pub fn advance_controlled(
     }
 
     let integrator = params.integrator_config();
+    let search = params.root_search;
     let epoch = params.epoch.as_ref();
     let check = crate::sim::core::body_event_checker::<AugmentedState<SpacecraftState>>(params);
 
@@ -496,13 +497,13 @@ pub fn advance_controlled(
         let tick_t = sat.next_tick_t();
         // The controller is not called at an instant the satellite did not
         // reach: termination wins over a tick at the same time.
-        if let Some(term) = propagate_controlled(sat, t, tick_t, &integrator, &check)? {
+        if let Some(term) = propagate_controlled(sat, t, tick_t, &integrator, search, &check)? {
             return Ok(Some(term));
         }
         tick_controller(sat, tick_t, epoch)?;
         t = tick_t;
     }
-    propagate_controlled(sat, t, to, &integrator, &check)
+    propagate_controlled(sat, t, to, &integrator, search, &check)
 }
 
 /// Integrate `[t0, t1]` under the command the actuators already hold.
@@ -528,6 +529,7 @@ pub fn propagate_controlled<E>(
     t0: f64,
     t1: f64,
     integrator: &IntegratorConfig,
+    search: RootSearch,
     event_check: &E,
 ) -> Result<Option<Termination>, String>
 where
@@ -568,11 +570,6 @@ where
     // segment's end is not reported again at the next one's start.
     let boundaries = sat.dynamics.boundaries();
     let mut slots = vec![RootSlot::new(); boundaries.len()];
-    // TODO: the default 1 ms tolerance. It bounds how late a boundary is
-    // reported, and so how much momentum `settle_boundary` hands back in
-    // one go; a knob for it belongs beside the integrator's own
-    // tolerances in `IntegratorConfig`.
-    let search = RootSearch::default();
 
     for segment in Segments::new(&sat.dynamics, t0, t1).map_err(span)? {
         let t = segment.start();
@@ -1120,6 +1117,7 @@ mod tests {
             0.0,
             20.0,
             &IntegratorConfig::Rk4 { dt: 0.25 },
+            RootSearch::default(),
             &|_: f64, _: &AugmentedState<SpacecraftState>| ControlFlow::Continue(()),
         )
         .expect("the span is finite");
@@ -1566,6 +1564,7 @@ mod tests {
                     t,
                     next_t,
                     &IntegratorConfig::Rk4 { dt: 0.01 },
+                    RootSearch::default(),
                     &never_ends,
                 )
                 .expect("integrates");
@@ -1978,8 +1977,15 @@ path = "does-not-exist.wasm"
             );
             let mass_before = sat.state.plant.mass;
 
-            propagate_controlled(&mut sat, 0.0, 10.0, &integrator, &never_ends)
-                .expect("the burn and the orbit are finite everywhere");
+            propagate_controlled(
+                &mut sat,
+                0.0,
+                10.0,
+                &integrator,
+                RootSearch::default(),
+                &never_ends,
+            )
+            .expect("the burn and the orbit are finite everywhere");
 
             let spent = mass_before - sat.state.plant.mass;
             // The propellant is the difference of two masses near 500 kg, so it
@@ -2010,6 +2016,7 @@ path = "does-not-exist.wasm"
                     0.0,
                     bound,
                     &IntegratorConfig::Rk4 { dt: 1.0 },
+                    RootSearch::default(),
                     &never_ends
                 )
                 .is_err(),
@@ -2022,6 +2029,7 @@ path = "does-not-exist.wasm"
                     bound,
                     10.0,
                     &IntegratorConfig::Rk4 { dt: 1.0 },
+                    RootSearch::default(),
                     &never_ends
                 )
                 .is_err(),
@@ -2093,6 +2101,7 @@ path = "does-not-exist.wasm"
             0.0,
             1.0,
             &IntegratorConfig::Rk4 { dt: 1.0 },
+            RootSearch::default(),
             &never_ends,
         )
         .expect_err("the second segment is not finite");

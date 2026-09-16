@@ -598,9 +598,11 @@ fn run_simulation_in_frame<F: RunFrame>(params: &SimParams) -> Result<Recording,
     use crate::sim::core::sat_params;
     use orts::setup::{build_orbital_system_in_frame, default_third_bodies};
 
-    let mut group = IndependentGroup::new(params.integrator_config()).with_event_checker(
-        crate::sim::core::body_event_checker::<OrbitalState<F>>(params),
-    );
+    let mut group = IndependentGroup::new(params.integrator_config())
+        .with_root_search(params.root_search)
+        .with_event_checker(crate::sim::core::body_event_checker::<OrbitalState<F>>(
+            params,
+        ));
 
     let third_bodies = default_third_bodies(&params.body).map_err(|e| {
         CmdError::failure(format!(
@@ -646,11 +648,11 @@ pub fn run_spacecraft_simulation(params: &SimParams) -> Result<Recording, CmdErr
     use orts::setup::default_third_bodies;
     use orts::spacecraft::SpacecraftState;
 
-    let mut group = IndependentGroup::new(params.integrator_config()).with_event_checker(
-        crate::sim::core::body_event_checker::<orts::effector::AugmentedState<SpacecraftState>>(
-            params,
-        ),
-    );
+    let mut group = IndependentGroup::new(params.integrator_config())
+        .with_root_search(params.root_search)
+        .with_event_checker(crate::sim::core::body_event_checker::<
+            orts::effector::AugmentedState<SpacecraftState>,
+        >(params));
 
     let third_bodies = default_third_bodies(&params.body).map_err(|e| {
         CmdError::failure(format!(

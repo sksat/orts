@@ -3,4 +3,11 @@
 /**
  * Integrator configuration within a config file.
  */
-export type IntegratorConfig = { type?: string, atol?: number, rtol?: number, };
+export type IntegratorConfig = { type?: string, atol?: number, rtol?: number, 
+/**
+ * How closely the time a state reaches a limit is located [s].
+ *
+ * See `--root-t-tolerance`. Unlike `atol` / `rtol`, this one applies to
+ * every integrator: the search halves a step whatever took it.
+ */
+root_t_tolerance?: number, };

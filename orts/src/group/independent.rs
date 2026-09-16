@@ -78,6 +78,7 @@ where
     satellites: Vec<(SatelliteEntry<D::State>, D)>,
     integrator: IntegratorConfig,
     event_checker: Option<EventChecker<D::State>>,
+    search: RootSearch,
 }
 
 impl<D: DynamicalSystem + HasBoundaries> IndependentGroup<D>
@@ -89,6 +90,7 @@ where
             satellites: Vec::new(),
             integrator,
             event_checker: None,
+            search: RootSearch::default(),
         }
     }
 
@@ -105,6 +107,24 @@ where
     /// Create with fixed-step RK4 integrator.
     pub fn rk4(dt: f64) -> Self {
         Self::new(IntegratorConfig::Rk4 { dt })
+    }
+
+    /// How closely a boundary's time is located, in place of the default.
+    ///
+    /// The search halves the interval holding a crossing until it is this
+    /// narrow, so the tolerance is what the reported time can be late by — and
+    /// with it, how far past its bound a state can be when
+    /// [`settle_boundary`](crate::effector::StateEffector::settle_boundary)
+    /// puts it back. A wheel driven at `τ` reaches its limit up to `τ ·
+    /// t_tolerance` past it; a spacecraft burning at `ṁ` runs `ṁ · t_tolerance`
+    /// past its propellant floor, and the impulse it got for that propellant
+    /// stays. Halving the tolerance costs one more trial step per boundary
+    /// located.
+    ///
+    /// The default is [`RootSearch::default`], 1 ms.
+    pub fn with_root_search(mut self, search: RootSearch) -> Self {
+        self.search = search;
+        self
     }
 
     /// Set an event checker, called on the state each *advancing*
@@ -357,11 +377,7 @@ where
             // from being reported again at the next one's start.
             let boundaries = dynamics.boundaries();
             let mut slots = vec![RootSlot::new(); boundaries.len()];
-            // TODO: the default 1 ms tolerance. It bounds how late a boundary is
-            // reported, and so how much momentum `settle_boundary` hands back in
-            // one go; a knob for it belongs beside the integrator's own
-            // tolerances in `IntegratorConfig`.
-            let search = RootSearch::default();
+            let search = self.search;
 
             // One segment at a time, so that no switch of the right-hand side
             // falls strictly inside a step and the stage on a segment's end

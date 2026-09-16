@@ -18,7 +18,7 @@
 //! [#446]: https://github.com/sksat/orts/issues/446
 
 use nalgebra::{Matrix3, Vector3};
-use utsuroi::{Integrator, Rk4, Tolerances};
+use utsuroi::{Integrator, Rk4, RootSearch, Tolerances};
 
 use orts::effector::{AugmentedState, ConstraintMode};
 use orts::group::{IndependentGroup, IntegratorConfig};
@@ -594,5 +594,58 @@ fn a_wheel_a_hair_past_its_bound_is_settled_before_it_runs_further() {
         ended.modes[2],
         ConstraintMode::Lower,
         "and its mode says which bound holds it"
+    );
+}
+
+/// The search's time tolerance is what the located time can be late by, and it
+/// is the caller's to choose: the z wheel reaches its limit at exactly 5.3 s,
+/// inside the step from 5.25 to 5.5. Asked for a micro-second, the walk halves
+/// that step until it has the instant; asked for a fifth of a second, one
+/// halving already brings the interval inside the tolerance and the crossing
+/// is reported at 5.375 — 0.075 s late, and the momentum for those 75 ms goes
+/// back to the body.
+#[test]
+fn the_tolerance_decides_how_closely_the_time_is_located() {
+    const REACHED_AT: f64 = MAX_MOMENTUM / MAX_TORQUE;
+
+    /// The first instant the walk reported the z wheel sitting on its bound.
+    let held_at = |t_tolerance: f64| -> f64 {
+        let system = saturating_system();
+        let initial = system.initial_augmented_state(initial_plant());
+        let mut group: IndependentGroup<Dynamics> =
+            IndependentGroup::new(IntegratorConfig::Rk4 { dt: DT })
+                .with_root_search(RootSearch {
+                    t_tolerance,
+                    ..RootSearch::default()
+                })
+                .add_satellite("sat", initial, saturating_system());
+
+        let mut first = f64::INFINITY;
+        group
+            .propagate_to_with(T_END, |_id, t, state| {
+                if (state.aux[2] + MAX_MOMENTUM).abs() < 1e-12 && t < first {
+                    first = t;
+                }
+            })
+            .expect("the walk succeeds");
+        first
+    };
+
+    let tight = held_at(1e-6);
+    assert!(
+        (tight - REACHED_AT).abs() <= 1e-6,
+        "asked for a micro-second, the bound is reported at {tight}, not {REACHED_AT}"
+    );
+
+    let loose = held_at(0.2);
+    assert!(
+        (loose - 5.375).abs() < 1e-12,
+        "asked for a fifth of a second, one halving of the step from 5.25 gives \
+         5.375, not {loose}"
+    );
+    assert!(
+        loose - REACHED_AT > 0.05,
+        "which is later than the tight answer, by more than the wheel's own \
+         tolerance"
     );
 }

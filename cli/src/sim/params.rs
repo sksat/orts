@@ -3,7 +3,7 @@ use std::sync::Arc;
 use arika::body::KnownBody;
 use arika::elements::ParsedElementSet;
 use arika::epoch::Epoch;
-use utsuroi::Tolerances;
+use utsuroi::{RootSearch, Tolerances};
 
 use crate::cli::FrameChoice;
 use crate::cli::{
@@ -174,6 +174,11 @@ pub struct SimParams {
     pub ground_stations: Vec<orts::visibility::GroundStation>,
     pub integrator: IntegratorChoice,
     pub tolerances: Tolerances,
+    /// How closely the propagation locates the time a state reaches a limit.
+    ///
+    /// Every path that walks with boundaries takes this: the groups through
+    /// `with_root_search`, the controlled path through `propagate_controlled`.
+    pub root_search: RootSearch,
     pub atmosphere: AtmosphereChoice,
     pub f107: f64,
     pub ap: f64,
@@ -399,6 +404,10 @@ impl SimParams {
                 atol: args.atol,
                 rtol: args.rtol,
             },
+            root_search: RootSearch {
+                t_tolerance: args.root_t_tolerance,
+                ..RootSearch::default()
+            },
             atmosphere: args.atmosphere,
             f107: args.f107,
             ap: args.ap,
@@ -476,6 +485,10 @@ impl SimParams {
             tolerances: Tolerances {
                 atol: config.integrator.atol,
                 rtol: config.integrator.rtol,
+            },
+            root_search: RootSearch {
+                t_tolerance: config.integrator.root_t_tolerance,
+                ..RootSearch::default()
             },
             atmosphere: config.atmosphere_choice(),
             f107: config.f107,
@@ -874,6 +887,7 @@ orbit = { type = "circular", altitude = 400 }
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            root_t_tolerance: 1e-3,
             atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
@@ -908,6 +922,7 @@ orbit = { type = "circular", altitude = 400 }
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            root_t_tolerance: 1e-3,
             atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
@@ -947,6 +962,7 @@ orbit = { type = "circular", altitude = 400 }
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            root_t_tolerance: 1e-3,
             atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
@@ -986,6 +1002,7 @@ orbit = { type = "circular", altitude = 400 }
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            root_t_tolerance: 1e-3,
             atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
@@ -1020,6 +1037,7 @@ orbit = { type = "circular", altitude = 400 }
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            root_t_tolerance: 1e-3,
             atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
@@ -1056,6 +1074,7 @@ orbit = { type = "circular", altitude = 400 }
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            root_t_tolerance: 1e-3,
             atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
@@ -1100,6 +1119,7 @@ orbit = { type = "circular", altitude = 400 }
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            root_t_tolerance: 1e-3,
             atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
@@ -1139,6 +1159,7 @@ orbit = { type = "circular", altitude = 400 }
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            root_t_tolerance: 1e-3,
             atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
@@ -1200,6 +1221,7 @@ orbit = { type = "circular", altitude = 400 }
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            root_t_tolerance: 1e-3,
             atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
@@ -1248,6 +1270,7 @@ orbit = { type = "circular", altitude = 400 }
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            root_t_tolerance: 1e-3,
             atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
@@ -1302,6 +1325,7 @@ orbit = { type = "circular", altitude = 400 }
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            root_t_tolerance: 1e-3,
             atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
@@ -1352,6 +1376,7 @@ orbit = { type = "circular", altitude = 400 }
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            root_t_tolerance: 1e-3,
             atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
@@ -1397,6 +1422,7 @@ orbit = { type = "circular", altitude = 400 }
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            root_t_tolerance: 1e-3,
             atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
@@ -1436,6 +1462,7 @@ orbit = { type = "circular", altitude = 400 }
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            root_t_tolerance: 1e-3,
             atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
