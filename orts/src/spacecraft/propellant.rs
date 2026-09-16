@@ -8,6 +8,20 @@
 //!
 //! Independent tanks and bipropellant systems are outside this model.
 
+use crate::effector::{
+    BoundaryExchange, BoundaryKind, ConstraintMode, EffectorBoundary, EffectorInput, StateEffector,
+};
+use crate::model::{ExternalLoads, HasFrame, HasMass};
+
+/// Width of the margin within which a spacecraft still counts as standing on
+/// its floor [kg].
+///
+/// The mass is put exactly on the floor when the boundary is settled, so only
+/// rounding moves it after that; the width is what keeps that rounding from
+/// reading as a fresh crossing. It is far below any propellant a spacecraft
+/// carries.
+const MASS_TOLERANCE: f64 = 1e-12;
+
 /// The floor under a spacecraft's mass, and what is left above it.
 ///
 /// The mass itself is the integrated state
@@ -65,6 +79,89 @@ impl PropellantPool {
     }
 }
 
+/// The pool as an effector: it carries no continuous state of its own — the
+/// mass is the plant's — but it carries the one thing a search needs, which is
+/// the mode saying whether there is anything left to burn.
+///
+/// Running dry is a boundary the propagation locates rather than a comparison
+/// the right-hand side makes: a comparison inside the right-hand side flips
+/// between the stages of a re-stepped interval, and the search that re-steps it
+/// then reports the crossing at the wrong time. There is no release: a tank
+/// does not refill, so the depleted mode absorbs.
+impl<S: HasFrame + HasMass + Send + Sync> StateEffector<S> for PropellantPool {
+    fn name(&self) -> &str {
+        "propellant_pool"
+    }
+
+    fn state_dim(&self) -> usize {
+        0
+    }
+
+    fn mode_dim(&self) -> usize {
+        1
+    }
+
+    fn derivatives(
+        &self,
+        _input: EffectorInput<'_, S>,
+        _aux_rates: &mut [f64],
+    ) -> ExternalLoads<S::Frame> {
+        // The pool pushes nothing: its consumers do, and the system stops
+        // asking them once this says the tank is empty.
+        ExternalLoads::zeros()
+    }
+
+    fn boundaries(&self) -> Vec<EffectorBoundary> {
+        vec![EffectorBoundary {
+            kind: BoundaryKind::ReachedLower { index: 0 },
+            boundary_tolerance: MASS_TOLERANCE,
+        }]
+    }
+
+    fn boundary_value(&self, _kind: BoundaryKind, input: EffectorInput<'_, S>) -> f64 {
+        // The propellant left, which is the margin that runs out.
+        input.state.mass() - self.dry_mass
+    }
+
+    fn settle_boundary(&self, _kind: BoundaryKind, _aux: &mut [f64]) -> Option<BoundaryExchange> {
+        // The mass belongs on the floor. What it burned below the floor is
+        // gone with the exhaust, so the impulse for it stays in the velocity —
+        // the error the localization left, bounded by the time tolerance.
+        Some(BoundaryExchange {
+            mass: Some(self.dry_mass),
+            ..Default::default()
+        })
+    }
+}
+
+impl PropellantPool {
+    /// The mode a spacecraft of this mass starts in.
+    ///
+    /// Three cases, and the middle one is why this is not a comparison the
+    /// propagation repeats: below the floor is an input error, *on* the floor
+    /// is a vehicle that starts empty — which no search can find, since a
+    /// margin of exactly zero has not been crossed — and above it is a vehicle
+    /// with propellant.
+    ///
+    /// # Panics
+    ///
+    /// Panics below the floor: a spacecraft cannot have less than no
+    /// propellant, and settling it up to the floor would hide the input error
+    /// by adding mass.
+    pub fn initial_mode(&self, mass: f64) -> ConstraintMode {
+        assert!(
+            mass.is_finite() && mass >= self.dry_mass,
+            "a spacecraft cannot start below its own dry mass: mass {mass}, floor {}",
+            self.dry_mass
+        );
+        if mass > self.dry_mass {
+            ConstraintMode::Free
+        } else {
+            ConstraintMode::Lower
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -93,6 +190,22 @@ mod tests {
             pool.is_empty(f64::NAN),
             "a mass that is no number is not fuel"
         );
+    }
+
+    /// Three cases at the start, and the middle one is what a search cannot
+    /// find: a margin of exactly zero has not been crossed.
+    #[test]
+    fn the_mode_a_spacecraft_starts_in() {
+        let pool = PropellantPool::new(100.0);
+        assert_eq!(pool.initial_mode(140.0), ConstraintMode::Free);
+        assert_eq!(pool.initial_mode(100.0), ConstraintMode::Lower);
+    }
+
+    /// Settling it up to the floor would hide an input error by adding mass.
+    #[test]
+    #[should_panic(expected = "cannot start below its own dry mass")]
+    fn a_spacecraft_starting_below_the_floor_is_refused() {
+        PropellantPool::new(100.0).initial_mode(99.0);
     }
 
     /// Zero would put the floor on the singularity of `F/m`, which a trial

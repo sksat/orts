@@ -42,9 +42,11 @@ pub struct SpacecraftDynamics<G: GravityField, F: Eci = SimpleEci> {
     /// would stop drag or a wheel too.
     propulsion: Vec<Box<dyn Model<SpacecraftState<F>>>>,
     /// The propellant every one of them draws from, with the floor under the
-    /// spacecraft's mass. `None` for a spacecraft that carries none, which is
-    /// every spacecraft with no propulsion registered.
-    pool: Option<PropellantPool>,
+    /// spacecraft's mass, and which effector it was registered as — its mode
+    /// is what says whether there is anything left to burn. `None` for a
+    /// spacecraft that carries none, which is every spacecraft with no
+    /// propulsion registered.
+    pool: Option<(PropellantPool, usize)>,
     effectors: Vec<Box<dyn StateEffector<SpacecraftState<F>>>>,
     registry: AuxRegistry,
     epoch_0: Option<Epoch>,
@@ -100,10 +102,26 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     ///
     /// One pool per spacecraft: every model registered with
     /// [`with_propulsion`](Self::with_propulsion) draws from it, and what is
-    /// left is the mass the state carries above the floor. Calling this twice
-    /// replaces the pool rather than adding a second one.
+    /// left is the mass the state carries above the floor.
+    ///
+    /// The pool is registered as an effector, which is how running dry becomes
+    /// a boundary the propagation locates: it carries no auxiliary state of its
+    /// own — the mass is the plant's — but it carries the mode that says
+    /// whether there is anything left to burn, and it declares the floor as a
+    /// boundary.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a pool is already registered. Two pools would be two floors,
+    /// which is what this exists to prevent.
     pub fn with_propellant(mut self, pool: PropellantPool) -> Self {
-        self.pool = Some(pool);
+        assert!(
+            self.pool.is_none(),
+            "a spacecraft has one propellant pool, and this one already has one"
+        );
+        let index = self.effectors.len();
+        self = self.with_effector(pool);
+        self.pool = Some((pool, index));
         self
     }
 
@@ -131,7 +149,28 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
 
     /// The propellant pool, if this spacecraft carries any.
     pub fn pool(&self) -> Option<PropellantPool> {
-        self.pool
+        self.pool.map(|(pool, _)| pool)
+    }
+
+    /// Whether the state's modes say there is propellant left to burn.
+    ///
+    /// The mode, not the mass: a comparison against the floor flips between
+    /// the stages of a re-stepped interval, and the search that re-steps it
+    /// then reports the crossing late. The mode only moves where the
+    /// propagation settled a boundary.
+    ///
+    /// True for a spacecraft with no pool at all: nothing to run out of.
+    fn has_propellant(&self, state: &AugmentedState<SpacecraftState<F>>) -> bool {
+        let Some((_, index)) = self.pool else {
+            return true;
+        };
+        let Some(entry) = self.registry.entries().get(index) else {
+            return true;
+        };
+        state
+            .modes
+            .get(entry.mode_offset)
+            .is_none_or(|mode| *mode == ConstraintMode::Free)
     }
 
     /// Add a state effector (builder pattern).
@@ -177,11 +216,20 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
         for eff in &self.effectors {
             bounds.extend(eff.aux_bounds());
         }
+        let mut modes = vec![ConstraintMode::default(); self.registry.total_modes()];
+        // A spacecraft can start with an empty tank, and no search would find
+        // that: a margin of exactly zero has not been crossed. Its mode says
+        // so from the first step. Starting *below* the floor is refused here.
+        if let Some((pool, index)) = self.pool
+            && let Some(entry) = self.registry.entries().get(index)
+        {
+            modes[entry.mode_offset] = pool.initial_mode(plant.mass);
+        }
         AugmentedState {
             plant,
             aux: vec![0.0; self.registry.total_dim()],
             aux_bounds: bounds,
-            modes: vec![ConstraintMode::default(); self.registry.total_modes()],
+            modes,
         }
     }
 
@@ -286,8 +334,13 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     ) -> Vec<(&str, ExternalLoads<F>)> {
         let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
         // The same set the right-hand side evaluates, so a record cannot show
-        // thrust the trajectory never felt.
-        self.models_to_evaluate(state)
+        // thrust the trajectory never felt. A sample is taken at a settled
+        // state, where the mass is on the floor exactly when the mode says
+        // depleted, so the mass answers here — the modes are not in reach of a
+        // caller holding a plant state, and the hazard a comparison carries is
+        // the search's, which no sample is inside of.
+        let burning = self.pool.is_none_or(|(pool, _)| !pool.is_empty(state.mass));
+        self.models_to_evaluate(burning)
             .map(|m| (m.name(), m.eval(t, state, epoch.as_ref())))
             .collect()
     }
@@ -296,13 +349,10 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     /// propulsion too while there is propellant left to burn.
     fn models_to_evaluate(
         &self,
-        state: &SpacecraftState<F>,
+        burning: bool,
     ) -> impl Iterator<Item = &Box<dyn Model<SpacecraftState<F>>>> {
-        let burning = self
-            .pool
-            .is_some_and(|pool| !pool.is_empty(state.mass))
-            .then_some(&self.propulsion);
-        self.models.iter().chain(burning.into_iter().flatten())
+        let propulsion = burning.then_some(&self.propulsion);
+        self.models.iter().chain(propulsion.into_iter().flatten())
     }
 
     /// Per-model disturbance torque in the body frame [N·m], for telemetry.
@@ -425,7 +475,7 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
 
         // Accumulate external loads from models
         let mut total = ExternalLoads::<F>::zeros();
-        for model in self.models_to_evaluate(&state.plant) {
+        for model in self.models_to_evaluate(self.has_propellant(state)) {
             total += eval_maybe_in_segment(model, segment, t, &state.plant, epoch.as_ref());
         }
 
@@ -554,6 +604,12 @@ impl<G: GravityField, F: Eci + 'static> HasBoundaries for SpacecraftDynamics<G, 
             // inertia that turns angular momentum into a rate.
             state.plant.attitude.angular_velocity +=
                 self.inertia_inv * exchange.angular_momentum_body.into_inner();
+            // And where a boundary fixes the mass — a propellant floor — the
+            // state belongs on it. The propellant burned below it is gone with
+            // the exhaust, so the impulse it gave stays in the velocity.
+            if let Some(mass) = exchange.mass {
+                state.plant.mass = mass;
+            }
         }
         state.modes[declared.mode_index()] = declared.boundary.kind.mode_after();
     }
@@ -573,9 +629,13 @@ impl<G: GravityField, F: Eci + 'static> DynamicalSystem for SpacecraftDynamics<G
     /// window whose end abuts the next one's start, are one place to end a step.
     fn next_discontinuity_after(&self, t: f64) -> Option<f64> {
         let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
+        // Propulsion among them: a scheduled burn's start and end are the
+        // switches this exists to report, and they are no less switches for
+        // the model being registered apart from the others.
         let from_models = self
             .models
             .iter()
+            .chain(self.propulsion.iter())
             .filter_map(|m| m.next_discontinuity_after(t, epoch.as_ref()));
         let from_effectors = self
             .effectors
@@ -784,7 +844,8 @@ mod tests {
             mass: FLOOR + 1.0,
             ..sample_spacecraft()
         };
-        let burning = dynamics.derivatives(0.0, &augment(with_fuel.clone()));
+        let burning =
+            dynamics.derivatives(0.0, &dynamics.initial_augmented_state(with_fuel.clone()));
         assert!(
             burning.plant.mass < 0.0,
             "with propellant left the thruster burns it, at {}",
@@ -796,7 +857,9 @@ mod tests {
             mass: FLOOR,
             ..sample_spacecraft()
         };
-        let dry = dynamics.derivatives(0.0, &augment(empty.clone()));
+        // On the floor from the start, so its mode says empty from the first
+        // step: a margin of exactly zero is not a crossing a search can find.
+        let dry = dynamics.derivatives(0.0, &dynamics.initial_augmented_state(empty.clone()));
         assert_eq!(
             dry.plant.mass, 0.0,
             "nothing left to burn, so nothing burns"
@@ -806,7 +869,8 @@ mod tests {
         // own and the thrust is gone rather than everything being gone.
         let others_only = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
             .with_model(ConstantAcceleration(Vector3::new(1e-6, 0.0, 0.0)));
-        let expected = others_only.derivatives(0.0, &augment(empty.clone()));
+        let expected =
+            others_only.derivatives(0.0, &others_only.initial_augmented_state(empty.clone()));
         assert!(
             (dry.plant.orbit.velocity() - expected.plant.orbit.velocity()).magnitude() < 1e-15,
             "an empty tank leaves the other models where they were"

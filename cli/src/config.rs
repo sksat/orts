@@ -1747,6 +1747,19 @@ impl SatelliteConfig {
         if let Some(attitude) = &self.attitude {
             attitude.validate().map_err(|e| format!("attitude: {e}"))?;
         }
+        // A spacecraft lighter than its own dry mass is not a state the
+        // propagation can reach or return to: the floor is the mass with no
+        // propellant, so below it there is less than nothing. Equal is a
+        // vehicle that starts empty, which is a run with no burn in it.
+        if let (Some(thruster), Some(attitude)) = (&self.thruster, &self.attitude)
+            && attitude.mass < thruster.dry_mass
+        {
+            return Err(format!(
+                "attitude.mass ({}) is below thruster.dry_mass ({}): the floor is the \
+                 mass with no propellant left, so a spacecraft cannot start under it",
+                attitude.mass, thruster.dry_mass
+            ));
+        }
         // A disturbance torque acts on an orientation, and an orbit-only
         // satellite has none, so the selection would be read and then dropped.
         if self.disturbances.is_some() && self.attitude.is_none() {
@@ -4039,6 +4052,48 @@ direction_body = [0.0, 0.0, 0.0]
             "expected index in error: {err}"
         );
         assert!(err.contains("direction_body"), "msg: {err}");
+    }
+
+    /// The floor is the mass with no propellant left, so a spacecraft that
+    /// starts under it has less than nothing in its tank — an input error,
+    /// not a state the propagation can return to. Starting *on* the floor is a
+    /// vehicle with an empty tank, which is a run with no burn in it.
+    #[test]
+    fn a_spacecraft_cannot_start_under_its_own_floor() {
+        let with_masses = |mass: f64, floor: f64| {
+            let sat: SatelliteConfig = toml::from_str(&format!(
+                "
+[orbit]
+type = \"circular\"
+altitude = 500
+[attitude]
+inertia_diag = [10, 10, 10]
+mass = {mass}
+
+[thruster]
+dry_mass = {floor}
+
+[[thruster.thrusters]]
+thrust_n = 10.0
+isp_s = 230.0
+direction_body = [1.0, 0.0, 0.0]
+"
+            ))
+            .expect("the table parses");
+            sat.validate()
+        };
+
+        let err = with_masses(300.0, 400.0).unwrap_err();
+        assert!(
+            err.contains("below thruster.dry_mass"),
+            "the error names both masses: {err}"
+        );
+
+        assert!(
+            with_masses(400.0, 400.0).is_ok(),
+            "starting empty is a run with no burn in it"
+        );
+        assert!(with_masses(500.0, 400.0).is_ok());
     }
 
     /// The floor is what says when the spacecraft is empty, so a propulsion

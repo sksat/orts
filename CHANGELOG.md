@@ -319,6 +319,20 @@ section is subdivided by package.
   ([#469](https://github.com/sksat/orts/pull/469))
 
 #### Fixed
+- A burn that crossed the propellant floor inside a step spent propellant the
+  spacecraft did not have. The thruster asked whether the mass was at its floor
+  and answered from the state it was handed, so a step that crossed burned at
+  full thrust throughout: measured in [#446] with 0.04 kg left, a thrust of
+  196.133 N and a one-second step, the spacecraft ended 0.01 kg *below* its
+  floor and gained 0.980273 m/s where Tsiolkovsky gives 0.784375 m/s for the
+  propellant it had — 25% too much. Running dry is now a boundary the
+  propagation locates: `PropellantPool` declares it, the mass is put on the
+  floor, and the mode it carries is what stops every consumer of that
+  propellant. The same case now lands on the floor and gains Tsiolkovsky's ΔV
+  to within 1e-6 m/s under RK4, DP45 and DOP853. What is left over is the
+  impulse for the propellant burned past the floor before the crossing was
+  located, which is `ṁ · t_tolerance` of it — a nanosecond of localization is
+  1e-10 kg, worth 2e-9 m/s.
 - A reaction wheel that reached its momentum limit took angular momentum out of
   the spacecraft: over a 20 s run of a 0.53 N·m·s wheel driven at 0.1 N·m, the
   body-frame total `I·ω + Σ aᵢ hᵢ` lost 7.5e-3 N·m·s under RK4 at `dt = 0.25`
