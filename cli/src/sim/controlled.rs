@@ -18,14 +18,16 @@ use orts::setup::default_third_bodies;
 use crate::sim::core::spacecraft_dynamics_for;
 use core::ops::ControlFlow;
 use nalgebra::Vector3;
+use orts::boundary::{BoundaryWalk, HasBoundaries, walk_to_target};
 use orts::group::IntegratorConfig;
 use orts::spacecraft::{
     MtqAssembly, ReactionWheelAssembly, SpacecraftDynamics, SpacecraftState, ThrusterAssembly,
     ThrusterAssemblyCore, ThrusterSpec,
 };
 use tobari::magnetic::igrf::Igrf;
-use utsuroi::AdvanceOutcome;
-use utsuroi::{Dop853, DormandPrince, IntegrationError, Integrator, Rk4, Segments};
+use utsuroi::{
+    Dop853, DormandPrince, IntegrationError, Integrator, Rk4, RootSearch, RootSlot, Segments,
+};
 
 use crate::config::{ControllerConfig, MtqConfig, ReactionWheelConfig, SensorChoice};
 use crate::satellite::SatelliteSpec;
@@ -559,68 +561,103 @@ where
     // still holds `t0` — and serve pauses on such an error and can resume from
     // there, propagating a state that belongs to a later instant.
     let mut state = sat.state.clone();
+
+    // The boundaries this satellite's effectors declare, and one guard each.
+    // Both live across the segments below, so that a boundary reported at one
+    // segment's end is not reported again at the next one's start.
+    let boundaries = sat.dynamics.boundaries();
+    let mut slots = vec![RootSlot::new(); boundaries.len()];
+    let search = RootSearch::default();
+
     for segment in Segments::new(&sat.dynamics, t0, t1).map_err(span)? {
         let t = segment.start();
         let segment_end = segment.end();
         let bound = segment.system();
 
-        // Each arm answers the same triple, so the commit rule below is
-        // written once. `stepper` is asked for its time before `into_state`
-        // consumes it: that is where an event stopped.
-        let (outcome, reached_t, next_state) = match integrator {
-            IntegratorConfig::Rk4 { dt } => {
-                // The stepper rather than `try_integrate`: the same walk, but
-                // it takes the event predicate. `integrate` panics on a bad
-                // step or a stalled clock, and this path returns `Result` so
-                // serve can send the client an Error down its graceful-halt
-                // path. A `dt` wider than the segment is not clamped — the
-                // last step of a segment lands on `segment_end` itself, which
-                // is what a segment ending at a switch of the right-hand side
-                // needs.
-                let mut stepper = Rk4.stepper(bound, state.clone(), t, *dt);
-                // As in the adaptive arms: a later segment starts from a state
-                // the check has already accepted, and `FixedStepper` documents
-                // that asking again about the same `(t, state)` can change what
-                // a stateful predicate answers.
-                if segment.is_continuation() {
-                    stepper = stepper.from_checked_state();
-                }
-                let outcome = stepper
-                    .advance_to(segment_end, |_, _| {}, event_check)
-                    .map_err(span)?;
-                (outcome, stepper.t(), stepper.into_state())
-            }
-            IntegratorConfig::Dp45 { dt, tolerances } => {
-                let mut stepper =
-                    DormandPrince.stepper(bound, state.clone(), t, *dt, tolerances.clone());
-                // A later segment starts from the state the previous one ended
-                // on, which the predicate has already accepted.
-                if segment.is_continuation() {
-                    stepper = stepper.from_checked_state();
-                }
-                let outcome = stepper
-                    .advance_to(segment_end, |_, _| {}, event_check)
-                    .map_err(span)?;
-                (outcome, stepper.t(), stepper.into_state())
-            }
-            IntegratorConfig::Dop853 { dt, tolerances } => {
-                let mut stepper = Dop853.stepper(bound, state.clone(), t, *dt, tolerances.clone());
-                if segment.is_continuation() {
-                    stepper = stepper.from_checked_state();
-                }
-                let outcome = stepper
-                    .advance_to(segment_end, |_, _| {}, event_check)
-                    .map_err(span)?;
-                (outcome, stepper.t(), stepper.into_state())
-            }
-        };
+        // A later segment starts from a state the check has already
+        // accepted, and the steppers document that asking again about the same
+        // `(t, state)` can change what a stateful predicate answers.
+        let started_checked = segment.is_continuation();
+        let mut observe = |_: f64, _: &AugmentedState<SpacecraftState>| {};
+
+        // The walk rather than `try_integrate`: the same steps, but it takes
+        // the event predicate and stops at the boundaries the effectors
+        // declared. `integrate` panics on a bad step or a stalled clock, and
+        // this path returns `Result` so serve can send the client an Error
+        // down its graceful-halt path. A `dt` wider than the segment is not
+        // clamped — the last step of a segment lands on `segment_end` itself,
+        // which is what a segment ending at a switch of the right-hand side
+        // needs.
+        let (walk, reached_t, next_state) = match integrator {
+            IntegratorConfig::Rk4 { dt } => walk_to_target(
+                &sat.dynamics,
+                &boundaries,
+                &mut slots,
+                search,
+                state.clone(),
+                t,
+                segment_end,
+                started_checked,
+                |state, t, checked| {
+                    let stepper = Rk4.stepper(bound, state, t, *dt);
+                    if checked {
+                        stepper.from_checked_state()
+                    } else {
+                        stepper
+                    }
+                },
+                &mut observe,
+                event_check,
+            ),
+            IntegratorConfig::Dp45 { dt, tolerances } => walk_to_target(
+                &sat.dynamics,
+                &boundaries,
+                &mut slots,
+                search,
+                state.clone(),
+                t,
+                segment_end,
+                started_checked,
+                |state, t, checked| {
+                    let stepper = DormandPrince.stepper(bound, state, t, *dt, tolerances.clone());
+                    if checked {
+                        stepper.from_checked_state()
+                    } else {
+                        stepper
+                    }
+                },
+                &mut observe,
+                event_check,
+            ),
+            IntegratorConfig::Dop853 { dt, tolerances } => walk_to_target(
+                &sat.dynamics,
+                &boundaries,
+                &mut slots,
+                search,
+                state.clone(),
+                t,
+                segment_end,
+                started_checked,
+                |state, t, checked| {
+                    let stepper = Dop853.stepper(bound, state, t, *dt, tolerances.clone());
+                    if checked {
+                        stepper.from_checked_state()
+                    } else {
+                        stepper
+                    }
+                },
+                &mut observe,
+                event_check,
+            ),
+        }
+        .map_err(span)?;
 
         state = next_state;
 
         // An event is a normal early stop: commit where it stopped and leave
         // the remaining segments alone. No propagation to the segment end, and
         // no rounding of the time.
-        if let AdvanceOutcome::Event { reason } = outcome {
+        if let BoundaryWalk::Stopped(reason) = walk {
             sat.state = state;
             sat.state_t = reached_t;
             let term = Termination {

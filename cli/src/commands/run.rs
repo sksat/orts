@@ -1,6 +1,7 @@
 use arika::body::KnownBody;
 use arika::frame::{SimpleEci, Vec3};
 use orts::OrbitalState;
+use orts::boundary::HasBoundaries;
 use orts::group::{HasPosition, IndependentGroup};
 use orts::orbital::kepler::KeplerianElements;
 use orts::record::archetypes::OrbitalState as RecordOrbitalState;
@@ -710,7 +711,7 @@ fn propagate_and_record<F: RunFrame, D>(
     log_state: impl Fn(&mut Recording, &EntityPath, &TimePoint, f64, &D::State, &D),
 ) -> Result<Recording, CmdError>
 where
-    D: DynamicalSystem,
+    D: DynamicalSystem + HasBoundaries,
     D::State: HasPosition,
 {
     let mut rec = Recording::new();
