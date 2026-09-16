@@ -137,15 +137,17 @@ section is subdivided by package.
   `--root-t-tolerance` / `[integrator] root_t_tolerance`, which is rejected at
   config time — for every integrator, since they all locate a crossing the same
   way — if it is not positive and finite. How many halvings a tolerance needs
-  follows from it rather than bounding it: an accepted step is at most `dt`
-  wide, so the CLI asks for `⌈log₂(dt / t_tolerance)⌉` of them (the library's
-  60 stays the floor, so an ordinary tolerance keeps the count it had). The
-  tolerance is the width the search
+  follows from it rather than bounding it: the CLI asks for
+  `⌈log₂(dt / t_tolerance)⌉` of them, plus 32 for the step the adaptive pair
+  grows its first one into, with the library's 60 as the floor so an ordinary
+  tolerance keeps the count it had. The tolerance is the width the search
   narrows a crossing's interval to, and so what the reported time can be late
-  by: a wheel driven at `τ` is held `τ · t_tolerance` past its limit, and a
-  spacecraft burning at `ṁ` stops `ṁ · t_tolerance` below its propellant floor
-  while keeping the impulse for that propellant. Each halving costs one more
-  re-step of the interval being narrowed. Measured on a wheel whose limit falls
+  by: a wheel driven at `τ` is held `τ · t_tolerance` past its limit, and the
+  body keeps the momentum for that much of the exchange. Each halving costs one
+  more re-step of the interval being narrowed, and the spacing of f64 at the
+  time in question is the floor under the tolerance — the search stops once
+  halving no longer changes the interval, so at `t = 1e15` a quarter-second
+  interval halves once and stops whatever was asked for. Measured on a wheel whose limit falls
   at 5.3 s, inside the step from 5.25 to 5.5: asked for a micro-second the walk
   reports 5.3, asked for a fifth of a second one halving already brings the
   interval inside the tolerance and it reports 5.375.

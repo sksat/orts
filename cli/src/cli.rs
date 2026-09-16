@@ -216,12 +216,12 @@ pub struct SimArgs {
 
     /// How closely the time a state reaches a limit is located [s].
     ///
-    /// A reaction wheel filling up or a tank running dry happens mid-step, and
-    /// the propagation halves the step until it has the time this narrow. The
-    /// tolerance is how late that time can be: a wheel driven at 0.1 N·m ends
-    /// up to 1e-4 N·m·s past its limit at the default, and a burn keeps the
-    /// impulse for whatever propellant it spent past the floor. Every halving
-    /// costs one more evaluation of the step being narrowed.
+    /// A reaction wheel filling up happens mid-step, and the propagation
+    /// halves the step until it has the time this narrow. The tolerance is how
+    /// late that time can be: a wheel driven at 0.1 N·m is held up to 1e-4
+    /// N·m·s past its limit at the default. Every halving costs one more
+    /// evaluation of the step being narrowed, and the spacing of f64 at the
+    /// time in question is the floor under the whole thing.
     #[arg(long, default_value_t = 1e-3)]
     pub root_t_tolerance: f64,
 

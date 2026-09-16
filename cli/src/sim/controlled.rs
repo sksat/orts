@@ -1072,6 +1072,63 @@ mod tests {
         (sat, ticks)
     }
 
+    /// The search the caller chose reaches this path.
+    ///
+    /// Not through the state it ends on: the total is conserved, so the body's
+    /// rate follows from the wheel's momentum whenever the bound was located,
+    /// and the wheel is on its bound by the end of the span either way. What
+    /// the tolerance decides is the instant in between, which this path
+    /// reports to nobody. So the forwarding is shown the other way round —
+    /// with a search no walk accepts, which fails only if it arrives.
+    #[test]
+    fn the_search_the_caller_chose_reaches_the_controlled_path() {
+        use orts::spacecraft::{ReactionWheelAssembly, RwCommand};
+
+        let saturating = || {
+            let (mut sat, _ticks) = satellite_with(1000.0, 0.0);
+            let mut rw = ReactionWheelAssembly::three_axis(0.01, 0.53, 0.1);
+            rw.command = RwCommand::Torques(rw.core().allocate(&Vector3::new(0.0, 0.0, 0.1)));
+            sat.dynamics = std::mem::replace(
+                &mut sat.dynamics,
+                orts::spacecraft::SpacecraftDynamics::new(
+                    arika::body::KnownBody::Earth.properties().mu,
+                    Box::new(orts::orbital::gravity::PointMass) as Box<dyn GravityField>,
+                    nalgebra::Matrix3::identity(),
+                ),
+            )
+            .with_effector(rw);
+            sat.state = sat
+                .dynamics
+                .initial_augmented_state(sat.state.plant.clone());
+            sat
+        };
+        let walk = |search: RootSearch| {
+            propagate_controlled(
+                &mut saturating(),
+                0.0,
+                20.0,
+                &IntegratorConfig::Rk4 { dt: 0.25 },
+                search,
+                &|_: f64, _: &AugmentedState<SpacecraftState>| ControlFlow::Continue(()),
+            )
+        };
+
+        assert!(walk(RootSearch::default()).is_ok(), "the default walks");
+
+        // A width no bisection reaches. `validate_root_t_tolerance` refuses it
+        // at config time; a state assembled by hand can still carry it, and
+        // the walk is where it stops.
+        let err = walk(RootSearch {
+            t_tolerance: 0.0,
+            ..RootSearch::default()
+        })
+        .expect_err("a search no walk accepts is refused where the walk starts");
+        assert!(
+            err.contains("tolerance"),
+            "the error names what it could not use: {err}"
+        );
+    }
+
     /// The controlled path walks with the boundaries the effectors declare, so
     /// a wheel that saturates inside a span is held at its limit and what it
     /// stops taking stays with the spacecraft. Stepping without that handling

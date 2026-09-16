@@ -115,11 +115,16 @@ where
     /// narrow, so the tolerance is what the reported time can be late by — and
     /// with it, how far past its bound a state can be when
     /// [`settle_boundary`](crate::effector::StateEffector::settle_boundary)
-    /// puts it back. A wheel driven at `τ` reaches its limit up to `τ ·
-    /// t_tolerance` past it; a spacecraft burning at `ṁ` runs `ṁ · t_tolerance`
-    /// past its propellant floor, and the impulse it got for that propellant
-    /// stays. Halving the tolerance costs one more trial step per boundary
+    /// puts it back: a wheel driven at `τ` is held up to `τ · t_tolerance`
+    /// past its limit, and the body keeps the momentum for that much of the
+    /// exchange. Halving the tolerance costs one more trial step per boundary
     /// located.
+    ///
+    /// The clock is the floor under it. The search also stops once halving no
+    /// longer changes the interval in f64, so at a large absolute time the
+    /// spacing of f64 decides the answer instead: at `t = 1e15` a quarter-second
+    /// interval halves once and stops, whatever tolerance was asked for, since
+    /// `1e15 + 0.125` is the next representable time.
     ///
     /// The default is [`RootSearch::default`], 1 ms.
     pub fn with_root_search(mut self, search: RootSearch) -> Self {
