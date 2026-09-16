@@ -21,6 +21,9 @@ use crate::effector::{ConstraintMode, EffectorBoundary};
 /// state sits in the augmented vectors.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DeclaredBoundary {
+    /// Index of the satellite whose system declared it, for a group that
+    /// propagates several at once. Zero for a system that is one spacecraft.
+    pub satellite: usize,
     /// Index of the effector that declared it.
     pub effector: usize,
     /// What the effector said about the boundary.
@@ -41,12 +44,16 @@ impl DeclaredBoundary {
         self.mode_offset + self.boundary.kind.index()
     }
 
-    /// Whether the search should look at this boundary, given every mode.
+    /// Whether the search should look at this boundary, given the mode block
+    /// of the effector that declared it.
+    ///
+    /// A state assembled without modes has none to read, and a boundary whose
+    /// mode is unknown is not one to search for.
     pub fn is_active(&self, modes: &[ConstraintMode]) -> bool {
-        let end = (self.mode_offset + self.mode_dim).min(modes.len());
-        self.boundary
-            .kind
-            .is_active(&modes[self.mode_offset.min(end)..end])
+        match modes.get(self.mode_offset..self.mode_offset + self.mode_dim) {
+            Some(block) => self.boundary.kind.is_active(block),
+            None => false,
+        }
     }
 }
 
@@ -79,10 +86,16 @@ pub trait HasBoundaries: DynamicalSystem {
     /// Only asked about boundaries this system declared.
     fn settle_boundary(&self, _declared: &DeclaredBoundary, _state: &mut Self::State) {}
 
-    /// The discrete modes of a state, which say which boundaries mean
-    /// anything.
-    fn modes<'s>(&self, _state: &'s Self::State) -> &'s [ConstraintMode] {
-        &[]
+    /// Whether a boundary means anything in the mode this state is in.
+    ///
+    /// A bound cannot be reached while its constraint is already held against
+    /// one, and there is nothing to release while it is free. The system
+    /// answers rather than handing out its modes, since a group of satellites
+    /// keeps one set per satellite and has no single slice to give.
+    ///
+    /// Only asked about boundaries this system declared.
+    fn boundary_is_active(&self, _declared: &DeclaredBoundary, _state: &Self::State) -> bool {
+        false
     }
 }
 
@@ -216,7 +229,7 @@ where
         // Only the boundaries that mean something in the modes the state now
         // has. Switched outside the walk, which is where a set allows it.
         for (index, declared) in boundaries.iter().enumerate() {
-            if declared.is_active(system.modes(&state)) {
+            if system.boundary_is_active(declared, &state) {
                 roots.activate(index);
             } else {
                 roots.deactivate(index);
@@ -268,7 +281,7 @@ fn settle_what_is_already_past<Sys: HasBoundaries>(
     for _ in 0..=boundaries.len() {
         let mut moved = false;
         for declared in boundaries {
-            if !declared.is_active(system.modes(state)) {
+            if !system.boundary_is_active(declared, state) {
                 continue;
             }
             // The value is a margin: at or below zero is at or past the

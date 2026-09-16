@@ -532,12 +532,14 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
     }
 
     fn aux_bounds(&self) -> Vec<(f64, f64)> {
-        let mut bounds: Vec<_> = self
-            .core
-            .wheels
-            .iter()
-            .map(|w| (-w.momentum_limit(), w.momentum_limit()))
-            .collect();
+        // The momentum bound is deliberately not one of these. Clamping the
+        // momentum would destroy whatever the wheel took past its bound before
+        // the boundary handling can give it back to the body, and the body has
+        // already integrated the reaction that carried it there — which is the
+        // angular momentum #446 measured going missing. Reaching the bound is a
+        // boundary the propagation locates, and `settle_boundary` is what puts
+        // the momentum on it.
+        let mut bounds: Vec<_> = vec![(f64::NEG_INFINITY, f64::INFINITY); self.core.num_wheels()];
         if self.core.has_motor_lag() {
             // τ_realized bounds: [-max_torque, max_torque] per wheel
             for w in &self.core.wheels {
@@ -1040,10 +1042,22 @@ mod tests {
             "torque back toward the middle is always allowed"
         );
 
-        assert_eq!(
-            StateEffector::<AttitudeState>::aux_bounds(&assembly),
-            vec![(-0.5, 0.5)],
-            "the projection clamps at the same bound"
+        // And the boundary the propagation watches is at the same place: the
+        // margin runs out where the tightened limit is.
+        let margin = assembly.boundary_value(
+            BoundaryKind::ReachedUpper { index: 0 },
+            EffectorInput {
+                t: 0.0,
+                state: &test_state_at_rest(),
+                aux: &[0.5],
+                modes: &[ConstraintMode::Free],
+                epoch: None,
+                segment: None,
+            },
+        );
+        assert!(
+            margin.abs() < 1e-15,
+            "the boundary is at the tightened limit: margin {margin} at h = 0.5"
         );
     }
 
@@ -1438,10 +1452,13 @@ mod tests {
         ]);
         let bounds = StateEffector::<AttitudeState>::aux_bounds(&rw);
         assert_eq!(bounds.len(), 4); // 2n = 4
-        // First 2: momentum bounds
-        assert_eq!(bounds[0], (-1.0, 1.0));
-        assert_eq!(bounds[1], (-1.0, 1.0));
-        // Next 2: torque bounds
+        // The momentum is left to the boundary handling, which is the only
+        // thing that can put it on its bound without losing the overshoot.
+        assert_eq!(bounds[0], (f64::NEG_INFINITY, f64::INFINITY));
+        assert_eq!(bounds[1], (f64::NEG_INFINITY, f64::INFINITY));
+        // The realized torque follows the command through a lag and has no
+        // exchange to conserve, so the projection keeps it in the motor's
+        // range.
         assert_eq!(bounds[2], (-0.1, 0.1));
         assert_eq!(bounds[3], (-0.1, 0.1));
     }

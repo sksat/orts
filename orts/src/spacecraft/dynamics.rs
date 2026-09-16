@@ -361,7 +361,14 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
                     t,
                     state: &state.plant,
                     aux: &state.aux[entry.offset..entry.offset + entry.dim],
-                    modes: &state.modes[entry.mode_offset..entry.mode_offset + entry.mode_dim],
+                    // A state assembled by hand carries no modes; an
+                    // effector reading none falls back to judging its own
+                    // constraint, which is what a walk with no boundary
+                    // handling has always done.
+                    modes: state
+                        .modes
+                        .get(entry.mode_offset..entry.mode_offset + entry.mode_dim)
+                        .unwrap_or(&[]),
                     epoch: epoch.as_ref(),
                     segment,
                 },
@@ -405,6 +412,7 @@ impl<G: GravityField, F: Eci + 'static> HasBoundaries for SpacecraftDynamics<G, 
                 eff.boundaries()
                     .into_iter()
                     .map(move |boundary| DeclaredBoundary {
+                        satellite: 0,
                         effector: index,
                         boundary,
                         aux_offset: entry.offset,
@@ -419,7 +427,10 @@ impl<G: GravityField, F: Eci + 'static> HasBoundaries for SpacecraftDynamics<G, 
     fn boundary_value(&self, declared: &DeclaredBoundary, t: f64, state: &Self::State) -> f64 {
         let effector = &self.effectors[declared.effector];
         let aux = &state.aux[declared.aux_offset..declared.aux_offset + declared.aux_dim];
-        let modes = &state.modes[declared.mode_offset..declared.mode_offset + declared.mode_dim];
+        let modes = state
+            .modes
+            .get(declared.mode_offset..declared.mode_offset + declared.mode_dim)
+            .unwrap_or(&[]);
         let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
         effector.boundary_value(
             declared.boundary.kind,
@@ -449,8 +460,8 @@ impl<G: GravityField, F: Eci + 'static> HasBoundaries for SpacecraftDynamics<G, 
         state.modes[declared.mode_index()] = declared.boundary.kind.mode_after();
     }
 
-    fn modes<'s>(&self, state: &'s Self::State) -> &'s [ConstraintMode] {
-        &state.modes
+    fn boundary_is_active(&self, declared: &DeclaredBoundary, state: &Self::State) -> bool {
+        declared.is_active(&state.modes)
     }
 }
 

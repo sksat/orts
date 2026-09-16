@@ -11,6 +11,7 @@ use utsuroi::{DynamicalSystem, SegmentContext};
 use crate::OrbitalState;
 use crate::attitude::DecoupledContext;
 use crate::attitude::state::AttitudeState;
+use crate::boundary::DeclaredBoundary;
 use crate::effector::{AugmentedState, AuxRegistry, ConstraintMode, EffectorInput, StateEffector};
 use crate::model::ExternalLoads;
 use crate::model::{EvalSegment, Model, eval_maybe_in_segment};
@@ -204,7 +205,14 @@ impl AugmentedAttitudeSystem {
                     t,
                     state: &context,
                     aux: &state.aux[entry.offset..entry.offset + entry.dim],
-                    modes: &state.modes[entry.mode_offset..entry.mode_offset + entry.mode_dim],
+                    // A state assembled by hand carries no modes; an
+                    // effector reading none falls back to judging its own
+                    // constraint, which is what a walk with no boundary
+                    // handling has always done.
+                    modes: state
+                        .modes
+                        .get(entry.mode_offset..entry.mode_offset + entry.mode_dim)
+                        .unwrap_or(&[]),
                     epoch: epoch.as_ref(),
                     segment,
                 },
@@ -240,6 +248,68 @@ impl AugmentedAttitudeSystem {
             aux_bounds: state.aux_bounds.clone(),
             modes: state.modes.clone(),
         }
+    }
+}
+
+impl crate::boundary::HasBoundaries for AugmentedAttitudeSystem {
+    fn boundaries(&self) -> Vec<DeclaredBoundary> {
+        self.effectors
+            .iter()
+            .enumerate()
+            .flat_map(|(index, eff)| {
+                let entry = &self.registry.entries()[index];
+                eff.boundaries()
+                    .into_iter()
+                    .map(move |boundary| DeclaredBoundary {
+                        satellite: 0,
+                        effector: index,
+                        boundary,
+                        aux_offset: entry.offset,
+                        aux_dim: entry.dim,
+                        mode_offset: entry.mode_offset,
+                        mode_dim: entry.mode_dim,
+                    })
+            })
+            .collect()
+    }
+
+    fn boundary_value(&self, declared: &DeclaredBoundary, t: f64, state: &Self::State) -> f64 {
+        // The same context the derivatives are taken in: the orbit and mass
+        // this system prescribes at `t`, around the attitude being examined.
+        let context = DecoupledContext {
+            attitude: state.plant.clone(),
+            orbit: (self.orbit_fn)(t),
+            mass: (self.mass_fn)(t),
+        };
+        let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
+        self.effectors[declared.effector].boundary_value(
+            declared.boundary.kind,
+            EffectorInput {
+                t,
+                state: &context,
+                aux: &state.aux[declared.aux_offset..declared.aux_offset + declared.aux_dim],
+                modes: state
+                    .modes
+                    .get(declared.mode_offset..declared.mode_offset + declared.mode_dim)
+                    .unwrap_or(&[]),
+                epoch: epoch.as_ref(),
+                segment: None,
+            },
+        )
+    }
+
+    fn settle_boundary(&self, declared: &DeclaredBoundary, state: &mut Self::State) {
+        let aux = &mut state.aux[declared.aux_offset..declared.aux_offset + declared.aux_dim];
+        if let Some(exchange) =
+            self.effectors[declared.effector].settle_boundary(declared.boundary.kind, aux)
+        {
+            state.plant.angular_velocity += self.inertia_inv * exchange.angular_momentum_body;
+        }
+        state.modes[declared.mode_index()] = declared.boundary.kind.mode_after();
+    }
+
+    fn boundary_is_active(&self, declared: &DeclaredBoundary, state: &Self::State) -> bool {
+        declared.is_active(&state.modes)
     }
 }
 

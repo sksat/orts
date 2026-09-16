@@ -3,9 +3,11 @@ use std::sync::Arc;
 
 use nalgebra::Vector3;
 use utsuroi::{
-    AdvanceOutcome, Dop853, DormandPrince, DynamicalSystem, IntegrationError, Integrator, OdeState,
-    Rk4, SegmentContext, Segments, Tolerances, derivatives_maybe_in_segment,
+    Dop853, DormandPrince, DynamicalSystem, IntegrationError, Integrator, OdeState, Rk4,
+    RootSearch, RootSlot, SegmentContext, Segments, Tolerances, derivatives_maybe_in_segment,
 };
+
+use crate::boundary::{BoundaryWalk, DeclaredBoundary, HasBoundaries, walk_to_target};
 
 use super::prop_group::{GroupSnapshot, PropGroupOutcome, SatId, SatelliteTermination};
 use super::state::GroupState;
@@ -232,6 +234,48 @@ where
     }
 }
 
+/// The boundaries of every satellite in the group, each stamped with whose it
+/// is.
+///
+/// A coupled group keeps one state per satellite and integrates them together,
+/// so a boundary is one satellite's: the index rides along in the declaration
+/// and every question about it is forwarded to that satellite's own system.
+impl<D: DynamicalSystem + HasBoundaries> HasBoundaries for CoupledGroupDynamics<D>
+where
+    D::State: HasPosition + FromAcceleration,
+{
+    fn boundaries(&self) -> Vec<DeclaredBoundary> {
+        self.dynamics
+            .iter()
+            .enumerate()
+            .flat_map(|(satellite, d)| {
+                d.boundaries().into_iter().map(move |mut declared| {
+                    declared.satellite = satellite;
+                    declared
+                })
+            })
+            .collect()
+    }
+
+    fn boundary_value(&self, declared: &DeclaredBoundary, t: f64, state: &Self::State) -> f64 {
+        self.dynamics[declared.satellite].boundary_value(
+            declared,
+            t,
+            &state.states[declared.satellite],
+        )
+    }
+
+    fn settle_boundary(&self, declared: &DeclaredBoundary, state: &mut Self::State) {
+        self.dynamics[declared.satellite]
+            .settle_boundary(declared, &mut state.states[declared.satellite]);
+    }
+
+    fn boundary_is_active(&self, declared: &DeclaredBoundary, state: &Self::State) -> bool {
+        self.dynamics[declared.satellite]
+            .boundary_is_active(declared, &state.states[declared.satellite])
+    }
+}
+
 impl<D: DynamicalSystem> DynamicalSystem for CoupledGroupDynamics<D>
 where
     D::State: HasPosition + FromAcceleration,
@@ -297,7 +341,7 @@ where
     event_checker: Option<EventChecker<D::State>>,
 }
 
-impl<D: DynamicalSystem> CoupledGroup<D>
+impl<D: DynamicalSystem + HasBoundaries> CoupledGroup<D>
 where
     D::State: HasPosition + FromAcceleration,
 {
@@ -438,6 +482,14 @@ where
         // carries the interval and whether an earlier segment came before it.
         // Stopping partway — on an event or an error — means stopping taking
         // items: the state a later segment would start from was never reached.
+        // The boundaries every satellite in the group declares, and one slot
+        // each. Both live across the segments: a guard is what keeps a boundary
+        // reported at one segment's end from being reported again at the next
+        // one's start.
+        let boundaries = self.dynamics.boundaries();
+        let mut slots = vec![RootSlot::new(); boundaries.len()];
+        let search = RootSearch::default();
+
         let segments = Segments::new(&self.dynamics, self.t, t_target)?;
         for segment in segments {
             if self.terminated {
@@ -450,7 +502,7 @@ where
             // happens to the group afterwards is written once below rather
             // than per solver. Nothing in here touches the fields the
             // recording does, so the borrows all end with the block.
-            let (outcome, reached_t, state) = {
+            let walk = {
                 let ids = &self.ids;
                 let event_checker = &self.event_checker;
                 // A group without a checker still has to give the steppers a
@@ -470,58 +522,83 @@ where
                     ControlFlow::Continue(())
                 };
 
+                // The state a later segment starts from is the one the
+                // previous segment ended on, already checked after its last
+                // accepted step.
+                let started_checked = segment.is_continuation();
+                let mut observe = |_: f64, _: &GroupState<D::State>| {};
                 match &self.integrator {
-                    IntegratorConfig::Dp45 { dt, tolerances } => {
-                        let mut stepper = DormandPrince.stepper(
-                            bound,
-                            self.state.clone(),
-                            self.t,
-                            *dt,
-                            tolerances.clone(),
-                        );
-                        // The state a later segment starts from is the one the
-                        // previous segment ended on, already checked after its
-                        // last accepted step.
-                        if segment.is_continuation() {
-                            stepper = stepper.from_checked_state();
-                        }
-                        let outcome = stepper.advance_to(segment_end, |_, _| {}, check);
-                        (outcome, stepper.t(), stepper.into_state())
-                    }
-                    IntegratorConfig::Dop853 { dt, tolerances } => {
-                        let mut stepper = Dop853.stepper(
-                            bound,
-                            self.state.clone(),
-                            self.t,
-                            *dt,
-                            tolerances.clone(),
-                        );
-                        if segment.is_continuation() {
-                            stepper = stepper.from_checked_state();
-                        }
-                        let outcome = stepper.advance_to(segment_end, |_, _| {}, check);
-                        (outcome, stepper.t(), stepper.into_state())
-                    }
-                    IntegratorConfig::Rk4 { dt } => {
-                        let mut stepper = Rk4.stepper(bound, self.state.clone(), self.t, *dt);
-                        if segment.is_continuation() {
-                            stepper = stepper.from_checked_state();
-                        }
-                        let outcome = stepper.advance_to(segment_end, |_, _| {}, check);
-                        (outcome, stepper.t(), stepper.into_state())
-                    }
+                    IntegratorConfig::Dp45 { dt, tolerances } => walk_to_target(
+                        &self.dynamics,
+                        &boundaries,
+                        &mut slots,
+                        search,
+                        self.state.clone(),
+                        self.t,
+                        segment_end,
+                        started_checked,
+                        |state, t, checked| {
+                            let stepper =
+                                DormandPrince.stepper(bound, state, t, *dt, tolerances.clone());
+                            if checked {
+                                stepper.from_checked_state()
+                            } else {
+                                stepper
+                            }
+                        },
+                        &mut observe,
+                        &check,
+                    ),
+                    IntegratorConfig::Dop853 { dt, tolerances } => walk_to_target(
+                        &self.dynamics,
+                        &boundaries,
+                        &mut slots,
+                        search,
+                        self.state.clone(),
+                        self.t,
+                        segment_end,
+                        started_checked,
+                        |state, t, checked| {
+                            let stepper = Dop853.stepper(bound, state, t, *dt, tolerances.clone());
+                            if checked {
+                                stepper.from_checked_state()
+                            } else {
+                                stepper
+                            }
+                        },
+                        &mut observe,
+                        &check,
+                    ),
+                    IntegratorConfig::Rk4 { dt } => walk_to_target(
+                        &self.dynamics,
+                        &boundaries,
+                        &mut slots,
+                        search,
+                        self.state.clone(),
+                        self.t,
+                        segment_end,
+                        started_checked,
+                        |state, t, checked| {
+                            let stepper = Rk4.stepper(bound, state, t, *dt);
+                            if checked {
+                                stepper.from_checked_state()
+                            } else {
+                                stepper
+                            }
+                        },
+                        &mut observe,
+                        &check,
+                    ),
                 }
             };
 
-            let terminations = match outcome {
-                Ok(AdvanceOutcome::Reached) => {
+            let terminations = match walk {
+                Ok((BoundaryWalk::Reached, _, state)) => {
                     self.state = state;
                     self.t = segment_end;
                     Vec::new()
                 }
-                Ok(AdvanceOutcome::Event {
-                    reason: (sat_id, reason),
-                }) => {
+                Ok((BoundaryWalk::Stopped((sat_id, reason)), reached_t, state)) => {
                     self.state = state;
                     self.t = reached_t;
                     self.terminated = true;
@@ -585,7 +662,7 @@ where
     }
 }
 
-impl<D: DynamicalSystem + Send> super::prop_group::PropGroup for CoupledGroup<D>
+impl<D: DynamicalSystem + HasBoundaries + Send> super::prop_group::PropGroup for CoupledGroup<D>
 where
     D::State: HasPosition + FromAcceleration + Send,
 {
@@ -879,6 +956,8 @@ mod tests {
         // Use a dummy DynamicalSystem that returns zero derivatives
         /// Free particle: d(pos)/dt = vel, d(vel)/dt = 0.
         struct FreeParticle;
+        impl crate::boundary::HasBoundaries for FreeParticle {}
+
         impl DynamicalSystem for FreeParticle {
             type State = OrbitalState;
             fn derivatives(&self, _t: f64, state: &OrbitalState) -> OrbitalState {
@@ -935,6 +1014,8 @@ mod tests {
         // Total energy = KE + PE = (v1² + v2²)/2 + k*(|r12| - L)²/2
         /// Free particle: d(pos)/dt = vel, d(vel)/dt = 0.
         struct FreeParticle;
+        impl crate::boundary::HasBoundaries for FreeParticle {}
+
         impl DynamicalSystem for FreeParticle {
             type State = OrbitalState;
             fn derivatives(&self, _t: f64, state: &OrbitalState) -> OrbitalState {
@@ -992,6 +1073,8 @@ mod tests {
         // Period T = 2π/√(2k)
         /// Free particle: d(pos)/dt = vel, d(vel)/dt = 0.
         struct FreeParticle;
+        impl crate::boundary::HasBoundaries for FreeParticle {}
+
         impl DynamicalSystem for FreeParticle {
             type State = OrbitalState;
             fn derivatives(&self, _t: f64, state: &OrbitalState) -> OrbitalState {
@@ -1043,6 +1126,8 @@ mod tests {
         // RK4 error should decrease by factor ~16 when dt is halved
         /// Free particle: d(pos)/dt = vel, d(vel)/dt = 0.
         struct FreeParticle;
+        impl crate::boundary::HasBoundaries for FreeParticle {}
+
         impl DynamicalSystem for FreeParticle {
             type State = OrbitalState;
             fn derivatives(&self, _t: f64, state: &OrbitalState) -> OrbitalState {
@@ -1200,6 +1285,8 @@ mod tests {
         // Spring-coupled two-body with DP45: energy should be well conserved
         /// Free particle: d(pos)/dt = vel, d(vel)/dt = 0.
         struct FreeParticle;
+        impl crate::boundary::HasBoundaries for FreeParticle {}
+
         impl DynamicalSystem for FreeParticle {
             type State = OrbitalState;
             fn derivatives(&self, _t: f64, state: &OrbitalState) -> OrbitalState {
@@ -1251,6 +1338,8 @@ mod tests {
     fn coupled_group_spring_rk4_oscillation() {
         /// Free particle: d(pos)/dt = vel, d(vel)/dt = 0.
         struct FreeParticle;
+        impl crate::boundary::HasBoundaries for FreeParticle {}
+
         impl DynamicalSystem for FreeParticle {
             type State = OrbitalState;
             fn derivatives(&self, _t: f64, state: &OrbitalState) -> OrbitalState {

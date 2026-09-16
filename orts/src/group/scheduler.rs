@@ -10,6 +10,8 @@
 //! state via `into_parts()`.
 
 use std::ops::ControlFlow;
+
+use crate::boundary::HasBoundaries;
 use std::sync::Arc;
 
 use utsuroi::{DynamicalSystem, IntegrationError, OdeState};
@@ -298,7 +300,7 @@ struct SatRecord<D: DynamicalSystem> {
 ///
 /// Satellites are propagated using ephemeral groups built each sync step.
 /// All active satellites share a common time `t`.
-pub struct Scheduler<D: DynamicalSystem>
+pub struct Scheduler<D: DynamicalSystem + HasBoundaries>
 where
     D::State: HasPosition + FromAcceleration,
 {
@@ -311,7 +313,7 @@ where
     pair_states: Vec<PairState>,
 }
 
-impl<D: DynamicalSystem> Scheduler<D>
+impl<D: DynamicalSystem + HasBoundaries> Scheduler<D>
 where
     D::State: HasPosition + FromAcceleration,
 {
@@ -1362,6 +1364,8 @@ mod tests {
     /// Free particle: d(pos)/dt = vel, d(vel)/dt = 0.
     #[derive(Clone, Copy)]
     struct FreeParticle;
+    impl crate::boundary::HasBoundaries for FreeParticle {}
+
     impl DynamicalSystem for FreeParticle {
         type State = OrbitalState;
         fn derivatives(&self, _t: f64, state: &OrbitalState) -> OrbitalState {
