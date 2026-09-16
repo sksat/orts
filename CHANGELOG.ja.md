@@ -108,8 +108,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   積分器と event check の間で受け取る。`orts run` / `orts serve` は
   `--root-t-tolerance` / `[integrator] root_t_tolerance` を読み、正の有限値でなければ
   config の時点で拒否する (どの積分器も同じ探索を通るので、全てに適用する)。半分割の回数は許容から導く (許容を縛らない):
-  CLI は `⌈log₂(dt / t_tolerance)⌉` 回に、adaptive な 2 つが最初のステップから育てる分として
-  32 回を足して要求する。library の 60 が下限なので、普通の許容ではこれまでと同じ回数になる。この許容は探索が
+  CLI は `⌈log₂(widest / t_tolerance)⌉` 回に、`t = 0` 近傍の subnormal の範囲ぶんとして 64 回を
+  足して要求する。`widest` は run の span である。`dt` は区間を縛らない (adaptive な 2 つでは
+  最初のステップにすぎず、受理したステップを DP45 は最大 5 倍、DOP853 は 6 倍に繰り返し育てる)。
+  縛るのは伝播そのもので、ステップは歩いている目標時刻で切られる。この許容は探索が
   交差を含む区間を詰める幅であり、報告される時刻が遅れうる量そのものである: $\tau$ で駆動される
   ホイールは上限を $\tau \cdot \varepsilon_t$ 超えたところで保持され、body はその分の交換を保つ。
   下限は f64 の時刻分解能で、探索は半分割しても区間が変わらなくなった時点でも止まる

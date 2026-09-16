@@ -13,34 +13,44 @@ use crate::config::SimConfig;
 use crate::satellite::{OrbitSpec, SatelliteSpec, parse_body, parse_sat_spec};
 use crate::tle::{fetch_tle_by_norad_id, try_fetch_tle_by_norad_id};
 
-/// Halvings allowed beyond what the configured step needs, for the step the
-/// adaptive solvers grow it into: 2³² times the first step.
-const HALVINGS_SPARE: u32 = 32;
+/// Halvings allowed beyond what the widest bracket needs.
+///
+/// Room for the interval near `t = 0`, where f64 keeps halving far below the
+/// spacing it has anywhere else: 64 more covers the subnormal range a bracket
+/// can reach there.
+const HALVINGS_SPARE: u32 = 64;
 
-/// The boundary search for a step of `dt` narrowed to `t_tolerance`.
+/// The boundary search narrowed to `t_tolerance`, for a run of `span` in
+/// steps of `dt`.
 ///
-/// The halvings follow from the two: `⌈log₂(dt / t_tolerance)⌉` of them bring
-/// an interval of `dt` inside the tolerance, and the count is what a tolerance
-/// costs rather than a limit on what it may be.
+/// The halvings follow from the tolerance and the widest interval that can
+/// hold a crossing: `⌈log₂(widest / t_tolerance)⌉` of them bring it inside the
+/// tolerance, and the count is what a tolerance costs rather than a limit on
+/// what it may be.
 ///
-/// `dt` is the fixed step for RK4 and the *first* step for the adaptive pair,
-/// which grows what it accepts — by up to 5× per step for DP45, 6× for DOP853
-/// — so the interval a search actually narrows can be far wider than `dt`.
-/// [`HALVINGS_SPARE`] covers that: 32 more allows a step four billion times
-/// the first one. Spending them is not the same as asking for them, since the
-/// search stops at the tolerance or at f64 resolution, whichever comes first;
-/// the count only has to be past what a legitimate search needs, so that what
-/// it stops is a value behaving unlike a continuous function.
-/// `utsuroi::RootSearch::default`'s 60 stays the floor, so an ordinary
-/// tolerance keeps the library's own count.
+/// `dt` alone does not bound the interval. It is the fixed step for RK4 but
+/// only the *first* step for the adaptive pair, which multiplies an accepted
+/// step by up to 5 (DP45) or 6 (DOP853) and does so repeatedly — fourteen such
+/// steps pass 2³². What does bound it is the propagation itself: a step is
+/// clamped to the target it is walking to, so no interval is wider than the
+/// span, and `span` is the run's own length.
 ///
-/// The search stops early anyway once halving no longer changes the interval in
-/// f64, so a tolerance below that resolution spends what the resolution needs
-/// and no more: measured, `1e-30` with a 0.25 s step converges after about 48.
-pub fn root_search(dt: f64, t_tolerance: f64) -> RootSearch {
+/// Allowing halvings is not spending them: the search stops at the tolerance
+/// or once halving no longer changes the interval in f64, whichever comes
+/// first. Measured, `1e-30` with a 0.25 s step converges after about 48, since
+/// the interval stops changing there. The count only has to be past what a
+/// legitimate search needs, so that what it stops is a value behaving unlike a
+/// continuous function. The spare alone is already past
+/// `RootSearch::default`'s 60, so that count is not used; it is kept for the
+/// pair the validators refuse, where the walk's own error is the answer.
+pub fn root_search(dt: f64, span: f64, t_tolerance: f64) -> RootSearch {
     let default = RootSearch::default();
-    let needed = if dt.is_finite() && dt > 0.0 && t_tolerance.is_finite() && t_tolerance > 0.0 {
-        let halvings = (dt / t_tolerance).log2().ceil();
+    let widest = [dt, span]
+        .into_iter()
+        .filter(|w| w.is_finite() && *w > 0.0)
+        .fold(0.0_f64, f64::max);
+    let needed = if widest > 0.0 && t_tolerance.is_finite() && t_tolerance > 0.0 {
+        let halvings = (widest / t_tolerance).log2().ceil();
         // `as u32` saturates, and a non-finite ratio cannot get here.
         (halvings.max(0.0) as u32).saturating_add(HALVINGS_SPARE)
     } else {
@@ -50,7 +60,7 @@ pub fn root_search(dt: f64, t_tolerance: f64) -> RootSearch {
     };
     RootSearch {
         t_tolerance,
-        max_iterations: needed.max(default.max_iterations),
+        max_iterations: needed,
     }
 }
 
@@ -445,7 +455,13 @@ impl SimParams {
                 atol: args.atol,
                 rtol: args.rtol,
             },
-            root_search: root_search(args.dt, args.root_t_tolerance),
+            root_search: root_search(
+                args.dt,
+                // No duration is one orbit, resolved later; the step is what
+                // is known here, and the spare covers the difference.
+                args.duration.unwrap_or(args.dt),
+                args.root_t_tolerance,
+            ),
             atmosphere: args.atmosphere,
             f107: args.f107,
             ap: args.ap,
@@ -524,7 +540,11 @@ impl SimParams {
                 atol: config.integrator.atol,
                 rtol: config.integrator.rtol,
             },
-            root_search: root_search(config.dt, config.integrator.root_t_tolerance),
+            root_search: root_search(
+                config.dt,
+                config.duration.unwrap_or(config.dt),
+                config.integrator.root_t_tolerance,
+            ),
             atmosphere: config.atmosphere_choice(),
             f107: config.f107,
             ap: config.ap,
@@ -825,24 +845,39 @@ mod tests {
     fn the_halvings_follow_from_the_tolerance() {
         let default = RootSearch::default();
 
-        // 1 ms from a 10 s step needs 14 halvings, which the floor covers.
-        let ordinary = root_search(10.0, 1e-3);
+        // 1 ms from a 10 s run needs 14 halvings, and the spare takes it to 78.
+        let ordinary = root_search(10.0, 10.0, 1e-3);
         assert_eq!(ordinary.t_tolerance, 1e-3);
-        assert_eq!(ordinary.max_iterations, default.max_iterations);
+        assert_eq!(ordinary.max_iterations, 78);
 
-        // 1e-30 from a 1 s step needs about 100.
-        let tight = root_search(1.0, 1e-30);
+        // A tolerance as wide as the run needs no halving at all, and the
+        // spare is what is left.
+        let loose = root_search(10.0, 10.0, 10.0);
+        assert_eq!(loose.max_iterations, HALVINGS_SPARE);
+
+        // The span is what bounds the interval, not the step: an hour in
+        // 10 s steps needs log2(3600 / 1e-3) ≈ 22, and the spare carries it
+        // past the floor.
+        let long_run = root_search(10.0, 3600.0, 1e-3);
+        assert!(
+            (86..=90).contains(&long_run.max_iterations),
+            "22 for the span and 64 spare: got {}",
+            long_run.max_iterations
+        );
+
+        // 1e-30 from a one-second span needs about 100.
+        let tight = root_search(1.0, 1.0, 1e-30);
         assert_eq!(tight.t_tolerance, 1e-30);
         assert!(
-            (132..=142).contains(&tight.max_iterations),
-            "log2(1e30) is about 100, plus the spare for a grown step: got {}",
+            (164..=170).contains(&tight.max_iterations),
+            "log2(1e30) is about 100, plus the spare: got {}",
             tight.max_iterations
         );
 
         // A pair the validators refuse is carried through as it is, for the
         // walk to refuse with its own error.
         for (dt, tol) in [(0.0, 1e-3), (10.0, 0.0), (f64::NAN, 1e-3), (10.0, f64::NAN)] {
-            let search = root_search(dt, tol);
+            let search = root_search(dt, dt, tol);
             assert_eq!(search.max_iterations, default.max_iterations);
             assert!(search.t_tolerance.is_nan() || search.t_tolerance == tol);
         }

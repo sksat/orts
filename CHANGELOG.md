@@ -138,9 +138,12 @@ section is subdivided by package.
   config time — for every integrator, since they all locate a crossing the same
   way — if it is not positive and finite. How many halvings a tolerance needs
   follows from it rather than bounding it: the CLI asks for
-  `⌈log₂(dt / t_tolerance)⌉` of them, plus 32 for the step the adaptive pair
-  grows its first one into, with the library's 60 as the floor so an ordinary
-  tolerance keeps the count it had. The tolerance is the width the search
+  `⌈log₂(widest / t_tolerance)⌉` of them, plus 64 for the subnormal range an
+  interval near `t = 0` reaches, where `widest` is the run's own span. `dt`
+  does not bound the interval — it is only the *first* step for the adaptive
+  pair, which multiplies an accepted step by up to 5 (DP45) or 6 (DOP853) and
+  does so repeatedly — but the propagation does, since a step is clamped to the
+  target it walks to. The tolerance is the width the search
   narrows a crossing's interval to, and so what the reported time can be late
   by: a wheel driven at `τ` is held `τ · t_tolerance` past its limit, and the
   body keeps the momentum for that much of the exchange. Each halving costs one
