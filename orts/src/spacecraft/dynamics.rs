@@ -1,8 +1,6 @@
 use std::marker::PhantomData;
 
-use crate::effector::{
-    AugmentedState, AuxRegistry, ConstraintMode, StateEffector, effector_derivatives,
-};
+use crate::effector::{AugmentedState, AuxRegistry, ConstraintMode, EffectorInput, StateEffector};
 use crate::model::{EvalSegment, Model, eval_maybe_in_segment};
 use crate::orbital::gravity::GravityField;
 use arika::epoch::Epoch;
@@ -356,16 +354,17 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
         let mut aux_rates = vec![0.0; self.registry.total_dim()];
         for (i, eff) in self.effectors.iter().enumerate() {
             let entry = &self.registry.entries()[i];
-            let aux_slice = &state.aux[entry.offset..entry.offset + entry.dim];
             let rates_slice = &mut aux_rates[entry.offset..entry.offset + entry.dim];
-            total += effector_derivatives(
-                eff.as_ref(),
-                segment,
-                t,
-                &state.plant,
-                aux_slice,
+            total += eff.derivatives(
+                EffectorInput {
+                    t,
+                    state: &state.plant,
+                    aux: &state.aux[entry.offset..entry.offset + entry.dim],
+                    modes: &state.modes[entry.mode_offset..entry.mode_offset + entry.mode_dim],
+                    epoch: epoch.as_ref(),
+                    segment,
+                },
                 rates_slice,
-                epoch.as_ref(),
             );
         }
 
@@ -998,11 +997,8 @@ mod tests {
         }
         fn derivatives(
             &self,
-            _t: f64,
-            _state: &S,
-            _aux: &[f64],
+            _input: EffectorInput<'_, S>,
             _aux_rates: &mut [f64],
-            _epoch: Option<&Epoch>,
         ) -> ExternalLoads<S::Frame> {
             ExternalLoads::<S::Frame>::acceleration(self.accel)
         }
@@ -1024,12 +1020,10 @@ mod tests {
         }
         fn derivatives(
             &self,
-            _t: f64,
-            state: &S,
-            _aux: &[f64],
+            input: EffectorInput<'_, S>,
             _aux_rates: &mut [f64],
-            _epoch: Option<&Epoch>,
         ) -> ExternalLoads<F> {
+            let state = input.state;
             let a_body = FrameVec3::<Body>::from_raw(self.accel_body);
             let a_inertial = state.attitude_to_inertial().transform(&a_body);
             ExternalLoads {

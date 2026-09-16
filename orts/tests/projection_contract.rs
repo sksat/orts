@@ -33,6 +33,7 @@ fn initial_state(system: &AugmentedAttitudeSystem) -> AugmentedState<AttitudeSta
         plant: AttitudeState::identity(),
         aux: system.initial_aux_state(),
         aux_bounds: system.initial_aux_bounds(),
+        modes: vec![],
     }
 }
 

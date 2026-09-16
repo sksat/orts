@@ -65,50 +65,17 @@ pub trait StateEffector<S: HasFrame>: Send + Sync + std::any::Any {
         0
     }
 
-    /// Compute loads on spacecraft and derivatives of auxiliary state.
+    /// Loads on the spacecraft and derivatives of this effector's auxiliary
+    /// state, at the stage [`EffectorInput`] describes.
     ///
-    /// `aux` is the current auxiliary state slice (length = `state_dim()`).
-    /// `aux_rates` is the output buffer for derivatives (length = `state_dim()`).
-    /// Returns the [`ExternalLoads`] contribution to the plant dynamics,
-    /// already expressed in the frame the state is propagated in
+    /// `aux_rates` is the output buffer (length = `state_dim()`). The returned
+    /// [`ExternalLoads`] are already in the frame the state is propagated in
     /// ([`HasFrame::Frame`]).
     fn derivatives(
         &self,
-        t: f64,
-        state: &S,
-        aux: &[f64],
+        input: EffectorInput<'_, S>,
         aux_rates: &mut [f64],
-        epoch: Option<&Epoch>,
     ) -> ExternalLoads<S::Frame>;
-
-    /// Loads and auxiliary rates for the segment a solver is stepping through.
-    ///
-    /// An effector that reports a boundary through
-    /// [`next_discontinuity_after`](Self::next_discontinuity_after) has its
-    /// switch turned into the end of a segment, and the stage that lands there
-    /// belongs to the step integrating the segment before it. Answering for
-    /// [`segment.start`](crate::model::EvalSegment::start) — and
-    /// [`segment.start_epoch`](crate::model::EvalSegment::start_epoch) for a
-    /// schedule written in epochs — keeps that stage on the inside of a
-    /// half-open interval ending there.
-    ///
-    /// `t`, `state`, `aux` and `epoch` still describe the stage, so an effector
-    /// whose contribution varies continuously — a reaction wheel following its
-    /// own momentum — keeps using them. Only a switch in time is held.
-    ///
-    /// The default ignores the segment and forwards to
-    /// [`derivatives`](Self::derivatives).
-    fn derivatives_in_segment(
-        &self,
-        _segment: &crate::model::EvalSegment<'_>,
-        t: f64,
-        state: &S,
-        aux: &[f64],
-        aux_rates: &mut [f64],
-        epoch: Option<&Epoch>,
-    ) -> ExternalLoads<S::Frame> {
-        self.derivatives(t, state, aux, aux_rates, epoch)
-    }
 
     /// Per-element (min, max) bounds for auxiliary state projection.
     ///
@@ -120,25 +87,50 @@ pub trait StateEffector<S: HasFrame>: Send + Sync + std::any::Any {
     }
 }
 
-/// Loads and auxiliary rates from `effector`, for the segment when there is one.
+/// Everything a [`StateEffector`] is evaluated at.
 ///
-/// Every system that holds effectors evaluates them through this, so the
-/// segment reaches the effector instead of stopping at the system.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn effector_derivatives<S: HasFrame>(
-    effector: &(impl StateEffector<S> + ?Sized),
-    segment: Option<&crate::model::EvalSegment<'_>>,
-    t: f64,
-    state: &S,
-    aux: &[f64],
-    aux_rates: &mut [f64],
-    epoch: Option<&Epoch>,
-) -> ExternalLoads<S::Frame> {
-    match segment {
-        Some(segment) => effector.derivatives_in_segment(segment, t, state, aux, aux_rates, epoch),
-        None => effector.derivatives(t, state, aux, aux_rates, epoch),
+/// One value rather than a row of arguments, so that an input the effectors
+/// did not have before — the discrete modes — reaches every implementation
+/// without touching the ones that ignore it.
+pub struct EffectorInput<'a, S> {
+    /// Integration time of the stage.
+    pub t: f64,
+    /// The plant state at that stage.
+    pub state: &'a S,
+    /// This effector's slice of the auxiliary state (length = `state_dim()`).
+    pub aux: &'a [f64],
+    /// This effector's slice of the discrete modes (length = `mode_dim()`).
+    ///
+    /// Read-only here: a mode changes where a walk stops, never inside a step.
+    pub modes: &'a [ConstraintMode],
+    /// The epoch of the stage, for a schedule written in epochs.
+    pub epoch: Option<&'a Epoch>,
+    /// The segment the solver is stepping through, when there is one.
+    ///
+    /// An effector that reports a boundary through
+    /// [`next_discontinuity_after`](StateEffector::next_discontinuity_after)
+    /// has its switch turned into the end of a segment, and the stage that
+    /// lands there belongs to the step integrating the segment before it.
+    /// Answering for [`segment.start`](crate::model::EvalSegment::start) — and
+    /// [`segment.start_epoch`](crate::model::EvalSegment::start_epoch) for a
+    /// schedule written in epochs — keeps that stage on the inside of a
+    /// half-open interval ending there.
+    ///
+    /// `t`, `state`, `aux` and `epoch` still describe the stage, so an effector
+    /// whose contribution varies continuously — a reaction wheel following its
+    /// own momentum — keeps using them. Only a switch in time is held.
+    pub segment: Option<&'a crate::model::EvalSegment<'a>>,
+}
+
+// Written out rather than derived: the state is behind a reference, so neither
+// copying nor cloning an input asks anything of the state's own type.
+impl<S> Clone for EffectorInput<'_, S> {
+    fn clone(&self) -> Self {
+        *self
     }
 }
+
+impl<S> Copy for EffectorInput<'_, S> {}
 
 // ConstraintMode
 
@@ -472,7 +464,7 @@ mod tests {
         );
 
         let before = s.modes.clone();
-        s.project(0.0);
+        let _ = s.project(0.0);
         assert_eq!(s.modes, before, "the projection does not touch a mode");
     }
 

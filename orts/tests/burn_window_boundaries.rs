@@ -460,11 +460,8 @@ fn a_scheduled_effector_reports_through_its_system() {
 
         fn derivatives(
             &self,
-            _t: f64,
-            _state: &S,
-            _aux: &[f64],
+            _input: orts::effector::EffectorInput<'_, S>,
             _aux_rates: &mut [f64],
-            _epoch: Option<&arika::epoch::Epoch>,
         ) -> orts::model::ExternalLoads<S::Frame> {
             orts::model::ExternalLoads::zeros()
         }

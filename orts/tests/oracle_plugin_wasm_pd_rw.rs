@@ -78,6 +78,7 @@ fn run_native(initial: AttitudeState) -> AugmentedState<AttitudeState> {
         plant: initial,
         aux: vec![0.0, 0.0, 0.0],
         aux_bounds: vec![],
+        modes: vec![],
     };
     let mut t = 0.0;
 
@@ -199,6 +200,7 @@ fn drive_wasm(
         plant: initial,
         aux: vec![0.0, 0.0, 0.0],
         aux_bounds: vec![],
+        modes: vec![],
     };
     let mut t = 0.0;
 

@@ -14,11 +14,10 @@
 //! integration. [`RwAssembly`] wraps the core as a [`StateEffector`] that
 //! integrates wheel angular momentum.
 
-use arika::epoch::Epoch;
 use nalgebra::Vector3;
 
 use super::ExternalLoads;
-use crate::effector::StateEffector;
+use crate::effector::{EffectorInput, StateEffector};
 use crate::model::{HasAttitude, HasFrame};
 
 /// A single reaction wheel with physical limits.
@@ -469,12 +468,10 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
 
     fn derivatives(
         &self,
-        _t: f64,
-        state: &S,
-        aux: &[f64],
+        input: EffectorInput<'_, S>,
         aux_rates: &mut [f64],
-        _epoch: Option<&Epoch>,
     ) -> ExternalLoads<S::Frame> {
+        let EffectorInput { state, aux, .. } = input;
         let n = self.core.num_wheels();
         let omega = &state.attitude().angular_velocity;
         let momentum = self.core.momentum_slice(aux);
@@ -571,7 +568,17 @@ mod tests {
         aux: &[f64],
         rates: &mut [f64],
     ) -> ExternalLoads {
-        rw.derivatives(0.0, state, aux, rates, None)
+        rw.derivatives(
+            EffectorInput {
+                t: 0.0,
+                state,
+                aux,
+                modes: &[],
+                epoch: None,
+                segment: None,
+            },
+            rates,
+        )
     }
 
     // Core tests

@@ -99,6 +99,7 @@ fn pd_rw_stabilization_with_gravity_gradient() {
         plant: initial_att,
         aux: vec![0.0, 0.0, 0.0],
         aux_bounds: vec![],
+        modes: vec![],
     };
     let mut t: f64 = 0.0;
 
@@ -181,6 +182,7 @@ fn rw_momentum_buildup_under_gravity_gradient() {
         plant: initial_att,
         aux: vec![0.0, 0.0, 0.0],
         aux_bounds: vec![],
+        modes: vec![],
     };
     let mut t: f64 = 0.0;
 
@@ -281,6 +283,7 @@ fn pd_rw_matches_direct_pd_symmetric_body() {
         plant: initial_att.clone(),
         aux: vec![0.0, 0.0, 0.0],
         aux_bounds: vec![],
+        modes: vec![],
     };
     let mut t: f64 = 0.0;
 

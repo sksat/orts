@@ -11,9 +11,7 @@ use utsuroi::{DynamicalSystem, SegmentContext};
 use crate::OrbitalState;
 use crate::attitude::DecoupledContext;
 use crate::attitude::state::AttitudeState;
-use crate::effector::{
-    AugmentedState, AuxRegistry, ConstraintMode, StateEffector, effector_derivatives,
-};
+use crate::effector::{AugmentedState, AuxRegistry, ConstraintMode, EffectorInput, StateEffector};
 use crate::model::ExternalLoads;
 use crate::model::{EvalSegment, Model, eval_maybe_in_segment};
 
@@ -200,16 +198,17 @@ impl AugmentedAttitudeSystem {
         let mut aux_rates = vec![0.0; self.registry.total_dim()];
         for (i, eff) in self.effectors.iter().enumerate() {
             let entry = &self.registry.entries()[i];
-            let aux_slice = &state.aux[entry.offset..entry.offset + entry.dim];
             let rates_slice = &mut aux_rates[entry.offset..entry.offset + entry.dim];
-            total += effector_derivatives(
-                eff.as_ref(),
-                segment,
-                t,
-                &context,
-                aux_slice,
+            total += eff.derivatives(
+                EffectorInput {
+                    t,
+                    state: &context,
+                    aux: &state.aux[entry.offset..entry.offset + entry.dim],
+                    modes: &state.modes[entry.mode_offset..entry.mode_offset + entry.mode_dim],
+                    epoch: epoch.as_ref(),
+                    segment,
+                },
                 rates_slice,
-                epoch.as_ref(),
             );
         }
 
