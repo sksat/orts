@@ -119,6 +119,19 @@ impl Rw {
         &self.axis
     }
 
+    /// The momentum this wheel can hold [N·m·s].
+    ///
+    /// A speed limit is a momentum limit through the rotor's inertia, so the
+    /// two bound the same quantity and the smaller one binds.
+    /// [`with_max_speed`](Self::with_max_speed) already tightens
+    /// `max_momentum` to match, but the fields are public: reading the bound
+    /// here keeps the value the projection clamps at, the torque the assembly
+    /// refuses, and the boundary a root event watches from drifting apart when
+    /// a caller sets one of them by hand.
+    pub fn momentum_limit(&self) -> f64 {
+        self.max_momentum.min(self.inertia * self.max_speed)
+    }
+
     /// Current spin speed from angular momentum [rad/s].
     pub fn speed_from_momentum(&self, h: f64) -> f64 {
         h / self.inertia
@@ -276,17 +289,11 @@ impl RwAssemblyCore {
             .enumerate()
             .map(|(i, wheel)| {
                 let mut tau = torques[i];
-                // Momentum saturation: prevent exceeding limits
-                if (momentum[i] >= wheel.max_momentum && tau > 0.0)
-                    || (momentum[i] <= -wheel.max_momentum && tau < 0.0)
-                {
-                    tau = 0.0;
-                }
-                // Speed saturation: prevent exceeding max_speed
-                let speed = wheel.speed_from_momentum(momentum[i]);
-                if (speed >= wheel.max_speed && tau > 0.0)
-                    || (speed <= -wheel.max_speed && tau < 0.0)
-                {
+                // A wheel at its bound cannot be driven further out. The bound
+                // covers the speed limit too, since speed is momentum over the
+                // rotor's inertia.
+                let limit = wheel.momentum_limit();
+                if (momentum[i] >= limit && tau > 0.0) || (momentum[i] <= -limit && tau < 0.0) {
                     tau = 0.0;
                 }
                 tau
@@ -449,7 +456,7 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
             .core
             .wheels
             .iter()
-            .map(|w| (-w.max_momentum, w.max_momentum))
+            .map(|w| (-w.momentum_limit(), w.momentum_limit()))
             .collect();
         if self.core.has_motor_lag() {
             // τ_realized bounds: [-max_torque, max_torque] per wheel
@@ -642,6 +649,46 @@ mod tests {
     }
 
     // clamp_physical tests
+
+    /// The bound that binds is the smaller of the two, whichever way a caller
+    /// set them.
+    ///
+    /// `with_max_speed` tightens `max_momentum` at construction, but the fields
+    /// are public and a caller can lower the speed limit afterwards. Both the
+    /// torque the assembly refuses and the bounds the projection enforces read
+    /// the effective limit, so they agree with each other.
+    #[test]
+    fn a_speed_limit_set_after_construction_still_binds() {
+        let mut rw = Rw::new(Vector3::x(), 0.01, 1.0, 0.1);
+        assert!((rw.momentum_limit() - 1.0).abs() < 1e-15);
+
+        // 0.5 N·m·s at this inertia.
+        rw.max_speed = 50.0;
+        assert!(
+            (rw.momentum_limit() - 0.5).abs() < 1e-15,
+            "limit is {}",
+            rw.momentum_limit()
+        );
+
+        let assembly = RwAssembly::new(vec![rw.clone()]);
+        let core = &assembly.core;
+        assert_eq!(
+            core.clamp_physical(&[0.05], &[0.6]),
+            vec![0.0],
+            "a wheel past the speed limit takes no more torque outward"
+        );
+        assert_eq!(
+            core.clamp_physical(&[-0.05], &[0.6]),
+            vec![-0.05],
+            "torque back toward the middle is always allowed"
+        );
+
+        assert_eq!(
+            StateEffector::<AttitudeState>::aux_bounds(&assembly),
+            vec![(-0.5, 0.5)],
+            "the projection clamps at the same bound"
+        );
+    }
 
     #[test]
     fn clamp_physical_saturation_positive() {
