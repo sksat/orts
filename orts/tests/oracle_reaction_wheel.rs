@@ -4,10 +4,13 @@
 //! torque-spin coupling, saturation, and rate limiting) for the reaction
 //! wheel assembly integrated alongside attitude dynamics.
 
+use core::ops::ControlFlow;
+
 use nalgebra::{Matrix3, Vector3, Vector4};
-use utsuroi::{Integrator, Rk4};
+use utsuroi::{Integrator, Rk4, RootSearch, RootSlot};
 
 use orts::attitude::{AttitudeState, AugmentedAttitudeSystem};
+use orts::boundary::{Boundaries, HasBoundaries, Span, walk_to_target};
 use orts::effector::AugmentedState;
 use orts::spacecraft::ReactionWheelAssembly;
 
@@ -189,12 +192,39 @@ fn momentum_saturation_stops_acceleration() {
 
     let mut omega_at_saturation = None;
 
-    let final_state = Rk4.integrate(&system, initial, 0.0, t_end, dt, |t, state| {
-        // Record omega_z around saturation time
-        if t > 6.0 && omega_at_saturation.is_none() {
-            omega_at_saturation = Some(state.plant.angular_velocity[2]);
-        }
-    });
+    // Through the walk, which is what holds a wheel on its limit: the limit is
+    // a boundary the propagation locates, and `Integrator::integrate` locates
+    // none — every wheel would stay `Free` and the motor would drive this one
+    // to 2.0 N·m·s. This system's state carries no position, so no group takes
+    // it; `walk_to_target` is the path such a caller has.
+    let boundaries = system.boundaries();
+    let mut slots = vec![RootSlot::new(); boundaries.len()];
+    let (_, _, final_state) = walk_to_target(
+        Boundaries {
+            system: &system,
+            declared: &boundaries,
+            slots: &mut slots,
+            search: RootSearch::default(),
+            segment: None,
+        },
+        Span {
+            from: 0.0,
+            to: t_end,
+            start_is_checked: false,
+        },
+        initial,
+        |state, t, _checked| Rk4.stepper(&system, state, t, dt),
+        &mut |t: f64, state: &AugmentedState<AttitudeState>| {
+            // Record omega_z around saturation time
+            if t > 6.0 && omega_at_saturation.is_none() {
+                omega_at_saturation = Some(state.plant.angular_velocity[2]);
+            }
+        },
+        &|_: f64, _: &AugmentedState<AttitudeState>| -> ControlFlow<()> {
+            ControlFlow::Continue(())
+        },
+    )
+    .expect("the walk succeeds");
 
     // Z-wheel should be at -max_momentum (absorbs reaction to +Z body torque)
     assert!(
