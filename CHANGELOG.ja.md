@@ -1239,9 +1239,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 #### Changed
 - **破壊的変更:** `SatelliteState` が、衛星が姿勢について述べる 3 つの事実のどれかを言えるように
   した。従来の `attitude` には「姿勢を名乗ったが回転として使えない」を表す方法が無かったため、
-  その事実を持つ呼び出し側は符号化するしかなく (記録経路は 4 成分すべて NaN と綴っていた)、
-  次の呼び出し側は同じ符号化を再発見することになっていた。`attitude` と `attitudeRefused: true` は
-  型で排他にした。`attitude` だけを渡す形 (`Quat | undefined` を含む) は従来どおり通る。
+  その事実を持つ呼び出し側は、viewer が有効でないと判定する値 (NaN や全 0) を渡すしかなく、
+  どの値がそうなるかは公開型に現れなかった。quaternion と拒否を型で排他にした:
+  `Quat` と `attitudeRefused: true` の同時指定は型エラーで、`attitude: undefined` は
+  どちら側にも置ける。`attitude` だけを渡す形 (`Quat | undefined` を含む) は従来どおり通る。
   scene は境界で状態を解決し、位置と並べて運ぶので、拒否を `OrbitPoint` に符号化しない。
   ([#479](https://github.com/sksat/orts/pull/479))
 - サンプルが姿勢について述べる内容を 1 箇所で解決するようにした。`resolveAttitude` が

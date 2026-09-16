@@ -89,6 +89,9 @@ export interface CSVMetadata {
   satelliteName: string | null;
   /** Multi-satellite CSV: list of satellite IDs from `# satellites = ...` */
   satellites: string[] | null;
+  /** The inertial frame the states are in, from `# frame = ...`; `null` for
+   * a file written before it was recorded, which is `simple-eci`. */
+  frame?: string | null;
 }
 
 /**

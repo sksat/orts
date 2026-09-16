@@ -52,8 +52,10 @@ export interface TrailPoint {
  * orientation. Without a way to say the second, a caller that knows it has to
  * encode it, and every caller invents the encoding again.
  *
- * `attitude` and `attitudeRefused` are exclusive: supplying both is a type
- * error, and `attitude` still reads as `Quat | undefined`.
+ * A quaternion and a refusal are exclusive: `attitudeRefused: true` beside a
+ * `Quat` is a type error. The property itself is not — `attitude: undefined`
+ * says nothing was supplied, so it sits either side — and `attitude` still
+ * reads as `Quat | undefined`.
  */
 export type SatelliteAttitude =
   /**
