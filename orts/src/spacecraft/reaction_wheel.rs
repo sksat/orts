@@ -1540,7 +1540,6 @@ mod tests {
         assert_eq!(core.state_dim(), 6); // 2n
     }
 
-    #[test]
     /// A wheel that can hold no momentum is refused where it is built.
     ///
     /// Nothing downstream can make sense of one. The start-state check accepts
@@ -1574,6 +1573,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn momentum_slice_no_lag() {
         let core = RwAssemblyCore::three_axis(0.01, 1.0, 0.1);
         let aux = [1.0, 2.0, 3.0];
