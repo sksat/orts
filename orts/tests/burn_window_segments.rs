@@ -115,6 +115,56 @@ fn a_window_shorter_than_a_step_spends_its_propellant() {
     }
 }
 
+/// A scheduled burn registered through `with_propulsion` is cut at its window
+/// edges too.
+///
+/// The propulsion models are a list of their own now, so they are a second
+/// place a system reads discontinuities from
+/// (`SpacecraftDynamics::next_discontinuity_after` chains it). Every case above
+/// registers its thruster with `with_model`, so dropping that chain would leave
+/// them green while a scheduled burn on the path the CLI now uses — the pool
+/// plus `with_propulsion` — missed its edges and integrated the wrong length.
+#[test]
+fn a_scheduled_burn_registered_as_propulsion_keeps_its_window() {
+    use orts::spacecraft::PropellantPool;
+
+    // The window from `a_window_shorter_than_a_step_spends_its_propellant`:
+    // narrower than the gap between RK4's stage times at `dt = 1`.
+    let built = |windows: Vec<BurnWindow>| {
+        let thruster = Thruster::new(THRUST_N, ISP_S, Vector3::x())
+            .with_profile(Box::new(ScheduledBurn { windows }));
+        SpacecraftDynamics::new(arika::earth::MU, PointMass, Matrix3::identity())
+            // A floor far below the mass: this case is about the window, and
+            // the burn never reaches it.
+            .with_propellant(PropellantPool::new(1.0))
+            .with_propulsion(thruster)
+    };
+
+    for (name, integrator) in integrators() {
+        let system = built(vec![BurnWindow::full(0.1, 0.2)]);
+        let start = system.initial_augmented_state(SpacecraftState {
+            orbit: initial_state().plant.orbit,
+            attitude: AttitudeState::identity(),
+            mass: MASS_KG,
+        });
+        let mut group: IndependentGroup<SpacecraftDynamics<PointMass>> = IndependentGroup::new(
+            integrator,
+        )
+        .add_satellite("sat", start, built(vec![BurnWindow::full(0.1, 0.2)]));
+        let mut final_mass = MASS_KG;
+        group
+            .propagate_to_with(SPAN_S, |_, _, state| final_mass = state.plant.mass)
+            .expect("the burn and the orbit are finite everywhere");
+
+        let spent = MASS_KG - final_mass;
+        let expected = propellant_for(0.1);
+        assert!(
+            (spent - expected).abs() < PROPELLANT_TOL_KG,
+            "{name} spent {spent} kg, expected {expected} kg"
+        );
+    }
+}
+
 /// A window covering a whole step. The stage on its exclusive end reads the
 /// throttle as off, and RK4 weights that stage 1/6, so this used to spend 5/6
 /// of the propellant.
