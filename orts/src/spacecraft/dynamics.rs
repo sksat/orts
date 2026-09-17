@@ -504,7 +504,10 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
         // the bisection needs back from it is a finite number, and zero loads
         // is the finite answer that leaves the mass where it is. The policy
         // lives here because it is the state that is outside the domain, not
-        // any one model.
+        // any one model — and for the same reason it covers the effectors
+        // below, one of which can be a translational force
+        // ([`StateEffector`](crate::effector::StateEffector) says so) and
+        // divide by the mass exactly as a model would.
         let mut total = ExternalLoads::<F>::zeros();
         let in_the_domain = matches!(
             state.plant.mass.partial_cmp(&0.0),
@@ -530,7 +533,12 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
         // state's, which is what makes the SimpleEci mislabel from issue #103
         // unrepresentable.
         let mut aux_rates = vec![0.0; self.registry.total_dim()];
-        for (i, eff) in self.effectors.iter().enumerate() {
+        for (i, eff) in
+            self.effectors
+                .iter()
+                .enumerate()
+                .take(if in_the_domain { usize::MAX } else { 0 })
+        {
             let entry = &self.registry.entries()[i];
             let rates_slice = &mut aux_rates[entry.offset..entry.offset + entry.dim];
             total += eff.derivatives(
@@ -947,11 +955,39 @@ mod tests {
     /// itself leaves a panel's drag to produce the infinity instead.
     #[test]
     fn a_state_with_no_mass_gets_finite_derivatives() {
+        use crate::model::HasMass;
         use crate::spacecraft::{PropellantPool, Thruster};
+
+        // An effector, rather than a model, that turns a force into an
+        // acceleration: `StateEffector` supports translational ones, so the
+        // policy has to reach them too.
+        struct ForceEffector;
+
+        impl<S: HasFrame + HasMass + Send + Sync> StateEffector<S> for ForceEffector {
+            fn name(&self) -> &str {
+                "force_effector"
+            }
+            fn state_dim(&self) -> usize {
+                0
+            }
+            fn derivatives(
+                &self,
+                input: EffectorInput<'_, S>,
+                _aux_rates: &mut [f64],
+            ) -> ExternalLoads<S::Frame> {
+                // 1 N along x, in km/s² as the loads are.
+                ExternalLoads::acceleration(Vector3::new(
+                    1.0 / input.state.mass() / 1000.0,
+                    0.0,
+                    0.0,
+                ))
+            }
+        }
 
         let dynamics = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
             // Something that divides by mass and is not propulsion.
             .with_model(ConstantForce(Vector3::new(1.0, 0.0, 0.0)))
+            .with_effector(ForceEffector)
             .with_propellant(PropellantPool::new(1.0))
             .with_propulsion(Thruster::new(196.133, 200.0, Vector3::x()));
 
@@ -967,6 +1003,7 @@ mod tests {
                 plant,
                 aux: vec![],
                 aux_bounds: vec![],
+                // One mode, the pool's: the force effector registers none.
                 modes: vec![ConstraintMode::Free],
             };
             let d = dynamics.derivatives(0.0, &state);
