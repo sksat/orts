@@ -33,7 +33,9 @@ const HALVINGS_SPARE: u32 = 64;
 /// step by up to 5 (DP45) or 6 (DOP853) and does so repeatedly — fourteen such
 /// steps pass 2³². What does bound it is the propagation itself: a step is
 /// clamped to the target it is walking to, so no interval is wider than the
-/// span, and `span` is the run's own length.
+/// gap between two targets. `span` is that bound: the run's own length where
+/// it has one, and otherwise the output interval, which is how far apart the
+/// targets of a run with no duration are.
 ///
 /// Allowing halvings is not spending them: the search stops at the tolerance
 /// or once halving no longer changes the interval in f64, whichever comes
@@ -457,9 +459,12 @@ impl SimParams {
             },
             root_search: root_search(
                 args.dt,
-                // No duration is one orbit, resolved later; the step is what
-                // is known here, and the spare covers the difference.
-                args.duration.unwrap_or(args.dt),
+                // A run with no duration still walks to a target every output
+                // interval, so that is what bounds a bracket there — `dt` is
+                // not it, and the spare does not cover the difference: a
+                // millionth of a second step with a one-second output interval
+                // and a tolerance below it needs the halvings of the interval.
+                args.duration.unwrap_or(0.0).max(output_interval),
                 args.root_t_tolerance,
             ),
             atmosphere: args.atmosphere,
@@ -542,7 +547,9 @@ impl SimParams {
             },
             root_search: root_search(
                 config.dt,
-                config.duration.unwrap_or(config.dt),
+                // As on the CLI path: the output interval bounds a bracket
+                // where the run has no duration.
+                config.duration.unwrap_or(0.0).max(output_interval),
                 config.integrator.root_t_tolerance,
             ),
             atmosphere: config.atmosphere_choice(),
@@ -881,6 +888,33 @@ mod tests {
             assert_eq!(search.max_iterations, default.max_iterations);
             assert!(search.t_tolerance.is_nan() || search.t_tolerance == tol);
         }
+    }
+
+    /// A run with no duration still walks to a target every output interval, so
+    /// that is the widest bracket the search can be handed. `dt` is not: it can
+    /// be orders of magnitude smaller, and the spare does not cover the
+    /// difference.
+    ///
+    /// Measured before this: `dt = 1e-30` with a one-second output interval and
+    /// a tolerance of `1e-40` configured 98 halvings where a one-second bracket
+    /// needs 133, so a boundary located anywhere in the run would have failed
+    /// with `RootNotLocalized` although every input passed validation.
+    #[test]
+    fn a_run_with_no_duration_bounds_the_bracket_by_its_output_interval() {
+        let mut args = sim_args_for_period_tests();
+        args.dt = 1e-30;
+        args.output_interval = Some(1.0);
+        args.duration = None;
+        args.root_t_tolerance = 1e-40;
+
+        let params = SimParams::from_sim_args(&args, false).expect("the arguments are valid");
+
+        let needed = (1.0_f64 / 1e-40).log2().ceil() as u32;
+        assert!(
+            params.root_search.max_iterations >= needed,
+            "a one-second bracket needs {needed} halvings, and the run configures {}",
+            params.root_search.max_iterations
+        );
     }
 
     /// `duration` is the run's end time, not the satellite's orbital period.
