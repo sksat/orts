@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use utsuroi::{DynamicalSystem, IntegrationError, OdeState, RootSearch};
 
-use super::coupled::{CoupledGroup, InterSatelliteForce, PairContext};
+use super::coupled::{ComponentStop, CoupledGroup, InterSatelliteForce, PairContext};
 use super::independent::{IndependentGroup, IntegratorConfig};
 use super::prop_group::{GroupSnapshot, PropGroupOutcome, SatId, SatelliteTermination};
 use super::{FromAcceleration, HasPosition};
@@ -174,7 +174,7 @@ struct Grouping {
 }
 
 /// A pair to receive KDK kicks.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct KickPair {
     sat_i: usize,
     sat_j: usize,
@@ -239,10 +239,16 @@ fn determine_grouping(
     pair_regimes: &[(usize, usize, PairRegime)],
     active: &[bool],
 ) -> Grouping {
-    // Collect Coupled edges for connected components
+    // Collect Coupled edges for connected components.
+    //
+    // Only between satellites that are still being propagated, as the kick
+    // pairs and the independent set below are: an edge to one that is done
+    // would keep it in a component, and a component is walked as one composite
+    // state — so it would be integrated again, and the satellite it was coupled
+    // to would go no further than the walk that refused it.
     let coupled_edges: Vec<(usize, usize)> = pair_regimes
         .iter()
-        .filter(|&&(_, _, regime)| regime == PairRegime::Coupled)
+        .filter(|&&(i, j, regime)| regime == PairRegime::Coupled && active[i] && active[j])
         .map(|&(i, j, _)| (i, j))
         .collect();
 
@@ -291,9 +297,31 @@ type SharedEventChecker<S> = Arc<dyn Fn(f64, &S) -> ControlFlow<String> + Send +
 struct SatRecord<D: DynamicalSystem> {
     id: SatId,
     state: D::State,
+    /// The instant `state` belongs to.
+    ///
+    /// Usually the scheduler's own clock, but not always: a walk that stopped
+    /// before the interval's end — an event, a solver failure — hands back
+    /// states from where it stopped, while the clock moves on to the interval's
+    /// end. Anything that asks a question *about a state* asks at this instant,
+    /// so a constraint that reads the time is not answered for one the state
+    /// never reached. Propagating such a state still starts from the clock;
+    /// closing that gap is [#530](https://github.com/sksat/orts/issues/530).
+    state_t: f64,
     dynamics: Option<D>,
     terminated: bool,
     end_time: Option<f64>,
+}
+
+impl<D: DynamicalSystem> SatRecord<D> {
+    /// Whether this satellite is still one to propagate at `t`.
+    ///
+    /// The same answer for the grouping and for the start-state check: a
+    /// satellite that is done carries a state belonging to the instant it
+    /// stopped at, so asking about it at a later `t` would judge it against a
+    /// context it never reached.
+    fn is_to_propagate(&self, t: f64) -> bool {
+        !self.terminated && !self.end_time.is_some_and(|et| t >= et - 1e-9)
+    }
 }
 
 /// Central scheduler that owns all satellites and manages regime transitions.
@@ -354,6 +382,7 @@ where
         self.satellites.push(SatRecord {
             id: id.into(),
             state,
+            state_t: self.t,
             dynamics: Some(dynamics),
             terminated: false,
             end_time: None,
@@ -371,6 +400,7 @@ where
         self.satellites.push(SatRecord {
             id: id.into(),
             state,
+            state_t: self.t,
             dynamics: Some(dynamics),
             terminated: false,
             end_time: Some(end_time),
@@ -522,6 +552,16 @@ where
                 break;
             }
 
+            // Ask each satellite about its own state before anything is
+            // grouped. A coupled component is walked as one composite state, so
+            // a member that cannot start would refuse the whole component's
+            // walk — and since that walk integrates nothing, its other members
+            // would be left at `self.t` while the clock below moves to
+            // `sync_target`, holding states that belong to an instant they
+            // never reached. Dropping the ones that refuse leaves a grouping
+            // whose members can all be flown.
+            all_terminations.extend(self.drop_satellites_that_cannot_start(self.t));
+
             // Re-evaluate pair regimes based on current distances
             self.update_pair_regimes();
             let grouping = self.build_grouping();
@@ -540,8 +580,30 @@ where
                 // 2. Half-kick (apply dt_sync/2 velocity impulse)
                 self.apply_kicks(&grouping.kick_pairs, &accels_start, dt_sync / 2.0);
 
+                // A kick changes velocities, so a constraint that reads one
+                // answers differently now than it did above. Asking again
+                // before the drift keeps the refusal out of the composite walk,
+                // which is what would otherwise leave a component's other
+                // members at this interval's start.
+                let kicked_into_refusal = self.drop_satellites_that_cannot_start(self.t);
+                let after_kick = (!kicked_into_refusal.is_empty()).then(|| {
+                    all_terminations.extend(kicked_into_refusal);
+                    // Without the ones just dropped: a component held together
+                    // by a satellite that cannot start is not one component any
+                    // more, and a kick pair with a dropped endpoint would read
+                    // that endpoint's position where it was left rather than
+                    // where it would have drifted to.
+                    self.build_grouping()
+                });
+                // The rest of the interval — the drift, the accelerations at
+                // its end and the closing kick — uses this grouping. The
+                // opening kick is already spent, so a pair whose partner was
+                // dropped keeps the half it received, as one an event stops
+                // mid-drift does.
+                let flown = after_kick.as_ref().unwrap_or(&grouping);
+
                 // 3. Drift: propagate ephemeral groups
-                let terms = self.propagate_groups_to(sync_target, &grouping)?;
+                let terms = self.propagate_groups_to(sync_target, flown)?;
 
                 // 4. Check for events
                 let has_events = !terms.is_empty();
@@ -549,17 +611,37 @@ where
 
                 if has_events {
                     // Event during drift. Apply second half-kick only to active sats.
-                    let accels_end = self.compute_kick_accels(&grouping.kick_pairs, sync_target);
-                    self.apply_kicks_active(&grouping.kick_pairs, &accels_end, dt_sync / 2.0);
+                    let pairs = flown.kick_pairs.clone();
+                    let accels_end = self.compute_kick_accels(&pairs, sync_target);
+                    self.apply_kicks_active(&pairs, &accels_end, dt_sync / 2.0);
+                    // This kick is the last thing the run does — the loop ends
+                    // below — so a satellite it puts past a constraint would be
+                    // handed back with nothing left to ask about it.
+                    // Each satellite is asked at the instant its own state
+                    // belongs to, which for a component an event stopped early
+                    // is where that walk stopped rather than the interval's end.
+                    let interval_started_at = self.t;
+                    all_terminations
+                        .extend(self.drop_satellites_that_cannot_start(interval_started_at));
                     self.t = sync_target;
                     break;
                 }
 
                 // 5. Compute accelerations at new positions (post-drift time)
-                let accels_end = self.compute_kick_accels(&grouping.kick_pairs, sync_target);
+                let pairs = flown.kick_pairs.clone();
+                let accels_end = self.compute_kick_accels(&pairs, sync_target);
 
                 // 6. Second half-kick
-                self.apply_kicks(&grouping.kick_pairs, &accels_end, dt_sync / 2.0);
+                self.apply_kicks(&pairs, &accels_end, dt_sync / 2.0);
+
+                // The closing kick can be what puts a state past a constraint,
+                // and this may be the last thing a run does: nothing would
+                // propagate from it, so nothing else would ask, and the state
+                // would be published as a satellite's own. Asked about the
+                // instant it now belongs to.
+                let interval_started_at = self.t;
+                all_terminations
+                    .extend(self.drop_satellites_that_cannot_start(interval_started_at));
             }
 
             self.t = sync_target;
@@ -617,13 +699,48 @@ where
         }
     }
 
+    /// Terminate every active satellite whose own system refuses the state it
+    /// would be propagated from, and report each one.
+    ///
+    /// The composite walk asks too, which is what covers a caller driving a
+    /// group directly. Here the answer decides who is in the grouping, because
+    /// a scheduler has somewhere to carry on from: the satellites that can
+    /// still be flown.
+    /// Each satellite is asked at the instant its own state belongs to
+    /// (`SatRecord::state_t`), which is not always the scheduler's clock.
+    ///
+    /// `flown_from` decides who is asked at all: a satellite that was already
+    /// done before the interval began is left alone, since nothing in it moved
+    /// its state.
+    fn drop_satellites_that_cannot_start(&mut self, flown_from: f64) -> Vec<SatelliteTermination> {
+        let mut dropped = Vec::new();
+        for sat in &mut self.satellites {
+            if !sat.is_to_propagate(flown_from) {
+                continue;
+            }
+            let t = sat.state_t;
+            let Some(dynamics) = sat.dynamics.as_ref() else {
+                continue;
+            };
+            if let Err(e) = dynamics.validate_boundary_walk_start(t, &sat.state) {
+                sat.terminated = true;
+                dropped.push(SatelliteTermination {
+                    satellite_id: sat.id.clone(),
+                    t,
+                    reason: e.to_string(),
+                });
+            }
+        }
+        dropped
+    }
+
     /// Build the grouping structure from current pair regimes.
     fn build_grouping(&self) -> Grouping {
         let n_sats = self.satellites.len();
         let active: Vec<bool> = self
             .satellites
             .iter()
-            .map(|s| !s.terminated && !s.end_time.is_some_and(|et| self.t >= et - 1e-9))
+            .map(|s| s.is_to_propagate(self.t))
             .collect();
 
         let pair_regimes: Vec<(usize, usize, PairRegime)> = self
@@ -680,6 +797,7 @@ where
             for part in parts {
                 if let Some(sat) = self.satellites.iter_mut().find(|s| s.id == part.id) {
                     sat.state = part.state;
+                    sat.state_t = part.t;
                     sat.dynamics = Some(part.dynamics);
                     sat.terminated = part.terminated;
                 }
@@ -697,6 +815,7 @@ where
             }
 
             group.set_t(self.t);
+            let group_started_at = self.t;
 
             // Map: satellite_idx → position within this coupled group
             let mut idx_to_local: Vec<(usize, usize)> = Vec::new();
@@ -727,6 +846,9 @@ where
             terminations.extend(outcome.terminations);
 
             let parts = group.into_parts();
+            // The component's own time: a walk that stopped early hands back
+            // states from where it stopped, not from the interval's end.
+            let parts_t = parts.t;
             // Recover state and dynamics for each satellite.
             // For event terminations: only the triggering satellite is "dead".
             // For integration errors: all satellites in the group are corrupted.
@@ -739,9 +861,29 @@ where
             {
                 let sat = &mut self.satellites[sat_idx];
                 sat.state = state;
+                // The component's own time: a walk that stopped early hands
+                // back states from where it stopped.
+                sat.state_t = parts_t;
                 sat.dynamics = Some(dynamics);
-                if parts.terminated && !parts.is_event_termination {
-                    // Integration error: composite ODE state corrupted
+                // Who is left running depends on how the walk ended. An
+                // integration error leaves every satellite at the end of the
+                // last segment that finished — an instant this interval has
+                // passed — so the whole component goes with it. A refusal
+                // at the interval's start integrated nothing, so the peers
+                // still hold states that belong to this interval's beginning
+                // and the grouping flies them over it; one at a later
+                // segment's start leaves them part-way through instead, with
+                // the clock about to move to the end, and a state from an
+                // instant the run has passed is worse than a stopped
+                // satellite. (A system whose check refuses a state its own
+                // propagation produced contradicts itself: the question is
+                // about what a caller handed over.)
+                let whole_component = match parts.stop {
+                    Some(ComponentStop::IntegrationError) => true,
+                    Some(ComponentStop::StartRefused) => (parts.t - group_started_at).abs() > 1e-12,
+                    Some(ComponentStop::Event) | None => false,
+                };
+                if parts.terminated && whole_component {
                     sat.terminated = true;
                 } else {
                     sat.terminated = term_id.is_some_and(|tid| tid == &sat.id);
@@ -1112,6 +1254,31 @@ mod tests {
         // Pair 0-1: sat 1 is inactive → kick pair excluded
         assert!(g.kick_pairs.is_empty());
         assert_eq!(g.independent, vec![0, 2]);
+    }
+
+    /// A coupled edge to a satellite that is done is not an edge any more, so
+    /// its peer is propagated on its own rather than as a component of one.
+    ///
+    /// The kick pairs and the independent set already skipped such satellites;
+    /// the components did not, so a finished satellite was pushed into the
+    /// composite walk again and its peer went no further than the refusal that
+    /// walk returned.
+    #[test]
+    fn grouping_excludes_a_coupled_satellite_that_is_done() {
+        let active = vec![true, false, true];
+        let pairs = vec![(0, 1, PairRegime::Coupled), (1, 2, PairRegime::Coupled)];
+        let g = determine_grouping(3, &pairs, &active);
+
+        assert!(
+            g.coupled_components.is_empty(),
+            "both edges went through the satellite that is done: {:?}",
+            g.coupled_components
+        );
+        assert_eq!(
+            g.independent,
+            vec![0, 2],
+            "and its peers are propagated on their own"
+        );
     }
 
     #[test]

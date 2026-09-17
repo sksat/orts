@@ -553,7 +553,11 @@ pub fn propagate_controlled<E>(
 where
     E: Fn(f64, &AugmentedState<SpacecraftState>) -> ControlFlow<String>,
 {
-    let span = |e: IntegrationError| format!("integration failed on [{t0:.3}, {t1:.3}]: {e}");
+    // Anything that can say what went wrong: the solver's own errors, and the
+    // system's refusal of the state a boundary walk was handed. The wording is
+    // about the span rather than about integrating, since a refused state is
+    // not something the solver failed at.
+    let span = |e: &dyn std::fmt::Display| format!("propagation failed on [{t0:.3}, {t1:.3}]: {e}");
 
     // Before the no-op guard: `t1 <= t0` is true for a `t0` of `+inf`, so an
     // invalid span would be reported as one already covered. `Segments::new`
@@ -561,7 +565,7 @@ where
     // runs backwards stays the no-op it has always been rather than becoming
     // an error.
     if !t0.is_finite() || !t1.is_finite() {
-        return Err(span(IntegrationError::InvalidTimeSpan { t0, t_end: t1 }));
+        return Err(span(&IntegrationError::InvalidTimeSpan { t0, t_end: t1 }));
     }
     if t1 <= t0 {
         return Ok(None);
@@ -589,7 +593,7 @@ where
     let boundaries = sat.dynamics.boundaries();
     let mut slots = vec![RootSlot::new(); boundaries.len()];
 
-    for segment in Segments::new(&sat.dynamics, t0, t1).map_err(span)? {
+    for segment in Segments::new(&sat.dynamics, t0, t1).map_err(|e| span(&e))? {
         let t = segment.start();
         let segment_end = segment.end();
         let bound = segment.system();
@@ -686,7 +690,7 @@ where
                 event_check,
             ),
         }
-        .map_err(span)?;
+        .map_err(|e| span(&e))?;
 
         state = next_state;
 
@@ -2081,6 +2085,66 @@ path = "does-not-exist.wasm"
             thruster.acceleration_inertial,
             arika::frame::Vec3::zeros(),
             "no thrust once the tank is empty"
+        );
+    }
+
+    /// The controlled path refuses a state below the floor rather than walking
+    /// it, and says which constraint refused it.
+    ///
+    /// `serve` can replace a satellite's state while a run is going, so the
+    /// check belongs where a boundary walk starts rather than only where a
+    /// satellite is added. Measured before the check existed: the walk's own
+    /// reconciliation settled the boundary and the mass rose to the dry mass,
+    /// which is propellant the caller never gave it.
+    #[test]
+    fn the_controlled_loop_refuses_a_state_below_the_propellant_floor() {
+        const THRUST_N: f64 = 10.0;
+        const ISP_S: f64 = 300.0;
+        const DRY_MASS: f64 = 500.0;
+        const MISSING_KG: f64 = 0.5;
+
+        let (mut sat, _) = satellite_with(1.0, 0.0);
+        let bare = std::mem::replace(
+            &mut sat.dynamics,
+            orts::spacecraft::SpacecraftDynamics::new(
+                arika::earth::MU,
+                Box::new(orts::orbital::gravity::PointMass),
+                nalgebra::Matrix3::identity(),
+            ),
+        );
+        let specs = vec![ThrusterSpec::new(THRUST_N, ISP_S, Vector3::x())];
+        sat.dynamics = install_thrusters(bare, specs.clone(), DRY_MASS);
+        sat.thruster_specs = specs;
+        // Built by hand, the way a restored or externally written state is: the
+        // constructor would have refused this mass.
+        sat.state = orts::effector::AugmentedState {
+            plant: orts::spacecraft::SpacecraftState {
+                mass: DRY_MASS - MISSING_KG,
+                ..sat.state.plant.clone()
+            },
+            aux: sat.state.aux.clone(),
+            aux_bounds: sat.state.aux_bounds.clone(),
+            modes: vec![orts::effector::ConstraintMode::Free],
+        };
+
+        let err = propagate_controlled(
+            &mut sat,
+            0.0,
+            60.0,
+            &IntegratorConfig::Rk4 { dt: 10.0 },
+            RootSearch::default(),
+            &never_ends,
+        )
+        .expect_err("the state cannot start a boundary walk");
+
+        assert!(
+            err.contains("propellant_pool") && err.contains("below the dry mass"),
+            "the error names the constraint that refused the state, not {err}"
+        );
+        assert_eq!(
+            sat.state.plant.mass,
+            DRY_MASS - MISSING_KG,
+            "and the mass is left as it was: settling it would add {MISSING_KG} kg"
         );
     }
 

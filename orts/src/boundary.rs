@@ -111,7 +111,148 @@ pub trait HasBoundaries: DynamicalSystem {
     fn boundary_is_active(&self, _declared: &DeclaredBoundary, _state: &Self::State) -> bool {
         false
     }
+
+    /// Whether this is a state the system's own constraints can be propagated
+    /// from, with the reason when it is not.
+    ///
+    /// [`walk_to_target`] asks once at its entry, before it settles anything.
+    /// A state that already sits past a one-sided constraint is refused here
+    /// rather than corrected: settling a mass below a propellant floor puts it
+    /// *on* the floor, which adds the mass the input was missing, and settling
+    /// a wheel past its limit turns the body at a rate the caller did not ask
+    /// for. Neither is a trajectory of the state that was handed over.
+    ///
+    /// The question is not "is every boundary value non-negative" — a state
+    /// resting on a bound, or one a command has just released, is a legal place
+    /// to start. Each constraint answers in its own terms, so this reports the
+    /// name of what refused and what it read.
+    ///
+    /// `t` is where the walk starts, because a system can prescribe part of
+    /// what a constraint reads: an attitude system takes its orbit and mass
+    /// from functions of time, so a mass valid at one instant is not
+    /// necessarily valid at another.
+    ///
+    /// Not asked during a walk: a boundary search steps past a constraint on
+    /// purpose, and its trial states are meant to be evaluable there.
+    ///
+    /// The question is about a state a caller committed to, so a system has to
+    /// accept every state its own propagation produces — the walk asks again at
+    /// each segment's start, and a system refusing what it just integrated
+    /// would be contradicting itself. A caller that moves a state between
+    /// walks, as [`Scheduler`](crate::group::Scheduler) does with its KDK
+    /// kicks, is asked about the state it moved *to*: before the next walk
+    /// runs, and — since a kick can be the last thing a run does — before it
+    /// hands the state back.
+    fn validate_boundary_walk_start(
+        &self,
+        _t: f64,
+        _state: &Self::State,
+    ) -> Result<(), StartStateError> {
+        Ok(())
+    }
 }
+
+/// Why a state cannot start a boundary walk.
+///
+/// The reason is what a reader needs; `satellite` is what a caller acts on. A
+/// group walks its satellites as one composite state, so the one that refused
+/// has to be named apart from the message — a termination recorded against the
+/// wrong spacecraft would have a caller resetting or re-commanding one that was
+/// fine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartStateError {
+    /// Which satellite of a group refused, where a group was asked. `None`
+    /// where the system is one spacecraft.
+    pub satellite: Option<usize>,
+    /// What refused the state, and what it read.
+    pub reason: String,
+}
+
+impl StartStateError {
+    /// A refusal by a system that is one spacecraft.
+    pub fn new(reason: impl Into<String>) -> Self {
+        Self {
+            satellite: None,
+            reason: reason.into(),
+        }
+    }
+
+    /// The same refusal, attributed to a satellite's place in its group.
+    pub fn from_satellite(mut self, index: usize) -> Self {
+        self.satellite = Some(index);
+        self
+    }
+}
+
+impl From<String> for StartStateError {
+    fn from(reason: String) -> Self {
+        Self::new(reason)
+    }
+}
+
+impl core::fmt::Display for StartStateError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.satellite {
+            Some(index) => write!(f, "satellite {index}: {}", self.reason),
+            None => write!(f, "{}", self.reason),
+        }
+    }
+}
+
+/// What can stop a [`walk_to_target`] before it reaches its target.
+///
+/// The solver's own failures, and the one the system reports about the state
+/// the walk was handed: those come from the caller's input rather than from the
+/// integration, so they are named apart from it.
+///
+/// `#[non_exhaustive]`, as [`IntegrationError`] is: a walk gaining a way to fail
+/// should not break a downstream `match`.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum BoundaryWalkError {
+    /// The solver or the boundary search failed.
+    Integration(IntegrationError),
+    /// The system refused the state the walk was asked to start from
+    /// ([`HasBoundaries::validate_boundary_walk_start`]).
+    StartRejected {
+        /// Time the refused state belongs to.
+        t: f64,
+        /// Which satellite refused, and why.
+        error: StartStateError,
+    },
+}
+
+impl BoundaryWalkError {
+    /// The integration time the failure belongs to, where it has one.
+    pub fn time(&self) -> Option<f64> {
+        match self {
+            Self::Integration(e) => e.time(),
+            Self::StartRejected { t, .. } => Some(*t),
+        }
+    }
+}
+
+impl From<IntegrationError> for BoundaryWalkError {
+    fn from(e: IntegrationError) -> Self {
+        Self::Integration(e)
+    }
+}
+
+impl core::fmt::Display for BoundaryWalkError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Integration(e) => write!(f, "{e}"),
+            Self::StartRejected { t, error } => {
+                write!(
+                    f,
+                    "the state at t = {t} cannot start a boundary walk: {error}"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for BoundaryWalkError {}
 
 /// One declared boundary, read as a root event.
 pub struct BoundaryEvent<'a, Sys> {
@@ -250,7 +391,7 @@ pub fn walk_to_target<Sys, Mk, W, F, E, B>(
     mut make: Mk,
     observer: &mut F,
     check: &E,
-) -> Result<(BoundaryWalk<B>, f64, Sys::State), IntegrationError>
+) -> Result<(BoundaryWalk<B>, f64, Sys::State), BoundaryWalkError>
 where
     Sys: HasBoundaries,
     Mk: FnMut(Sys::State, f64, bool) -> W,
@@ -281,6 +422,12 @@ where
         to: t_target,
         start_is_checked,
     } = span;
+    // Before anything is settled: a state the system's constraints call
+    // invalid is refused rather than corrected, and correcting it is exactly
+    // what the reconciliation below would do.
+    system
+        .validate_boundary_walk_start(from, &state)
+        .map_err(|error| BoundaryWalkError::StartRejected { t: from, error })?;
     let mut state = state;
     let mut t = from;
     // The caller says whether the state it handed over has been through the
@@ -743,7 +890,9 @@ mod tests {
         assert!(
             matches!(
                 outcome,
-                Err(IntegrationError::RootStillCrossed { t, event: 0 }) if t == 0.0
+                Err(BoundaryWalkError::Integration(
+                    IntegrationError::RootStillCrossed { t, event: 0 }
+                )) if t == 0.0
             ),
             "the walk reports which boundary it is still past, at the time it gave up"
         );

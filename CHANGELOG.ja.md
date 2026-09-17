@@ -109,6 +109,31 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   variant で表される。([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
+- **BREAKING**: `orts::boundary::walk_to_target` の戻り値が utsuroi の
+  `IntegrationError` から `BoundaryWalkError` になった。系の拘束が受け付けない state は
+  積分の失敗ではないので分けている: `BoundaryWalkError::StartRejected { t, error }` が
+  `StartStateError` を持ち、「何が拒否し、何を読んだか」に加えて、群の場合はどの衛星かを
+  持つ (群は 1 つの合成 state として刻むため、直せばよい衛星ではなく最初に刻んだ衛星を
+  記録してしまう)。solver の失敗は `BoundaryWalkError::Integration` のままである。エラーを match する呼び出し側は腕を `Integration` で包む。整形するだけの
+  呼び出し側はそのままで、group が終了した衛星に記録する理由の文面も変わらない。答えるのは
+  `HasBoundaries::validate_boundary_walk_start` と `StateEffector::validate_state` で、
+  どちらも既定は `Ok(())` である。前者は walk の開始時刻を取る: 系が拘束の読む値を
+  与えている場合があるためで、`AugmentedAttitudeSystem` は質量を時刻の関数から取るので、
+  同じ state が或る時刻では dry mass より上、別の時刻では下になる。dry mass を下回る質量、質量と食い違うプールのモード、
+  上限を超えたホイール、上限から離れているのに保持と言っているモード、そして `aux` /
+  `modes` の長さや `aux_bounds` の値が登録した effector の申告と合わない state は、境界を処理する経路の
+  入口で拒否される。独立群、結合群 (各衛星に聞く)、`AugmentedAttitudeSystem`、CLI の制御付きループ、
+  `walk_to_target` の直接呼び出しである。`Integrator::integrate` で直接刻む経路は境界を処理しないので
+  検査も走らない (モードが動かないのと同じ制限である)。`Scheduler` は群を組む前に各衛星へ聞き、
+  開始できない機体を落としてから残りをその区間ぶん飛ばす — 結合群の walk は 1 機の拒否で
+  1 ステップも積分しないので、そのままでは同じ component の衛星が、scheduler の時計が
+  既に通過した時刻に取り残される。`CoupledGroupParts::is_event_termination` は
+  `stop: Option<ComponentStop>` になった。walk が event で終わったのか、開始 state の拒否か、
+  積分エラーかを区別する: scheduler が component に対して何をするかは 3 通りで、bool 1 つでは
+  表せない。以前はどれも無言だった: dry mass 100 kg に対して手組みした 99.5 kg の
+  state は、最初のステップを終えると 100 kg になっていた — 入力に無かった 0.5 kg の推進剤が
+  増えていた。state が既に越えている境界を処理するのは、伝播ループの仕事だからである
+  ([#523](https://github.com/sksat/orts/issues/523))
 - **BREAKING**: thruster も assembly も dry mass を持たなくなった。
   `ThrusterSpec::dry_mass` / `Thruster::with_dry_mass` / `ThrusterSpec::with_dry_mass` と
   `ThrusterAssemblyCore::new` の第 2 引数を削除し、床は宇宙機のもの (`PropellantPool`、dynamics に

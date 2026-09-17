@@ -111,6 +111,28 @@ pub trait StateEffector<S: HasFrame>: Send + Sync + std::any::Any {
         0
     }
 
+    /// Whether this effector's part of a state is one a propagation can start
+    /// from, with the reason when it is not.
+    ///
+    /// The slices are this effector's own (lengths `state_dim()` and
+    /// `mode_dim()`), and `plant` is the state they belong to — a constraint on
+    /// a plant quantity, such as a propellant floor under the mass, reads it
+    /// there.
+    ///
+    /// Answer for what the constraint means, not for the sign of the boundary
+    /// value: a quantity resting exactly on its bound in the mode that holds
+    /// it there is a legal start. Only a state no trajectory of this effector
+    /// could be at belongs in an `Err`, since the propagation refuses it
+    /// instead of moving it ([`HasBoundaries::validate_boundary_walk_start`](crate::boundary::HasBoundaries::validate_boundary_walk_start)).
+    fn validate_state(
+        &self,
+        _plant: &S,
+        _aux: &[f64],
+        _modes: &[ConstraintMode],
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
     /// Loads on the spacecraft and derivatives of this effector's auxiliary
     /// state, at the stage [`EffectorInput`] describes.
     ///

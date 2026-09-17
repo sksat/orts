@@ -101,6 +101,7 @@ classDiagram
     +boundary_value(declared, t, y) f64
     +settle_boundary(declared, y)
     +boundary_is_active(declared, y) bool
+    +validate_boundary_walk_start(t, y) Result
   }
 
   OdeState <|.. OrbitalState
@@ -160,7 +161,12 @@ Key points:
   it answers which boundaries exist, what each one's margin is at a state
   (positive ahead of it, zero on it, negative past it), and what to put on the
   bound once one is located. Every method has a default, so a system without
-  constraints writes `impl HasBoundaries for X {}`.
+  constraints writes `impl HasBoundaries for X {}`. It also says whether a
+  state is one its constraints can be propagated from: a mass below a
+  propellant floor, or a wheel past its limit, is refused rather than settled,
+  since settling it would add propellant the input never had or turn the body
+  at a rate nobody asked for. Each effector answers about its own part
+  (`StateEffector::validate_state`).
 - `orts::boundary::walk_to_target` is the one loop every propagation path runs:
   it settles what a state is already past, switches the active boundaries for
   the modes the state is in, and steps with utsuroi's root search watching the

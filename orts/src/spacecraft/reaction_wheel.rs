@@ -610,6 +610,92 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
             .collect()
     }
 
+    /// Each wheel inside its limit, in a mode that agrees with where it sits.
+    ///
+    /// A momentum handed over past the limit is refused rather than settled:
+    /// settling returns the overshoot to the body, so the spacecraft would
+    /// start turning at a rate the caller never asked for. Resting exactly on
+    /// the limit is a legal start in either mode — `Free` there is a crossing
+    /// the search reports on the next step, and `Upper` is a wheel already
+    /// held — but a mode claiming a wheel is held while its momentum is inside
+    /// the limit would freeze it at a value that is not its bound.
+    fn validate_state(
+        &self,
+        _plant: &S,
+        aux: &[f64],
+        modes: &[ConstraintMode],
+    ) -> Result<(), String> {
+        let momentum = self.core.momentum_slice(aux);
+        for (index, wheel) in self.core.wheels.iter().enumerate() {
+            let h = momentum[index];
+            let limit = wheel.momentum_limit();
+            if !h.is_finite() {
+                return Err(format!("wheel {index} carries a momentum of {h}"));
+            }
+            let mode = modes.get(index).copied().unwrap_or_default();
+            match mode {
+                // Free: the tolerance the wheel declares for sitting on its
+                // bound applies, deliberately. A state that arrives a hair past
+                // a bound while free is one the propagation settles at its
+                // start, since a margin that is already negative offers the
+                // search no sign change to find
+                // (`projection_contract.rs`'s
+                // `a_wheel_a_hair_past_its_bound_is_settled_before_it_runs_further`
+                // pins that), and settling returns the overshoot to the body.
+                ConstraintMode::Free => {
+                    if h.abs() > limit + MOMENTUM_TOLERANCE {
+                        return Err(format!(
+                            "wheel {index} starts at {h} N·m·s, past its limit of {limit} N·m·s"
+                        ));
+                    }
+                }
+                // Held: the mode turns off the boundary that would have caught
+                // an overshoot, so nothing settles it and the wheel would run
+                // the span outside its limit. It has to be on its bound, and
+                // not past it.
+                ConstraintMode::Upper | ConstraintMode::Lower => {
+                    let bound = if matches!(mode, ConstraintMode::Upper) {
+                        limit
+                    } else {
+                        -limit
+                    };
+                    if h.abs() > limit {
+                        return Err(format!(
+                            "wheel {index} is held at {bound} N·m·s by its mode while its \
+                             momentum is {h} N·m·s, past the limit"
+                        ));
+                    }
+                    if (h - bound).abs() > MOMENTUM_TOLERANCE {
+                        return Err(format!(
+                            "wheel {index} is held at {bound} N·m·s by its mode while its \
+                             momentum is {h} N·m·s"
+                        ));
+                    }
+                }
+            }
+            if let Some(torques) = self.core.realized_torque_slice(aux) {
+                let torque = torques[index];
+                let max = wheel.max_torque;
+                if !torque.is_finite() {
+                    return Err(format!(
+                        "wheel {index} carries a realized torque of {torque}"
+                    ));
+                }
+                // The projection clamps this to the same bound, but only after
+                // a step has been accepted: the first derivative is taken at
+                // what the state carried, so a torque outside the bound turns
+                // the body before anything clamps it.
+                if torque.abs() > max {
+                    return Err(format!(
+                        "wheel {index} starts at a realized torque of {torque} N·m, past its \
+                         limit of {max} N·m"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn settle_boundary(&self, kind: BoundaryKind, aux: &mut [f64]) -> Option<BoundaryExchange> {
         let index = kind.index();
         let wheel = &self.core.wheels[index];

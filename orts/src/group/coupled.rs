@@ -8,7 +8,8 @@ use utsuroi::{
 };
 
 use crate::boundary::{
-    Boundaries, BoundaryWalk, DeclaredBoundary, HasBoundaries, Span, walk_to_target,
+    Boundaries, BoundaryWalk, BoundaryWalkError, DeclaredBoundary, HasBoundaries, Span,
+    StartStateError, walk_to_target,
 };
 
 use super::prop_group::{GroupSnapshot, PropGroupOutcome, SatId, SatelliteTermination};
@@ -147,10 +148,9 @@ pub struct CoupledGroupParts<S, D> {
     pub t: f64,
     pub terminated: bool,
     pub termination: Option<SatelliteTermination>,
-    /// `true` if termination was caused by a `ControlFlow::Break` event
-    /// (only the triggering satellite is "dead"). `false` for integration
-    /// errors where the composite ODE state is corrupted.
-    pub is_event_termination: bool,
+    /// Why the walk ended, where it ended before its target. `None` where it
+    /// reached it.
+    pub stop: Option<ComponentStop>,
 }
 
 /// Coupled group dynamics: each satellite's derivatives plus inter-satellite
@@ -236,6 +236,42 @@ where
     }
 }
 
+/// Why a coupled component's walk ended before its target.
+///
+/// What a caller does about it differs by kind: an event ends the run for the
+/// satellite it names, a refused start state means nothing was integrated at
+/// the time the parts carry, and an integration error leaves every satellite at
+/// the end of the last segment that finished.
+///
+/// `#[non_exhaustive]`: a walk gaining another way to end should not break a
+/// downstream `match`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ComponentStop {
+    /// The caller's check answered `ControlFlow::Break` for one satellite.
+    Event,
+    /// One satellite refused the state the walk was to start from
+    /// ([`HasBoundaries::validate_boundary_walk_start`](crate::boundary::HasBoundaries::validate_boundary_walk_start)).
+    StartRefused,
+    /// The solver or the boundary search failed. The parts carry the state and
+    /// the time of the last segment that finished, since a failed segment's own
+    /// steps are not committed — so the satellites are all at an instant the
+    /// interval has already passed.
+    IntegrationError,
+}
+
+/// The satellite a refused start state belongs to, where the error names one.
+///
+/// A group refusing its own shape — a state carrying a different number of
+/// satellites than the group has — names none, so a caller reading this cannot
+/// tell a refusal from a solver failure; [`ComponentStop`] is what says which.
+fn refusing_satellite(e: &BoundaryWalkError) -> Option<usize> {
+    match e {
+        BoundaryWalkError::StartRejected { error, .. } => error.satellite,
+        BoundaryWalkError::Integration(_) => None,
+    }
+}
+
 /// The boundaries of every satellite in the group, each stamped with whose it
 /// is.
 ///
@@ -282,6 +318,31 @@ where
     fn boundary_is_active(&self, declared: &DeclaredBoundary, state: &Self::State) -> bool {
         self.dynamics[declared.satellite]
             .boundary_is_active(declared, &state.states[declared.satellite])
+    }
+
+    /// Every satellite about its own state, named by its place in the group.
+    ///
+    /// A composite answering the default `Ok(())` would let a coupled group
+    /// start from exactly the states the check exists to refuse, since one walk
+    /// covers the whole group: the children never see the question.
+    fn validate_boundary_walk_start(
+        &self,
+        t: f64,
+        state: &Self::State,
+    ) -> Result<(), StartStateError> {
+        if state.states.len() != self.dynamics.len() {
+            return Err(StartStateError::new(format!(
+                "the group state carries {} satellites where the group has {}",
+                state.states.len(),
+                self.dynamics.len()
+            )));
+        }
+        for (index, (dynamics, sat)) in self.dynamics.iter().zip(&state.states).enumerate() {
+            dynamics
+                .validate_boundary_walk_start(t, sat)
+                .map_err(|e| e.from_satellite(index))?;
+        }
+        Ok(())
     }
 }
 
@@ -345,7 +406,7 @@ where
     t: f64,
     terminated: bool,
     termination: Option<SatelliteTermination>,
-    is_event_termination: bool,
+    stop: Option<ComponentStop>,
     integrator: IntegratorConfig,
     event_checker: Option<EventChecker<D::State>>,
     search: RootSearch,
@@ -363,7 +424,7 @@ where
             t: 0.0,
             terminated: false,
             termination: None,
-            is_event_termination: false,
+            stop: None,
             integrator,
             event_checker: None,
             search: RootSearch::default(),
@@ -452,7 +513,7 @@ where
             t: self.t,
             terminated: self.terminated,
             termination: self.termination,
-            is_event_termination: self.is_event_termination,
+            stop: self.stop,
         }
     }
 
@@ -638,7 +699,7 @@ where
                     self.state = state;
                     self.t = reached_t;
                     self.terminated = true;
-                    self.is_event_termination = true;
+                    self.stop = Some(ComponentStop::Event);
                     let term = SatelliteTermination {
                         satellite_id: sat_id,
                         t: reached_t,
@@ -653,18 +714,37 @@ where
                     // solver but the segment did not finish, and the state
                     // after the step that failed is not a trajectory.
                     self.terminated = true;
+                    // A refusal is named apart from a solver failure: nothing
+                    // was integrated where the walk was refused, so every other
+                    // satellite still holds the state it was handed at the time
+                    // these parts carry.
+                    // Read from the variant, not from the satellite index: a
+                    // group refusing its own shape names no satellite and is
+                    // still a refusal.
+                    self.stop = Some(match &e {
+                        BoundaryWalkError::StartRejected { .. } => ComponentStop::StartRefused,
+                        BoundaryWalkError::Integration(_) => ComponentStop::IntegrationError,
+                    });
                     // Pre-flight rejections (bad dt/tolerances) carry no time
                     // of their own; attribute them to where the stepper was
                     // asked to start.
                     let t = e.time().unwrap_or(self.t);
                     let term = SatelliteTermination {
-                        satellite_id: self
-                            .ids
-                            .first()
+                        // A group is walked as one composite state, so a
+                        // solver failure belongs to the group and is recorded
+                        // against its first satellite. A refused start state
+                        // belongs to the satellite that refused it, which is
+                        // the one a caller has to fix.
+                        satellite_id: refusing_satellite(&e)
+                            .and_then(|index| self.ids.get(index))
+                            .or_else(|| self.ids.first())
                             .cloned()
                             .unwrap_or_else(|| SatId::from("unknown")),
                         t,
-                        reason: format!("{e:?}"),
+                        reason: match &e {
+                            BoundaryWalkError::Integration(e) => format!("{e:?}"),
+                            e => e.to_string(),
+                        },
                     };
                     self.termination = Some(term.clone());
                     vec![term]

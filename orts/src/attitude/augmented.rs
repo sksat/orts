@@ -338,6 +338,89 @@ impl crate::boundary::HasBoundaries for AugmentedAttitudeSystem {
     fn boundary_is_active(&self, declared: &DeclaredBoundary, state: &Self::State) -> bool {
         declared.is_active(&state.modes)
     }
+
+    /// The lengths, then each effector about its own part — as
+    /// [`SpacecraftDynamics`](crate::spacecraft::SpacecraftDynamics) does, for
+    /// the same reason: a wheel restored past its limit would otherwise be
+    /// settled on the first step, and the body would start turning at a rate
+    /// the caller never asked for.
+    ///
+    /// The context an effector is given here is the attitude with the orbit and
+    /// mass this system prescribes at `t`, which is where the state belongs: a
+    /// walk resuming at a later instant reads a different mass, and a
+    /// constraint on it would otherwise be checked against an instant the state
+    /// never belonged to.
+    fn validate_boundary_walk_start(
+        &self,
+        t: f64,
+        state: &Self::State,
+    ) -> Result<(), crate::boundary::StartStateError> {
+        use crate::boundary::StartStateError;
+
+        let (modes, aux) = (state.modes.len(), state.aux.len());
+        if modes != self.registry.total_modes() {
+            return Err(StartStateError::new(format!(
+                "the state carries {modes} modes where the registered effectors declared {}",
+                self.registry.total_modes()
+            )));
+        }
+        if aux != self.registry.total_dim() {
+            return Err(StartStateError::new(format!(
+                "the state carries {aux} auxiliary values where the registered effectors \
+                 declared {}",
+                self.registry.total_dim()
+            )));
+        }
+        // As in `SpacecraftDynamics`: empty means unbounded, which is a state
+        // to accept only where no
+        // effector declared a bound to lose: a wheel's realized torque is
+        // projected onto its own limit, and a state that dropped, widened or
+        // reversed those bounds would be projected onto what it carries rather
+        // than onto what the wheel reports. Projection reads the state's own
+        // vector, so the values have to be the declared ones.
+        let declared = self.initial_aux_bounds();
+        let bounds_to_lose = declared
+            .iter()
+            .any(|(low, high)| low.is_finite() || high.is_finite());
+        let unbounded_is_enough = state.aux_bounds.is_empty() && !bounds_to_lose;
+        if !unbounded_is_enough {
+            if state.aux_bounds.len() != declared.len() {
+                return Err(StartStateError::new(format!(
+                    "the state carries {} bounds for {aux} auxiliary values, where the \
+                     registered effectors declared {}",
+                    state.aux_bounds.len(),
+                    declared.len()
+                )));
+            }
+            if let Some((index, (carried, want))) = state
+                .aux_bounds
+                .iter()
+                .zip(&declared)
+                .enumerate()
+                .find(|(_, (carried, want))| carried != want)
+            {
+                return Err(StartStateError::new(format!(
+                    "auxiliary bound {index} is {carried:?} where the registered effectors \
+                     declared {want:?}"
+                )));
+            }
+        }
+        let context = DecoupledContext {
+            attitude: state.plant.clone(),
+            orbit: (self.orbit_fn)(t),
+            mass: (self.mass_fn)(t),
+        };
+        for (effector, entry) in self.effectors.iter().zip(self.registry.entries()) {
+            effector
+                .validate_state(
+                    &context,
+                    &state.aux[entry.offset..entry.offset + entry.dim],
+                    &state.modes[entry.mode_offset..entry.mode_offset + entry.mode_dim],
+                )
+                .map_err(|reason| StartStateError::new(format!("{}: {reason}", effector.name())))?;
+        }
+        Ok(())
+    }
 }
 
 impl DynamicalSystem for AugmentedAttitudeSystem {
@@ -407,6 +490,156 @@ mod tests {
     /// it. `walk_to_target` is the path such a caller takes, and this walks a
     /// wheel to its limit through it: the wheel is held on the bound, its mode
     /// says so, and the body keeps the momentum the wheel stopped taking.
+    /// What the check reads can depend on when the walk starts: this system
+    /// prescribes the mass, so the same state is above a propellant floor at
+    /// one instant and below it at another.
+    ///
+    /// Asking at `t = 0` for a walk that starts later would accept a state
+    /// whose mass is below the floor there, which is the state the whole check
+    /// exists to refuse.
+    #[test]
+    fn the_check_reads_the_context_at_the_time_the_walk_starts() {
+        use crate::boundary::{BoundaryWalkError, HasBoundaries};
+        use crate::spacecraft::PropellantPool;
+
+        const DRY_MASS: f64 = 95.0;
+        const LOADED: f64 = 100.0;
+        const SPENT: f64 = 90.0;
+        const EMPTIES_AT: f64 = 5.0;
+
+        // A mass that drops below the floor partway through, as a prescribed
+        // mass can: nothing here integrates it.
+        let system = AugmentedAttitudeSystem::new(
+            symmetric_inertia(10.0),
+            |_| OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::zeros()),
+            |t| if t < EMPTIES_AT { LOADED } else { SPENT },
+        )
+        .with_effector(PropellantPool::new(DRY_MASS));
+
+        let state = system.initial_augmented_state(AttitudeState {
+            quaternion: Vector4::new(1.0, 0.0, 0.0, 0.0),
+            angular_velocity: Vector3::zeros(),
+        });
+
+        assert!(
+            system.validate_boundary_walk_start(0.0, &state).is_ok(),
+            "at t = 0 the spacecraft carries {} kg of propellant",
+            LOADED - DRY_MASS
+        );
+
+        let refused = system
+            .validate_boundary_walk_start(2.0 * EMPTIES_AT, &state)
+            .expect_err("at t = 10 the prescribed mass is below the dry mass");
+        assert!(
+            refused.reason.contains("below the dry mass"),
+            "the reason reads the mass at the walk's own time, not {}",
+            refused.reason
+        );
+
+        // And the walk itself asks with the time it was given, not with zero.
+        use crate::boundary::{Boundaries, Span, walk_to_target};
+        use core::ops::ControlFlow;
+        use utsuroi::{Integrator, Rk4, RootSearch, RootSlot};
+
+        let boundaries = system.boundaries();
+        let mut slots = vec![RootSlot::new(); boundaries.len()];
+        let outcome = walk_to_target(
+            Boundaries {
+                system: &system,
+                declared: &boundaries,
+                slots: &mut slots,
+                search: RootSearch::default(),
+                segment: None,
+            },
+            Span {
+                from: 2.0 * EMPTIES_AT,
+                to: 2.0 * EMPTIES_AT + 1.0,
+                start_is_checked: false,
+            },
+            state,
+            |s, t, _checked| Rk4.stepper(&system, s, t, 0.25),
+            &mut |_: f64, _: &AugmentedState<AttitudeState>| {},
+            &|_: f64, _: &AugmentedState<AttitudeState>| -> ControlFlow<()> {
+                ControlFlow::Continue(())
+            },
+        );
+        let Err(BoundaryWalkError::StartRejected { t, .. }) = outcome else {
+            panic!("a walk from t = 10 is refused: {outcome:?}");
+        };
+        assert_eq!(
+            t,
+            2.0 * EMPTIES_AT,
+            "the refusal belongs to where it started"
+        );
+    }
+
+    /// A restored state whose wheel is past its limit is refused rather than
+    /// settled: settling returns the overshoot to the body, so the spacecraft
+    /// would start turning at a rate the caller never asked for.
+    ///
+    /// This system is walked directly, which is why it answers for itself —
+    /// the default would leave this path out.
+    #[test]
+    fn a_wheel_past_its_limit_cannot_start_a_walk_under_this_system() {
+        use crate::boundary::{Boundaries, BoundaryWalkError, HasBoundaries, Span, walk_to_target};
+        use crate::spacecraft::ReactionWheelAssembly;
+        use core::ops::ControlFlow;
+        use utsuroi::{Integrator, Rk4, RootSearch, RootSlot};
+
+        const MAX_MOMENTUM: f64 = 0.53;
+        const PAST_IT: f64 = 0.6;
+
+        let rw = ReactionWheelAssembly::three_axis(0.01, MAX_MOMENTUM, 0.1);
+        let system = AugmentedAttitudeSystem::circular_orbit(
+            symmetric_inertia(10.0),
+            398600.4418,
+            7000.0,
+            100.0,
+        )
+        .with_effector(rw);
+
+        let mut state = system.initial_augmented_state(AttitudeState {
+            quaternion: Vector4::new(1.0, 0.0, 0.0, 0.0),
+            angular_velocity: Vector3::zeros(),
+        });
+        // Assembled by hand, the way a restored state is: past the limit, and
+        // in the mode of a wheel that is still free.
+        state.aux[2] = PAST_IT;
+
+        let boundaries = system.boundaries();
+        let mut slots = vec![RootSlot::new(); boundaries.len()];
+        let outcome = walk_to_target(
+            Boundaries {
+                system: &system,
+                declared: &boundaries,
+                slots: &mut slots,
+                search: RootSearch::default(),
+                segment: None,
+            },
+            Span {
+                from: 0.0,
+                to: 1.0,
+                start_is_checked: false,
+            },
+            state,
+            |s, t, _checked| Rk4.stepper(&system, s, t, 0.25),
+            &mut |_: f64, _: &AugmentedState<AttitudeState>| {},
+            &|_: f64, _: &AugmentedState<AttitudeState>| -> ControlFlow<()> {
+                ControlFlow::Continue(())
+            },
+        );
+
+        let Err(BoundaryWalkError::StartRejected { t, error }) = outcome else {
+            panic!("the walk refuses the state instead of settling it: {outcome:?}");
+        };
+        assert_eq!(t, 0.0, "the refusal belongs to the state's own time");
+        assert!(
+            error.reason.contains("reaction_wheels") && error.reason.contains("past its limit"),
+            "the reason names the effector and what it read, not {}",
+            error.reason
+        );
+    }
+
     #[test]
     fn a_wheel_saturating_under_this_system_keeps_the_bodys_momentum() {
         use crate::boundary::{Boundaries, HasBoundaries, Span, walk_to_target};

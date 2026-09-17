@@ -177,6 +177,20 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
             .is_none_or(|mode| *mode == ConstraintMode::Free)
     }
 
+    /// The projection bounds every registered effector declared, concatenated
+    /// in registration order.
+    ///
+    /// What [`initial_augmented_state`](Self::initial_augmented_state) puts in
+    /// a new state, and what the start-state check measures a handed-over
+    /// state against.
+    pub fn declared_aux_bounds(&self) -> Vec<(f64, f64)> {
+        let mut bounds = Vec::with_capacity(self.registry.total_dim());
+        for eff in &self.effectors {
+            bounds.extend(eff.aux_bounds());
+        }
+        bounds
+    }
+
     /// Add a state effector (builder pattern).
     ///
     /// A [`PropellantPool`] registered here is registered as the pool, exactly
@@ -234,10 +248,7 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
         &self,
         plant: SpacecraftState<F>,
     ) -> AugmentedState<SpacecraftState<F>> {
-        let mut bounds = Vec::with_capacity(self.registry.total_dim());
-        for eff in &self.effectors {
-            bounds.extend(eff.aux_bounds());
-        }
+        let bounds = self.declared_aux_bounds();
         let mut modes = vec![ConstraintMode::default(); self.registry.total_modes()];
         // A spacecraft can start with an empty tank, and no search would find
         // that: a margin of exactly zero has not been crossed. Its mode says
@@ -728,6 +739,82 @@ impl<G: GravityField, F: Eci + 'static> HasBoundaries for SpacecraftDynamics<G, 
 
     fn boundary_is_active(&self, declared: &DeclaredBoundary, state: &Self::State) -> bool {
         declared.is_active(&state.modes)
+    }
+
+    /// The lengths first, then each effector about its own part.
+    ///
+    /// The lengths are what makes the slices below well defined, and every
+    /// other path reads the same offsets: a state whose vectors do not match
+    /// the registry would index out of an effector's slice or silently leave
+    /// part of it unprojected.
+    ///
+    /// The effectors answer in their own terms rather than by the sign of a
+    /// boundary value, since a quantity resting on a bound in the mode that
+    /// holds it there is a legal start.
+    fn validate_boundary_walk_start(
+        &self,
+        _t: f64,
+        state: &Self::State,
+    ) -> Result<(), crate::boundary::StartStateError> {
+        let (modes, aux) = (state.modes.len(), state.aux.len());
+        if modes != self.registry.total_modes() {
+            return Err(crate::boundary::StartStateError::new(format!(
+                "the state carries {modes} modes where the registered effectors declared {}",
+                self.registry.total_modes()
+            )));
+        }
+        if aux != self.registry.total_dim() {
+            return Err(crate::boundary::StartStateError::new(format!(
+                "the state carries {aux} auxiliary values where the registered effectors \
+                 declared {}",
+                self.registry.total_dim()
+            )));
+        }
+        // Empty means unbounded, which is a state to accept only where no
+        // effector declared a bound to lose: a wheel's realized torque is
+        // projected onto its own limit, and a state that dropped, widened or
+        // reversed those bounds would be projected onto what it carries rather
+        // than onto what the wheel reports. Projection reads the state's own
+        // vector, so the values have to be the declared ones.
+        let declared = self.declared_aux_bounds();
+        let bounds_to_lose = declared
+            .iter()
+            .any(|(low, high)| low.is_finite() || high.is_finite());
+        let unbounded_is_enough = state.aux_bounds.is_empty() && !bounds_to_lose;
+        if !unbounded_is_enough {
+            if state.aux_bounds.len() != declared.len() {
+                return Err(crate::boundary::StartStateError::new(format!(
+                    "the state carries {} bounds for {aux} auxiliary values, where the \
+                     registered effectors declared {}",
+                    state.aux_bounds.len(),
+                    declared.len()
+                )));
+            }
+            if let Some((index, (carried, want))) = state
+                .aux_bounds
+                .iter()
+                .zip(&declared)
+                .enumerate()
+                .find(|(_, (carried, want))| carried != want)
+            {
+                return Err(crate::boundary::StartStateError::new(format!(
+                    "auxiliary bound {index} is {carried:?} where the registered effectors \
+                     declared {want:?}"
+                )));
+            }
+        }
+        for (effector, entry) in self.effectors.iter().zip(self.registry.entries()) {
+            effector
+                .validate_state(
+                    &state.plant,
+                    &state.aux[entry.offset..entry.offset + entry.dim],
+                    &state.modes[entry.mode_offset..entry.mode_offset + entry.mode_dim],
+                )
+                .map_err(|reason| {
+                    crate::boundary::StartStateError::new(format!("{}: {reason}", effector.name()))
+                })?;
+        }
+        Ok(())
     }
 }
 

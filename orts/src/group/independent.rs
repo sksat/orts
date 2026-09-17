@@ -5,7 +5,9 @@ use utsuroi::{
     RootSearch, RootSlot, SegmentContext, Segments, Tolerances, validate_step_size,
 };
 
-use crate::boundary::{Boundaries, BoundaryWalk, HasBoundaries, Span, walk_to_target};
+use crate::boundary::{
+    Boundaries, BoundaryWalk, BoundaryWalkError, HasBoundaries, Span, walk_to_target,
+};
 
 use super::HasPosition;
 use super::prop_group::{GroupSnapshot, PropGroupOutcome, SatId, SatelliteTermination};
@@ -529,7 +531,10 @@ where
                         terminations.push(SatelliteTermination {
                             satellite_id: entry.id.clone(),
                             t,
-                            reason: format!("{e:?}"),
+                            reason: match &e {
+                                BoundaryWalkError::Integration(e) => format!("{e:?}"),
+                                e => e.to_string(),
+                            },
                         });
                     }
                 }

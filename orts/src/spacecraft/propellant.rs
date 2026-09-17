@@ -132,6 +132,62 @@ impl<S: HasFrame + HasMass + Send + Sync> StateEffector<S> for PropellantPool {
         input.state.mass() - self.dry_mass
     }
 
+    /// What the mass says, and then what the mode has to agree with.
+    ///
+    /// Any mass below the floor is refused, however little: no trajectory of
+    /// this pool reaches a mass with less than no propellant, and settling such
+    /// a state would put the mass *on* the floor, adding what the input was
+    /// missing.
+    ///
+    /// At or above the floor the mode is what can disagree. A tank with
+    /// propellant in it and a mode saying it is empty would silence the
+    /// propulsion for a run that could burn. Within `MASS_TOLERANCE` *above*
+    /// the floor either mode is accepted — that is where a settled state sits,
+    /// and a picogram is not propellant.
+    fn validate_state(
+        &self,
+        plant: &S,
+        _aux: &[f64],
+        modes: &[ConstraintMode],
+    ) -> Result<(), String> {
+        let mass = plant.mass();
+        let Some(mode) = modes.first() else {
+            return Err("the pool's mode is missing from the state".to_string());
+        };
+        if !mass.is_finite() {
+            return Err(format!("the mass is {mass}"));
+        }
+        // Strictly, as the wheel's limit is: the boundary handling writes the
+        // dry mass itself, so no state a propagation produced lies just below
+        // it. The tolerance below is for the other question — which mode a
+        // mass on the floor should carry.
+        if mass < self.dry_mass {
+            return Err(format!(
+                "the mass {mass} kg is below the dry mass {} kg, so the state carries \
+                 less than no propellant",
+                self.dry_mass
+            ));
+        }
+        let on_the_floor = (mass - self.dry_mass).abs() <= MASS_TOLERANCE;
+        match (mode, on_the_floor) {
+            // No upper bound is declared, so no mode can be held against one.
+            (ConstraintMode::Upper, _) => {
+                Err("the pool has no upper bound, so its mode cannot be Upper".to_string())
+            }
+            // On the floor, or within a picogram above it: a settled state
+            // sits here, and a picogram is not propellant, so either mode
+            // describes it. (Below the floor never reaches this.)
+            (_, true) => Ok(()),
+            (ConstraintMode::Free, false) => Ok(()),
+            (ConstraintMode::Lower, false) => Err(format!(
+                "the mode says the tank is empty while the mass {mass} kg is {} kg above \
+                 the dry mass {} kg",
+                mass - self.dry_mass,
+                self.dry_mass
+            )),
+        }
+    }
+
     fn settle_boundary(&self, _kind: BoundaryKind, _aux: &mut [f64]) -> Option<BoundaryExchange> {
         // The mass belongs on the floor. What it burned below the floor is
         // gone with the exhaust, so the impulse for it stays in the velocity —

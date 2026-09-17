@@ -138,6 +138,43 @@ section is subdivided by package.
   ([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
+- **BREAKING**: `orts::boundary::walk_to_target` returns `BoundaryWalkError`
+  rather than utsuroi's `IntegrationError`, because a state a system's own
+  constraints refuse is not an integration failure:
+  `BoundaryWalkError::StartRejected { t, error }` carries a `StartStateError`
+  with what refused it, what it read, and — for a group, walked as one
+  composite state — which satellite, so a termination is recorded against the
+  spacecraft a caller has to fix rather than the one walked first. The solver's
+  failures stay as `BoundaryWalkError::Integration`. A caller that matches on the error wraps
+  its arms in `Integration`; one that only formats it can keep doing so, and
+  the reason a group records for a terminated satellite is unchanged.
+  `HasBoundaries::validate_boundary_walk_start` and
+  `StateEffector::validate_state` are what answer, both defaulting to `Ok(())`.
+  The first takes the time the walk starts at, because a system can prescribe
+  what a constraint reads: `AugmentedAttitudeSystem` takes its mass from a
+  function of time, so the same state is above a propellant floor at one
+  instant and below it at another.
+  A mass below the propellant floor, a pool mode disagreeing with the mass it
+  carries, a wheel past its limit or held by its mode away from its bound, and
+  a state whose `aux` / `modes` lengths or `aux_bounds` values disagree with
+  what the registered effectors declared are now refused at the entry to every
+  boundary-aware propagation path — a direct `Integrator::integrate` handles no
+  boundaries and runs no check, the same limit the modes themselves have:
+  the independent group, a coupled group (which asks each satellite),
+  `AugmentedAttitudeSystem`, the CLI's controlled loop, and a direct
+  `walk_to_target`. `Scheduler` asks each satellite before it groups anything,
+  so one that cannot start is dropped and the rest of its component is still
+  flown over that interval — a composite walk refused by one member integrates
+  nothing, which would leave its peers at a time the scheduler's clock has
+  already passed. `CoupledGroupParts::is_event_termination` is replaced by
+  `stop: Option<ComponentStop>`, which says whether the walk ended on an event,
+  on a refused start state or on an integration error: what the scheduler does
+  about a component differs by kind, and one bool could not carry three
+  answers.
+  They used to be silent: a hand-built 99.5 kg with a 100 kg floor came back
+  from its first step *at* 100 kg — half a kilogram of propellant the input
+  never had — because settling a boundary the state already sat past is what
+  the walk does. ([#523](https://github.com/sksat/orts/issues/523))
 - **BREAKING**: a thruster no longer carries a dry mass, and neither does an
   assembly: `ThrusterSpec::dry_mass`, `Thruster::with_dry_mass`,
   `ThrusterSpec::with_dry_mass` and `ThrusterAssemblyCore::new`'s second
