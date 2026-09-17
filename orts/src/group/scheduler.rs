@@ -2784,8 +2784,9 @@ mod tests {
     /// Free particles with no force between them, so the answer is analytic:
     /// after `t` seconds at 0.5 m/s the survivor is at `y = 0.5 t`. A component
     /// is walked as one composite state, so the event that stops one member
-    /// stops the walk for both; the clock then moves to the interval's end and
-    /// the survivor's state stays where the walk left it.
+    /// stops the walk for both — and what this asserts is that the survivor is
+    /// walked on from the event's time to the interval's end, rather than being
+    /// left where the interrupted walk put it while the clock moves on.
     #[test]
     fn a_survivor_keeps_the_interval_its_partner_stopped_in() {
         const SPEED: f64 = 0.5;
@@ -2830,6 +2831,70 @@ mod tests {
         assert!(
             (y - SPEED * SPAN).abs() < 1e-9,
             "the survivor flies the whole span: {y} where {} is 0.5 * {SPAN}",
+            SPEED * SPAN
+        );
+    }
+
+    /// Two members stopping in the same interval, the second one during the
+    /// first one's catch-up.
+    ///
+    /// The loop that walks the survivors on has to keep going rather than pass
+    /// once: the first event ends the walk at 101 s, the second at 111 s, and
+    /// the interval runs to 120 s. The last survivor is a free particle the
+    /// whole time, so its position is analytic.
+    #[test]
+    fn a_second_event_during_the_catch_up_is_handled_too() {
+        const SPEED: f64 = 0.5;
+        const SPAN: f64 = 300.0;
+
+        let leaving =
+            |x: f64| OrbitalState::new(Vector3::new(x, 0.0, 0.0), Vector3::new(1.0, 0.0, 0.0));
+        let still = OrbitalState::new(Vector3::zeros(), Vector3::new(0.0, SPEED, 0.0));
+        let none = || {
+            Arc::new(Spring {
+                stiffness: 0.0,
+                rest_length: 0.0,
+            })
+        };
+
+        let mut sched: Scheduler<FreeParticle> =
+            Scheduler::new(default_config(), IntegratorConfig::Rk4 { dt: 1.0 })
+                .with_event_checker(|_t, state: &OrbitalState| {
+                    if state.position().x > 200.0 {
+                        ControlFlow::Break("out of range".to_string())
+                    } else {
+                        ControlFlow::Continue(())
+                    }
+                })
+                // Crosses x = 200 at t = 100, inside the interval [60, 120).
+                .add_satellite("first", leaving(100.0), FreeParticle)
+                // And this one at t = 110, inside the first one's catch-up.
+                .add_satellite("second", leaving(90.0), FreeParticle)
+                .add_satellite("stays", still, FreeParticle)
+                .add_interaction_fixed("stays", "first", PairRegime::Coupled, none())
+                .add_interaction_fixed("stays", "second", PairRegime::Coupled, none());
+
+        let outcome = sched.propagate_to(SPAN).unwrap();
+        let reported: Vec<SatId> = outcome
+            .terminations
+            .iter()
+            .map(|t| t.satellite_id.clone())
+            .collect();
+        for id in ["first", "second"] {
+            assert!(
+                reported.contains(&SatId::from(id)),
+                "{id} leaves the range and is reported: {reported:?}"
+            );
+        }
+
+        let y = sched
+            .satellite_state(&SatId::from("stays"))
+            .unwrap()
+            .position()
+            .y;
+        assert!(
+            (y - SPEED * SPAN).abs() < 1e-9,
+            "the last survivor flies the whole span: {y} where {} is {SPEED} * {SPAN}",
             SPEED * SPAN
         );
     }
