@@ -10,11 +10,15 @@
 //!
 //! [#446]: https://github.com/sksat/orts/issues/446
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use nalgebra::{Matrix3, Vector3};
 use utsuroi::{RootSearch, Tolerances};
 
 use orts::effector::{AugmentedState, ConstraintMode};
 use orts::group::{IndependentGroup, IntegratorConfig};
+use orts::model::{ExternalLoads, Model};
 use orts::orbital::OrbitalState;
 use orts::orbital::gravity::PointMass;
 use orts::spacecraft::{G0, PropellantPool, SpacecraftDynamics, SpacecraftState, Thruster};
@@ -34,12 +38,69 @@ fn system() -> SpacecraftDynamics<PointMass> {
         .with_propulsion(Thruster::new(THRUST_N, ISP_S, Vector3::x()))
 }
 
+/// A model that does nothing and counts how often it was asked.
+///
+/// One evaluation of the right-hand side evaluates every model once, so its
+/// count is the number of derivative evaluations: accepted steps, the trial
+/// steps of a search, and the stages of each.
+struct EvalCounter(Arc<AtomicUsize>);
+
+impl Model<SpacecraftState> for EvalCounter {
+    fn name(&self) -> &str {
+        "eval_counter"
+    }
+
+    fn eval(
+        &self,
+        _t: f64,
+        _state: &SpacecraftState,
+        _epoch: Option<&arika::epoch::Epoch>,
+    ) -> ExternalLoads {
+        self.0.fetch_add(1, Ordering::Relaxed);
+        ExternalLoads::zeros()
+    }
+}
+
+/// The same spacecraft, counting its derivative evaluations into `counter`.
+fn counted_system(counter: &Arc<AtomicUsize>) -> SpacecraftDynamics<PointMass> {
+    system().with_model(EvalCounter(Arc::clone(counter)))
+}
+
 fn initial() -> SpacecraftState {
     SpacecraftState {
         orbit: OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::zeros()),
         attitude: orts::attitude::AttitudeState::identity(),
         mass: DRY_MASS + PROPELLANT,
     }
+}
+
+/// The three integrators the configuration offers, at a tolerance tight enough
+/// that the propellant figures are the boundary handling's and not the
+/// solver's.
+fn integrators() -> Vec<(&'static str, IntegratorConfig)> {
+    vec![
+        ("rk4", IntegratorConfig::Rk4 { dt: DT }),
+        (
+            "dp45",
+            IntegratorConfig::Dp45 {
+                dt: DT,
+                tolerances: Tolerances {
+                    atol: 1e-12,
+                    rtol: 1e-12,
+                },
+            },
+        ),
+        (
+            "dop853",
+            IntegratorConfig::Dop853 {
+                dt: DT,
+                tolerances: Tolerances {
+                    atol: 1e-12,
+                    rtol: 1e-12,
+                },
+            },
+        ),
+    ]
 }
 
 /// Tsiolkovsky for the propellant the spacecraft actually carried [m/s].
@@ -76,29 +137,7 @@ fn walk(config: IntegratorConfig, t_tolerance: f64) -> (f64, f64, ConstraintMode
 /// rather than for the whole step the crossing fell in.
 #[test]
 fn a_burn_across_the_floor_spends_the_propellant_it_has() {
-    for (name, config) in [
-        ("rk4", IntegratorConfig::Rk4 { dt: DT }),
-        (
-            "dp45",
-            IntegratorConfig::Dp45 {
-                dt: DT,
-                tolerances: Tolerances {
-                    atol: 1e-12,
-                    rtol: 1e-12,
-                },
-            },
-        ),
-        (
-            "dop853",
-            IntegratorConfig::Dop853 {
-                dt: DT,
-                tolerances: Tolerances {
-                    atol: 1e-12,
-                    rtol: 1e-12,
-                },
-            },
-        ),
-    ] {
+    for (name, config) in integrators() {
         let (dv, mass, mode) = walk(config, 1e-9);
 
         assert_eq!(mode, ConstraintMode::Lower, "{name}: the tank ends empty");
@@ -119,6 +158,73 @@ fn a_burn_across_the_floor_spends_the_propellant_it_has() {
     }
 }
 
+/// What locating the floor costs, counted rather than timed.
+///
+/// The propellant is what decides whether the walk meets the boundary at all,
+/// so the comparison is the same burn with a tank that empties inside the span
+/// against one that outlasts it. The difference is the search: the bracket is
+/// the step the crossing falls in, halved until it is inside the tolerance,
+/// and each halving re-steps the solver's stages.
+///
+/// Run with `cargo test -p orts --test propellant_floor -- --nocapture`.
+#[test]
+fn what_locating_the_floor_costs() {
+    /// Propellant that outlasts the span: 0.1 kg/s for 5 s needs 0.5 kg.
+    const PLENTY: f64 = 1.0;
+
+    fn evaluations(propellant: f64, config: IntegratorConfig) -> (usize, ConstraintMode) {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let built = counted_system(&counter);
+        let plant = SpacecraftState {
+            mass: DRY_MASS + propellant,
+            ..initial()
+        };
+        let start = built.initial_augmented_state(plant);
+        let mut group: IndependentGroup<SpacecraftDynamics<PointMass>> =
+            IndependentGroup::new(config).add_satellite("sat", start, counted_system(&counter));
+        group.propagate_to(T_END).expect("the walk succeeds");
+        let mode = group
+            .satellites()
+            .next()
+            .expect("one satellite")
+            .state
+            .modes[0];
+        (counter.load(Ordering::Relaxed), mode)
+    }
+
+    println!("\nA {T_END} s burn in {DT} s steps, t_tolerance = 1 ms (the default)");
+    println!(
+        "{:<10} {:>22} {:>20} {:>10}",
+        "integrator", "evals (tank outlasts)", "evals (tank empties)", "ratio"
+    );
+    for (name, config) in integrators() {
+        let (plenty, plenty_mode) = evaluations(PLENTY, config.clone());
+        let (empty, empty_mode) = evaluations(PROPELLANT, config);
+        assert_eq!(
+            plenty_mode,
+            ConstraintMode::Free,
+            "{name}: the larger tank outlasts the span"
+        );
+        assert_eq!(
+            empty_mode,
+            ConstraintMode::Lower,
+            "{name}: the smaller tank empties inside it"
+        );
+        println!(
+            "{name:<10} {plenty:>22} {empty:>20} {:>10.3}",
+            empty as f64 / plenty as f64
+        );
+        // Ten halvings of a one-second step at a millisecond, times the
+        // solver's stages, is the order of it — a regression that searched on
+        // every step would cost that much per step instead of once.
+        let searched = empty.saturating_sub(plenty);
+        assert!(
+            searched < 300,
+            "{name}: locating the floor cost {searched} evaluations"
+        );
+    }
+}
+
 /// What the tolerance buys, in the units the issue measured: the excess ΔV is
 /// the impulse for the propellant burned past the floor, which is `ṁ` times
 /// the width the search narrowed the crossing to.
@@ -126,11 +232,17 @@ fn a_burn_across_the_floor_spends_the_propellant_it_has() {
 fn the_excess_delta_v_follows_the_tolerance() {
     let mass_rate = THRUST_N / (ISP_S * G0);
 
-    for t_tolerance in [1e-3, 1e-6] {
+    println!("\nRK4 dt = 1 s, the floor crossed 0.4 s in");
+    println!(
+        "{:<14} {:>18} {:>18}",
+        "t_tolerance", "excess dv [m/s]", "budget T/m_dry*e"
+    );
+    for t_tolerance in [1e-3, 1e-6, 1e-9] {
         let (dv, _, _) = walk(IntegratorConfig::Rk4 { dt: DT }, t_tolerance);
         let excess = dv - analytical_dv();
         // ΔV for the propellant spent past the floor, at the floor's mass.
         let budget = THRUST_N / DRY_MASS * t_tolerance;
+        println!("{t_tolerance:<14e} {excess:>18.3e} {budget:>18.3e}");
         assert!(
             excess >= -1e-9 && excess <= budget * 1.5,
             "at {t_tolerance:e} the excess is {excess:.3e} m/s, and the budget \
