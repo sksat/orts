@@ -138,6 +138,24 @@ section is subdivided by package.
   ([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
+- **BREAKING**: `orts::boundary::walk_to_target` returns `BoundaryWalkError`
+  rather than utsuroi's `IntegrationError`, because a state a system's own
+  constraints refuse is not an integration failure:
+  `BoundaryWalkError::StartRejected { t, reason }` carries what refused it and
+  what it read, and the solver's failures stay as
+  `BoundaryWalkError::Integration`. A caller that matches on the error wraps
+  its arms in `Integration`; one that only formats it can keep doing so, and
+  the reason a group records for a terminated satellite is unchanged.
+  `HasBoundaries::validate_boundary_walk_start` and
+  `StateEffector::validate_state` are what answer, both defaulting to `Ok(())`.
+  A mass below the propellant floor, a pool mode disagreeing with the mass it
+  carries, a wheel past its limit or held by its mode away from its bound, and
+  a state whose `aux` / `modes` / `aux_bounds` lengths disagree with the
+  registered effectors are now refused at the entry to every propagation path.
+  They used to be silent: a hand-built 99.5 kg with a 100 kg floor came back
+  from its first step *at* 100 kg — half a kilogram of propellant the input
+  never had — because settling a boundary the state already sat past is what
+  the walk does. ([#523](https://github.com/sksat/orts/issues/523))
 - **BREAKING**: a thruster no longer carries a dry mass, and neither does an
   assembly: `ThrusterSpec::dry_mass`, `Thruster::with_dry_mass`,
   `ThrusterSpec::with_dry_mass` and `ThrusterAssemblyCore::new`'s second

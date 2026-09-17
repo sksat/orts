@@ -100,6 +100,7 @@ classDiagram
     +boundary_value(declared, t, y) f64
     +settle_boundary(declared, y)
     +boundary_is_active(declared, y) bool
+    +validate_boundary_walk_start(y) Result
   }
 
   OdeState <|.. OrbitalState
@@ -153,6 +154,10 @@ classDiagram
   ある state での各境界の余裕がいくらか (境界の手前で正、境界上で 0、越えると
   負)、境界に到達したとき何を境界上に載せるかに答える。全 method に既定実装が
   あるので、拘束のない System は `impl HasBoundaries for X {}` と書く。
+  「その state から伝播を開始できるか」も System が答える。dry mass を下回った質量や
+  上限を超えたホイールは、境界処理で直すのではなく拒否する — 直すと入力に無かった
+  推進剤が増え、ホイールなら誰も指示していない回転が機体に付く。各 effector は自分の
+  担当部分について答える (`StateEffector::validate_state`)。
 - `orts::boundary::walk_to_target` が、全ての伝播経路が通る唯一のループである。
   state が既に越えている境界を処理し、state のモードに応じて有効な境界を切り替え、
   utsuroi の root 探索に余裕を見張らせながら刻む。停止先は二分探索で求めた境界の
