@@ -297,6 +297,16 @@ type SharedEventChecker<S> = Arc<dyn Fn(f64, &S) -> ControlFlow<String> + Send +
 struct SatRecord<D: DynamicalSystem> {
     id: SatId,
     state: D::State,
+    /// The instant `state` belongs to.
+    ///
+    /// Usually the scheduler's own clock, but not always: a walk that stopped
+    /// before the interval's end — an event, a solver failure — hands back
+    /// states from where it stopped, while the clock moves on to the interval's
+    /// end. Anything that asks a question *about a state* asks at this instant,
+    /// so a constraint that reads the time is not answered for one the state
+    /// never reached. Propagating such a state still starts from the clock;
+    /// closing that gap is [#530](https://github.com/sksat/orts/issues/530).
+    state_t: f64,
     dynamics: Option<D>,
     terminated: bool,
     end_time: Option<f64>,
@@ -372,6 +382,7 @@ where
         self.satellites.push(SatRecord {
             id: id.into(),
             state,
+            state_t: self.t,
             dynamics: Some(dynamics),
             terminated: false,
             end_time: None,
@@ -389,6 +400,7 @@ where
         self.satellites.push(SatRecord {
             id: id.into(),
             state,
+            state_t: self.t,
             dynamics: Some(dynamics),
             terminated: false,
             end_time: Some(end_time),
@@ -548,7 +560,7 @@ where
             // `sync_target`, holding states that belong to an instant they
             // never reached. Dropping the ones that refuse leaves a grouping
             // whose members can all be flown.
-            all_terminations.extend(self.drop_satellites_that_cannot_start_at(self.t, self.t, &[]));
+            all_terminations.extend(self.drop_satellites_that_cannot_start(self.t));
 
             // Re-evaluate pair regimes based on current distances
             self.update_pair_regimes();
@@ -573,8 +585,7 @@ where
                 // before the drift keeps the refusal out of the composite walk,
                 // which is what would otherwise leave a component's other
                 // members at this interval's start.
-                let kicked_into_refusal =
-                    self.drop_satellites_that_cannot_start_at(self.t, self.t, &[]);
+                let kicked_into_refusal = self.drop_satellites_that_cannot_start(self.t);
                 let after_kick = (!kicked_into_refusal.is_empty()).then(|| {
                     all_terminations.extend(kicked_into_refusal);
                     // Without the ones just dropped: a component held together
@@ -599,19 +610,12 @@ where
                     // This kick is the last thing the run does — the loop ends
                     // below — so a satellite it puts past a constraint would be
                     // handed back with nothing left to ask about it.
+                    // Each satellite is asked at the instant its own state
+                    // belongs to, which for a component an event stopped early
+                    // is where that walk stopped rather than the interval's end.
                     let interval_started_at = self.t;
-                    // Only about the satellites whose states really are at this
-                    // interval's end. A coupled component an event stopped
-                    // early recovered its members at the time the walk stopped,
-                    // so asking about them here would judge them against a
-                    // context they never reached.
-                    let stopped_early =
-                        self.satellites_in_components_that_stopped(&grouping, &all_terminations);
-                    all_terminations.extend(self.drop_satellites_that_cannot_start_at(
-                        sync_target,
-                        interval_started_at,
-                        &stopped_early,
-                    ));
+                    all_terminations
+                        .extend(self.drop_satellites_that_cannot_start(interval_started_at));
                     self.t = sync_target;
                     break;
                 }
@@ -628,11 +632,8 @@ where
                 // would be published as a satellite's own. Asked about the
                 // instant it now belongs to.
                 let interval_started_at = self.t;
-                all_terminations.extend(self.drop_satellites_that_cannot_start_at(
-                    sync_target,
-                    interval_started_at,
-                    &[],
-                ));
+                all_terminations
+                    .extend(self.drop_satellites_that_cannot_start(interval_started_at));
             }
 
             self.t = sync_target;
@@ -697,27 +698,19 @@ where
     /// group directly. Here the answer decides who is in the grouping, because
     /// a scheduler has somewhere to carry on from: the satellites that can
     /// still be flown.
-    /// `asked_at` is the instant the states belong to; `flown_from` is the
-    /// instant that decides who is asked at all.
+    /// Each satellite is asked at the instant its own state belongs to
+    /// (`SatRecord::state_t`), which is not always the scheduler's clock.
     ///
-    /// The two differ after the closing half-kick: the states now belong to the
-    /// interval's end, but a satellite whose own end time is that instant was
-    /// still flown — and kicked — in the interval, so it is asked. One that
-    /// finished earlier is not: its state belongs to the instant it stopped at,
-    /// and judging it at a later one would refuse it for a context it never
-    /// reached.
-    fn drop_satellites_that_cannot_start_at(
-        &mut self,
-        asked_at: f64,
-        flown_from: f64,
-        skip: &[usize],
-    ) -> Vec<SatelliteTermination> {
-        let t = asked_at;
+    /// `flown_from` decides who is asked at all: a satellite that was already
+    /// done before the interval began is left alone, since nothing in it moved
+    /// its state.
+    fn drop_satellites_that_cannot_start(&mut self, flown_from: f64) -> Vec<SatelliteTermination> {
         let mut dropped = Vec::new();
-        for (index, sat) in self.satellites.iter_mut().enumerate() {
-            if skip.contains(&index) || !sat.is_to_propagate(flown_from) {
+        for sat in &mut self.satellites {
+            if !sat.is_to_propagate(flown_from) {
                 continue;
             }
+            let t = sat.state_t;
             let Some(dynamics) = sat.dynamics.as_ref() else {
                 continue;
             };
@@ -731,30 +724,6 @@ where
             }
         }
         dropped
-    }
-
-    /// The satellites of every coupled component that stopped before the
-    /// interval's end, by index.
-    ///
-    /// A component is walked as one composite state, so when one of its
-    /// satellites stops, the whole component's states are recovered at the
-    /// time the walk stopped rather than at the interval's end. An independent
-    /// satellite's stop is its own, so its peers are unaffected.
-    fn satellites_in_components_that_stopped(
-        &self,
-        grouping: &Grouping,
-        terms: &[SatelliteTermination],
-    ) -> Vec<usize> {
-        let stopped: Vec<usize> = terms
-            .iter()
-            .filter_map(|t| self.satellites.iter().position(|s| s.id == t.satellite_id))
-            .collect();
-        grouping
-            .coupled_components
-            .iter()
-            .filter(|comp| comp.iter().any(|idx| stopped.contains(idx)))
-            .flat_map(|comp| comp.iter().copied())
-            .collect()
     }
 
     /// Build the grouping structure from current pair regimes.
@@ -820,6 +789,7 @@ where
             for part in parts {
                 if let Some(sat) = self.satellites.iter_mut().find(|s| s.id == part.id) {
                     sat.state = part.state;
+                    sat.state_t = part.t;
                     sat.dynamics = Some(part.dynamics);
                     sat.terminated = part.terminated;
                 }
@@ -868,6 +838,9 @@ where
             terminations.extend(outcome.terminations);
 
             let parts = group.into_parts();
+            // The component's own time: a walk that stopped early hands back
+            // states from where it stopped, not from the interval's end.
+            let parts_t = parts.t;
             // Recover state and dynamics for each satellite.
             // For event terminations: only the triggering satellite is "dead".
             // For integration errors: all satellites in the group are corrupted.
@@ -880,6 +853,9 @@ where
             {
                 let sat = &mut self.satellites[sat_idx];
                 sat.state = state;
+                // The component's own time: a walk that stopped early hands
+                // back states from where it stopped.
+                sat.state_t = parts_t;
                 sat.dynamics = Some(dynamics);
                 // Who is left running depends on how the walk ended. An
                 // integration error leaves every satellite at the end of the

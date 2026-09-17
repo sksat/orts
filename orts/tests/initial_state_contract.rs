@@ -942,6 +942,52 @@ fn a_satellite_past_its_end_time_is_left_alone() {
     );
 }
 
+/// A wheel already held cannot be past its bound.
+///
+/// The tolerance the wheel declares is for a state the walk settles at its
+/// start, and the walk only settles what is free: a held mode turns off the
+/// boundary that would have caught the overshoot, so a held wheel a hair past
+/// its bound would run the whole span outside its limit.
+#[test]
+fn a_held_wheel_past_its_bound_is_refused() {
+    const LIMIT: f64 = 1.0;
+
+    let start = |momentum: f64, mode: ConstraintMode| AugmentedState {
+        plant: plant_at(DRY_MASS),
+        aux: vec![momentum],
+        aux_bounds: vec![],
+        modes: vec![mode],
+    };
+
+    // Half a tolerance past the bound: accepted while free, because the walk
+    // settles it before the first step.
+    let (reason, _) = walked(start(LIMIT + 0.5e-12, ConstraintMode::Free), || {
+        with_a_wheel(LIMIT)
+    });
+    assert!(
+        reason.is_none(),
+        "a free wheel a hair past its bound is settled, not refused: {reason:?}"
+    );
+
+    // The same momentum with the mode already holding it: nothing would settle
+    // it, so it is refused.
+    let (reason, _) = walked(start(LIMIT + 0.5e-12, ConstraintMode::Upper), || {
+        with_a_wheel(LIMIT)
+    });
+    let reason = reason.expect("the satellite is terminated rather than propagated");
+    assert!(
+        reason.contains("past the limit"),
+        "the reason says the held wheel is outside its limit, not {reason}"
+    );
+
+    // And a wheel held exactly on its bound starts.
+    let (reason, _) = walked(start(LIMIT, ConstraintMode::Upper), || with_a_wheel(LIMIT));
+    assert!(
+        reason.is_none(),
+        "a wheel held on its bound propagates: {reason:?}"
+    );
+}
+
 /// The lengths come first, because every other path indexes the same offsets.
 #[test]
 fn a_state_whose_vectors_do_not_match_the_registry_is_refused() {

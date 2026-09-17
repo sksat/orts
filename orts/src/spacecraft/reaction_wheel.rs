@@ -632,22 +632,46 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
             if !h.is_finite() {
                 return Err(format!("wheel {index} carries a momentum of {h}"));
             }
-            // With the tolerance the wheel declares for sitting on its bound,
-            // deliberately: a state that arrives a hair past a bound — a
-            // restored state, a command applied between walks — is one the
-            // propagation settles at its start, since a margin that is already
-            // negative offers the search no sign change to find
-            // (`projection_contract.rs`'s
-            // `a_wheel_a_hair_past_its_bound_is_settled_before_it_runs_further`
-            // pins that). Settling a wheel returns the overshoot to the body,
-            // so the total is conserved, and a hair's worth of it changes the
-            // body's rate by a hair. That is what makes this different from the
-            // propellant floor, where settling *adds* mass and the comparison
-            // is strict.
-            if h.abs() > limit + MOMENTUM_TOLERANCE {
-                return Err(format!(
-                    "wheel {index} starts at {h} N·m·s, past its limit of {limit} N·m·s"
-                ));
+            let mode = modes.get(index).copied().unwrap_or_default();
+            match mode {
+                // Free: the tolerance the wheel declares for sitting on its
+                // bound applies, deliberately. A state that arrives a hair past
+                // a bound while free is one the propagation settles at its
+                // start, since a margin that is already negative offers the
+                // search no sign change to find
+                // (`projection_contract.rs`'s
+                // `a_wheel_a_hair_past_its_bound_is_settled_before_it_runs_further`
+                // pins that), and settling returns the overshoot to the body.
+                ConstraintMode::Free => {
+                    if h.abs() > limit + MOMENTUM_TOLERANCE {
+                        return Err(format!(
+                            "wheel {index} starts at {h} N·m·s, past its limit of {limit} N·m·s"
+                        ));
+                    }
+                }
+                // Held: the mode turns off the boundary that would have caught
+                // an overshoot, so nothing settles it and the wheel would run
+                // the span outside its limit. It has to be on its bound, and
+                // not past it.
+                ConstraintMode::Upper | ConstraintMode::Lower => {
+                    let bound = if matches!(mode, ConstraintMode::Upper) {
+                        limit
+                    } else {
+                        -limit
+                    };
+                    if h.abs() > limit {
+                        return Err(format!(
+                            "wheel {index} is held at {bound} N·m·s by its mode while its \
+                             momentum is {h} N·m·s, past the limit"
+                        ));
+                    }
+                    if (h - bound).abs() > MOMENTUM_TOLERANCE {
+                        return Err(format!(
+                            "wheel {index} is held at {bound} N·m·s by its mode while its \
+                             momentum is {h} N·m·s"
+                        ));
+                    }
+                }
             }
             if let Some(torques) = self.core.realized_torque_slice(aux) {
                 let torque = torques[index];
@@ -667,20 +691,6 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
                          limit of {max} N·m"
                     ));
                 }
-            }
-            let mode = modes.get(index).copied().unwrap_or_default();
-            let held_at = match mode {
-                ConstraintMode::Upper => Some(limit),
-                ConstraintMode::Lower => Some(-limit),
-                ConstraintMode::Free => None,
-            };
-            if let Some(bound) = held_at
-                && (h - bound).abs() > MOMENTUM_TOLERANCE
-            {
-                return Err(format!(
-                    "wheel {index} is held at {bound} N·m·s by its mode while its momentum \
-                     is {h} N·m·s"
-                ));
             }
         }
         Ok(())
