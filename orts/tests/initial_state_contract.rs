@@ -272,6 +272,111 @@ fn a_coupled_group_asks_each_satellite_about_its_own_state() {
     );
 }
 
+/// A pair with no force between it: what makes two satellites one coupled
+/// component here is the regime, and a force that pulls nothing leaves the
+/// trajectories the straight lines these assertions read.
+struct NoForce;
+
+impl orts::group::coupled::InterSatelliteForce for NoForce {
+    fn name(&self) -> &str {
+        "none"
+    }
+
+    fn acceleration_pair(
+        &self,
+        _ctx: &orts::group::coupled::PairContext<'_>,
+    ) -> (Vector3<f64>, Vector3<f64>) {
+        (Vector3::zeros(), Vector3::zeros())
+    }
+}
+
+/// Under a scheduler, a refusal takes the satellite that refused and leaves the
+/// rest of its component running.
+///
+/// A coupled component is integrated as one composite state, so an integration
+/// error puts every satellite in it on no trajectory and the scheduler drops
+/// them all. A refused start state is the other case: nothing was stepped, so
+/// the others still hold exactly the state they were handed. What that looks
+/// like from outside is that they keep moving.
+#[test]
+fn a_scheduler_drops_only_the_satellite_that_refused() {
+    use orts::group::RegimeConfig;
+    use orts::group::scheduler::Scheduler;
+
+    const SPEED: f64 = 1.0;
+
+    // Close enough to be one coupled component, so the refusal happens inside
+    // a composite walk rather than in a group of one. Both drift outward, away
+    // from the floor.
+    let moving =
+        |x: f64| OrbitalState::new(Vector3::new(x, 0.0, 0.0), Vector3::new(SPEED, 0.0, 0.0));
+    let mut sched: Scheduler<Floor> = Scheduler::new(
+        RegimeConfig {
+            couple_enter: 10.0,
+            couple_exit: 20.0,
+            sync_enter: 20.0,
+            sync_exit: 30.0,
+            sync_interval: 10.0,
+            min_dwell_time: 0.0,
+        },
+        IntegratorConfig::Rk4 { dt: DT },
+    )
+    .add_satellite("above", moving(FLOOR_X + 1.0), Floor)
+    .add_satellite("below", moving(FLOOR_X - 1.0), Floor)
+    .add_interaction_fixed(
+        "above",
+        "below",
+        orts::group::PairRegime::Coupled,
+        std::sync::Arc::new(NoForce),
+    );
+
+    // The premise: one coupled component, walked as a single composite state.
+    assert_eq!(
+        sched.pair_regime(
+            &orts::group::SatId::from("above"),
+            &orts::group::SatId::from("below")
+        ),
+        Some(orts::group::PairRegime::Coupled),
+        "the two are close enough to be integrated together"
+    );
+
+    let outcome = sched.propagate_to(DT).expect("the scheduler answers");
+    let refused = outcome
+        .terminations
+        .first()
+        .expect("the satellite below the floor is terminated");
+    assert_eq!(
+        refused.satellite_id,
+        orts::group::SatId::from("below"),
+        "the record names the satellite that refused"
+    );
+
+    sched
+        .propagate_to(3.0 * DT)
+        .expect("the scheduler answers again");
+    let x_of = |id: &str| {
+        sched
+            .satellite_state(&orts::group::SatId::from(id))
+            .expect("the satellite is still in the fleet")
+            .position()
+            .x
+    };
+    // The refused call advanced nothing: the component's walk never ran, so the
+    // first second is lost for both of them. What the surviving satellite gets
+    // back is the rest of the span, once the scheduler has regrouped without
+    // the one it dropped.
+    assert!(
+        (x_of("above") - (FLOOR_X + 1.0 + 2.0 * DT * SPEED)).abs() < 1e-9,
+        "the satellite whose state was fine keeps moving, not {}",
+        x_of("above")
+    );
+    assert!(
+        (x_of("below") - (FLOOR_X - 1.0)).abs() < 1e-9,
+        "and the one that refused stays where it was handed over, not {}",
+        x_of("below")
+    );
+}
+
 /// The lengths come first, because every other path indexes the same offsets.
 #[test]
 fn a_state_whose_vectors_do_not_match_the_registry_is_refused() {

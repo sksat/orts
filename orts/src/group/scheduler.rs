@@ -740,8 +740,9 @@ where
                 let sat = &mut self.satellites[sat_idx];
                 sat.state = state;
                 sat.dynamics = Some(dynamics);
-                if parts.terminated && !parts.is_event_termination {
-                    // Integration error: composite ODE state corrupted
+                if parts.terminated && !parts.others_can_continue {
+                    // An integration error leaves the composite state on no
+                    // trajectory, so the whole component goes with it.
                     sat.terminated = true;
                 } else {
                     sat.terminated = term_id.is_some_and(|tid| tid == &sat.id);
