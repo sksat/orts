@@ -117,6 +117,14 @@ pub trait StateEffector<S: HasFrame>: Send + Sync + std::any::Any {
     /// `aux_rates` is the output buffer (length = `state_dim()`). The returned
     /// [`ExternalLoads`] are already in the frame the state is propagated in
     /// ([`HasFrame::Frame`]).
+    ///
+    /// # The state can be outside the physical domain
+    ///
+    /// As for [`Model::eval`](crate::model::Model::eval): a boundary search
+    /// steps past a constraint on purpose, so a stage can arrive with a mass
+    /// of zero or less. Write finite rates and return loads there rather than
+    /// panicking; `SpacecraftDynamics` drops the acceleration and keeps the
+    /// rest.
     fn derivatives(
         &self,
         input: EffectorInput<'_, S>,

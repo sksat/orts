@@ -350,19 +350,31 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     /// disagree with the trajectory on a path that settles no boundaries: the
     /// mode stays `Free` and the thrust keeps being integrated, while a
     /// mass-based comparison would report none.
+    ///
+    /// A state whose mass is not positive gets the same treatment it gets in
+    /// the right-hand side, for the same reason: the acceleration a model
+    /// reports there is an infinity, and a record of an infinity says nothing
+    /// the trajectory did.
     pub fn model_breakdown(
         &self,
         t: f64,
         state: &AugmentedState<SpacecraftState<F>>,
     ) -> Vec<(&str, ExternalLoads<F>)> {
         let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
+        let in_the_domain = mass_is_positive(state.plant.mass);
         self.models_to_evaluate(self.has_propellant(state))
-            .map(|m| (m.name(), m.eval(t, &state.plant, epoch.as_ref())))
+            .map(|m| {
+                let loads = m.eval(t, &state.plant, epoch.as_ref());
+                (m.name(), keep_what_is_finite(loads, in_the_domain))
+            })
             .collect()
     }
 
     /// The models that act on a spacecraft in this state: all of them, and the
     /// propulsion too while there is propellant left to burn.
+    ///
+    /// See [`keep_what_is_finite`] for what happens to what they return at a
+    /// state whose mass is not positive.
     fn models_to_evaluate(
         &self,
         burning: bool,
@@ -519,20 +531,10 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
         // The policy lives here because it is the state that is outside the
         // domain, not any one model.
         let mut total = ExternalLoads::<F>::zeros();
-        let in_the_domain = matches!(
-            state.plant.mass.partial_cmp(&0.0),
-            Some(core::cmp::Ordering::Greater)
-        );
+        let in_the_domain = mass_is_positive(state.plant.mass);
         for model in self.models_to_evaluate(self.has_propellant(state)) {
             let loads = eval_maybe_in_segment(model, segment, t, &state.plant, epoch.as_ref());
-            total += if in_the_domain {
-                loads
-            } else {
-                ExternalLoads {
-                    acceleration_inertial: arika::frame::Vec3::zeros(),
-                    ..loads
-                }
-            };
+            total += keep_what_is_finite(loads, in_the_domain);
         }
 
         // Evaluate state effectors.
@@ -569,14 +571,7 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
                 },
                 rates_slice,
             );
-            total += if in_the_domain {
-                loads
-            } else {
-                ExternalLoads {
-                    acceleration_inertial: arika::frame::Vec3::zeros(),
-                    ..loads
-                }
-            };
+            total += keep_what_is_finite(loads, in_the_domain);
         }
 
         // Total translational acceleration
@@ -680,6 +675,40 @@ impl<G: GravityField, F: Eci + 'static> HasBoundaries for SpacecraftDynamics<G, 
 
     fn boundary_is_active(&self, declared: &DeclaredBoundary, state: &Self::State) -> bool {
         declared.is_active(&state.modes)
+    }
+}
+
+/// Whether a mass is in the domain of `F/m`.
+///
+/// `partial_cmp`, so that a mass that is no number is covered too: a NaN is
+/// comparable to nothing, and what it means here is the same as no mass.
+fn mass_is_positive(mass: f64) -> bool {
+    matches!(mass.partial_cmp(&0.0), Some(core::cmp::Ordering::Greater))
+}
+
+/// What is left of a model's loads at a state outside the domain of `F/m`.
+///
+/// A boundary search steps past a propellant floor on purpose — it re-steps an
+/// interval under the mode that held before the crossing — so a wide enough
+/// step takes a stage below zero mass, and everything that turns a force into
+/// an acceleration divides by the mass there. That half is dropped: nothing
+/// about such a state is physical, and what the search needs back from it is a
+/// finite number.
+///
+/// The mass rate is kept, because it is not singular in the mass and it is
+/// what the search reads the crossing from. Measured: 99 kg of propellant at
+/// 1 kg/s in a hundred-second RK4 step has its last stage at zero mass, and
+/// with that stage's flow suppressed the step ends at 16.67 kg — both ends
+/// above the 1 kg floor, no change of sign, and the crossing at 99 s is not
+/// located until a later step.
+fn keep_what_is_finite<F: Eci>(loads: ExternalLoads<F>, in_the_domain: bool) -> ExternalLoads<F> {
+    if in_the_domain {
+        loads
+    } else {
+        ExternalLoads {
+            acceleration_inertial: arika::frame::Vec3::zeros(),
+            ..loads
+        }
     }
 }
 
@@ -1043,6 +1072,17 @@ mod tests {
                 "and the burn keeps its flow there, at {}",
                 d.plant.mass
             );
+
+            // The record of such a state says the same thing the trajectory
+            // did: a telemetry sample taken at a state a walk is about to
+            // discard would otherwise carry an infinity.
+            for (name, loads) in dynamics.model_breakdown(0.0, &state) {
+                assert!(
+                    loads.acceleration_inertial.is_finite(),
+                    "{name} reports {:?} at a mass of {mass}",
+                    loads.acceleration_inertial
+                );
+            }
         }
     }
 

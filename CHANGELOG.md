@@ -330,9 +330,12 @@ section is subdivided by package.
   floor, and the mode it carries is what stops every consumer of that
   propellant. A state with no mass — which a search reaches on purpose, since
   it re-steps an interval under the mode that held before the crossing — is
-  outside the domain of every model that turns a force into an acceleration,
-  so none of them is evaluated there; without that the derivative was
-  `[inf, NaN, NaN]` and the walk failed on a state it was going to discard. The same case now lands on the floor and gains Tsiolkovsky's ΔV
+  outside the domain of `F/m`, so the system drops the acceleration every model
+  and effector reported there and keeps the rest; without that the derivative
+  was `[inf, NaN, NaN]` and the walk failed on a state it was going to discard.
+  The mass rate is what is kept: it is not singular in the mass, and it is what
+  carries a step's endpoint across the floor, so suppressing it would leave both
+  ends of a wide step above the floor and hide the crossing inside it. The same case now lands on the floor and gains Tsiolkovsky's ΔV
   to within 1e-6 m/s under RK4, DP45 and DOP853. What is left over is the
   impulse for the propellant burned past the floor before the crossing was
   located, which is `ṁ · t_tolerance` of it — a nanosecond of localization is

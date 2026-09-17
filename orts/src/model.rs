@@ -188,6 +188,18 @@ pub trait Model<S: HasFrame>: Send + Sync {
     ///
     /// `epoch` is the absolute time corresponding to integration time `t`.
     /// It is `None` when no initial epoch was provided.
+    ///
+    /// # The state can be outside the physical domain
+    ///
+    /// A boundary search re-steps an interval under the mode that held before
+    /// the crossing, so it steps past a constraint on purpose: past a
+    /// propellant floor, and with a wide enough step to a stage whose mass is
+    /// zero or negative. Such a state is handed to every model the system
+    /// evaluates. Return loads for it rather than panicking — `F / mass` there
+    /// is an infinity, which is a number, and `SpacecraftDynamics` drops the
+    /// acceleration it cannot use while keeping the mass rate the search reads
+    /// the crossing from. What the bisection needs back from a state it is
+    /// about to discard is a value, not a failure.
     fn eval(&self, t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<S::Frame>;
 
     /// The next time after `t` at which this model's loads change
