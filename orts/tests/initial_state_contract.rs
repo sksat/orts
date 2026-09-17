@@ -203,6 +203,56 @@ fn a_wheel_held_by_its_mode_away_from_its_bound_is_refused() {
     );
 }
 
+/// A state that dropped the bounds its effectors declared is refused.
+///
+/// `aux_bounds` empty means unbounded, which is a legal state only where
+/// nothing declared a bound to lose. A wheel with motor lag projects its
+/// realized torque onto its own limit, so a restored state without those
+/// bounds would be projected onto nothing — silently, since projection reads
+/// the state's own vector.
+#[test]
+fn a_state_that_dropped_declared_bounds_is_refused() {
+    const LIMIT: f64 = 1.0;
+    const TORQUE: f64 = 0.1;
+
+    let wheel = Rw::new(Vector3::x(), 0.01, LIMIT, TORQUE).with_motor_lag(0.05);
+    let with_lag = || {
+        SpacecraftDynamics::new(1e-30, PointMass, Matrix3::identity())
+            .with_effector(ReactionWheelAssembly::new(vec![wheel.clone()]))
+    };
+    // Momentum and realized torque, both inside their limits — and no bounds.
+    let start = AugmentedState {
+        plant: plant_at(DRY_MASS),
+        aux: vec![0.1 * LIMIT, 0.0],
+        aux_bounds: vec![],
+        modes: vec![ConstraintMode::Free],
+    };
+    let (reason, _) = walked(start, with_lag);
+
+    let reason = reason.expect("the satellite is terminated rather than propagated");
+    assert!(
+        reason.contains("bounds"),
+        "the reason says the state carries no bounds for values that have them, not {reason}"
+    );
+
+    // The same state with the bounds the effectors declared starts.
+    let system = with_lag();
+    let full = AugmentedState {
+        aux_bounds: system.declared_aux_bounds(),
+        ..AugmentedState {
+            plant: plant_at(DRY_MASS),
+            aux: vec![0.1 * LIMIT, 0.0],
+            aux_bounds: vec![],
+            modes: vec![ConstraintMode::Free],
+        }
+    };
+    let (reason, _) = walked(full, with_lag);
+    assert!(
+        reason.is_none(),
+        "with its bounds it propagates: {reason:?}"
+    );
+}
+
 /// A system with a floor of its own, for the path a spacecraft cannot take.
 ///
 /// `CoupledGroup` needs a state an interaction force can be turned into
@@ -576,6 +626,54 @@ fn the_closing_kick_is_asked_about_before_the_run_ends() {
         (refused.t - DT).abs() < 1e-9,
         "and it belongs to the end of the interval, not {}",
         refused.t
+    );
+}
+
+/// A satellite whose own end time is the interval's end was still flown in it,
+/// so the closing kick is asked about for it too.
+///
+/// The two skips pull in opposite directions here: a satellite that finished
+/// earlier must not be judged at this instant, and one finishing exactly now
+/// must be — it took the kick that made its final state unusable, and nothing
+/// after this will ask.
+#[test]
+fn a_satellite_finishing_at_the_interval_end_is_asked_about_its_kick() {
+    use orts::group::RegimeConfig;
+    use orts::group::scheduler::Scheduler;
+
+    const SHOVE: f64 = 6.0 / DT;
+
+    let at = |x: f64| OrbitalState::new(Vector3::new(x, 0.0, 0.0), Vector3::zeros());
+    let mut sched: Scheduler<SpeedLimit> = Scheduler::new(
+        RegimeConfig {
+            couple_enter: 10.0,
+            couple_exit: 20.0,
+            sync_enter: 20.0,
+            sync_exit: 30.0,
+            sync_interval: DT,
+            min_dwell_time: 0.0,
+        },
+        IntegratorConfig::Rk4 { dt: DT },
+    )
+    .add_satellite_until("kicked", at(FLOOR_X), DT, SpeedLimit)
+    .add_satellite("kicker", at(FLOOR_X + 1e6), SpeedLimit)
+    .add_interaction_fixed(
+        "kicked",
+        "kicker",
+        orts::group::PairRegime::Synchronized,
+        std::sync::Arc::new(Shove(SHOVE)),
+    );
+
+    let outcome = sched.propagate_to(DT).expect("the scheduler answers");
+    let refused = outcome
+        .terminations
+        .iter()
+        .find(|t| t.satellite_id == orts::group::SatId::from("kicked"))
+        .expect("the satellite that finishes here is still asked about its own kick");
+    assert!(
+        refused.reason.contains("over the speed limit"),
+        "the reason is the speed the kick gave it, not {}",
+        refused.reason
     );
 }
 

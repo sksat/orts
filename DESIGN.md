@@ -137,7 +137,7 @@ event で、既存の終了 event (`ControlFlow` を返す checker、受理し�
 ### 伝播を開始する state の契約
 
 境界を持つ系は、渡された state を「自分の拘束で伝播を開始できる state か」で判定する
-(`HasBoundaries::validate_walk_start`、既定は `Ok(())`)。判定は目標時刻まで刻むループ
+(`HasBoundaries::validate_boundary_walk_start`、既定は `Ok(())`)。判定は目標時刻まで刻むループ
 (`walk_to_target`) の入口で 1 度、最初の境界処理より前に行う。
 
 - **判定を derivatives に置かない。** 探索は交差の向こう側を意図的に試すので、試行 state は

@@ -236,12 +236,6 @@ where
     }
 }
 
-/// The boundaries of every satellite in the group, each stamped with whose it
-/// is.
-///
-/// A coupled group keeps one state per satellite and integrates them together,
-/// so a boundary is one satellite's: the index rides along in the declaration
-/// and every question about it is forwarded to that satellite's own system.
 /// Why a coupled component's walk ended before its target.
 ///
 /// What a caller does about it differs by kind: an event ends the run for the
@@ -261,6 +255,10 @@ pub enum ComponentStop {
 }
 
 /// The satellite a refused start state belongs to, where the error names one.
+///
+/// A group refusing its own shape — a state carrying a different number of
+/// satellites than the group has — names none, so a caller reading this cannot
+/// tell a refusal from a solver failure; [`ComponentStop`] is what says which.
 fn refusing_satellite(e: &BoundaryWalkError) -> Option<usize> {
     match e {
         BoundaryWalkError::StartRejected { error, .. } => error.satellite,
@@ -268,6 +266,12 @@ fn refusing_satellite(e: &BoundaryWalkError) -> Option<usize> {
     }
 }
 
+/// The boundaries of every satellite in the group, each stamped with whose it
+/// is.
+///
+/// A coupled group keeps one state per satellite and integrates them together,
+/// so a boundary is one satellite's: the index rides along in the declaration
+/// and every question about it is forwarded to that satellite's own system.
 impl<D: DynamicalSystem + HasBoundaries> HasBoundaries for CoupledGroupDynamics<D>
 where
     D::State: HasPosition + FromAcceleration,
@@ -708,9 +712,12 @@ where
                     // was integrated where the walk was refused, so every other
                     // satellite still holds the state it was handed at the time
                     // these parts carry.
-                    self.stop = Some(match refusing_satellite(&e) {
-                        Some(_) => ComponentStop::StartRefused,
-                        None => ComponentStop::IntegrationError,
+                    // Read from the variant, not from the satellite index: a
+                    // group refusing its own shape names no satellite and is
+                    // still a refusal.
+                    self.stop = Some(match &e {
+                        BoundaryWalkError::StartRejected { .. } => ComponentStop::StartRefused,
+                        BoundaryWalkError::Integration(_) => ComponentStop::IntegrationError,
                     });
                     // Pre-flight rejections (bad dt/tolerances) carry no time
                     // of their own; attribute them to where the stepper was

@@ -100,7 +100,7 @@ classDiagram
     +boundary_value(declared, t, y) f64
     +settle_boundary(declared, y)
     +boundary_is_active(declared, y) bool
-    +validate_boundary_walk_start(y) Result
+    +validate_boundary_walk_start(t, y) Result
   }
 
   OdeState <|.. OrbitalState

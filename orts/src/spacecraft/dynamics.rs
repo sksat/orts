@@ -177,6 +177,20 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
             .is_none_or(|mode| *mode == ConstraintMode::Free)
     }
 
+    /// The projection bounds every registered effector declared, concatenated
+    /// in registration order.
+    ///
+    /// What [`initial_augmented_state`](Self::initial_augmented_state) puts in
+    /// a new state, and what the start-state check measures a handed-over
+    /// state against.
+    pub fn declared_aux_bounds(&self) -> Vec<(f64, f64)> {
+        let mut bounds = Vec::with_capacity(self.registry.total_dim());
+        for eff in &self.effectors {
+            bounds.extend(eff.aux_bounds());
+        }
+        bounds
+    }
+
     /// Add a state effector (builder pattern).
     ///
     /// A [`PropellantPool`] registered here is registered as the pool, exactly
@@ -234,10 +248,7 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
         &self,
         plant: SpacecraftState<F>,
     ) -> AugmentedState<SpacecraftState<F>> {
-        let mut bounds = Vec::with_capacity(self.registry.total_dim());
-        for eff in &self.effectors {
-            bounds.extend(eff.aux_bounds());
-        }
+        let bounds = self.declared_aux_bounds();
         let mut modes = vec![ConstraintMode::default(); self.registry.total_modes()];
         // A spacecraft can start with an empty tank, and no search would find
         // that: a margin of exactly zero has not been crossed. Its mode says
@@ -759,10 +770,21 @@ impl<G: GravityField, F: Eci + 'static> HasBoundaries for SpacecraftDynamics<G, 
                 self.registry.total_dim()
             )));
         }
-        if !state.aux_bounds.is_empty() && state.aux_bounds.len() != aux {
+        // `aux_bounds` empty means unbounded, which is a state to accept only
+        // where no effector declared a bound to lose: a wheel's realized
+        // torque is projected onto its own limit, and a restored state that
+        // dropped those bounds would silently be projected onto nothing.
+        let declared = self.declared_aux_bounds();
+        let bounds_to_lose = declared
+            .iter()
+            .any(|(low, high)| low.is_finite() || high.is_finite());
+        let unbounded_is_enough = state.aux_bounds.is_empty() && !bounds_to_lose;
+        if !unbounded_is_enough && state.aux_bounds.len() != aux {
             return Err(crate::boundary::StartStateError::new(format!(
-                "the state carries {} bounds for {aux} auxiliary values",
-                state.aux_bounds.len()
+                "the state carries {} bounds for {aux} auxiliary values, where the \
+                 registered effectors declared {}",
+                state.aux_bounds.len(),
+                declared.len()
             )));
         }
         for (effector, entry) in self.effectors.iter().zip(self.registry.entries()) {

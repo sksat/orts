@@ -554,8 +554,10 @@ where
     E: Fn(f64, &AugmentedState<SpacecraftState>) -> ControlFlow<String>,
 {
     // Anything that can say what went wrong: the solver's own errors, and the
-    // system's refusal of the state a boundary walk was handed.
-    let span = |e: &dyn std::fmt::Display| format!("integration failed on [{t0:.3}, {t1:.3}]: {e}");
+    // system's refusal of the state a boundary walk was handed. The wording is
+    // about the span rather than about integrating, since a refused state is
+    // not something the solver failed at.
+    let span = |e: &dyn std::fmt::Display| format!("propagation failed on [{t0:.3}, {t1:.3}]: {e}");
 
     // Before the no-op guard: `t1 <= t0` is true for a `t0` of `+inf`, so an
     // invalid span would be reported as one already covered. `Segments::new`

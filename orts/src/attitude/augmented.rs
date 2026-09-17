@@ -371,10 +371,19 @@ impl crate::boundary::HasBoundaries for AugmentedAttitudeSystem {
                 self.registry.total_dim()
             )));
         }
-        if !state.aux_bounds.is_empty() && state.aux_bounds.len() != aux {
+        // As in `SpacecraftDynamics`: empty means unbounded, which is a state
+        // to accept only where no effector declared a bound to lose.
+        let declared = self.initial_aux_bounds();
+        let bounds_to_lose = declared
+            .iter()
+            .any(|(low, high)| low.is_finite() || high.is_finite());
+        let unbounded_is_enough = state.aux_bounds.is_empty() && !bounds_to_lose;
+        if !unbounded_is_enough && state.aux_bounds.len() != aux {
             return Err(StartStateError::new(format!(
-                "the state carries {} bounds for {aux} auxiliary values",
-                state.aux_bounds.len()
+                "the state carries {} bounds for {aux} auxiliary values, where the \
+                 registered effectors declared {}",
+                state.aux_bounds.len(),
+                declared.len()
             )));
         }
         let context = DecoupledContext {
