@@ -143,6 +143,12 @@ classDiagram
 - System は 3 種類 — `OrbitalSystem` / `AttitudeSystem` /
   `SpacecraftDynamics` — いずれも state と `Vec<Box<dyn Model<S>>>` を
   束ねる `DynamicalSystem`。
+- `SpacecraftDynamics` は、推進剤を使う model を通常の model (`with_model`) とは別の list
+  (`with_propulsion`) で持つ。`PropellantPool` が止めるのはこの集合だからである。プールは連続状態を
+  持たない `StateEffector` で、持っているのは「タンクが空か」を言う離散モードと、尽きたときに
+  伝播が時刻を求める境界である。質量流量やモデル名から止める対象を推測すると外れるので、集合を
+  分けて答えにしている。telemetry の breakdown も同じモードを読むので、記録だけで推力が出ることは
+  ない。
 - 一方向拘束を持つ System は `HasBoundaries` も実装する。どの境界があるか、
   ある state での各境界の余裕がいくらか (境界の手前で正、境界上で 0、越えると
   負)、境界に到達したとき何を境界上に載せるかに答える。全 method に既定実装が

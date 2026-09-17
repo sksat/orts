@@ -347,8 +347,9 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     ///
     /// Every one of them, whether it acts at a given state or not: this takes
     /// no state, so it cannot say whether a tank still has propellant. The
-    /// breakdowns do, and they leave the propulsion out where the pool's mode
-    /// says the tank is empty.
+    /// breakdowns do — they skip *evaluating* a propulsion model the pool has
+    /// switched off, and keep its entry as a zero, so a record has one column
+    /// per name here whatever the tank holds.
     pub fn model_names(&self) -> Vec<&str> {
         self.models
             .iter()
