@@ -203,12 +203,12 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
         // that the generic path cannot leave one the system does not know
         // about: its floor would be a boundary that stops no thruster, and no
         // state would carry the mode it needs.
-        if let Some(pool) = (&*boxed as &dyn std::any::Any).downcast_ref::<PropellantPool>() {
+        if let Some(pool) = pool_that(boxed.as_ref()) {
             assert!(
                 self.pool.is_none(),
                 "a spacecraft has one propellant pool, and this one already has one"
             );
-            self.pool = Some((*pool, index));
+            self.pool = Some((pool, index));
         }
         self.effectors.push(boxed);
         self
@@ -728,6 +728,20 @@ impl<G: GravityField, F: Eci + 'static> HasBoundaries for SpacecraftDynamics<G, 
     fn boundary_is_active(&self, declared: &DeclaredBoundary, state: &Self::State) -> bool {
         declared.is_active(&state.modes)
     }
+}
+
+/// The propellant pool this effector is, if it is one.
+///
+/// [`StateEffector`] has [`Any`](std::any::Any) as a supertrait, so a
+/// registered effector can be asked what concrete type it is. This is the one
+/// place that asks, and what it is for: a pool registered through the generic
+/// [`with_effector`](SpacecraftDynamics::with_effector) is still the
+/// spacecraft's pool, and a system that did not recognise it would carry a
+/// floor that stops no thruster.
+fn pool_that<S: crate::model::HasFrame>(effector: &dyn StateEffector<S>) -> Option<PropellantPool> {
+    (effector as &dyn std::any::Any)
+        .downcast_ref::<PropellantPool>()
+        .copied()
 }
 
 /// Whether a mass is in the domain of `F/m`.

@@ -116,6 +116,15 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   それぞれが RHS の中で行っていた比較 (`state.mass <= dry_mass`) は境界の探索と両立しない:
   刻み直した区間のステージ間で切り替わり、交差の時刻を誤って報告する。`orts.toml` も同じ要求で、
   `[satellites.thruster] dry_mass` は必須で正の値である (以前は既定値 0)。
+- **BREAKING**: `SpacecraftDynamics` の 4 つの load breakdown (`model_breakdown` /
+  `torque_breakdown` / `acceleration_breakdown` / `load_breakdown`) が
+  `&SpacecraftState<F>` ではなく `&AugmentedState<SpacecraftState<F>>` を取る。噴射するかどうかは
+  プールのモード、つまり右辺と同じ値で決まり、モードは augmented state にある。質量を読む形では、
+  境界を処理しない経路で記録と軌道が食い違った。`sat.state` を持っている呼び出し側は、`.plant` に
+  入らずそのまま渡す。
+- **BREAKING**: `BoundaryExchange` に `mass: Option<f64>` (境界が決める質量) が増えた。角運動量
+  だけ返す effector は `BoundaryExchange { angular_momentum_body, ..Default::default() }` と
+  書けばそのままコンパイルでき、この書き方なら後でフィールドが増えても壊れない。
 - **BREAKING**: 状態が限界に達する時刻をどこまで詰めて求めるかを設定にした (これまでは
   各経路が既定の 1 ms を埋め込んでいた)。`IndependentGroup::with_root_search` と
   `CoupledGroup::with_root_search` が `RootSearch` を取り、`propagate_controlled` は

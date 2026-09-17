@@ -149,6 +149,19 @@ section is subdivided by package.
   interval, which reports a crossing at the wrong time. `orts.toml` grows the
   same requirement — `[satellites.thruster] dry_mass` is required and must be
   positive, where it used to default to zero.
+- **BREAKING**: the four load breakdowns of `SpacecraftDynamics` —
+  `model_breakdown`, `torque_breakdown`, `acceleration_breakdown` and
+  `load_breakdown` — take `&AugmentedState<SpacecraftState<F>>` where they took
+  `&SpacecraftState<F>`. Whether the propulsion burns is the pool's mode, the
+  same value the right-hand side gates on, and a mode lives in the augmented
+  state; reading the mass instead let a record disagree with the trajectory on
+  a path that settles no boundaries. A caller holding `sat.state` passes it
+  whole rather than reaching into `.plant`.
+- **BREAKING**: `BoundaryExchange` gains `mass: Option<f64>`, the mass a
+  boundary fixes. An effector that returns only angular momentum keeps
+  compiling by filling the rest in — `BoundaryExchange { angular_momentum_body,
+  ..Default::default() }` — which is also what keeps a later field from
+  breaking it.
 - **BREAKING**: how closely the propagation locates the time a state reaches a
   limit is a setting rather than the 1 ms default every path hard-coded.
   `IndependentGroup::with_root_search` and `CoupledGroup::with_root_search` take
