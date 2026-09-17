@@ -548,7 +548,7 @@ where
             // `sync_target`, holding states that belong to an instant they
             // never reached. Dropping the ones that refuse leaves a grouping
             // whose members can all be flown.
-            all_terminations.extend(self.drop_satellites_that_cannot_start_at(self.t, self.t));
+            all_terminations.extend(self.drop_satellites_that_cannot_start_at(self.t, self.t, &[]));
 
             // Re-evaluate pair regimes based on current distances
             self.update_pair_regimes();
@@ -573,7 +573,8 @@ where
                 // before the drift keeps the refusal out of the composite walk,
                 // which is what would otherwise leave a component's other
                 // members at this interval's start.
-                let kicked_into_refusal = self.drop_satellites_that_cannot_start_at(self.t, self.t);
+                let kicked_into_refusal =
+                    self.drop_satellites_that_cannot_start_at(self.t, self.t, &[]);
                 let after_kick = (!kicked_into_refusal.is_empty()).then(|| {
                     all_terminations.extend(kicked_into_refusal);
                     // Without the ones just dropped: a component held together
@@ -599,9 +600,18 @@ where
                     // below — so a satellite it puts past a constraint would be
                     // handed back with nothing left to ask about it.
                     let interval_started_at = self.t;
-                    all_terminations.extend(
-                        self.drop_satellites_that_cannot_start_at(sync_target, interval_started_at),
-                    );
+                    // Only about the satellites whose states really are at this
+                    // interval's end. A coupled component an event stopped
+                    // early recovered its members at the time the walk stopped,
+                    // so asking about them here would judge them against a
+                    // context they never reached.
+                    let stopped_early =
+                        self.satellites_in_components_that_stopped(&grouping, &all_terminations);
+                    all_terminations.extend(self.drop_satellites_that_cannot_start_at(
+                        sync_target,
+                        interval_started_at,
+                        &stopped_early,
+                    ));
                     self.t = sync_target;
                     break;
                 }
@@ -618,9 +628,11 @@ where
                 // would be published as a satellite's own. Asked about the
                 // instant it now belongs to.
                 let interval_started_at = self.t;
-                all_terminations.extend(
-                    self.drop_satellites_that_cannot_start_at(sync_target, interval_started_at),
-                );
+                all_terminations.extend(self.drop_satellites_that_cannot_start_at(
+                    sync_target,
+                    interval_started_at,
+                    &[],
+                ));
             }
 
             self.t = sync_target;
@@ -698,11 +710,12 @@ where
         &mut self,
         asked_at: f64,
         flown_from: f64,
+        skip: &[usize],
     ) -> Vec<SatelliteTermination> {
         let t = asked_at;
         let mut dropped = Vec::new();
-        for sat in &mut self.satellites {
-            if !sat.is_to_propagate(flown_from) {
+        for (index, sat) in self.satellites.iter_mut().enumerate() {
+            if skip.contains(&index) || !sat.is_to_propagate(flown_from) {
                 continue;
             }
             let Some(dynamics) = sat.dynamics.as_ref() else {
@@ -718,6 +731,30 @@ where
             }
         }
         dropped
+    }
+
+    /// The satellites of every coupled component that stopped before the
+    /// interval's end, by index.
+    ///
+    /// A component is walked as one composite state, so when one of its
+    /// satellites stops, the whole component's states are recovered at the
+    /// time the walk stopped rather than at the interval's end. An independent
+    /// satellite's stop is its own, so its peers are unaffected.
+    fn satellites_in_components_that_stopped(
+        &self,
+        grouping: &Grouping,
+        terms: &[SatelliteTermination],
+    ) -> Vec<usize> {
+        let stopped: Vec<usize> = terms
+            .iter()
+            .filter_map(|t| self.satellites.iter().position(|s| s.id == t.satellite_id))
+            .collect();
+        grouping
+            .coupled_components
+            .iter()
+            .filter(|comp| comp.iter().any(|idx| stopped.contains(idx)))
+            .flat_map(|comp| comp.iter().copied())
+            .collect()
     }
 
     /// Build the grouping structure from current pair regimes.

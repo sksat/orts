@@ -242,7 +242,11 @@ where
 /// satellite it names, a refused start state means nothing was integrated at
 /// the time the parts carry, and an integration error leaves every satellite at
 /// the end of the last segment that finished.
+///
+/// `#[non_exhaustive]`: a walk gaining another way to end should not break a
+/// downstream `match`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ComponentStop {
     /// The caller's check answered `ControlFlow::Break` for one satellite.
     Event,

@@ -204,7 +204,11 @@ impl core::fmt::Display for StartStateError {
 /// The solver's own failures, and the one the system reports about the state
 /// the walk was handed: those come from the caller's input rather than from the
 /// integration, so they are named apart from it.
+///
+/// `#[non_exhaustive]`, as [`IntegrationError`] is: a walk gaining a way to fail
+/// should not break a downstream `match`.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum BoundaryWalkError {
     /// The solver or the boundary search failed.
     Integration(IntegrationError),
