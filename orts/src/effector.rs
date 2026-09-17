@@ -117,6 +117,14 @@ pub trait StateEffector<S: HasFrame>: Send + Sync + std::any::Any {
     /// `aux_rates` is the output buffer (length = `state_dim()`). The returned
     /// [`ExternalLoads`] are already in the frame the state is propagated in
     /// ([`HasFrame::Frame`]).
+    ///
+    /// # The state can be outside the physical domain
+    ///
+    /// As for [`Model::eval`](crate::model::Model::eval): a boundary search
+    /// steps past a constraint on purpose, so a stage can arrive with a mass
+    /// of zero or less. Write finite rates and return loads there rather than
+    /// panicking; `SpacecraftDynamics` drops the acceleration and keeps the
+    /// rest.
     fn derivatives(
         &self,
         input: EffectorInput<'_, S>,
@@ -264,6 +272,26 @@ pub struct BoundaryExchange {
     /// angular momentum into a rate, so the frame is part of the type: a
     /// correction expressed in any other frame cannot be built here.
     pub angular_momentum_body: Vec3<Body>,
+    /// The mass the plant is left with, where a boundary fixes it [kg].
+    ///
+    /// This is not the same kind of exchange the angular momentum is: a
+    /// spacecraft that burned past its propellant floor cannot be given the
+    /// propellant back, because the exhaust carried it — and its momentum —
+    /// out of the system. What this corrects is the state: the mass belongs on
+    /// the floor, and the impulse for the propellant it spent below the floor
+    /// stays in the velocity, as the error of locating the time.
+    pub mass: Option<f64>,
+}
+
+impl Default for BoundaryExchange {
+    /// Nothing to give back: the effector moved its own state and the plant
+    /// keeps what it has.
+    fn default() -> Self {
+        Self {
+            angular_momentum_body: Vec3::zeros(),
+            mass: None,
+        }
+    }
 }
 
 /// Check that every boundary an effector declares names a mode it registered.

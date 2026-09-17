@@ -628,6 +628,7 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
         aux[index] = bound;
         Some(BoundaryExchange {
             angular_momentum_body: arika::frame::Vec3::from_raw(overshoot * wheel.axis()),
+            ..Default::default()
         })
     }
 

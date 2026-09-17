@@ -11,6 +11,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `orts` (Rust, crates.io)
 
 #### Added
+- `PropellantPool` を追加した。宇宙機が積む推進剤をプール 1 つ・床 1 つで表し、残量は state が
+  床より上に持っている質量である。床 0 は拒否する (`F/m` の特異点に床を置くことになる。境界の探索は
+  交差前のモードで区間を刻み直すので、床を越えて試行するのが設計である)。
+  `SpacecraftDynamics::with_propellant` がプールを、`with_propulsion` がそれを消費する model を
+  登録する。推進系の model は他の model と同じに評価され、プールが空になったら一切評価されない。
+  どの model が推進剤を使うかは呼び出し側が言う: 質量流量の符号や名前から推測すると、drag や
+  reaction wheel まで止めてしまう。
 - `SpacecraftDynamics::load_breakdown` を追加。加速度の magnitude と body torque を、
   全モデル 1 回の評価から `LoadBreakdown` (`orts::spacecraft` から re-export) で返す。`ExternalLoads` が両方を持っているので、両方を欲しい
   呼び出し側 (1 サンプルを報告する telemetry) が全モデルを 2 回評価する理由はない。
@@ -102,6 +109,22 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   variant で表される。([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
+- **BREAKING**: thruster も assembly も dry mass を持たなくなった。
+  `ThrusterSpec::dry_mass` / `Thruster::with_dry_mass` / `ThrusterSpec::with_dry_mass` と
+  `ThrusterAssemblyCore::new` の第 2 引数を削除し、床は宇宙機のもの (`PropellantPool`、dynamics に
+  登録する) にした。推進器がそれぞれ床を持つと、いつ宇宙機が空になるかで食い違える。さらに、
+  それぞれが RHS の中で行っていた比較 (`state.mass <= dry_mass`) は境界の探索と両立しない:
+  刻み直した区間のステージ間で切り替わり、交差の時刻を誤って報告する。`orts.toml` も同じ要求で、
+  `[satellites.thruster] dry_mass` は必須で正の値である (以前は既定値 0)。
+- **BREAKING**: `SpacecraftDynamics` の 4 つの load breakdown (`model_breakdown` /
+  `torque_breakdown` / `acceleration_breakdown` / `load_breakdown`) が
+  `&SpacecraftState<F>` ではなく `&AugmentedState<SpacecraftState<F>>` を取る。噴射するかどうかは
+  プールのモード、つまり右辺と同じ値で決まり、モードは augmented state にある。質量を読む形では、
+  境界を処理しない経路で記録と軌道が食い違った。`sat.state` を持っている呼び出し側は、`.plant` に
+  入らずそのまま渡す。
+- **BREAKING**: `BoundaryExchange` に `mass: Option<f64>` (境界が決める質量) が増えた。角運動量
+  だけ返す effector は `BoundaryExchange { angular_momentum_body, ..Default::default() }` と
+  書けばそのままコンパイルでき、この書き方なら後でフィールドが増えても壊れない。
 - **BREAKING**: 状態が限界に達する時刻をどこまで詰めて求めるかを設定にした (これまでは
   各経路が既定の 1 ms を埋め込んでいた)。`IndependentGroup::with_root_search` と
   `CoupledGroup::with_root_search` が `RootSearch` を取り、`propagate_controlled` は
@@ -233,6 +256,20 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   1 つ足すのは `with_occulter`。古いフィールドを名前で書いた struct literal は
   コンパイルできなくなる。([#469](https://github.com/sksat/orts/pull/469))
 #### Fixed
+- 推進剤の床をステップの内側で跨ぐ燃焼が、宇宙機が持っていない推進剤を使っていた。thruster は
+  「質量が床にあるか」を渡された state で判定していたので、跨いだステップは全開で燃え続けた。
+  [#446] の実測では、残量 0.04 kg・推力 196.133 N・1 秒刻みで、最終質量が床を 0.01 kg 下回り、
+  ΔV は実在する推進剤ぶんの Tsiolkovsky 値 0.784375 m/s に対して 0.980273 m/s (24.98 % 過大)
+  だった。枯渇は伝播が時刻を求める境界になった: `PropellantPool` が申告し、質量を床に載せ、
+  そのモードがこの推進剤を使う全ての消費者を止める。
+  質量のない state (探索は交差前のモードで区間を刻み直すので、そこに達するのは設計である) は
+  `F/m` の領域の外なので、model と effector が返した加速度を系が落とし、残りはそのまま使う。
+  これがないと導関数は `[inf, NaN, NaN]` になり、捨てる予定の state で walk が失敗する。残す方の
+  質量流量は質量によらず、ステップの終端を床の向こうへ運ぶ項でもある: 潰すと床をまたぐステップの
+  両端が床より上に残り、交差が次のステップまで報告されない。同じ条件で質量は床に乗り、ΔV は RK4 / DP45 /
+  DOP853 のいずれでも Tsiolkovsky 値と 1e-6 m/s 以内で一致する。残るのは、交差を局在化する前に
+  床より下で燃やした推進剤ぶんの力積 (`ṁ · t_tolerance`) である。1 ナノ秒の局在化なら 1e-10 kg で、
+  2e-9 m/s に相当する。
 - 角運動量の上限に達した reaction wheel が、宇宙機の全角運動量を減らしていた。
   0.53 N·m·s のホイールを 0.1 N·m で駆動する 20 秒の伝播で、body frame の合計
   `I·ω + Σ aᵢ hᵢ` は `dt = 0.25` の RK4 で 7.5e-3 N·m·s、`atol = rtol = 1e-3` の

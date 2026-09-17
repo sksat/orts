@@ -9,7 +9,7 @@ use arika::frame::{Eci, SimpleEci};
 use nalgebra::Matrix3;
 use utsuroi::{DynamicalSystem, SegmentContext};
 
-use super::{ExternalLoads, SpacecraftState};
+use super::{ExternalLoads, PropellantPool, SpacecraftState};
 
 /// Coupled orbit-attitude dynamics for a rigid spacecraft.
 ///
@@ -36,6 +36,17 @@ pub struct SpacecraftDynamics<G: GravityField, F: Eci = SimpleEci> {
     inertia: Matrix3<f64>,
     inertia_inv: Matrix3<f64>,
     models: Vec<Box<dyn Model<SpacecraftState<F>>>>,
+    /// Models that draw on the propellant, kept apart from the rest so that
+    /// running dry stops them and nothing else. Which models those are is the
+    /// caller's to say — guessing from a negative mass rate or from a name
+    /// would stop drag or a wheel too.
+    propulsion: Vec<Box<dyn Model<SpacecraftState<F>>>>,
+    /// The propellant every one of them draws from, with the floor under the
+    /// spacecraft's mass, and which effector it was registered as — its mode
+    /// is what says whether there is anything left to burn. `None` for a
+    /// spacecraft that carries none, which is every spacecraft with no
+    /// propulsion registered.
+    pool: Option<(PropellantPool, usize)>,
     effectors: Vec<Box<dyn StateEffector<SpacecraftState<F>>>>,
     registry: AuxRegistry,
     epoch_0: Option<Epoch>,
@@ -71,6 +82,8 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
             inertia,
             inertia_inv,
             models: Vec::new(),
+            propulsion: Vec::new(),
+            pool: None,
             effectors: Vec::new(),
             registry: AuxRegistry::new(),
             epoch_0: None,
@@ -85,7 +98,91 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
         self
     }
 
+    /// The propellant this spacecraft carries, as a floor under its mass.
+    ///
+    /// One pool per spacecraft: every model registered with
+    /// [`with_propulsion`](Self::with_propulsion) draws from it, and what is
+    /// left is the mass the state carries above the floor.
+    ///
+    /// The pool is registered as an effector, which is how running dry becomes
+    /// a boundary the propagation locates: it carries no auxiliary state of its
+    /// own — the mass is the plant's — but it carries the mode that says
+    /// whether there is anything left to burn, and it declares the floor as a
+    /// boundary.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a pool is already registered. Two pools would be two floors,
+    /// which is what this exists to prevent.
+    pub fn with_propellant(self, pool: PropellantPool) -> Self {
+        self.with_effector(pool)
+    }
+
+    /// Add a model that burns propellant (builder pattern).
+    ///
+    /// Its loads are evaluated exactly as [`with_model`](Self::with_model)'s
+    /// are, until the pool is empty — then this one is not asked at all, and
+    /// neither is any other that draws on the same propellant. A propulsion
+    /// model registered through `with_model` would keep thrusting on an empty
+    /// tank.
+    ///
+    /// # What "empty" needs
+    ///
+    /// The pool's mode is what stops the burn, and only a propagation that
+    /// handles boundaries moves it: a group, the CLI's controlled path, or
+    /// [`walk_to_target`](crate::boundary::walk_to_target) directly. Stepping
+    /// this system through [`Integrator`](utsuroi::Integrator) yourself runs no
+    /// search and settles nothing, so the mode stays
+    /// [`Free`](crate::effector::ConstraintMode::Free) and the burn continues
+    /// below the floor — the same limitation the momentum limit of
+    /// [`RwAssembly`](crate::spacecraft::RwAssembly) has.
+    ///
+    /// # Panics
+    ///
+    /// Panics without a pool to draw from: the floor is what says when the
+    /// spacecraft is empty, and thrust with no floor has no end.
+    pub fn with_propulsion(mut self, model: impl Model<SpacecraftState<F>> + 'static) -> Self {
+        assert!(
+            self.pool.is_some(),
+            "a propulsion model needs the propellant it burns: call \
+             `with_propellant` first"
+        );
+        self.propulsion.push(Box::new(model));
+        self
+    }
+
+    /// The propellant pool, if this spacecraft carries any.
+    pub fn pool(&self) -> Option<PropellantPool> {
+        self.pool.map(|(pool, _)| pool)
+    }
+
+    /// Whether the state's modes say there is propellant left to burn.
+    ///
+    /// The mode, not the mass: a comparison against the floor flips between
+    /// the stages of a re-stepped interval, and the search that re-steps it
+    /// then reports the crossing late. The mode only moves where the
+    /// propagation settled a boundary.
+    ///
+    /// True for a spacecraft with no pool at all: nothing to run out of.
+    fn has_propellant(&self, state: &AugmentedState<SpacecraftState<F>>) -> bool {
+        let Some((_, index)) = self.pool else {
+            return true;
+        };
+        let Some(entry) = self.registry.entries().get(index) else {
+            return true;
+        };
+        state
+            .modes
+            .get(entry.mode_offset)
+            .is_none_or(|mode| *mode == ConstraintMode::Free)
+    }
+
     /// Add a state effector (builder pattern).
+    ///
+    /// A [`PropellantPool`] registered here is registered as the pool, exactly
+    /// as [`with_propellant`](Self::with_propellant) would: it declares a
+    /// boundary and carries the mode the propulsion is gated on, and a pool
+    /// the system did not know about would declare a floor that stops nothing.
     ///
     /// Effectors have auxiliary state (e.g. RW angular momentum) that
     /// is integrated alongside the plant state. The effector must produce
@@ -100,7 +197,20 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
         let mode_dim = effector.mode_dim();
         crate::effector::check_declared_modes(effector.name(), &effector.boundaries(), mode_dim);
         self.registry.register(effector.name(), dim, mode_dim);
-        self.effectors.push(Box::new(effector));
+        let index = self.effectors.len();
+        let boxed: Box<dyn StateEffector<SpacecraftState<F>>> = Box::new(effector);
+        // A pool is the pool wherever it was registered. Recognised here so
+        // that the generic path cannot leave one the system does not know
+        // about: its floor would be a boundary that stops no thruster, and no
+        // state would carry the mode it needs.
+        if let Some(pool) = pool_that(boxed.as_ref()) {
+            assert!(
+                self.pool.is_none(),
+                "a spacecraft has one propellant pool, and this one already has one"
+            );
+            self.pool = Some((pool, index));
+        }
+        self.effectors.push(boxed);
         self
     }
 
@@ -128,11 +238,24 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
         for eff in &self.effectors {
             bounds.extend(eff.aux_bounds());
         }
+        let mut modes = vec![ConstraintMode::default(); self.registry.total_modes()];
+        // A spacecraft can start with an empty tank, and no search would find
+        // that: a margin of exactly zero has not been crossed. Its mode says
+        // so from the first step. Starting *below* the floor is refused here —
+        // and here only: `AugmentedState`'s fields are public, so a state
+        // assembled by hand can carry a mass the pool would have rejected, and
+        // the walk then settles it onto the floor, which adds the mass the
+        // input was missing. Issue #523 is where that check belongs.
+        if let Some((pool, index)) = self.pool
+            && let Some(entry) = self.registry.entries().get(index)
+        {
+            modes[entry.mode_offset] = pool.initial_mode(plant.mass);
+        }
         AugmentedState {
             plant,
             aux: vec![0.0; self.registry.total_dim()],
             aux_bounds: bounds,
-            modes: vec![ConstraintMode::default(); self.registry.total_modes()],
+            modes,
         }
     }
 
@@ -202,34 +325,121 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     /// This is used to swap in a model with updated commanded state
     /// between integration segments (e.g., `MtqAssembly` with a new
     /// `command`).
+    ///
+    /// A propulsion model is replaced where it was registered, so a rebuilt
+    /// thruster assembly stays propulsion and the pool it draws from is
+    /// untouched: the propellant is the spacecraft's, and a command does not
+    /// refill it.
     pub fn replace_model(
         &mut self,
         name: &str,
         new_model: Box<dyn Model<SpacecraftState<F>>>,
     ) -> Option<Box<dyn Model<SpacecraftState<F>>>> {
-        if let Some(slot) = self.models.iter_mut().find(|m| m.name() == name) {
-            Some(std::mem::replace(slot, new_model))
-        } else {
-            None
-        }
+        let slot = self
+            .models
+            .iter_mut()
+            .chain(self.propulsion.iter_mut())
+            .find(|m| m.name() == name);
+        slot.map(|slot| std::mem::replace(slot, new_model))
     }
 
-    /// Names of active models.
+    /// Names of the registered models, propulsion last.
+    ///
+    /// Every one of them, whether it acts at a given state or not: this takes
+    /// no state, so it cannot say whether a tank still has propellant. The
+    /// breakdowns do — they skip *evaluating* a propulsion model the pool has
+    /// switched off, and keep its entry as a zero, so a record has one column
+    /// per name here whatever the tank holds.
     pub fn model_names(&self) -> Vec<&str> {
-        self.models.iter().map(|m| m.name()).collect()
+        self.models
+            .iter()
+            .chain(self.propulsion.iter())
+            .map(|m| m.name())
+            .collect()
+    }
+
+    /// Check that a state carries the modes this system's effectors registered.
+    ///
+    /// Every path that reads a mode goes through here first. A state assembled
+    /// by hand can carry none — the fields are public — and a mode that is not
+    /// there reads as [`ConstraintMode::Free`], which would say "there is
+    /// propellant left" about a tank that has run dry.
+    ///
+    /// # Panics
+    ///
+    /// If the state's mode vector is not the length the registry says.
+    fn check_modes(&self, state: &AugmentedState<SpacecraftState<F>>) {
+        assert_eq!(
+            state.modes.len(),
+            self.registry.total_modes(),
+            "mode vector length ({}) does not match registry ({})",
+            state.modes.len(),
+            self.registry.total_modes()
+        );
     }
 
     /// Per-model load breakdown at the given state.
+    ///
+    /// The augmented state rather than the plant alone, because whether the
+    /// propulsion burns is the pool's mode — the same value the right-hand
+    /// side gates on. Reading the mass here instead would make a record
+    /// disagree with the trajectory on a path that settles no boundaries: the
+    /// mode stays `Free` and the thrust keeps being integrated, while a
+    /// mass-based comparison would report none.
+    ///
+    /// A state whose mass is not positive gets the same treatment it gets in
+    /// the right-hand side, for the same reason: the acceleration a model
+    /// reports there is an infinity, and a record of an infinity says nothing
+    /// the trajectory did.
+    ///
+    /// Every registered model gets an entry, in the order
+    /// [`model_names`](Self::model_names) lists them. A propulsion model the
+    /// pool has switched off is not evaluated — that is the point of the mode —
+    /// but its entry is there, a zero: the telemetry that reads this builds one
+    /// column per model, and a row that drops an entry after depletion leaves
+    /// that column sparse where a reader wants to see the thrust go to zero.
+    ///
+    /// # Panics
+    ///
+    /// If the state's mode vector is not the length the registry says (see
+    /// [`check_modes`](Self::check_modes)).
     pub fn model_breakdown(
         &self,
         t: f64,
-        state: &SpacecraftState<F>,
+        state: &AugmentedState<SpacecraftState<F>>,
     ) -> Vec<(&str, ExternalLoads<F>)> {
+        self.check_modes(state);
         let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
-        self.models
-            .iter()
-            .map(|m| (m.name(), m.eval(t, state, epoch.as_ref())))
-            .collect()
+        let in_the_domain = mass_is_positive(state.plant.mass);
+        let burning = self.has_propellant(state);
+        let mut breakdown: Vec<(&str, ExternalLoads<F>)> = self
+            .models_to_evaluate(burning)
+            .map(|m| {
+                let loads = m.eval(t, &state.plant, epoch.as_ref());
+                (m.name(), keep_what_is_finite(loads, in_the_domain))
+            })
+            .collect();
+        if !burning {
+            breakdown.extend(
+                self.propulsion
+                    .iter()
+                    .map(|m| (m.name(), ExternalLoads::zeros())),
+            );
+        }
+        breakdown
+    }
+
+    /// The models that act on a spacecraft in this state: all of them, and the
+    /// propulsion too while there is propellant left to burn.
+    ///
+    /// See [`keep_what_is_finite`] for what happens to what they return at a
+    /// state whose mass is not positive.
+    fn models_to_evaluate(
+        &self,
+        burning: bool,
+    ) -> impl Iterator<Item = &Box<dyn Model<SpacecraftState<F>>>> {
+        let propulsion = burning.then_some(&self.propulsion);
+        self.models.iter().chain(propulsion.into_iter().flatten())
     }
 
     /// Per-model disturbance torque in the body frame [N·m], for telemetry.
@@ -254,7 +464,7 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     pub fn torque_breakdown(
         &self,
         t: f64,
-        state: &SpacecraftState<F>,
+        state: &AugmentedState<SpacecraftState<F>>,
     ) -> Vec<(&str, arika::frame::Vec3<arika::frame::Body>)> {
         // Straight from the models, without the gravity field
         // [`load_breakdown`](Self::load_breakdown) needs: a torque-only caller
@@ -279,10 +489,14 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     /// [`torque_breakdown`](Self::torque_breakdown) answer. Each of those
     /// projects from `model_breakdown` on its own, so a caller wanting one half
     /// does not build the other; this exists for the caller wanting both.
-    pub fn load_breakdown(&self, t: f64, state: &SpacecraftState<F>) -> LoadBreakdown<'_> {
+    pub fn load_breakdown(
+        &self,
+        t: f64,
+        state: &AugmentedState<SpacecraftState<F>>,
+    ) -> LoadBreakdown<'_> {
         let grav = self
             .gravity
-            .acceleration(self.mu, state.orbit.position())
+            .acceleration(self.mu, state.plant.orbit.position())
             .magnitude();
         let breakdown = self.model_breakdown(t, state);
         let mut accelerations = Vec::with_capacity(breakdown.len() + 1);
@@ -299,13 +513,17 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     }
 
     /// Acceleration breakdown for telemetry.
-    pub fn acceleration_breakdown(&self, t: f64, state: &SpacecraftState<F>) -> Vec<(&str, f64)> {
+    pub fn acceleration_breakdown(
+        &self,
+        t: f64,
+        state: &AugmentedState<SpacecraftState<F>>,
+    ) -> Vec<(&str, f64)> {
         // Projected here rather than through
         // [`load_breakdown`](Self::load_breakdown), which would build a vector
         // of every model's torque for this caller to drop.
         let grav = self
             .gravity
-            .acceleration(self.mu, state.orbit.position())
+            .acceleration(self.mu, state.plant.orbit.position())
             .magnitude();
         let mut result = vec![("gravity", grav)];
         for (name, loads) in self.model_breakdown(t, state) {
@@ -335,13 +553,7 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
         // Rejected here, on the first evaluation, rather than silently opting
         // out of the constraints. `initial_augmented_state` builds the vector
         // this expects.
-        assert_eq!(
-            state.modes.len(),
-            self.registry.total_modes(),
-            "mode vector length ({}) does not match registry ({})",
-            state.modes.len(),
-            self.registry.total_modes()
-        );
+        self.check_modes(state);
 
         let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
 
@@ -350,10 +562,32 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
             .gravity
             .acceleration(self.mu, state.plant.orbit.position());
 
-        // Accumulate external loads from models
+        // Accumulate external loads from models.
+        //
+        // Only half of it where the state has no mass. Everything that turns a
+        // force into an acceleration divides by the mass — a thruster, a
+        // panel's drag or SRP, and a translational
+        // [`StateEffector`](crate::effector::StateEffector) — so `F/m` is an
+        // infinity there and the walk fails on a state it was going to discard
+        // anyway: a boundary search re-steps an interval under the mode that
+        // held before the crossing, so it steps past the propellant floor on
+        // purpose, and a wide enough step takes a stage below zero mass. The
+        // acceleration such a stage reports is dropped.
+        //
+        // The mass rate is kept, because it is not singular and it is what the
+        // search reads the crossing from: a hundred-second step burning 1 kg/s
+        // through 99 kg of propellant has its last stage at zero mass, and
+        // suppressing that stage's mass rate leaves both ends of the step above
+        // the floor — the crossing inside it then goes unreported until a later
+        // step, which is the defect this whole path exists to fix.
+        //
+        // The policy lives here because it is the state that is outside the
+        // domain, not any one model.
         let mut total = ExternalLoads::<F>::zeros();
-        for model in &self.models {
-            total += eval_maybe_in_segment(model, segment, t, &state.plant, epoch.as_ref());
+        let in_the_domain = mass_is_positive(state.plant.mass);
+        for model in self.models_to_evaluate(self.has_propellant(state)) {
+            let loads = eval_maybe_in_segment(model, segment, t, &state.plant, epoch.as_ref());
+            total += keep_what_is_finite(loads, in_the_domain);
         }
 
         // Evaluate state effectors.
@@ -372,7 +606,7 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
         for (i, eff) in self.effectors.iter().enumerate() {
             let entry = &self.registry.entries()[i];
             let rates_slice = &mut aux_rates[entry.offset..entry.offset + entry.dim];
-            total += eff.derivatives(
+            let loads = eff.derivatives(
                 EffectorInput {
                     t,
                     state: &state.plant,
@@ -390,6 +624,7 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
                 },
                 rates_slice,
             );
+            total += keep_what_is_finite(loads, in_the_domain);
         }
 
         // Total translational acceleration
@@ -481,12 +716,66 @@ impl<G: GravityField, F: Eci + 'static> HasBoundaries for SpacecraftDynamics<G, 
             // inertia that turns angular momentum into a rate.
             state.plant.attitude.angular_velocity +=
                 self.inertia_inv * exchange.angular_momentum_body.into_inner();
+            // And where a boundary fixes the mass — a propellant floor — the
+            // state belongs on it. The propellant burned below it is gone with
+            // the exhaust, so the impulse it gave stays in the velocity.
+            if let Some(mass) = exchange.mass {
+                state.plant.mass = mass;
+            }
         }
         state.modes[declared.mode_index()] = declared.boundary.kind.mode_after();
     }
 
     fn boundary_is_active(&self, declared: &DeclaredBoundary, state: &Self::State) -> bool {
         declared.is_active(&state.modes)
+    }
+}
+
+/// The propellant pool this effector is, if it is one.
+///
+/// [`StateEffector`] has [`Any`](std::any::Any) as a supertrait, so a
+/// registered effector can be asked what concrete type it is. This is the one
+/// place that asks, and what it is for: a pool registered through the generic
+/// [`with_effector`](SpacecraftDynamics::with_effector) is still the
+/// spacecraft's pool, and a system that did not recognise it would carry a
+/// floor that stops no thruster.
+fn pool_that<S: crate::model::HasFrame>(effector: &dyn StateEffector<S>) -> Option<PropellantPool> {
+    (effector as &dyn std::any::Any)
+        .downcast_ref::<PropellantPool>()
+        .copied()
+}
+
+/// Whether a mass is in the domain of `F/m`.
+///
+/// `partial_cmp`, so that a mass that is no number is covered too: a NaN is
+/// comparable to nothing, and what it means here is the same as no mass.
+fn mass_is_positive(mass: f64) -> bool {
+    matches!(mass.partial_cmp(&0.0), Some(core::cmp::Ordering::Greater))
+}
+
+/// What is left of a model's loads at a state outside the domain of `F/m`.
+///
+/// A boundary search steps past a propellant floor on purpose — it re-steps an
+/// interval under the mode that held before the crossing — so a wide enough
+/// step takes a stage below zero mass, and everything that turns a force into
+/// an acceleration divides by the mass there. That half is dropped: nothing
+/// about such a state is physical, and what the search needs back from it is a
+/// finite number.
+///
+/// The mass rate is kept, because it is not singular in the mass and it is
+/// what the search reads the crossing from. Measured: 99 kg of propellant at
+/// 1 kg/s in a hundred-second RK4 step has its last stage at zero mass, and
+/// with that stage's flow suppressed the step ends at 16.67 kg — both ends
+/// above the 1 kg floor, no change of sign, and the crossing at 99 s is not
+/// located until a later step.
+fn keep_what_is_finite<F: Eci>(loads: ExternalLoads<F>, in_the_domain: bool) -> ExternalLoads<F> {
+    if in_the_domain {
+        loads
+    } else {
+        ExternalLoads {
+            acceleration_inertial: arika::frame::Vec3::zeros(),
+            ..loads
+        }
     }
 }
 
@@ -500,9 +789,13 @@ impl<G: GravityField, F: Eci + 'static> DynamicalSystem for SpacecraftDynamics<G
     /// window whose end abuts the next one's start, are one place to end a step.
     fn next_discontinuity_after(&self, t: f64) -> Option<f64> {
         let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
+        // Propulsion among them: a scheduled burn's start and end are the
+        // switches this exists to report, and they are no less switches for
+        // the model being registered apart from the others.
         let from_models = self
             .models
             .iter()
+            .chain(self.propulsion.iter())
             .filter_map(|m| m.next_discontinuity_after(t, epoch.as_ref()));
         let from_effectors = self
             .effectors
@@ -688,6 +981,313 @@ mod tests {
         let _ = dynamics.with_effector(OneModeTwoBoundaries);
     }
 
+    /// An empty tank silences the thrust, and the record still has a column
+    /// for it.
+    ///
+    /// The telemetry that reads a breakdown builds one column per model (see
+    /// `SatSnapshot::torques`, whose doc says every model appears, its entry a
+    /// measured zero). Dropping the propulsion entry once the pool is empty
+    /// would leave that column sparse from the moment of depletion, where what
+    /// a reader wants to see is the thrust going to zero.
+    #[test]
+    fn a_breakdown_keeps_an_entry_for_propulsion_the_pool_switched_off() {
+        use crate::spacecraft::{PropellantPool, Thruster};
+
+        const FLOOR: f64 = 100.0;
+        let dynamics = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
+            .with_model(ConstantAcceleration(Vector3::new(1e-6, 0.0, 0.0)))
+            .with_propellant(PropellantPool::new(FLOOR))
+            .with_propulsion(Thruster::new(10.0, 300.0, Vector3::x()));
+
+        let with_fuel = dynamics.initial_augmented_state(SpacecraftState {
+            mass: FLOOR + 1.0,
+            ..sample_spacecraft()
+        });
+        let empty = dynamics.initial_augmented_state(SpacecraftState {
+            mass: FLOOR,
+            ..sample_spacecraft()
+        });
+
+        let names = |state: &AugmentedState<SpacecraftState>| -> Vec<&str> {
+            dynamics
+                .model_breakdown(0.0, state)
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect()
+        };
+        assert_eq!(
+            names(&with_fuel),
+            dynamics.model_names(),
+            "with propellant left, one entry per registered model"
+        );
+        assert_eq!(
+            names(&empty),
+            dynamics.model_names(),
+            "and an empty tank keeps the same entries, in the same order"
+        );
+
+        let dry = dynamics.model_breakdown(0.0, &empty);
+        let (_, thruster) = dry
+            .iter()
+            .find(|(name, _)| *name == "thruster")
+            .expect("the thruster has an entry");
+        assert_eq!(
+            thruster.acceleration_inertial,
+            arika::frame::Vec3::zeros(),
+            "its entry is a zero, not a thrust"
+        );
+        assert_eq!(thruster.mass_rate, 0.0);
+    }
+
+    /// A breakdown reads the pool's mode, so it holds the state to the same
+    /// contract the right-hand side does: a hand-built state with no modes
+    /// would otherwise read as a full tank and report thrust.
+    #[test]
+    #[should_panic(expected = "mode vector length")]
+    fn a_breakdown_rejects_a_state_without_the_modes_its_effectors_registered() {
+        use crate::spacecraft::{PropellantPool, Thruster};
+
+        let dynamics = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
+            .with_propellant(PropellantPool::new(100.0))
+            .with_propulsion(Thruster::new(10.0, 300.0, Vector3::x()));
+        let state = AugmentedState {
+            plant: sample_spacecraft(),
+            aux: vec![],
+            aux_bounds: vec![],
+            modes: vec![],
+        };
+
+        let _ = dynamics.model_breakdown(0.0, &state);
+    }
+
+    /// One pool, one floor, and the system is what reads them: a thruster
+    /// fires whatever it is asked to, so a spacecraft with nothing left to
+    /// burn has to not be asked. Both places that used to compare
+    /// `mass <= dry_mass` inside the right-hand side are gone — a comparison
+    /// there flips between the stages of a re-stepped boundary search.
+    ///
+    /// Everything that is not propulsion keeps being evaluated: drag and a
+    /// wheel do not stop because a tank ran dry.
+    #[test]
+    fn a_spacecraft_with_nothing_left_to_burn_is_not_asked_for_thrust() {
+        use crate::spacecraft::{PropellantPool, Thruster};
+
+        const FLOOR: f64 = 100.0;
+        let drag_like = ConstantAcceleration(Vector3::new(1e-6, 0.0, 0.0));
+        let dynamics = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
+            .with_model(drag_like)
+            .with_propellant(PropellantPool::new(FLOOR))
+            .with_propulsion(Thruster::new(10.0, 300.0, Vector3::x()));
+
+        let with_fuel = SpacecraftState {
+            mass: FLOOR + 1.0,
+            ..sample_spacecraft()
+        };
+        let burning =
+            dynamics.derivatives(0.0, &dynamics.initial_augmented_state(with_fuel.clone()));
+        assert!(
+            burning.plant.mass < 0.0,
+            "with propellant left the thruster burns it, at {}",
+            burning.plant.mass
+        );
+
+        // Exactly on the floor is empty: the propellant is what is above it.
+        let empty = SpacecraftState {
+            mass: FLOOR,
+            ..sample_spacecraft()
+        };
+        // On the floor from the start, so its mode says empty from the first
+        // step: a margin of exactly zero is not a crossing a search can find.
+        let dry = dynamics.derivatives(0.0, &dynamics.initial_augmented_state(empty.clone()));
+        assert_eq!(
+            dry.plant.mass, 0.0,
+            "nothing left to burn, so nothing burns"
+        );
+
+        // The drag-like model is still evaluated, so the acceleration is its
+        // own and the thrust is gone rather than everything being gone.
+        let others_only = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
+            .with_model(ConstantAcceleration(Vector3::new(1e-6, 0.0, 0.0)));
+        let expected =
+            others_only.derivatives(0.0, &others_only.initial_augmented_state(empty.clone()));
+        assert!(
+            (dry.plant.orbit.velocity() - expected.plant.orbit.velocity()).magnitude() < 1e-15,
+            "an empty tank leaves the other models where they were"
+        );
+
+        // And the record says the same, so a sample cannot show thrust the
+        // trajectory never felt. The entry stays — the telemetry's column for
+        // it would otherwise go sparse — and what it carries is a zero, which
+        // `a_breakdown_keeps_an_entry_for_propulsion_the_pool_switched_off`
+        // pins.
+        let dry_record = dynamics.model_breakdown(0.0, &dynamics.initial_augmented_state(empty));
+        let (_, thruster) = dry_record
+            .iter()
+            .find(|(name, _)| *name == "thruster")
+            .expect("the thruster keeps its entry");
+        assert_eq!(thruster.mass_rate, 0.0, "and reports no thrust in it");
+
+        let wet_record =
+            dynamics.model_breakdown(0.0, &dynamics.initial_augmented_state(with_fuel));
+        let (_, thruster) = wet_record
+            .iter()
+            .find(|(name, _)| *name == "thruster")
+            .expect("the thruster has an entry");
+        assert!(
+            thruster.mass_rate < 0.0,
+            "while there is propellant the record shows the burn, at {}",
+            thruster.mass_rate
+        );
+    }
+
+    /// A boundary search steps past the propellant floor on purpose — it
+    /// re-steps an interval under the mode that held before the crossing — so
+    /// a wide enough step takes a stage below zero mass. Every model that
+    /// turns a force into an acceleration divides by the mass there, so the
+    /// derivative would be an infinity and the walk would fail on a state it
+    /// was going to discard.
+    ///
+    /// The policy is the system's, not each model's: a thruster guarding
+    /// itself leaves a panel's drag to produce the infinity instead.
+    #[test]
+    fn a_state_with_no_mass_gets_finite_derivatives() {
+        use crate::model::HasMass;
+        use crate::spacecraft::{PropellantPool, Thruster};
+
+        // An effector, rather than a model, that turns a force into an
+        // acceleration: `StateEffector` supports translational ones, so the
+        // policy has to reach them too.
+        struct ForceEffector;
+
+        impl<S: HasFrame + HasMass + Send + Sync> StateEffector<S> for ForceEffector {
+            fn name(&self) -> &str {
+                "force_effector"
+            }
+            fn state_dim(&self) -> usize {
+                0
+            }
+            fn derivatives(
+                &self,
+                input: EffectorInput<'_, S>,
+                _aux_rates: &mut [f64],
+            ) -> ExternalLoads<S::Frame> {
+                // 1 N along x, in km/s² as the loads are.
+                ExternalLoads::acceleration(Vector3::new(
+                    1.0 / input.state.mass() / 1000.0,
+                    0.0,
+                    0.0,
+                ))
+            }
+        }
+
+        let dynamics = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
+            // Something that divides by mass and is not propulsion.
+            .with_model(ConstantForce(Vector3::new(1.0, 0.0, 0.0)))
+            .with_effector(ForceEffector)
+            .with_propellant(PropellantPool::new(1.0))
+            .with_propulsion(Thruster::new(196.133, 200.0, Vector3::x()));
+
+        for mass in [0.0, -1e-6, -10.0] {
+            let plant = SpacecraftState {
+                mass,
+                ..sample_spacecraft()
+            };
+            // Built by hand: `initial_augmented_state` refuses a mass below
+            // the floor, which is the input error. This is the trial state a
+            // search produces, which has to be evaluable.
+            let state = AugmentedState {
+                plant,
+                aux: vec![],
+                aux_bounds: vec![],
+                // One mode, the pool's: the force effector registers none.
+                modes: vec![ConstraintMode::Free],
+            };
+            let d = dynamics.derivatives(0.0, &state);
+            assert!(
+                d.plant.orbit.velocity().iter().all(|c| c.is_finite())
+                    && d.plant.mass.is_finite()
+                    && d.plant
+                        .attitude
+                        .angular_velocity
+                        .iter()
+                        .all(|c| c.is_finite()),
+                "at a mass of {mass} the derivative is {:?}",
+                d.plant.orbit.velocity()
+            );
+            // The mass rate is the half that is not singular, and the
+            // search reads the crossing from it.
+            assert!(
+                d.plant.mass < 0.0,
+                "and the burn keeps its flow there, at {}",
+                d.plant.mass
+            );
+
+            // The record of such a state says the same thing the trajectory
+            // did: a telemetry sample taken at a state a walk is about to
+            // discard would otherwise carry an infinity.
+            for (name, loads) in dynamics.model_breakdown(0.0, &state) {
+                assert!(
+                    loads.acceleration_inertial.is_finite(),
+                    "{name} reports {:?} at a mass of {mass}",
+                    loads.acceleration_inertial
+                );
+            }
+        }
+    }
+
+    /// A pool is the pool wherever a caller registered it. `with_effector` is
+    /// public and `PropellantPool` is an effector, so the generic path could
+    /// otherwise leave a pool the system does not know about: its floor would
+    /// declare a boundary that stops no thruster, and no state would carry the
+    /// mode it needs.
+    #[test]
+    fn a_pool_registered_as_a_plain_effector_is_still_the_pool() {
+        use crate::spacecraft::{PropellantPool, Thruster};
+
+        const FLOOR: f64 = 100.0;
+        let dynamics = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
+            .with_effector(PropellantPool::new(FLOOR))
+            .with_propulsion(Thruster::new(10.0, 300.0, Vector3::x()));
+
+        assert_eq!(
+            dynamics.pool().map(|p| p.dry_mass()),
+            Some(FLOOR),
+            "the system knows the pool it was handed"
+        );
+
+        // And it gates on it: on the floor from the start, so nothing burns.
+        let empty = SpacecraftState {
+            mass: FLOOR,
+            ..sample_spacecraft()
+        };
+        let dry = dynamics.derivatives(0.0, &dynamics.initial_augmented_state(empty));
+        assert_eq!(dry.plant.mass, 0.0);
+    }
+
+    /// Two floors are what one pool exists to prevent, whichever door they
+    /// came through.
+    #[test]
+    #[should_panic(expected = "one propellant pool")]
+    fn a_second_pool_is_refused() {
+        use crate::spacecraft::PropellantPool;
+
+        let _: SpacecraftDynamics<PointMass> =
+            SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
+                .with_propellant(PropellantPool::new(100.0))
+                .with_effector(PropellantPool::new(200.0));
+    }
+
+    /// A propulsion model with no pool behind it would thrust forever: the
+    /// floor is what says when the spacecraft is empty.
+    #[test]
+    #[should_panic(expected = "needs the propellant it burns")]
+    fn propulsion_without_a_pool_is_refused() {
+        use crate::spacecraft::Thruster;
+
+        SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
+            .with_propulsion(Thruster::new(10.0, 300.0, Vector3::x()));
+    }
+
     /// Wrap a plant state as an augmented state with no effectors.
     fn augment(plant: SpacecraftState) -> AugmentedState<SpacecraftState> {
         AugmentedState {
@@ -708,6 +1308,21 @@ mod tests {
         }
         fn eval(&self, _t: f64, _state: &SpacecraftState, _epoch: Option<&Epoch>) -> ExternalLoads {
             ExternalLoads::acceleration(self.0)
+        }
+    }
+
+    /// A force, which is what a real model has: the acceleration it produces
+    /// is the force over the mass, and that is the division a state with no
+    /// mass cannot survive. `PanelDrag` and `PanelSrp` do the same.
+    struct ConstantForce(Vector3<f64>);
+
+    impl Model<SpacecraftState> for ConstantForce {
+        fn name(&self) -> &str {
+            "const_force_n"
+        }
+        fn eval(&self, _t: f64, state: &SpacecraftState, _epoch: Option<&Epoch>) -> ExternalLoads {
+            // N / kg = m/s², and km/s² is what the loads carry.
+            ExternalLoads::acceleration(self.0 / state.mass / 1000.0)
         }
     }
 
@@ -956,7 +1571,7 @@ mod tests {
             .with_model(ConstantAcceleration(accel))
             .with_model(ConstantTorqueModel(torque));
 
-        let breakdown = dyn_sc.model_breakdown(0.0, &sc);
+        let breakdown = dyn_sc.model_breakdown(0.0, &dyn_sc.initial_augmented_state(sc));
         assert_eq!(breakdown.len(), 2);
         assert_eq!(breakdown[0].0, "const_force");
         assert_eq!(
@@ -1380,7 +1995,7 @@ mod tests {
         let dynamics = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
             .with_model(NamedTorqueModel("first", about_x))
             .with_model(NamedTorqueModel("second", about_z));
-        let state = sample_spacecraft();
+        let state = dynamics.initial_augmented_state(sample_spacecraft());
 
         let breakdown = dynamics.torque_breakdown(0.0, &state);
 
@@ -1409,7 +2024,7 @@ mod tests {
     fn torque_breakdown_leaves_out_the_gravity_field() {
         let dynamics = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
             .with_model(NamedTorqueModel("only_model", Vector3::new(0.0, 1.0, 0.0)));
-        let state = sample_spacecraft();
+        let state = dynamics.initial_augmented_state(sample_spacecraft());
 
         let accel = dynamics.acceleration_breakdown(0.0, &state);
         assert!(
@@ -1463,7 +2078,7 @@ mod tests {
             .with_model(Counting {
                 calls: Arc::clone(&calls),
             });
-        let state = sample_spacecraft();
+        let state = dynamics.initial_augmented_state(sample_spacecraft());
 
         let LoadBreakdown {
             accelerations,

@@ -4,8 +4,9 @@ import type { ThrusterSpecConfig } from "./ThrusterSpecConfig";
 /**
  * 推進器群 (ThrusterAssembly) 設定。
  *
- * `thrusters` に各推進器の静的パラメータを並べ、`dry_mass` で
- * 推進剤枯渇時の停止閾値 (spacecraft total mass [kg]) を指定する。
+ * `thrusters` に各推進器の静的パラメータを並べ、`dry_mass` で宇宙機の
+ * 推進剤の床 (spacecraft total mass [kg]) を指定する。床は宇宙機に 1 つで、
+ * 全推進器が同じプールから引く。
  */
 export type ThrusterConfig = { 
 /**
@@ -13,7 +14,10 @@ export type ThrusterConfig = {
  */
 thrusters: Array<ThrusterSpecConfig>, 
 /**
- * Assembly-level propellant floor [kg]。
- * spacecraft total mass がこの値以下になったら全推進器を停止。
+ * 宇宙機の推進剤の床 [kg]。
+ *
+ * spacecraft total mass がこの値になったら推進剤がない。正の有限値である
+ * こと: 0 は `F/m` の特異点に床を置くことになり、境界の探索が床を越えて
+ * 試行する設計と両立しない。
  */
-dry_mass?: number, };
+dry_mass: number, };

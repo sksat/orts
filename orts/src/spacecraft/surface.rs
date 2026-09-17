@@ -3454,7 +3454,7 @@ mod tests {
         // Collect drag magnitude at several steps to verify it varies
         let mut magnitudes = Vec::new();
         let _ = Rk4.integrate(&dyn_sc, state.into(), 0.0, 60.0, 1.0, |_t, s| {
-            let loads = dyn_sc.model_breakdown(0.0, &s.plant);
+            let loads = dyn_sc.model_breakdown(0.0, s);
             if let Some((_, el)) = loads.first() {
                 magnitudes.push(el.acceleration_inertial.magnitude());
             }

@@ -1208,17 +1208,19 @@ pub struct ThrusterSpecConfig {
 
 /// 推進器群 (ThrusterAssembly) 設定。
 ///
-/// `thrusters` に各推進器の静的パラメータを並べ、`dry_mass` で
-/// 推進剤枯渇時の停止閾値 (spacecraft total mass [kg]) を指定する。
+/// `thrusters` に各推進器の静的パラメータを並べ、`dry_mass` で宇宙機の
+/// 推進剤の床 (spacecraft total mass [kg]) を指定する。床は宇宙機に 1 つで、
+/// 全推進器が同じプールから引く。
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
 #[ts(export)]
 pub struct ThrusterConfig {
     /// 推進器一覧（空リストは reject）。
     pub thrusters: Vec<ThrusterSpecConfig>,
-    /// Assembly-level propellant floor [kg]。
-    /// spacecraft total mass がこの値以下になったら全推進器を停止。
-    #[serde(default)]
-    #[ts(as = "Option<_>", optional)]
+    /// 宇宙機の推進剤の床 [kg]。
+    ///
+    /// spacecraft total mass がこの値になったら推進剤がない。正の有限値である
+    /// こと: 0 は `F/m` の特異点に床を置くことになり、境界の探索が床を越えて
+    /// 試行する設計と両立しない。
     pub dry_mass: f64,
 }
 
@@ -1718,8 +1720,13 @@ impl ThrusterConfig {
                 return Err(format!("thruster[{i}].isp_s must be positive and finite"));
             }
         }
-        if !self.dry_mass.is_finite() || self.dry_mass < 0.0 {
-            return Err("thruster.dry_mass must be non-negative and finite".into());
+        if !self.dry_mass.is_finite() || self.dry_mass <= 0.0 {
+            return Err(
+                "thruster.dry_mass must be positive and finite: it is the mass the \
+                 spacecraft has with no propellant left, and zero would put that on \
+                 the singularity of F/m"
+                    .into(),
+            );
         }
         Ok(())
     }
@@ -1739,6 +1746,19 @@ impl SatelliteConfig {
         }
         if let Some(attitude) = &self.attitude {
             attitude.validate().map_err(|e| format!("attitude: {e}"))?;
+        }
+        // A spacecraft lighter than its own dry mass is not a state the
+        // propagation can reach or return to: the floor is the mass with no
+        // propellant, so below it there is less than nothing. Equal is a
+        // vehicle that starts empty, which is a run with no burn in it.
+        if let (Some(thruster), Some(attitude)) = (&self.thruster, &self.attitude)
+            && attitude.mass < thruster.dry_mass
+        {
+            return Err(format!(
+                "attitude.mass ({}) is below thruster.dry_mass ({}): the floor is the \
+                 mass with no propellant left, so a spacecraft cannot start under it",
+                attitude.mass, thruster.dry_mass
+            ));
         }
         // A disturbance torque acts on an orientation, and an orbit-only
         // satellite has none, so the selection would be read and then dropped.
@@ -4018,6 +4038,7 @@ type = "circular"
 altitude = 600
 
 [satellites.thruster]
+dry_mass = 400.0
 
 [[satellites.thruster.thrusters]]
 thrust_n = 10.0
@@ -4033,6 +4054,96 @@ direction_body = [0.0, 0.0, 0.0]
         assert!(err.contains("direction_body"), "msg: {err}");
     }
 
+    /// The floor is the mass with no propellant left, so a spacecraft that
+    /// starts under it has less than nothing in its tank — an input error,
+    /// not a state the propagation can return to. Starting *on* the floor is a
+    /// vehicle with an empty tank, which is a run with no burn in it.
+    #[test]
+    fn a_spacecraft_cannot_start_under_its_own_floor() {
+        let with_masses = |mass: f64, floor: f64| {
+            let sat: SatelliteConfig = toml::from_str(&format!(
+                "
+[orbit]
+type = \"circular\"
+altitude = 500
+[attitude]
+inertia_diag = [10, 10, 10]
+mass = {mass}
+
+[thruster]
+dry_mass = {floor}
+
+[[thruster.thrusters]]
+thrust_n = 10.0
+isp_s = 230.0
+direction_body = [1.0, 0.0, 0.0]
+"
+            ))
+            .expect("the table parses");
+            sat.validate()
+        };
+
+        let err = with_masses(300.0, 400.0).unwrap_err();
+        assert!(
+            err.contains("below thruster.dry_mass"),
+            "the error names both masses: {err}"
+        );
+
+        assert!(
+            with_masses(400.0, 400.0).is_ok(),
+            "starting empty is a run with no burn in it"
+        );
+        assert!(with_masses(500.0, 400.0).is_ok());
+    }
+
+    /// The floor is what says when the spacecraft is empty, so a propulsion
+    /// system described without one is not described: `dry_mass` is required
+    /// rather than defaulted, since no value is the right guess for a mass.
+    /// Zero is refused for the reason `PropellantPool::new` refuses it — it
+    /// would put the floor on the singularity of `F/m`, which a boundary
+    /// search steps past by design.
+    #[test]
+    fn a_thruster_table_needs_a_positive_floor() {
+        let with_floor = |floor: &str| {
+            format!(
+                "
+[[satellites]]
+[satellites.orbit]
+type = \"circular\"
+altitude = 500
+
+[satellites.thruster]
+{floor}
+
+[[satellites.thruster.thrusters]]
+thrust_n = 10.0
+isp_s = 230.0
+direction_body = [1.0, 0.0, 0.0]
+"
+            )
+        };
+
+        let missing = toml::from_str::<SimConfig>(&with_floor(""))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            missing.contains("dry_mass"),
+            "a table with no floor is refused by name: {missing}"
+        );
+
+        let zero = config_with(&with_floor("dry_mass = 0.0"))
+            .validate()
+            .unwrap_err();
+        assert!(zero.contains("positive"), "zero is not a floor: {zero}");
+
+        assert!(
+            config_with(&with_floor("dry_mass = 400.0"))
+                .validate()
+                .is_ok(),
+            "a positive floor is what a propulsion system has"
+        );
+    }
+
     #[test]
     fn thruster_config_load_surfaces_validation_error() {
         let toml = r#"
@@ -4042,6 +4153,7 @@ type = "circular"
 altitude = 500
 
 [satellites.thruster]
+dry_mass = 400.0
 
 [[satellites.thruster.thrusters]]
 thrust_n = 10.0

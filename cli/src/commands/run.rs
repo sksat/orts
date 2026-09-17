@@ -697,7 +697,7 @@ pub fn run_spacecraft_simulation(params: &SimParams) -> Result<Recording, CmdErr
         let q = Quaternion4D(sc.attitude.quaternion);
         let w = AngularVelocity3D(sc.attitude.angular_velocity);
         rec.log_orbital_state_with_attitude(entity, tp, &os, Some(&q), Some(&w));
-        log_disturbance_torques(rec, entity, tp, t, sc, dynamics);
+        log_disturbance_torques(rec, entity, tp, t, state, dynamics);
     })
 }
 
@@ -1632,7 +1632,7 @@ fn log_disturbance_torques<G, F>(
     entity: &EntityPath,
     tp: &TimePoint,
     t: f64,
-    state: &orts::spacecraft::SpacecraftState<F>,
+    state: &orts::effector::AugmentedState<orts::spacecraft::SpacecraftState<F>>,
     dynamics: &orts::spacecraft::SpacecraftDynamics<G, F>,
 ) where
     G: orts::orbital::gravity::GravityField,
@@ -1667,7 +1667,7 @@ fn log_controlled_state(
     let q = Quaternion4D(att.quaternion);
     let w = AngularVelocity3D(att.angular_velocity);
     rec.log_orbital_state_with_attitude(entity, tp, &os, Some(&q), Some(&w));
-    log_disturbance_torques(rec, entity, tp, t, &sat.state.plant, &sat.dynamics);
+    log_disturbance_torques(rec, entity, tp, t, &sat.state, &sat.dynamics);
 
     // MTQ command (always log to keep row count aligned with orbital state).
     // TODO: distinguish Moments vs NormalizedMoments — currently both are

@@ -12,7 +12,7 @@ use orts::OrbitalState;
 use orts::attitude::AttitudeState;
 use orts::orbital::gravity::PointMass;
 use orts::spacecraft::{
-    BurnWindow, G0, ScheduledBurn, SpacecraftDynamics, SpacecraftState, Thruster,
+    BurnWindow, G0, PropellantPool, ScheduledBurn, SpacecraftDynamics, SpacecraftState, Thruster,
 };
 use utsuroi::{Integrator, Rk4};
 
@@ -20,7 +20,58 @@ use utsuroi::{Integrator, Rk4};
 ///
 /// Uses a tiny μ so gravity is effectively zero, letting us isolate thrust effects.
 fn free_space_dynamics(inertia: Matrix3<f64>, thruster: Thruster) -> SpacecraftDynamics<PointMass> {
-    SpacecraftDynamics::new(1e-30, PointMass, inertia).with_model(thruster)
+    // A floor low enough that these cases never reach it; the one case about
+    // reaching it sets its own.
+    free_space_with_floor(inertia, thruster, 1e-6)
+}
+
+/// Propagate a burning spacecraft to `t_end` through a group, whose walk
+/// settles the propellant floor the pool declares.
+///
+/// `Integrator::integrate` is the wrong instrument for a case about running
+/// dry: it locates no boundaries, so nothing puts the mass on the floor or
+/// moves the pool's mode, and the burn carries on below it.
+fn walk_to(
+    dry_mass: f64,
+    thrust: f64,
+    isp: f64,
+    m0: f64,
+    t_end: f64,
+    dt: f64,
+) -> orts::effector::AugmentedState<SpacecraftState> {
+    let system = || {
+        free_space_with_floor(
+            symmetric_inertia(10.0),
+            Thruster::new(thrust, isp, Vector3::x()),
+            dry_mass,
+        )
+    };
+    let start = system().initial_augmented_state(identity_spacecraft(m0));
+    let mut group: orts::group::IndependentGroup<SpacecraftDynamics<PointMass>> =
+        orts::group::IndependentGroup::new(orts::group::IntegratorConfig::Rk4 { dt })
+            .add_satellite("sat", start, system());
+    group.propagate_to(t_end).expect("the walk succeeds");
+    group
+        .satellites()
+        .next()
+        .expect("one satellite")
+        .state
+        .clone()
+}
+
+/// Free space with a thruster drawing on a pool whose floor is `dry_mass`.
+///
+/// The floor is the spacecraft's, so it is registered with the dynamics rather
+/// than with the thruster, and the thruster is registered as propulsion —
+/// which is what stops it once the pool is empty.
+fn free_space_with_floor(
+    inertia: Matrix3<f64>,
+    thruster: Thruster,
+    dry_mass: f64,
+) -> SpacecraftDynamics<PointMass> {
+    SpacecraftDynamics::new(1e-30, PointMass, inertia)
+        .with_propellant(PropellantPool::new(dry_mass))
+        .with_propulsion(thruster)
 }
 
 fn free_space_multi(
@@ -71,7 +122,14 @@ fn tsiolkovsky_constant_thrust() {
 
     let dt = 0.1;
     let state0 = identity_spacecraft(m0);
-    let result = Rk4.integrate(&dynamics, state0.into(), 0.0, burn_time, dt, |_, _| {});
+    let result = Rk4.integrate(
+        &dynamics,
+        dynamics.initial_augmented_state(state0),
+        0.0,
+        burn_time,
+        dt,
+        |_, _| {},
+    );
 
     let dv_numerical = result.plant.orbit.velocity().magnitude();
     let rel_err = (dv_numerical - dv_analytical).abs() / dv_analytical;
@@ -109,7 +167,7 @@ fn mass_depletion_linear() {
     for &check_t in &[10.0, 50.0, 100.0, 200.0] {
         let result = Rk4.integrate(
             &dynamics,
-            state0.clone().into(),
+            dynamics.initial_augmented_state(state0.clone()),
             0.0,
             check_t,
             dt,
@@ -138,14 +196,12 @@ fn propellant_exhaustion_stops_thrust() {
     // Burn time to reach dry_mass: (m0 - dry_mass) / mass_rate
     let burn_time = (m0 - dry_mass) / mass_rate;
 
-    let thruster = Thruster::new(thrust, isp, Vector3::x()).with_dry_mass(dry_mass);
-    let dynamics = free_space_dynamics(symmetric_inertia(10.0), thruster);
-
-    // Integrate well past the expected exhaustion time
+    // Through a group, which is what settles the floor the pool declares:
+    // `Integrator::integrate` locates no boundaries, so the burn would run
+    // straight through it.
     let total_time = burn_time * 3.0;
     let dt = 0.01;
-    let state0 = identity_spacecraft(m0);
-    let result = Rk4.integrate(&dynamics, state0.into(), 0.0, total_time, dt, |_, _| {});
+    let result = walk_to(dry_mass, thrust, isp, m0, total_time, dt);
 
     // Mass should be near dry_mass (not below)
     assert!(
@@ -156,19 +212,7 @@ fn propellant_exhaustion_stops_thrust() {
     );
 
     // Velocity should stop increasing after burn — compare v at 2T vs 3T
-    let dynamics2 = free_space_dynamics(
-        symmetric_inertia(10.0),
-        Thruster::new(thrust, isp, Vector3::x()).with_dry_mass(dry_mass),
-    );
-    let state0b = identity_spacecraft(m0);
-    let r2 = Rk4.integrate(
-        &dynamics2,
-        state0b.into(),
-        0.0,
-        burn_time * 2.0,
-        dt,
-        |_, _| {},
-    );
+    let r2 = walk_to(dry_mass, thrust, isp, m0, burn_time * 2.0, dt);
     let v_diff = (*result.plant.orbit.velocity() - *r2.plant.orbit.velocity()).magnitude();
     assert!(
         v_diff < 1e-10,
@@ -195,7 +239,14 @@ fn torque_spin_up() {
     let dt = 0.01;
     // Start with zero angular velocity
     let state0 = identity_spacecraft(500.0);
-    let result = Rk4.integrate(&dynamics, state0.into(), 0.0, t_final, dt, |_, _| {});
+    let result = Rk4.integrate(
+        &dynamics,
+        dynamics.initial_augmented_state(state0),
+        0.0,
+        t_final,
+        dt,
+        |_, _| {},
+    );
 
     // Expected: ωz = -F * t / I (constant torque, approximately — mass changes slightly)
     // For small mass change ratio, this is very close to linear
@@ -240,7 +291,14 @@ fn dt_convergence_tsiolkovsky() {
         let thruster = Thruster::new(thrust, isp, Vector3::x());
         let dynamics = free_space_dynamics(symmetric_inertia(10.0), thruster);
         let state0 = identity_spacecraft(m0);
-        let result = Rk4.integrate(&dynamics, state0.into(), 0.0, burn_time, dt, |_, _| {});
+        let result = Rk4.integrate(
+            &dynamics,
+            dynamics.initial_augmented_state(state0),
+            0.0,
+            burn_time,
+            dt,
+            |_, _| {},
+        );
         let dv = result.plant.orbit.velocity().magnitude();
         errors.push((dv - dv_exact).abs());
     }
@@ -283,7 +341,14 @@ fn scheduled_burn_delta_v() {
     let dt = 0.01;
     let state0 = identity_spacecraft(m0);
     // Integrate past the burn end to verify coast
-    let result = Rk4.integrate(&dynamics, state0.into(), 0.0, 200.0, dt, |_, _| {});
+    let result = Rk4.integrate(
+        &dynamics,
+        dynamics.initial_augmented_state(state0),
+        0.0,
+        200.0,
+        dt,
+        |_, _| {},
+    );
 
     let dv = result.plant.orbit.velocity().magnitude();
     let rel_err = (dv - dv_analytical).abs() / dv_analytical;
@@ -328,7 +393,14 @@ fn tsiolkovsky_velocity_vector_direction() {
     };
 
     let dt = 0.1;
-    let result = Rk4.integrate(&dynamics, state0.into(), 0.0, burn_time, dt, |_, _| {});
+    let result = Rk4.integrate(
+        &dynamics,
+        dynamics.initial_augmented_state(state0),
+        0.0,
+        burn_time,
+        dt,
+        |_, _| {},
+    );
 
     // X velocity should be unchanged (no thrust along X)
     assert!(
@@ -374,7 +446,14 @@ fn opposing_thrusters_superposition() {
 
     let state0 = identity_spacecraft(m0);
     let dt = 0.1;
-    let result = Rk4.integrate(&dynamics, state0.into(), 0.0, burn_time, dt, |_, _| {});
+    let result = Rk4.integrate(
+        &dynamics,
+        dynamics.initial_augmented_state(state0),
+        0.0,
+        burn_time,
+        dt,
+        |_, _| {},
+    );
 
     // Net acceleration should be ~0 → velocity stays ~0
     assert!(
@@ -424,7 +503,14 @@ fn rotating_spacecraft_thrust_integration() {
     };
 
     let dt = 0.001; // small dt for accuracy with rotation
-    let result = Rk4.integrate(&dynamics, state0.into(), 0.0, t_final, dt, |_, _| {});
+    let result = Rk4.integrate(
+        &dynamics,
+        dynamics.initial_augmented_state(state0),
+        0.0,
+        t_final,
+        dt,
+        |_, _| {},
+    );
 
     // Analytical (constant mass approximation):
     // a = F / (m * 1000) [km/s²]

@@ -2097,7 +2097,7 @@ mod tests {
         // Collect SRP magnitude at each step
         let mut magnitudes = Vec::new();
         let _ = Rk4.integrate(&dyn_sc, state.into(), 0.0, 60.0, 1.0, |t, s| {
-            let loads = dyn_sc.model_breakdown(t, &s.plant);
+            let loads = dyn_sc.model_breakdown(t, s);
             if let Some((_, el)) = loads.first() {
                 magnitudes.push(el.acceleration_inertial.magnitude());
             }

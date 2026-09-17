@@ -101,8 +101,6 @@ pub struct ControlledSatellite {
     /// Thruster specs (空なら thruster なし)。ZOH 境界で ThrusterAssembly を
     /// 作り直すために保持する。
     pub thruster_specs: Vec<ThrusterSpec>,
-    /// Thruster assembly-level propellant floor [kg]。
-    pub thruster_dry_mass: f64,
     /// Sim time this satellite's controller schedule is anchored at [s]: where
     /// the satellite entered the simulation.
     tick_base_t: f64,
@@ -149,7 +147,6 @@ impl ControlledSatellite {
             mtq_max_moment: 0.0,
             body,
             thruster_specs: Vec::new(),
-            thruster_dry_mass: 0.0,
             tick_base_t: 0.0,
             ticks_done: 0,
         }
@@ -217,6 +214,27 @@ fn validate_tick_advances(start_t: f64, sample_period: f64) -> Result<(), String
              would land on the same instant"
         ))
     }
+}
+
+/// Install a spacecraft's propellant and the assembly that draws on it.
+///
+/// The propellant is the spacecraft's, so the pool is registered with
+/// [`with_propellant`](SpacecraftDynamics::with_propellant) and the assembly
+/// with [`with_propulsion`](SpacecraftDynamics::with_propulsion): that pairing
+/// is what stops the burn once the tank is empty, where `with_model` would keep
+/// it thrusting. A function rather than two lines inside the builder, so that
+/// the case walking a depletion (`the_controlled_loop_stops_a_burn_at_the_propellant_floor`)
+/// covers the wiring a run uses instead of a copy of it — the builder itself
+/// needs a plugin guest, which a unit test cannot load.
+fn install_thrusters(
+    dynamics: SpacecraftDynamics<Box<dyn GravityField>>,
+    specs: Vec<ThrusterSpec>,
+    dry_mass: f64,
+) -> SpacecraftDynamics<Box<dyn GravityField>> {
+    let core = ThrusterAssemblyCore::new(specs);
+    dynamics
+        .with_propellant(orts::spacecraft::PropellantPool::new(dry_mass))
+        .with_propulsion(ThrusterAssembly::new(core))
 }
 
 /// Config からプラグイン制御付き衛星を構築する。
@@ -291,7 +309,7 @@ pub fn build_controlled_satellite(
     };
 
     // Thruster を追加。
-    let (thruster_specs, thruster_dry_mass) = if let Some(cfg) = &spec.thruster_config {
+    let thruster_specs = if let Some(cfg) = &spec.thruster_config {
         let specs: Vec<ThrusterSpec> = cfg
             .thrusters
             .iter()
@@ -307,11 +325,10 @@ pub fn build_controlled_satellite(
                 s
             })
             .collect();
-        let core = ThrusterAssemblyCore::new(specs.clone(), cfg.dry_mass);
-        dynamics = dynamics.with_model(ThrusterAssembly::new(core));
-        (specs, cfg.dry_mass)
+        dynamics = install_thrusters(dynamics, specs.clone(), cfg.dry_mass);
+        specs
     } else {
-        (Vec::new(), 0.0)
+        Vec::new()
     };
 
     // 初期状態。`initial_epoch` で評価（動的追加なら epoch + current_t）。
@@ -351,7 +368,6 @@ pub fn build_controlled_satellite(
         mtq_max_moment,
         body: params.body,
         thruster_specs,
-        thruster_dry_mass,
         tick_base_t: start_t,
         ticks_done: 0,
     })
@@ -424,7 +440,7 @@ fn apply_held_commands(sat: &mut ControlledSatellite) -> Result<(), String> {
                 sat.thruster_specs.len()
             ));
         }
-        let core = ThrusterAssemblyCore::new(sat.thruster_specs.clone(), sat.thruster_dry_mass);
+        let core = ThrusterAssemblyCore::new(sat.thruster_specs.clone());
         let mut assembly = ThrusterAssembly::new(core);
         assembly.command = thruster_cmd.clone();
         if sat
@@ -1054,7 +1070,6 @@ mod tests {
             mtq_max_moment: 0.0,
             body: arika::body::KnownBody::Earth,
             thruster_specs: Vec::new(),
-            thruster_dry_mass: 0.0,
             tick_base_t: start_t,
             ticks_done: 0,
         };
@@ -1808,7 +1823,7 @@ mod tests {
                 .with_epoch(Epoch::from_gregorian(2026, 3, 20, 12, 0, 0.0))
                 .with_model(model);
             sat.dynamics
-                .model_breakdown(0.0, &sat.state.plant)
+                .model_breakdown(0.0, &sat.state)
                 .into_iter()
                 .find(|(name, _)| *name == "mtq_assembly")
                 .expect("the assembly is installed")
@@ -1883,7 +1898,7 @@ mod tests {
 
         let torque = sat
             .dynamics
-            .model_breakdown(0.0, &sat.state.plant)
+            .model_breakdown(0.0, &sat.state)
             .into_iter()
             .find(|(name, _)| *name == "mtq_assembly")
             .expect("the assembly is installed")
@@ -1958,6 +1973,115 @@ path = "does-not-exist.wasm"
                 "{body}: the magnetorquer should not stop the build: {err}"
             );
         }
+    }
+
+    /// The controlled loop stops a burn at the propellant floor, and the record
+    /// says so.
+    ///
+    /// The wiring is the run's own: `install_thrusters` is what
+    /// `build_controlled_satellite` calls, and this case calls it too, so a
+    /// change there cannot leave the case green. (The builder itself needs a
+    /// plugin guest, which a unit test cannot load — hence the seam.) The burn
+    /// case above installs its thruster with `with_model` and has no pool at
+    /// all, so nothing held this.
+    ///
+    /// 0.1 kg of propellant at 10 N and Isp 300 s lasts 29.4 s. The walk is
+    /// given 60 s in 10 s steps, so the crossing falls inside a step.
+    #[test]
+    fn the_controlled_loop_stops_a_burn_at_the_propellant_floor() {
+        use orts::spacecraft::G0;
+
+        const THRUST_N: f64 = 10.0;
+        const ISP_S: f64 = 300.0;
+        const DRY_MASS: f64 = 500.0;
+        const PROPELLANT: f64 = 0.1;
+
+        let (mut sat, _) = satellite_with(1.0, 0.0);
+        let bare = std::mem::replace(
+            &mut sat.dynamics,
+            orts::spacecraft::SpacecraftDynamics::new(
+                arika::earth::MU,
+                Box::new(orts::orbital::gravity::PointMass),
+                nalgebra::Matrix3::identity(),
+            ),
+        );
+        let specs = vec![ThrusterSpec::new(THRUST_N, ISP_S, Vector3::x())];
+        sat.dynamics = install_thrusters(bare, specs.clone(), DRY_MASS);
+        // An assembly fires what it is commanded to, and the loop takes that
+        // from the actuators, replacing the model on every tick — so this is
+        // also what holds `replace_model` putting the new assembly back in the
+        // propulsion set rather than among the ordinary models.
+        sat.thruster_specs = specs;
+        sat.actuators
+            .apply(&Command::thruster(vec![1.0]))
+            .expect("one throttle for one thruster");
+        // What a tick does with a held command; `propagate_controlled` on its
+        // own only walks the span.
+        apply_held_commands(&mut sat).expect("one throttle for one thruster");
+        // The fixture's state was built before the pool was registered, so it
+        // carries no mode for it.
+        sat.state = sat
+            .dynamics
+            .initial_augmented_state(orts::spacecraft::SpacecraftState {
+                mass: DRY_MASS + PROPELLANT,
+                ..sat.state.plant.clone()
+            });
+
+        propagate_controlled(
+            &mut sat,
+            0.0,
+            60.0,
+            &IntegratorConfig::Rk4 { dt: 10.0 },
+            RootSearch::default(),
+            &never_ends,
+        )
+        .expect("the burn and the orbit are finite everywhere");
+
+        assert!(
+            (sat.state.plant.mass - DRY_MASS).abs() < 1e-6,
+            "the mass ends on the floor, not at {}",
+            sat.state.plant.mass
+        );
+        // 29.4 s of burning is what 0.1 kg at this thrust buys, so the floor is
+        // crossed inside the third step rather than on its edge.
+        let burn_time = PROPELLANT / (THRUST_N / (ISP_S * G0));
+        assert!(
+            (29.0..30.0).contains(&burn_time),
+            "the burn lasts {burn_time} s, inside the 20..30 s step"
+        );
+
+        // And nothing burns after that: another minute leaves the mass where it
+        // is. The ΔV against Tsiolkovsky is `propellant_floor.rs`'s case, in
+        // free space — here the orbit turns under the thrust, so a velocity
+        // difference is mostly the orbit.
+        let on_the_floor = sat.state.plant.mass;
+        propagate_controlled(
+            &mut sat,
+            60.0,
+            120.0,
+            &IntegratorConfig::Rk4 { dt: 10.0 },
+            RootSearch::default(),
+            &never_ends,
+        )
+        .expect("the walk succeeds");
+        assert_eq!(
+            sat.state.plant.mass, on_the_floor,
+            "an empty tank spends nothing"
+        );
+
+        // The record keeps a column for the thruster and reports no thrust in
+        // it, which is what a reader watching the burn end sees.
+        let breakdown = sat.dynamics.model_breakdown(60.0, &sat.state);
+        let (_, thruster) = breakdown
+            .iter()
+            .find(|(name, _)| *name == "thruster_assembly")
+            .expect("the assembly keeps its entry after depletion");
+        assert_eq!(thruster.mass_rate, 0.0);
+        assert_eq!(
+            thruster.acceleration_inertial,
+            arika::frame::Vec3::zeros(),
+            "no thrust once the tank is empty"
+        );
     }
 
     /// A burn shorter than an integration step is flown by the controlled loop.

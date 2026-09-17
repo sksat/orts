@@ -41,7 +41,7 @@ fn assembly_tsiolkovsky() {
     let dv_analytical = isp * G0 * (m0 / mf).ln() / 1000.0; // km/s
 
     let spec = ThrusterSpec::new(thrust, isp, Vector3::x());
-    let core = ThrusterAssemblyCore::new(vec![spec], 0.0);
+    let core = ThrusterAssemblyCore::new(vec![spec]);
     let mut asm = ThrusterAssembly::new(core);
     asm.command = ThrusterCommand::Throttles(vec![1.0]);
 
@@ -67,13 +67,10 @@ fn assembly_opposing_thrusters_mass_depletion() {
     let m0 = 1000.0;
     let burn_time = 100.0;
 
-    let core = ThrusterAssemblyCore::new(
-        vec![
-            ThrusterSpec::new(thrust, isp, Vector3::x()),
-            ThrusterSpec::new(thrust, isp, -Vector3::x()),
-        ],
-        0.0,
-    );
+    let core = ThrusterAssemblyCore::new(vec![
+        ThrusterSpec::new(thrust, isp, Vector3::x()),
+        ThrusterSpec::new(thrust, isp, -Vector3::x()),
+    ]);
     let mut asm = ThrusterAssembly::new(core);
     asm.command = ThrusterCommand::Throttles(vec![1.0, 1.0]);
 
@@ -105,13 +102,10 @@ fn assembly_multi_direction() {
     let burn_time = 10.0;
 
     // X and Y thrusters at half throttle each
-    let core = ThrusterAssemblyCore::new(
-        vec![
-            ThrusterSpec::new(thrust, isp, Vector3::x()),
-            ThrusterSpec::new(thrust, isp, Vector3::y()),
-        ],
-        0.0,
-    );
+    let core = ThrusterAssemblyCore::new(vec![
+        ThrusterSpec::new(thrust, isp, Vector3::x()),
+        ThrusterSpec::new(thrust, isp, Vector3::y()),
+    ]);
     let mut asm = ThrusterAssembly::new(core);
     asm.command = ThrusterCommand::Throttles(vec![0.5, 0.5]);
 

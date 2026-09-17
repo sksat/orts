@@ -147,6 +147,15 @@ Key points:
 - Systems come in three flavors — `OrbitalSystem`, `AttitudeSystem`,
   `SpacecraftDynamics` — each a `DynamicalSystem` that bundles a state with
   `Vec<Box<dyn Model<S>>>`.
+- `SpacecraftDynamics` keeps the models that burn propellant in a list of their
+  own (`with_propulsion`) next to the ordinary ones (`with_model`), because
+  they are the ones a `PropellantPool` switches off. The pool is a
+  `StateEffector` that carries no continuous state: what it holds is the
+  discrete mode that says whether the tank is empty, and the boundary the
+  propagation locates when it runs dry. Mass flow or a model's name would be a
+  guess at which models to stop; the separate list is the answer, and the
+  telemetry breakdowns read the same mode so a record cannot show thrust the
+  trajectory never had.
 - A system that carries one-sided constraints also implements `HasBoundaries`:
   it answers which boundaries exist, what each one's margin is at a state
   (positive ahead of it, zero on it, negative past it), and what to put on the

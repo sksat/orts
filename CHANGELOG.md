@@ -14,6 +14,15 @@ section is subdivided by package.
 ### `orts` (Rust, crates.io)
 
 #### Added
+- `PropellantPool` is the propellant a spacecraft carries: one pool, one floor,
+  and what is left is the mass the state carries above it. A floor of zero is
+  refused — it would sit on the singularity of `F/m`, and a boundary search
+  steps past the floor by design, re-stepping an interval under the mode that
+  held before the crossing. `SpacecraftDynamics::with_propellant` registers it
+  and `with_propulsion` registers a model that draws on it; a propulsion model
+  is evaluated exactly as any other until the pool is empty, and then it is not
+  asked at all. Which models burn propellant is the caller's to say: guessing
+  from a negative mass rate or from a name would stop drag or a wheel too.
 - `SpacecraftDynamics::load_breakdown` answers the acceleration magnitudes and
   the body torques from one evaluation of every model, as a `LoadBreakdown`
   re-exported from `orts::spacecraft`. `ExternalLoads` carries
@@ -129,6 +138,30 @@ section is subdivided by package.
   ([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
+- **BREAKING**: a thruster no longer carries a dry mass, and neither does an
+  assembly: `ThrusterSpec::dry_mass`, `Thruster::with_dry_mass`,
+  `ThrusterSpec::with_dry_mass` and `ThrusterAssemblyCore::new`'s second
+  argument are gone, and the floor is the spacecraft's — `PropellantPool`,
+  registered with the dynamics. Two thrusters carrying their own floor could
+  disagree about when the spacecraft is empty, and the comparison they each
+  made inside the right-hand side (`state.mass <= dry_mass`) is what a
+  boundary search cannot have: it flips between the stages of a re-stepped
+  interval, which reports a crossing at the wrong time. `orts.toml` grows the
+  same requirement — `[satellites.thruster] dry_mass` is required and must be
+  positive, where it used to default to zero.
+- **BREAKING**: the four load breakdowns of `SpacecraftDynamics` —
+  `model_breakdown`, `torque_breakdown`, `acceleration_breakdown` and
+  `load_breakdown` — take `&AugmentedState<SpacecraftState<F>>` where they took
+  `&SpacecraftState<F>`. Whether the propulsion burns is the pool's mode, the
+  same value the right-hand side gates on, and a mode lives in the augmented
+  state; reading the mass instead let a record disagree with the trajectory on
+  a path that settles no boundaries. A caller holding `sat.state` passes it
+  whole rather than reaching into `.plant`.
+- **BREAKING**: `BoundaryExchange` gains `mass: Option<f64>`, the mass a
+  boundary fixes. An effector that returns only angular momentum keeps
+  compiling by filling the rest in — `BoundaryExchange { angular_momentum_body,
+  ..Default::default() }` — which is also what keeps a later field from
+  breaking it.
 - **BREAKING**: how closely the propagation locates the time a state reaches a
   limit is a setting rather than the 1 ms default every path hard-coded.
   `IndependentGroup::with_root_search` and `CoupledGroup::with_root_search` take
@@ -299,6 +332,27 @@ section is subdivided by package.
   ([#469](https://github.com/sksat/orts/pull/469))
 
 #### Fixed
+- A burn that crossed the propellant floor inside a step spent propellant the
+  spacecraft did not have. The thruster asked whether the mass was at its floor
+  and answered from the state it was handed, so a step that crossed burned at
+  full thrust throughout: measured in [#446] with 0.04 kg left, a thrust of
+  196.133 N and a one-second step, the spacecraft ended 0.01 kg *below* its
+  floor and gained 0.980273 m/s where Tsiolkovsky gives 0.784375 m/s for the
+  propellant it had — 25% too much. Running dry is now a boundary the
+  propagation locates: `PropellantPool` declares it, the mass is put on the
+  floor, and the mode it carries is what stops every consumer of that
+  propellant. A state with no mass — which a search reaches on purpose, since
+  it re-steps an interval under the mode that held before the crossing — is
+  outside the domain of `F/m`, so the system drops the acceleration every model
+  and effector reported there and keeps the rest; without that the derivative
+  was `[inf, NaN, NaN]` and the walk failed on a state it was going to discard.
+  The mass rate is what is kept: it is not singular in the mass, and it is what
+  carries a step's endpoint across the floor, so suppressing it would leave both
+  ends of a wide step above the floor and hide the crossing inside it. The same case now lands on the floor and gains Tsiolkovsky's ΔV
+  to within 1e-6 m/s under RK4, DP45 and DOP853. What is left over is the
+  impulse for the propellant burned past the floor before the crossing was
+  located, which is `ṁ · t_tolerance` of it — a nanosecond of localization is
+  1e-10 kg, worth 2e-9 m/s.
 - A reaction wheel that reached its momentum limit took angular momentum out of
   the spacecraft: over a 20 s run of a 0.53 N·m·s wheel driven at 0.1 N·m, the
   body-frame total `I·ω + Σ aᵢ hᵢ` lost 7.5e-3 N·m·s under RK4 at `dt = 0.25`
