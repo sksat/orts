@@ -123,7 +123,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   上限を超えたホイール、上限から離れているのに保持と言っているモード、そして `aux` /
   `modes` / `aux_bounds` の長さが登録した effector と合わない state は、どの伝播経路でも
   入口で拒否される (独立群、結合群 (各衛星に聞く)、`AugmentedAttitudeSystem`、CLI の
-  制御付きループ、`walk_to_target` の直接呼び出し)。以前はどれも無言だった: dry mass 100 kg に対して手組みした 99.5 kg の
+  制御付きループ、`walk_to_target` の直接呼び出し)。`Scheduler` は群を組む前に各衛星へ聞き、
+  開始できない機体を落としてから残りをその区間ぶん飛ばす — 結合群の walk は 1 機の拒否で
+  1 ステップも積分しないので、そのままでは同じ component の衛星が、scheduler の時計が
+  既に通過した時刻に取り残される。以前はどれも無言だった: dry mass 100 kg に対して手組みした 99.5 kg の
   state は、最初のステップを終えると 100 kg になっていた — 入力に無かった 0.5 kg の推進剤が
   増えていた。state が既に越えている境界を処理するのは、伝播ループの仕事だからである
   ([#523](https://github.com/sksat/orts/issues/523))

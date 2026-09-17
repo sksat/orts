@@ -160,7 +160,11 @@ section is subdivided by package.
   registered effectors are now refused at the entry to every propagation path:
   the independent group, a coupled group (which asks each satellite),
   `AugmentedAttitudeSystem`, the CLI's controlled loop, and a direct
-  `walk_to_target`.
+  `walk_to_target`. `Scheduler` asks each satellite before it groups anything,
+  so one that cannot start is dropped and the rest of its component is still
+  flown over that interval — a composite walk refused by one member integrates
+  nothing, which would leave its peers at a time the scheduler's clock has
+  already passed.
   They used to be silent: a hand-built 99.5 kg with a 100 kg floor came back
   from its first step *at* 100 kg — half a kilogram of propellant the input
   never had — because settling a boundary the state already sat past is what

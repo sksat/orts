@@ -361,13 +361,13 @@ fn a_scheduler_drops_only_the_satellite_that_refused() {
             .position()
             .x
     };
-    // The refused call advanced nothing: the component's walk never ran, so the
-    // first second is lost for both of them. What the surviving satellite gets
-    // back is the rest of the span, once the scheduler has regrouped without
-    // the one it dropped.
+    // The whole span, not the part after the refusal: the satellite that could
+    // not start is dropped before anything is grouped, so the survivor is flown
+    // over the same interval rather than being left behind at a time the
+    // scheduler's clock has already passed.
     assert!(
-        (x_of("above") - (FLOOR_X + 1.0 + 2.0 * DT * SPEED)).abs() < 1e-9,
-        "the satellite whose state was fine keeps moving, not {}",
+        (x_of("above") - (FLOOR_X + 1.0 + 3.0 * DT * SPEED)).abs() < 1e-9,
+        "the satellite whose state was fine flies the whole span, not {}",
         x_of("above")
     );
     assert!(

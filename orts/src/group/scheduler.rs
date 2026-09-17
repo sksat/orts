@@ -522,6 +522,16 @@ where
                 break;
             }
 
+            // Ask each satellite about its own state before anything is
+            // grouped. A coupled component is walked as one composite state, so
+            // a member that cannot start would refuse the whole component's
+            // walk — and since that walk integrates nothing, its other members
+            // would be left at `self.t` while the clock below moves to
+            // `sync_target`, holding states that belong to an instant they
+            // never reached. Dropping the ones that refuse leaves a grouping
+            // whose members can all be flown.
+            all_terminations.extend(self.drop_satellites_that_cannot_start());
+
             // Re-evaluate pair regimes based on current distances
             self.update_pair_regimes();
             let grouping = self.build_grouping();
@@ -615,6 +625,35 @@ where
                 self.pair_states[idx].last_transition_t = self.t;
             }
         }
+    }
+
+    /// Terminate every active satellite whose own system refuses the state it
+    /// would be propagated from, and report each one.
+    ///
+    /// The composite walk asks too, which is what covers a caller driving a
+    /// group directly. Here the answer decides who is in the grouping, because
+    /// a scheduler has somewhere to carry on from: the satellites that can
+    /// still be flown.
+    fn drop_satellites_that_cannot_start(&mut self) -> Vec<SatelliteTermination> {
+        let t = self.t;
+        let mut dropped = Vec::new();
+        for sat in &mut self.satellites {
+            if sat.terminated {
+                continue;
+            }
+            let Some(dynamics) = sat.dynamics.as_ref() else {
+                continue;
+            };
+            if let Err(e) = dynamics.validate_boundary_walk_start(t, &sat.state) {
+                sat.terminated = true;
+                dropped.push(SatelliteTermination {
+                    satellite_id: sat.id.clone(),
+                    t,
+                    reason: e.to_string(),
+                });
+            }
+        }
+        dropped
     }
 
     /// Build the grouping structure from current pair regimes.
