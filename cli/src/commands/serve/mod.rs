@@ -116,9 +116,11 @@ fn reject_unhonored_sim_args(sim: &SimArgs, written: &WrittenFlags) -> Result<()
 /// The sim args that only [`SimParams::from_sim_args`] reads, named as they
 /// were written on the command line.
 ///
-/// The plugin backend flags are deliberately absent: `PluginBackendOverrides`
-/// applies them to every `SimParams` the manager builds, whoever started the
-/// simulation.
+/// `--plugin-backend` and `--plugin-backend-threshold` are deliberately absent:
+/// `PluginBackendOverrides` applies those to every `SimParams` the manager
+/// builds, whoever started the simulation. It does not carry
+/// `--plugin-backend-async-mode`, which reaches a simulation only through
+/// `SimParams::from_sim_args`, so that one is named like the rest.
 ///
 /// A flag counts because it was written, not because its value differs from the
 /// default. This check only runs where nothing reads these values at all — a
@@ -142,18 +144,27 @@ struct WrittenFlags(Vec<&'static str>);
 
 impl WrittenFlags {
     /// The flags on this process's own command line.
+    fn from_this_process() -> Self {
+        Self::written_in(std::env::args_os())
+    }
+
+    /// The flags written in one whole command line, `serve` and all.
     ///
     /// The arguments are parsed a second time, because the first parse happens
     /// inside `parse_with_license_notice` and does not hand back the matches
     /// that carry each value's source. A second parse of an argv the same
-    /// command already accepted does not fail; where it somehow does, nothing
-    /// is reported as written and the value comparison below still answers, as
-    /// it did before this existed.
-    fn from_this_process() -> Self {
+    /// command already accepted does not fail. Where it somehow does — or
+    /// where the command line names another subcommand — nothing is reported
+    /// as written, so the guard names nothing and `serve` starts as it would
+    /// have before this check existed.
+    fn written_in<I, T>(argv: I) -> Self
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
         use clap::CommandFactory;
 
-        let Ok(matches) = crate::cli::Cli::command().try_get_matches_from(std::env::args_os())
-        else {
+        let Ok(matches) = crate::cli::Cli::command().try_get_matches_from(argv) else {
             return Self::default();
         };
         match matches.subcommand_matches("serve") {
@@ -187,7 +198,7 @@ impl WrittenFlags {
 ///
 /// Every one of them used to be read as absent when its value happened to
 /// equal the default.
-const VALUE_FLAGS: [(&str, &str); 9] = [
+const VALUE_FLAGS: [(&str, &str); 10] = [
     ("body", "--body"),
     ("dt", "--dt"),
     ("integrator", "--integrator"),
@@ -197,6 +208,7 @@ const VALUE_FLAGS: [(&str, &str); 9] = [
     ("atmosphere", "--atmosphere"),
     ("f107", "--f107"),
     ("ap", "--ap"),
+    ("plugin_backend_async_mode", "--plugin-backend-async-mode"),
 ];
 
 fn unhonored_sim_args(sim: &SimArgs, written: &WrittenFlags) -> Vec<&'static str> {
@@ -500,6 +512,29 @@ mod tests {
         assert!(parse_stream_stdio("/comlink").is_err());
         assert!(parse_stream_stdio("sat0/").is_err());
         assert!(parse_stream_stdio("sat0/a/b").is_err());
+    }
+
+    /// The path the process itself takes: the whole command line, through
+    /// `Cli`, with `serve`'s own matches pulled out of it.
+    ///
+    /// The other cases build matches from `SimArgs` alone, which would keep
+    /// passing if the ids under `serve` were spelled differently or the
+    /// subcommand were pulled out wrongly.
+    #[test]
+    fn the_whole_command_line_is_read_the_way_the_process_reads_it() {
+        let written = WrittenFlags::written_in(["orts", "serve", "--atol", "1e-10"]);
+        assert!(
+            written.was_written("--atol"),
+            "--atol is written, whatever its value: {written:?}"
+        );
+        assert!(!written.was_written("--dt"), "and --dt is not: {written:?}");
+
+        // Another subcommand's flags are not serve's.
+        let elsewhere = WrittenFlags::written_in(["orts", "run", "--atol", "1e-10"]);
+        assert!(
+            !elsewhere.was_written("--atol"),
+            "run's flags are read by run: {elsewhere:?}"
+        );
     }
 
     /// A flag written with the value it already had is still a flag the server
