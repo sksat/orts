@@ -2086,6 +2086,66 @@ path = "does-not-exist.wasm"
         );
     }
 
+    /// The controlled path refuses a state below the floor rather than walking
+    /// it, and says which constraint refused it.
+    ///
+    /// `serve` can replace a satellite's state while a run is going, so the
+    /// check belongs where a boundary walk starts rather than only where a
+    /// satellite is added. Measured before the check existed: the walk's own
+    /// reconciliation settled the boundary and the mass rose to the dry mass,
+    /// which is propellant the caller never gave it.
+    #[test]
+    fn the_controlled_loop_refuses_a_state_below_the_propellant_floor() {
+        const THRUST_N: f64 = 10.0;
+        const ISP_S: f64 = 300.0;
+        const DRY_MASS: f64 = 500.0;
+        const MISSING_KG: f64 = 0.5;
+
+        let (mut sat, _) = satellite_with(1.0, 0.0);
+        let bare = std::mem::replace(
+            &mut sat.dynamics,
+            orts::spacecraft::SpacecraftDynamics::new(
+                arika::earth::MU,
+                Box::new(orts::orbital::gravity::PointMass),
+                nalgebra::Matrix3::identity(),
+            ),
+        );
+        let specs = vec![ThrusterSpec::new(THRUST_N, ISP_S, Vector3::x())];
+        sat.dynamics = install_thrusters(bare, specs.clone(), DRY_MASS);
+        sat.thruster_specs = specs;
+        // Built by hand, the way a restored or externally written state is: the
+        // constructor would have refused this mass.
+        sat.state = orts::effector::AugmentedState {
+            plant: orts::spacecraft::SpacecraftState {
+                mass: DRY_MASS - MISSING_KG,
+                ..sat.state.plant.clone()
+            },
+            aux: sat.state.aux.clone(),
+            aux_bounds: sat.state.aux_bounds.clone(),
+            modes: vec![orts::effector::ConstraintMode::Free],
+        };
+
+        let err = propagate_controlled(
+            &mut sat,
+            0.0,
+            60.0,
+            &IntegratorConfig::Rk4 { dt: 10.0 },
+            RootSearch::default(),
+            &never_ends,
+        )
+        .expect_err("the state cannot start a boundary walk");
+
+        assert!(
+            err.contains("propellant_pool") && err.contains("below the dry mass"),
+            "the error names the constraint that refused the state, not {err}"
+        );
+        assert_eq!(
+            sat.state.plant.mass,
+            DRY_MASS - MISSING_KG,
+            "and the mass is left as it was: settling it would add {MISSING_KG} kg"
+        );
+    }
+
     /// A burn shorter than an integration step is flown by the controlled loop.
     ///
     /// `propagate_controlled` used to run the integrator from `t0` straight to
