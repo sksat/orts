@@ -53,7 +53,10 @@ pub fn root_search(dt: f64, span: f64, t_tolerance: f64) -> RootSearch {
         .fold(0.0_f64, f64::max);
     let needed = if widest > 0.0 && t_tolerance.is_finite() && t_tolerance > 0.0 {
         let halvings = (widest / t_tolerance).log2().ceil();
-        // `as u32` saturates, and a non-finite ratio cannot get here.
+        // Both operands are finite and positive here, and their ratio still
+        // need not be: `1e308 / 1e-300` is an infinity, whose `log2` is one
+        // too. `as u32` saturates, so such a pair asks for every halving there
+        // is rather than wrapping to none.
         (halvings.max(0.0) as u32).saturating_add(HALVINGS_SPARE)
     } else {
         // A pair `validate_root_t_tolerance` and `validate_time_params` refuse;

@@ -126,7 +126,7 @@ where
     /// is from the crossing the spacecraft would really have also carries the
     /// state's own integration error, and a value that is nearly flat where it
     /// crosses turns a small error in the value into a large one in the time
-    /// (see [`AdvanceOutcome::Roots`](utsuroi::AdvanceOutcome::Roots), whose
+    /// (see [`RootOutcome::Roots`](utsuroi::RootOutcome::Roots), whose
     /// `bracket` says the same). Tightening this tolerance narrows one term of
     /// the three.
     ///

@@ -1941,8 +1941,8 @@ pub fn validate_tolerances(
 /// after the output file exists.
 ///
 /// How many halvings a tolerance needs is not a reason to refuse it: the count
-/// follows from the tolerance, and [`root_search`](crate::sim::root_search)
-/// derives it.
+/// follows from the tolerance, and
+/// [`root_search`](crate::sim::params::root_search) derives it.
 pub fn validate_root_t_tolerance(t_tolerance: f64) -> Result<(), String> {
     if !t_tolerance.is_finite() || t_tolerance <= 0.0 {
         return Err(format!(
