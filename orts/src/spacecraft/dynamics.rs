@@ -484,9 +484,28 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
             .gravity
             .acceleration(self.mu, state.plant.orbit.position());
 
-        // Accumulate external loads from models
+        // Accumulate external loads from models.
+        //
+        // Not at all where the state has no mass. Every model that turns a
+        // force into an acceleration divides by it — a thruster, a panel's
+        // drag or SRP — so `F/m` is an infinity there and the walk fails on a
+        // state it was going to discard anyway: a boundary search re-steps an
+        // interval under the mode that held before the crossing, so it steps
+        // past the propellant floor on purpose, and a wide enough step takes a
+        // stage below zero mass. Nothing about such a state is physical; what
+        // the bisection needs back from it is a finite number, and zero loads
+        // is the finite answer that leaves the mass where it is. The policy
+        // lives here because it is the state that is outside the domain, not
+        // any one model.
         let mut total = ExternalLoads::<F>::zeros();
-        for model in self.models_to_evaluate(self.has_propellant(state)) {
+        let in_the_domain = matches!(
+            state.plant.mass.partial_cmp(&0.0),
+            Some(core::cmp::Ordering::Greater)
+        );
+        for model in self
+            .models_to_evaluate(self.has_propellant(state))
+            .take(if in_the_domain { usize::MAX } else { 0 })
+        {
             total += eval_maybe_in_segment(model, segment, t, &state.plant, epoch.as_ref());
         }
 
@@ -909,6 +928,58 @@ mod tests {
         );
     }
 
+    /// A boundary search steps past the propellant floor on purpose — it
+    /// re-steps an interval under the mode that held before the crossing — so
+    /// a wide enough step takes a stage below zero mass. Every model that
+    /// turns a force into an acceleration divides by the mass there, so the
+    /// derivative would be an infinity and the walk would fail on a state it
+    /// was going to discard.
+    ///
+    /// The policy is the system's, not each model's: a thruster guarding
+    /// itself leaves a panel's drag to produce the infinity instead.
+    #[test]
+    fn a_state_with_no_mass_gets_finite_derivatives() {
+        use crate::spacecraft::{PropellantPool, Thruster};
+
+        let dynamics = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
+            // Something that divides by mass and is not propulsion.
+            .with_model(ConstantForce(Vector3::new(1.0, 0.0, 0.0)))
+            .with_propellant(PropellantPool::new(1.0))
+            .with_propulsion(Thruster::new(196.133, 200.0, Vector3::x()));
+
+        for mass in [0.0, -1e-6, -10.0] {
+            let plant = SpacecraftState {
+                mass,
+                ..sample_spacecraft()
+            };
+            // Built by hand: `initial_augmented_state` refuses a mass below
+            // the floor, which is the input error. This is the trial state a
+            // search produces, which has to be evaluable.
+            let state = AugmentedState {
+                plant,
+                aux: vec![],
+                aux_bounds: vec![],
+                modes: vec![ConstraintMode::Free],
+            };
+            let d = dynamics.derivatives(0.0, &state);
+            assert!(
+                d.plant.orbit.velocity().iter().all(|c| c.is_finite())
+                    && d.plant.mass.is_finite()
+                    && d.plant
+                        .attitude
+                        .angular_velocity
+                        .iter()
+                        .all(|c| c.is_finite()),
+                "at a mass of {mass} the derivative is {:?}",
+                d.plant.orbit.velocity()
+            );
+            assert_eq!(
+                d.plant.mass, 0.0,
+                "and nothing burns there, so the mass stays where it is"
+            );
+        }
+    }
+
     /// A pool is the pool wherever a caller registered it. `with_effector` is
     /// public and `PropellantPool` is an effector, so the generic path could
     /// otherwise leave a pool the system does not know about: its floor would
@@ -982,6 +1053,21 @@ mod tests {
         }
         fn eval(&self, _t: f64, _state: &SpacecraftState, _epoch: Option<&Epoch>) -> ExternalLoads {
             ExternalLoads::acceleration(self.0)
+        }
+    }
+
+    /// A force, which is what a real model has: the acceleration it produces
+    /// is the force over the mass, and that is the division a state with no
+    /// mass cannot survive. `PanelDrag` and `PanelSrp` do the same.
+    struct ConstantForce(Vector3<f64>);
+
+    impl Model<SpacecraftState> for ConstantForce {
+        fn name(&self) -> &str {
+            "const_force_n"
+        }
+        fn eval(&self, _t: f64, state: &SpacecraftState, _epoch: Option<&Epoch>) -> ExternalLoads {
+            // N / kg = m/s², and km/s² is what the loads carry.
+            ExternalLoads::acceleration(self.0 / state.mass / 1000.0)
         }
     }
 

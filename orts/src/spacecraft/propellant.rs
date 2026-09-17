@@ -47,9 +47,11 @@ impl PropellantPool {
     /// crossing, so it steps past the floor on purpose, and a wide enough step
     /// takes a stage below zero mass (measured: a floor of 1 kg, an initial
     /// mass of 1.1 and a flow of 2.2 kg/s put RK4's midpoint at exactly zero
-    /// with `dt = 1`). What covers that is the thruster answering a state with
-    /// no mass with no loads, since nothing there is physical and the
-    /// bisection is on its way to an interval that is.
+    /// with `dt = 1`). What covers that is the system: a state with no mass is
+    /// outside the domain of every model that turns a force into an
+    /// acceleration, so none of them is evaluated there. Nothing about such a
+    /// state is physical, and what the bisection needs back from it is a
+    /// finite number.
     pub fn new(dry_mass: f64) -> Self {
         assert!(
             dry_mass.is_finite() && dry_mass > 0.0,

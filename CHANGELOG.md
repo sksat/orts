@@ -328,7 +328,11 @@ section is subdivided by package.
   propellant it had — 25% too much. Running dry is now a boundary the
   propagation locates: `PropellantPool` declares it, the mass is put on the
   floor, and the mode it carries is what stops every consumer of that
-  propellant. The same case now lands on the floor and gains Tsiolkovsky's ΔV
+  propellant. A state with no mass — which a search reaches on purpose, since
+  it re-steps an interval under the mode that held before the crossing — is
+  outside the domain of every model that turns a force into an acceleration,
+  so none of them is evaluated there; without that the derivative was
+  `[inf, NaN, NaN]` and the walk failed on a state it was going to discard. The same case now lands on the floor and gains Tsiolkovsky's ΔV
   to within 1e-6 m/s under RK4, DP45 and DOP853. What is left over is the
   impulse for the propellant burned past the floor before the crossing was
   located, which is `ṁ · t_tolerance` of it — a nanosecond of localization is
