@@ -742,6 +742,7 @@ impl<G: GravityField, F: Eci + 'static> HasBoundaries for SpacecraftDynamics<G, 
     /// holds it there is a legal start.
     fn validate_boundary_walk_start(
         &self,
+        _t: f64,
         state: &Self::State,
     ) -> Result<(), crate::boundary::StartStateError> {
         let (modes, aux) = (state.modes.len(), state.aux.len());

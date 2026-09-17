@@ -298,7 +298,11 @@ where
     /// A composite answering the default `Ok(())` would let a coupled group
     /// start from exactly the states the check exists to refuse, since one walk
     /// covers the whole group: the children never see the question.
-    fn validate_boundary_walk_start(&self, state: &Self::State) -> Result<(), StartStateError> {
+    fn validate_boundary_walk_start(
+        &self,
+        t: f64,
+        state: &Self::State,
+    ) -> Result<(), StartStateError> {
         if state.states.len() != self.dynamics.len() {
             return Err(StartStateError::new(format!(
                 "the group state carries {} satellites where the group has {}",
@@ -308,7 +312,7 @@ where
         }
         for (index, (dynamics, sat)) in self.dynamics.iter().zip(&state.states).enumerate() {
             dynamics
-                .validate_boundary_walk_start(sat)
+                .validate_boundary_walk_start(t, sat)
                 .map_err(|e| e.from_satellite(index))?;
         }
         Ok(())

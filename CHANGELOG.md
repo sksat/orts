@@ -150,6 +150,10 @@ section is subdivided by package.
   the reason a group records for a terminated satellite is unchanged.
   `HasBoundaries::validate_boundary_walk_start` and
   `StateEffector::validate_state` are what answer, both defaulting to `Ok(())`.
+  The first takes the time the walk starts at, because a system can prescribe
+  what a constraint reads: `AugmentedAttitudeSystem` takes its mass from a
+  function of time, so the same state is above a propellant floor at one
+  instant and below it at another.
   A mass below the propellant floor, a pool mode disagreeing with the mass it
   carries, a wheel past its limit or held by its mode away from its bound, and
   a state whose `aux` / `modes` / `aux_bounds` lengths disagree with the

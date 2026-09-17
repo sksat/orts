@@ -127,9 +127,18 @@ pub trait HasBoundaries: DynamicalSystem {
     /// to start. Each constraint answers in its own terms, so this reports the
     /// name of what refused and what it read.
     ///
+    /// `t` is where the walk starts, because a system can prescribe part of
+    /// what a constraint reads: an attitude system takes its orbit and mass
+    /// from functions of time, so a mass valid at one instant is not
+    /// necessarily valid at another.
+    ///
     /// Not asked during a walk: a boundary search steps past a constraint on
     /// purpose, and its trial states are meant to be evaluable there.
-    fn validate_boundary_walk_start(&self, _state: &Self::State) -> Result<(), StartStateError> {
+    fn validate_boundary_walk_start(
+        &self,
+        _t: f64,
+        _state: &Self::State,
+    ) -> Result<(), StartStateError> {
         Ok(())
     }
 }
@@ -404,7 +413,7 @@ where
     // invalid is refused rather than corrected, and correcting it is exactly
     // what the reconciliation below would do.
     system
-        .validate_boundary_walk_start(&state)
+        .validate_boundary_walk_start(from, &state)
         .map_err(|error| BoundaryWalkError::StartRejected { t: from, error })?;
     let mut state = state;
     let mut t = from;

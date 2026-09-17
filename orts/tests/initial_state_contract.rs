@@ -221,7 +221,11 @@ impl utsuroi::DynamicalSystem for Floor {
 }
 
 impl HasBoundaries for Floor {
-    fn validate_boundary_walk_start(&self, state: &OrbitalState) -> Result<(), StartStateError> {
+    fn validate_boundary_walk_start(
+        &self,
+        _t: f64,
+        state: &OrbitalState,
+    ) -> Result<(), StartStateError> {
         let x = state.position().x;
         if x < FLOOR_X {
             return Err(StartStateError::new(format!(

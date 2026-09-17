@@ -117,7 +117,9 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   記録してしまう)。solver の失敗は `BoundaryWalkError::Integration` のままである。エラーを match する呼び出し側は腕を `Integration` で包む。整形するだけの
   呼び出し側はそのままで、group が終了した衛星に記録する理由の文面も変わらない。答えるのは
   `HasBoundaries::validate_boundary_walk_start` と `StateEffector::validate_state` で、
-  どちらも既定は `Ok(())` である。dry mass を下回る質量、質量と食い違うプールのモード、
+  どちらも既定は `Ok(())` である。前者は walk の開始時刻を取る: 系が拘束の読む値を
+  与えている場合があるためで、`AugmentedAttitudeSystem` は質量を時刻の関数から取るので、
+  同じ state が或る時刻では dry mass より上、別の時刻では下になる。dry mass を下回る質量、質量と食い違うプールのモード、
   上限を超えたホイール、上限から離れているのに保持と言っているモード、そして `aux` /
   `modes` / `aux_bounds` の長さが登録した effector と合わない state は、どの伝播経路でも
   入口で拒否される (独立群、結合群 (各衛星に聞く)、`AugmentedAttitudeSystem`、CLI の
