@@ -284,6 +284,27 @@ where
         self.dynamics[declared.satellite]
             .boundary_is_active(declared, &state.states[declared.satellite])
     }
+
+    /// Every satellite about its own state, named by its place in the group.
+    ///
+    /// A composite answering the default `Ok(())` would let a coupled group
+    /// start from exactly the states the check exists to refuse, since one walk
+    /// covers the whole group: the children never see the question.
+    fn validate_boundary_walk_start(&self, state: &Self::State) -> Result<(), String> {
+        if state.states.len() != self.dynamics.len() {
+            return Err(format!(
+                "the group state carries {} satellites where the group has {}",
+                state.states.len(),
+                self.dynamics.len()
+            ));
+        }
+        for (index, (dynamics, sat)) in self.dynamics.iter().zip(&state.states).enumerate() {
+            dynamics
+                .validate_boundary_walk_start(sat)
+                .map_err(|reason| format!("satellite {index}: {reason}"))?;
+        }
+        Ok(())
+    }
 }
 
 impl<D: DynamicalSystem> DynamicalSystem for CoupledGroupDynamics<D>

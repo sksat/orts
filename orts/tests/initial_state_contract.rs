@@ -17,6 +17,7 @@
 use nalgebra::{Matrix3, Vector3};
 
 use orts::attitude::AttitudeState;
+use orts::boundary::HasBoundaries;
 use orts::effector::{AugmentedState, ConstraintMode};
 use orts::group::IntegratorConfig;
 use orts::group::independent::IndependentGroup;
@@ -199,6 +200,64 @@ fn a_wheel_held_by_its_mode_away_from_its_bound_is_refused() {
     assert!(
         reason.contains("is held at"),
         "the reason says the mode and the momentum disagree, not {reason}"
+    );
+}
+
+/// A system with a floor of its own, for the path a spacecraft cannot take.
+///
+/// `CoupledGroup` needs a state an interaction force can be turned into
+/// (`FromAcceleration`), which `AugmentedState` does not implement, so a
+/// spacecraft with effectors cannot be in one today. What this checks is the
+/// composite's delegation, and any constrained system reaches it.
+struct Floor;
+
+const FLOOR_X: f64 = 7000.0;
+
+impl utsuroi::DynamicalSystem for Floor {
+    type State = OrbitalState;
+    fn derivatives(&self, _t: f64, state: &OrbitalState) -> OrbitalState {
+        OrbitalState::from_derivative(*state.velocity(), Vector3::zeros())
+    }
+}
+
+impl HasBoundaries for Floor {
+    fn validate_boundary_walk_start(&self, state: &OrbitalState) -> Result<(), String> {
+        let x = state.position().x;
+        if x < FLOOR_X {
+            return Err(format!("{x} is below the floor at {FLOOR_X}"));
+        }
+        Ok(())
+    }
+}
+
+/// A coupled group walks its satellites as one composite state, so the
+/// composite has to ask each of them: one answering for itself would let the
+/// group start from exactly the states its children refuse, and the child that
+/// refused would have no name in the reason.
+#[test]
+fn a_coupled_group_asks_each_satellite_about_its_own_state() {
+    use orts::group::coupled::CoupledGroup;
+
+    let above = OrbitalState::new(Vector3::new(FLOOR_X + 1.0, 0.0, 0.0), Vector3::zeros());
+    let below = OrbitalState::new(Vector3::new(FLOOR_X - 1.0, 0.0, 0.0), Vector3::zeros());
+    let mut group = CoupledGroup::new(IntegratorConfig::Rk4 { dt: DT })
+        .add_satellite("above", above, Floor)
+        .add_satellite("below", below, Floor);
+
+    let outcome = group.propagate_to(DT).expect("the group answers");
+    let reason = outcome
+        .terminations
+        .first()
+        .map(|t| t.reason.clone())
+        .expect("the group is terminated rather than propagated");
+    assert!(
+        reason.contains("satellite 1") && reason.contains("below the floor"),
+        "the reason says which satellite refused the state, not {reason}"
+    );
+    assert_eq!(
+        group.group_state().states[1].position().x,
+        FLOOR_X - 1.0,
+        "and its state is left as it was handed over"
     );
 }
 
