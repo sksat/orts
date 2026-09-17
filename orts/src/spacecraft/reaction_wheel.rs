@@ -610,6 +610,51 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
             .collect()
     }
 
+    /// Each wheel inside its limit, in a mode that agrees with where it sits.
+    ///
+    /// A momentum handed over past the limit is refused rather than settled:
+    /// settling returns the overshoot to the body, so the spacecraft would
+    /// start turning at a rate the caller never asked for. Resting exactly on
+    /// the limit is a legal start in either mode — `Free` there is a crossing
+    /// the search reports on the next step, and `Upper` is a wheel already
+    /// held — but a mode claiming a wheel is held while its momentum is inside
+    /// the limit would freeze it at a value that is not its bound.
+    fn validate_state(
+        &self,
+        _plant: &S,
+        aux: &[f64],
+        modes: &[ConstraintMode],
+    ) -> Result<(), String> {
+        let momentum = self.core.momentum_slice(aux);
+        for (index, wheel) in self.core.wheels.iter().enumerate() {
+            let h = momentum[index];
+            let limit = wheel.momentum_limit();
+            if !h.is_finite() {
+                return Err(format!("wheel {index} carries a momentum of {h}"));
+            }
+            if h.abs() > limit + MOMENTUM_TOLERANCE {
+                return Err(format!(
+                    "wheel {index} starts at {h} N·m·s, past its limit of {limit} N·m·s"
+                ));
+            }
+            let mode = modes.get(index).copied().unwrap_or_default();
+            let held_at = match mode {
+                ConstraintMode::Upper => Some(limit),
+                ConstraintMode::Lower => Some(-limit),
+                ConstraintMode::Free => None,
+            };
+            if let Some(bound) = held_at
+                && (h - bound).abs() > MOMENTUM_TOLERANCE
+            {
+                return Err(format!(
+                    "wheel {index} is held at {bound} N·m·s by its mode while its momentum \
+                     is {h} N·m·s"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     fn settle_boundary(&self, kind: BoundaryKind, aux: &mut [f64]) -> Option<BoundaryExchange> {
         let index = kind.index();
         let wheel = &self.core.wheels[index];

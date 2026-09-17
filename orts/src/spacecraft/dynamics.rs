@@ -729,6 +729,49 @@ impl<G: GravityField, F: Eci + 'static> HasBoundaries for SpacecraftDynamics<G, 
     fn boundary_is_active(&self, declared: &DeclaredBoundary, state: &Self::State) -> bool {
         declared.is_active(&state.modes)
     }
+
+    /// The lengths first, then each effector about its own part.
+    ///
+    /// The lengths are what makes the slices below well defined, and every
+    /// other path reads the same offsets: a state whose vectors do not match
+    /// the registry would index out of an effector's slice or silently leave
+    /// part of it unprojected.
+    ///
+    /// The effectors answer in their own terms rather than by the sign of a
+    /// boundary value, since a quantity resting on a bound in the mode that
+    /// holds it there is a legal start.
+    fn validate_boundary_walk_start(&self, state: &Self::State) -> Result<(), String> {
+        let (modes, aux) = (state.modes.len(), state.aux.len());
+        if modes != self.registry.total_modes() {
+            return Err(format!(
+                "the state carries {modes} modes where the registered effectors declared {}",
+                self.registry.total_modes()
+            ));
+        }
+        if aux != self.registry.total_dim() {
+            return Err(format!(
+                "the state carries {aux} auxiliary values where the registered effectors \
+                 declared {}",
+                self.registry.total_dim()
+            ));
+        }
+        if !state.aux_bounds.is_empty() && state.aux_bounds.len() != aux {
+            return Err(format!(
+                "the state carries {} bounds for {aux} auxiliary values",
+                state.aux_bounds.len()
+            ));
+        }
+        for (effector, entry) in self.effectors.iter().zip(self.registry.entries()) {
+            effector
+                .validate_state(
+                    &state.plant,
+                    &state.aux[entry.offset..entry.offset + entry.dim],
+                    &state.modes[entry.mode_offset..entry.mode_offset + entry.mode_dim],
+                )
+                .map_err(|reason| format!("{}: {reason}", effector.name()))?;
+        }
+        Ok(())
+    }
 }
 
 /// The propellant pool this effector is, if it is one.
