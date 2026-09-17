@@ -112,13 +112,23 @@ where
     /// How closely a boundary's time is located, in place of the default.
     ///
     /// The search halves the interval holding a crossing until it is this
-    /// narrow, so the tolerance is what the reported time can be late by — and
-    /// with it, how far past its bound a state can be when
+    /// narrow, so the tolerance is how far the time it returns can be from the
+    /// sign change it found — and with it, how far past its bound a state can
+    /// be when
     /// [`settle_boundary`](crate::effector::StateEffector::settle_boundary)
-    /// puts it back: a wheel driven at `τ` is held up to `τ · t_tolerance`
-    /// past its limit, and the body keeps the momentum for that much of the
-    /// exchange. Halving the tolerance costs one more trial step per boundary
-    /// located.
+    /// puts it back: a wheel driven at a constant `τ` is held up to
+    /// `τ · t_tolerance` past its limit, and the body keeps the momentum for
+    /// that much of the exchange. Halving the tolerance costs one more trial
+    /// step per boundary located.
+    ///
+    /// That is the localization, and it is not the whole error. The sign change
+    /// is the one the *computed* trajectory has, so how far the returned time
+    /// is from the crossing the spacecraft would really have also carries the
+    /// state's own integration error, and a value that is nearly flat where it
+    /// crosses turns a small error in the value into a large one in the time
+    /// (see [`AdvanceOutcome::Roots`](utsuroi::AdvanceOutcome::Roots), whose
+    /// `bracket` says the same). Tightening this tolerance narrows one term of
+    /// the three.
     ///
     /// The clock is the floor under it. The search also stops once halving no
     /// longer changes the interval in f64, so at a large absolute time the

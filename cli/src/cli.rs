@@ -218,8 +218,11 @@ pub struct SimArgs {
     ///
     /// A reaction wheel filling up happens mid-step, and the propagation
     /// halves the step until it has the time this narrow. The tolerance is how
-    /// late that time can be: a wheel driven at 0.1 N·m is held up to 1e-4
-    /// N·m·s past its limit at the default. Every halving costs one more
+    /// far the time it settles on can be from the sign change it found: a wheel
+    /// driven at a constant 0.1 N·m is held up to 1e-4 N·m·s past its limit at
+    /// the default. It bounds that localization and not the whole error — the
+    /// sign change belongs to the computed trajectory, so the state's own
+    /// integration error is in there too. Every halving costs one more
     /// evaluation of the step being narrowed, and the spacing of f64 at the
     /// time in question is the floor under the whole thing.
     #[arg(long, default_value_t = 1e-3)]

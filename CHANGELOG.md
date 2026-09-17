@@ -144,9 +144,13 @@ section is subdivided by package.
   pair, which multiplies an accepted step by up to 5 (DP45) or 6 (DOP853) and
   does so repeatedly — but the propagation does, since a step is clamped to the
   target it walks to. The tolerance is the width the search
-  narrows a crossing's interval to, and so what the reported time can be late
-  by: a wheel driven at `τ` is held `τ · t_tolerance` past its limit, and the
-  body keeps the momentum for that much of the exchange. Each halving costs one
+  narrows a crossing's interval to, and so how far the time it returns can be
+  from the sign change it found: a wheel driven at a constant `τ` is held
+  `τ · t_tolerance` past its limit, and the body keeps the momentum for that
+  much of the exchange. It bounds that localization and not the distance to the
+  crossing the spacecraft would really have, which also carries the state's
+  integration error and, where the value is flat there, the slope that turns a
+  small error in the value into a large one in the time. Each halving costs one
   more re-step of the interval being narrowed, and the spacing of f64 at the
   time in question is the floor under the tolerance — the search stops once
   halving no longer changes the interval, so at `t = 1e15` a quarter-second
