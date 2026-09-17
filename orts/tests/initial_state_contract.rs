@@ -235,6 +235,25 @@ fn a_state_that_dropped_declared_bounds_is_refused() {
         "the reason says the state carries no bounds for values that have them, not {reason}"
     );
 
+    // Widened rather than dropped: the right number of entries, and a torque
+    // limit the wheel never reported. Projection reads what the state carries,
+    // so this is the same loss with the count intact.
+    let widened = AugmentedState {
+        plant: plant_at(DRY_MASS),
+        aux: vec![0.1 * LIMIT, 0.0],
+        aux_bounds: vec![
+            (f64::NEG_INFINITY, f64::INFINITY),
+            (-10.0 * TORQUE, 10.0 * TORQUE),
+        ],
+        modes: vec![ConstraintMode::Free],
+    };
+    let (reason, _) = walked(widened, with_lag);
+    let reason = reason.expect("the satellite is terminated rather than propagated");
+    assert!(
+        reason.contains("auxiliary bound 1"),
+        "the reason names the bound that differs from the declared one, not {reason}"
+    );
+
     // The same state with the bounds the effectors declared starts.
     let system = with_lag();
     let full = AugmentedState {

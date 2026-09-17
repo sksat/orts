@@ -121,7 +121,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   与えている場合があるためで、`AugmentedAttitudeSystem` は質量を時刻の関数から取るので、
   同じ state が或る時刻では dry mass より上、別の時刻では下になる。dry mass を下回る質量、質量と食い違うプールのモード、
   上限を超えたホイール、上限から離れているのに保持と言っているモード、そして `aux` /
-  `modes` / `aux_bounds` の長さが登録した effector と合わない state は、どの伝播経路でも
+  `modes` の長さや `aux_bounds` の値が登録した effector の申告と合わない state は、どの伝播経路でも
   入口で拒否される (独立群、結合群 (各衛星に聞く)、`AugmentedAttitudeSystem`、CLI の
   制御付きループ、`walk_to_target` の直接呼び出し)。`Scheduler` は群を組む前に各衛星へ聞き、
   開始できない機体を落としてから残りをその区間ぶん飛ばす — 結合群の walk は 1 機の拒否で

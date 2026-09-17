@@ -770,22 +770,38 @@ impl<G: GravityField, F: Eci + 'static> HasBoundaries for SpacecraftDynamics<G, 
                 self.registry.total_dim()
             )));
         }
-        // `aux_bounds` empty means unbounded, which is a state to accept only
-        // where no effector declared a bound to lose: a wheel's realized
-        // torque is projected onto its own limit, and a restored state that
-        // dropped those bounds would silently be projected onto nothing.
+        // Empty means unbounded, which is a state to accept only where no
+        // effector declared a bound to lose: a wheel's realized torque is
+        // projected onto its own limit, and a state that dropped, widened or
+        // reversed those bounds would be projected onto what it carries rather
+        // than onto what the wheel reports. Projection reads the state's own
+        // vector, so the values have to be the declared ones.
         let declared = self.declared_aux_bounds();
         let bounds_to_lose = declared
             .iter()
             .any(|(low, high)| low.is_finite() || high.is_finite());
         let unbounded_is_enough = state.aux_bounds.is_empty() && !bounds_to_lose;
-        if !unbounded_is_enough && state.aux_bounds.len() != aux {
-            return Err(crate::boundary::StartStateError::new(format!(
-                "the state carries {} bounds for {aux} auxiliary values, where the \
-                 registered effectors declared {}",
-                state.aux_bounds.len(),
-                declared.len()
-            )));
+        if !unbounded_is_enough {
+            if state.aux_bounds.len() != declared.len() {
+                return Err(crate::boundary::StartStateError::new(format!(
+                    "the state carries {} bounds for {aux} auxiliary values, where the \
+                     registered effectors declared {}",
+                    state.aux_bounds.len(),
+                    declared.len()
+                )));
+            }
+            if let Some((index, (carried, want))) = state
+                .aux_bounds
+                .iter()
+                .zip(&declared)
+                .enumerate()
+                .find(|(_, (carried, want))| carried != want)
+            {
+                return Err(crate::boundary::StartStateError::new(format!(
+                    "auxiliary bound {index} is {carried:?} where the registered effectors \
+                     declared {want:?}"
+                )));
+            }
         }
         for (effector, entry) in self.effectors.iter().zip(self.registry.entries()) {
             effector
