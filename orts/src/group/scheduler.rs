@@ -845,8 +845,9 @@ where
                 sat.state = state;
                 sat.dynamics = Some(dynamics);
                 // Who is left running depends on how the walk ended. An
-                // integration error leaves the composite state on no
-                // trajectory, so the whole component goes with it. A refusal
+                // integration error leaves every satellite at the end of the
+                // last segment that finished — an instant this interval has
+                // passed — so the whole component goes with it. A refusal
                 // at the interval's start integrated nothing, so the peers
                 // still hold states that belong to this interval's beginning
                 // and the grouping flies them over it; one at a later

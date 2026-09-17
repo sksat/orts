@@ -154,7 +154,11 @@ impl<S: HasFrame + HasMass + Send + Sync> StateEffector<S> for PropellantPool {
         if !mass.is_finite() {
             return Err(format!("the mass is {mass}"));
         }
-        if mass < self.dry_mass - MASS_TOLERANCE {
+        // Strictly, as the wheel's limit is: the boundary handling writes the
+        // dry mass itself, so no state a propagation produced lies just below
+        // it. The tolerance below is for the other question — which mode a
+        // mass on the floor should carry.
+        if mass < self.dry_mass {
             return Err(format!(
                 "the mass {mass} kg is below the dry mass {} kg, so the state carries \
                  less than no propellant",
@@ -162,20 +166,21 @@ impl<S: HasFrame + HasMass + Send + Sync> StateEffector<S> for PropellantPool {
             ));
         }
         let on_the_floor = (mass - self.dry_mass).abs() <= MASS_TOLERANCE;
-        match mode {
-            ConstraintMode::Free if !on_the_floor => Ok(()),
-            ConstraintMode::Lower if on_the_floor => Ok(()),
-            ConstraintMode::Free | ConstraintMode::Lower if on_the_floor => Ok(()),
-            ConstraintMode::Lower => Err(format!(
+        match (mode, on_the_floor) {
+            // No upper bound is declared, so no mode can be held against one.
+            (ConstraintMode::Upper, _) => {
+                Err("the pool has no upper bound, so its mode cannot be Upper".to_string())
+            }
+            // On the floor: a settled state sits here, and a picogram is not
+            // propellant, so either mode describes it.
+            (_, true) => Ok(()),
+            (ConstraintMode::Free, false) => Ok(()),
+            (ConstraintMode::Lower, false) => Err(format!(
                 "the mode says the tank is empty while the mass {mass} kg is {} kg above \
                  the dry mass {} kg",
                 mass - self.dry_mass,
                 self.dry_mass
             )),
-            ConstraintMode::Upper => {
-                Err("the pool has no upper bound, so its mode cannot be Upper".to_string())
-            }
-            ConstraintMode::Free => Ok(()),
         }
     }
 

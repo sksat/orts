@@ -632,7 +632,12 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
             if !h.is_finite() {
                 return Err(format!("wheel {index} carries a momentum of {h}"));
             }
-            if h.abs() > limit + MOMENTUM_TOLERANCE {
+            // Strictly: `settle_boundary` writes the bound itself, so no state a
+            // propagation produced lies between the bound and the bound plus a
+            // tolerance. A limit of zero — which `Rw::new` allows — would
+            // otherwise accept a wheel held at 5e-13 N·m·s, and a held mode
+            // turns off the very boundary that would have caught it.
+            if h.abs() > limit {
                 return Err(format!(
                     "wheel {index} starts at {h} N·m·s, past its limit of {limit} N·m·s"
                 ));

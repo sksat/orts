@@ -240,9 +240,8 @@ where
 ///
 /// What a caller does about it differs by kind: an event ends the run for the
 /// satellite it names, a refused start state means nothing was integrated at
-/// the time the parts carry, and an integration error leaves the composite
-/// state part-way through a segment — on no trajectory, for every satellite in
-/// it.
+/// the time the parts carry, and an integration error leaves every satellite at
+/// the end of the last segment that finished.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComponentStop {
     /// The caller's check answered `ControlFlow::Break` for one satellite.
@@ -250,7 +249,10 @@ pub enum ComponentStop {
     /// One satellite refused the state the walk was to start from
     /// ([`HasBoundaries::validate_boundary_walk_start`](crate::boundary::HasBoundaries::validate_boundary_walk_start)).
     StartRefused,
-    /// The solver or the boundary search failed.
+    /// The solver or the boundary search failed. The parts carry the state and
+    /// the time of the last segment that finished, since a failed segment's own
+    /// steps are not committed — so the satellites are all at an instant the
+    /// interval has already passed.
     IntegrationError,
 }
 
