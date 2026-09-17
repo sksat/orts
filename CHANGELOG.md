@@ -138,19 +138,20 @@ section is subdivided by package.
   ([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
-- **BREAKING**: a reaction wheel has to be able to hold momentum: `Rw::new` and
-  `Rw::with_max_speed` panic on a momentum limit of zero, where `new` used to
-  accept one and `with_max_speed` used to produce one by tightening a positive
-  limit with a speed limit of zero. Such a wheel stores nothing and nothing
-  downstream can make sense of it — the start-state check accepts a momentum
-  within `MOMENTUM_TOLERANCE` of the bound, which for a limit of zero is any
-  momentum up to 5e-13 N·m·s, and a mode already holding the wheel turns off the
-  boundary that would have caught it, so the wheel runs the span holding
-  momentum its own limit says it cannot store. It is the same requirement that
-  `PropellantPool::new` makes of a dry mass. The limit checked is the one the
-  wheel ends up with, `max_momentum.min(inertia * max_speed)`, since the speed
-  bound is derived by a division that underflows for a large enough inertia.
-  ([#529](https://github.com/sksat/orts/issues/529))
+- **BREAKING**: a reaction wheel has to be able to hold momentum. `Rw::new` and
+  `Rw::with_max_speed` panic unless the limit the wheel ends up with —
+  `max_momentum.min(inertia * max_speed)` — is positive, and
+  `RwAssemblyCore::new` panics on a wheel that lost its capacity after it was
+  built: `Rw`'s fields are public and `momentum_limit` reads them, so
+  `rw.max_speed = 0.0` is enough to empty one. A limit of zero leaves nothing to
+  locate a boundary against — the momentum margin starts at zero, which a search
+  reads as already crossed, so the wheel is held from the first step and absorbs
+  nothing, and the boundary tolerance meant for rounding around a bound
+  (1e-12 N·m·s) becomes the whole range the wheel can be in. The check is on the
+  limit the wheel ends up with because `Rw::new` derives the speed limit by a
+  division that underflows for a large enough inertia (`f64::MIN_POSITIVE` over
+  `f64::MAX` gives 0 rad/s). The same requirement `PropellantPool::new` makes of
+  a dry mass. ([#529](https://github.com/sksat/orts/issues/529))
 - **BREAKING**: `orts::boundary::walk_to_target` returns `BoundaryWalkError`
   rather than utsuroi's `IntegrationError`, because a state a system's own
   constraints refuse is not an integration failure:

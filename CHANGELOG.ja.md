@@ -110,15 +110,15 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 
 #### Changed
 - **BREAKING**: reaction wheel は角運動量を保持できなければならない。`Rw::new` と
-  `Rw::with_max_speed` は上限 0 で panic する。従来は `new` が 0 を受け付け、
-  `with_max_speed` は速度上限 0 で正の上限を 0 まで絞っていた。容量 0 のホイールは何も蓄えられず、
-  下流のどこも意味を付けられない — 開始 state の検査は境界から `MOMENTUM_TOLERANCE` 以内を
-  受け付けるので、上限 0 では 5e-13 N·m·s までが通り、保持モードだと本来捕まえる境界 event も
-  無効になる。結果として、自分の上限が「蓄えられない」と言っている角運動量を持ったまま区間を
-  走る。`PropellantPool::new` が dry mass に課しているのと同じ要求である。検査するのはホイールが
-  最終的に持つ上限 `max_momentum.min(inertia * max_speed)` で、速度側の上限は除算で導かれるため
-  慣性が大きいと 0 に落ちる
-  ([#529](https://github.com/sksat/orts/issues/529))
+  `Rw::with_max_speed` は、ホイールが最終的に持つ上限 `max_momentum.min(inertia * max_speed)` が
+  正でなければ panic する。`RwAssemblyCore::new` も、作られた後に容量を失ったホイールで panic する:
+  `Rw` のフィールドは pub で `momentum_limit` がそれを読むので、`rw.max_speed = 0.0` だけで
+  容量 0 になる。上限 0 では境界を位置付ける対象がない — 角運動量の余裕が 0 から始まるので探索は
+  「すでに越えた」と読み、ホイールは最初のステップから保持されて何も吸収できず、境界付近の丸めの
+  ために置いた許容幅 (1e-12 N·m·s) がホイールの可動範囲そのものになる。検査を最終的な上限に対して
+  行うのは、`Rw::new` が速度上限を除算で導いており、慣性が大きいとアンダーフローするためである
+  (`f64::MIN_POSITIVE / f64::MAX` は 0 rad/s)。`PropellantPool::new` が dry mass に課しているのと
+  同じ要求である ([#529](https://github.com/sksat/orts/issues/529))
 - **BREAKING**: `orts::boundary::walk_to_target` の戻り値が utsuroi の
   `IntegrationError` から `BoundaryWalkError` になった。系の拘束が受け付けない state は
   積分の失敗ではないので分けている: `BoundaryWalkError::StartRejected { t, error }` が
