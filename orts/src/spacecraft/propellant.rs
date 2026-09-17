@@ -156,11 +156,14 @@ impl PropellantPool {
     ///
     /// Panics below the floor: a spacecraft cannot have less than no
     /// propellant, and settling it up to the floor would hide the input error
-    /// by adding mass.
+    /// by adding mass. Panics on a mass that is not a finite number too — a
+    /// NaN is below nothing and an infinity is above everything, and neither
+    /// names a spacecraft.
     pub fn initial_mode(&self, mass: f64) -> ConstraintMode {
         assert!(
             mass.is_finite() && mass >= self.dry_mass,
-            "a spacecraft cannot start below its own dry mass: mass {mass}, floor {}",
+            "a spacecraft starts with a finite mass at or above its own dry mass: \
+             mass {mass}, dry mass {}",
             self.dry_mass
         );
         if mass > self.dry_mass {
@@ -212,9 +215,30 @@ mod tests {
 
     /// Settling it up to the floor would hide an input error by adding mass.
     #[test]
-    #[should_panic(expected = "cannot start below its own dry mass")]
+    #[should_panic(expected = "at or above its own dry mass")]
     fn a_spacecraft_starting_below_the_floor_is_refused() {
         PropellantPool::new(100.0).initial_mode(99.0);
+    }
+
+    /// The same assertion covers a mass that is no number: a NaN is below
+    /// nothing and an infinity is above everything, so the message names both
+    /// requirements rather than reading as "below the floor" for `+inf`.
+    #[test]
+    fn a_mass_that_is_not_a_finite_number_is_refused() {
+        for mass in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let panicked = std::panic::catch_unwind(|| {
+                PropellantPool::new(100.0).initial_mode(mass);
+            });
+            let payload = panicked.expect_err("a mass of {mass} is refused");
+            let message = payload
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .unwrap_or("");
+            assert!(
+                message.contains("finite mass at or above its own dry mass"),
+                "the message for {mass} names both requirements, not {message:?}"
+            );
+        }
     }
 
     /// Zero would put the floor on the singularity of `F/m`, which a trial
