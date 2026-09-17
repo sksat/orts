@@ -648,6 +648,72 @@ fn the_closing_kick_is_asked_about_before_the_run_ends() {
     );
 }
 
+/// An event during the drift ends the interval early, and the closing kick
+/// still lands on the satellites that are left — so it is asked about there
+/// too.
+///
+/// The event path applies its closing kick and leaves the loop, so a survivor
+/// kicked past its constraint would be handed back with nothing left to ask
+/// about it.
+#[test]
+fn a_kick_after_an_event_is_asked_about_too() {
+    use core::ops::ControlFlow;
+    use orts::group::RegimeConfig;
+    use orts::group::scheduler::Scheduler;
+
+    const SHOVE: f64 = 6.0 / DT;
+    const STOPS_BEYOND: f64 = FLOOR_X + 500.0;
+
+    let at = |x: f64| OrbitalState::new(Vector3::new(x, 0.0, 0.0), Vector3::zeros());
+    let mut sched: Scheduler<SpeedLimit> = Scheduler::new(
+        RegimeConfig {
+            couple_enter: 10.0,
+            couple_exit: 20.0,
+            sync_enter: 20.0,
+            sync_exit: 30.0,
+            sync_interval: DT,
+            min_dwell_time: 0.0,
+        },
+        IntegratorConfig::Rk4 { dt: DT },
+    )
+    // Out beyond the line the checker draws, so the drift ends on an event.
+    .add_satellite("stopper", at(STOPS_BEYOND + 1.0), SpeedLimit)
+    .add_satellite("kicked", at(FLOOR_X), SpeedLimit)
+    .add_satellite("kicker", at(FLOOR_X + 1e6), SpeedLimit)
+    .add_interaction_fixed(
+        "kicked",
+        "kicker",
+        orts::group::PairRegime::Synchronized,
+        std::sync::Arc::new(Shove(SHOVE)),
+    )
+    .with_event_checker(|_t, state: &OrbitalState| {
+        if state.position().x > STOPS_BEYOND {
+            ControlFlow::Break("out of range".to_string())
+        } else {
+            ControlFlow::Continue(())
+        }
+    });
+
+    let outcome = sched.propagate_to(DT).expect("the scheduler answers");
+    assert!(
+        outcome
+            .terminations
+            .iter()
+            .any(|t| t.satellite_id == orts::group::SatId::from("stopper")),
+        "the event ends the interval, which is what puts the run on this path"
+    );
+    let refused = outcome
+        .terminations
+        .iter()
+        .find(|t| t.satellite_id == orts::group::SatId::from("kicked"))
+        .expect("the survivor's closing kick is asked about as well");
+    assert!(
+        refused.reason.contains("over the speed limit"),
+        "the reason is the speed the kick gave it, not {}",
+        refused.reason
+    );
+}
+
 /// A satellite whose own end time is the interval's end was still flown in it,
 /// so the closing kick is asked about for it too.
 ///

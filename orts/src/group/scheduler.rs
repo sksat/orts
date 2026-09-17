@@ -595,6 +595,13 @@ where
                     // Event during drift. Apply second half-kick only to active sats.
                     let accels_end = self.compute_kick_accels(&grouping.kick_pairs, sync_target);
                     self.apply_kicks_active(&grouping.kick_pairs, &accels_end, dt_sync / 2.0);
+                    // This kick is the last thing the run does — the loop ends
+                    // below — so a satellite it puts past a constraint would be
+                    // handed back with nothing left to ask about it.
+                    let interval_started_at = self.t;
+                    all_terminations.extend(
+                        self.drop_satellites_that_cannot_start_at(sync_target, interval_started_at),
+                    );
                     self.t = sync_target;
                     break;
                 }
