@@ -12,14 +12,16 @@
 //! locating one boundary cost.
 //!
 //! The cost is per boundary located, so it amortizes over a run: measured over
-//! one orbit it is under a percent of the walk. Run with `--nocapture` to read
-//! the tables, and with `--release` to add the timed one.
+//! one orbit it is under a percent of the walk. Run with
+//! `-- --nocapture --test-threads=1` to read the tables (two of them print,
+//! and parallel tests interleave their lines), and with `--release` to add the
+//! timed one.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use nalgebra::{Matrix3, Vector3};
-use utsuroi::Tolerances;
+use utsuroi::{RootSearch, Tolerances};
 
 use orts::attitude::AttitudeState;
 use orts::effector::ConstraintMode;
@@ -86,18 +88,26 @@ fn initial_plant() -> SpacecraftState {
 ///
 /// The search narrows a crossing to `RootSearch::default`'s 1 ms here, which is
 /// what every propagation path uses.
-fn evaluations(torque: f64, config: IntegratorConfig) -> Walk {
+fn evaluations(torque: f64, config: IntegratorConfig, search: RootSearch) -> Walk {
     let counter = Arc::new(AtomicUsize::new(0));
     let built = system(torque, &counter);
     let initial = built.initial_augmented_state(initial_plant());
 
-    let mut group: IndependentGroup<SpacecraftDynamics<PointMass>> =
-        IndependentGroup::new(config).add_satellite("sat", initial, system(torque, &counter));
+    let mut group: IndependentGroup<SpacecraftDynamics<PointMass>> = IndependentGroup::new(config)
+        .with_root_search(search)
+        .add_satellite("sat", initial, system(torque, &counter));
     // The observer runs once per accepted step, and once more for the state a
-    // boundary was settled on.
+    // boundary was settled on. That extra report is the settled state, so the
+    // first one whose wheel is held is the time the search located.
     let mut reports = 0usize;
+    let mut located = None;
     group
-        .propagate_to_with(T_END, |_id, _t, _state| reports += 1)
+        .propagate_to_with(T_END, |_id, t, state| {
+            reports += 1;
+            if located.is_none() && state.modes[2] != ConstraintMode::Free {
+                located = Some(t);
+            }
+        })
         .expect("the walk succeeds");
 
     let held = group
@@ -111,6 +121,7 @@ fn evaluations(torque: f64, config: IntegratorConfig) -> Walk {
         evaluations: counter.load(Ordering::Relaxed),
         reports,
         held,
+        located,
     }
 }
 
@@ -121,14 +132,15 @@ fn evaluations(torque: f64, config: IntegratorConfig) -> Walk {
 /// solver re-grows the step it had grown. Cutting a walk in two at an arbitrary
 /// time costs exactly that and nothing else, which is how much of the cost
 /// above is the restart rather than the search.
-fn evaluations_cut_at(cut: f64, config: IntegratorConfig) -> Walk {
+fn evaluations_cut_at(cut: f64, config: IntegratorConfig, search: RootSearch) -> Walk {
     let counter = Arc::new(AtomicUsize::new(0));
     let torque = MAX_TORQUE / 10.0;
     let built = system(torque, &counter);
     let initial = built.initial_augmented_state(initial_plant());
 
-    let mut group: IndependentGroup<SpacecraftDynamics<PointMass>> =
-        IndependentGroup::new(config).add_satellite("sat", initial, system(torque, &counter));
+    let mut group: IndependentGroup<SpacecraftDynamics<PointMass>> = IndependentGroup::new(config)
+        .with_root_search(search)
+        .add_satellite("sat", initial, system(torque, &counter));
     let mut reports = 0usize;
     for target in [cut, T_END] {
         group
@@ -139,6 +151,7 @@ fn evaluations_cut_at(cut: f64, config: IntegratorConfig) -> Walk {
         evaluations: counter.load(Ordering::Relaxed),
         reports,
         held: false,
+        located: None,
     }
 }
 
@@ -173,6 +186,67 @@ struct Walk {
     reports: usize,
     /// Whether the wheel ended held on a bound.
     held: bool,
+    /// The time the search located the bound at, if it reached one.
+    located: Option<f64>,
+}
+
+/// What a finer tolerance costs, and what it buys.
+///
+/// The search halves the bracket, so a tolerance ten times finer is
+/// $\log_2 10 \approx 3.3$ more re-stepped intervals — four more RK4 stages
+/// each — and the located time is within the tolerance either way. A cost that
+/// grew with `1 / tolerance` rather than with its logarithm would make a
+/// nanosecond unaffordable; it costs about nine times a tenth of a second.
+///
+/// Run with `cargo test -p orts --test boundary_cost -- --nocapture`.
+#[test]
+fn a_finer_tolerance_costs_its_logarithm() {
+    // A step of 0.25 s brackets the crossing at 5.3 s, so the search starts
+    // from a quarter second whatever the tolerance is.
+    const T_STAR: f64 = MAX_MOMENTUM / MAX_TORQUE;
+    let config = IntegratorConfig::Rk4 { dt: DT };
+    let quiet = evaluations(MAX_TORQUE / 10.0, config.clone(), RootSearch::default()).evaluations;
+
+    println!("\nRK4 dt = 0.25 s, the bound at t = {T_STAR} s; 320 evaluations reach no bound");
+    println!(
+        "{:<12} {:>8} {:>12} {:>12} {:>14}",
+        "t_tolerance", "evals", "for the one", "halvings", "time error"
+    );
+    let mut previous = None;
+    for tol in [1e-1, 1e-2, 1e-3, 1e-4, 1e-6, 1e-9] {
+        let walk = evaluations(
+            MAX_TORQUE,
+            config.clone(),
+            RootSearch {
+                t_tolerance: tol,
+                max_iterations: 60,
+            },
+        );
+        let located = walk.located.expect("the driven wheel reaches its bound");
+        let searched = walk.evaluations - quiet;
+        // Four stages per re-stepped interval, and the restart costs 4 more.
+        let halvings = (searched as f64 / 4.0) - 1.0;
+        println!(
+            "{tol:<12.0e} {:>8} {searched:>12} {halvings:>12.0} {:>14.2e}",
+            walk.evaluations,
+            (located - T_STAR).abs()
+        );
+        assert!(
+            (located - T_STAR).abs() <= tol,
+            "the located time is inside the tolerance it was given: {located} for {tol}"
+        );
+        if let Some((coarser_tol, coarser_halvings)) = previous {
+            let decades: f64 = coarser_tol / tol;
+            let grown = halvings - coarser_halvings;
+            assert!(
+                grown < 2.0 * decades.log2() + 2.0,
+                "{tol}: {grown} more halvings than {coarser_tol}, not the \
+                 {:.1} a halving search costs",
+                decades.log2()
+            );
+        }
+        previous = Some((tol, halvings));
+    }
 }
 
 /// The cost of the walk, printed as a table for the pull request to quote.
@@ -211,8 +285,8 @@ fn what_locating_a_boundary_costs() {
     );
     for (name, config) in integrators {
         // A tenth of the torque never reaches the bound in 20 s.
-        let quiet = evaluations(MAX_TORQUE / 10.0, config.clone());
-        let busy = evaluations(MAX_TORQUE, config);
+        let quiet = evaluations(MAX_TORQUE / 10.0, config.clone(), RootSearch::default());
+        let busy = evaluations(MAX_TORQUE, config, RootSearch::default());
         assert!(!quiet.held, "{name}: the gentle case reaches no bound");
         assert!(busy.held, "{name}: the driven case reaches its bound");
         let ratio = busy.evaluations as f64 / quiet.evaluations as f64;
@@ -260,9 +334,9 @@ fn what_locating_a_boundary_costs() {
             },
         ),
     ] {
-        let whole = evaluations(MAX_TORQUE / 10.0, config.clone());
+        let whole = evaluations(MAX_TORQUE / 10.0, config.clone(), RootSearch::default());
         // Where the driven wheel reaches its bound.
-        let cut = evaluations_cut_at(MAX_MOMENTUM / MAX_TORQUE, config);
+        let cut = evaluations_cut_at(MAX_MOMENTUM / MAX_TORQUE, config, RootSearch::default());
         println!(
             "{name:<22} {:>10} {:>12} {:>+10}",
             whole.evaluations,
