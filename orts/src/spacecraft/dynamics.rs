@@ -338,21 +338,21 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     }
 
     /// Per-model load breakdown at the given state.
+    ///
+    /// The augmented state rather than the plant alone, because whether the
+    /// propulsion burns is the pool's mode — the same value the right-hand
+    /// side gates on. Reading the mass here instead would make a record
+    /// disagree with the trajectory on a path that settles no boundaries: the
+    /// mode stays `Free` and the thrust keeps being integrated, while a
+    /// mass-based comparison would report none.
     pub fn model_breakdown(
         &self,
         t: f64,
-        state: &SpacecraftState<F>,
+        state: &AugmentedState<SpacecraftState<F>>,
     ) -> Vec<(&str, ExternalLoads<F>)> {
         let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
-        // The same set the right-hand side evaluates, so a record cannot show
-        // thrust the trajectory never felt. A sample is taken at a settled
-        // state, where the mass is on the floor exactly when the mode says
-        // depleted, so the mass answers here — the modes are not in reach of a
-        // caller holding a plant state, and the hazard a comparison carries is
-        // the search's, which no sample is inside of.
-        let burning = self.pool.is_none_or(|(pool, _)| !pool.is_empty(state.mass));
-        self.models_to_evaluate(burning)
-            .map(|m| (m.name(), m.eval(t, state, epoch.as_ref())))
+        self.models_to_evaluate(self.has_propellant(state))
+            .map(|m| (m.name(), m.eval(t, &state.plant, epoch.as_ref())))
             .collect()
     }
 
@@ -388,7 +388,7 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     pub fn torque_breakdown(
         &self,
         t: f64,
-        state: &SpacecraftState<F>,
+        state: &AugmentedState<SpacecraftState<F>>,
     ) -> Vec<(&str, arika::frame::Vec3<arika::frame::Body>)> {
         // Straight from the models, without the gravity field
         // [`load_breakdown`](Self::load_breakdown) needs: a torque-only caller
@@ -413,10 +413,14 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     /// [`torque_breakdown`](Self::torque_breakdown) answer. Each of those
     /// projects from `model_breakdown` on its own, so a caller wanting one half
     /// does not build the other; this exists for the caller wanting both.
-    pub fn load_breakdown(&self, t: f64, state: &SpacecraftState<F>) -> LoadBreakdown<'_> {
+    pub fn load_breakdown(
+        &self,
+        t: f64,
+        state: &AugmentedState<SpacecraftState<F>>,
+    ) -> LoadBreakdown<'_> {
         let grav = self
             .gravity
-            .acceleration(self.mu, state.orbit.position())
+            .acceleration(self.mu, state.plant.orbit.position())
             .magnitude();
         let breakdown = self.model_breakdown(t, state);
         let mut accelerations = Vec::with_capacity(breakdown.len() + 1);
@@ -433,13 +437,17 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     }
 
     /// Acceleration breakdown for telemetry.
-    pub fn acceleration_breakdown(&self, t: f64, state: &SpacecraftState<F>) -> Vec<(&str, f64)> {
+    pub fn acceleration_breakdown(
+        &self,
+        t: f64,
+        state: &AugmentedState<SpacecraftState<F>>,
+    ) -> Vec<(&str, f64)> {
         // Projected here rather than through
         // [`load_breakdown`](Self::load_breakdown), which would build a vector
         // of every model's torque for this caller to drop.
         let grav = self
             .gravity
-            .acceleration(self.mu, state.orbit.position())
+            .acceleration(self.mu, state.plant.orbit.position())
             .magnitude();
         let mut result = vec![("gravity", grav)];
         for (name, loads) in self.model_breakdown(t, state) {
@@ -909,7 +917,7 @@ mod tests {
         // And the record says the same, so a sample cannot show thrust the
         // trajectory never felt.
         let named: Vec<&str> = dynamics
-            .model_breakdown(0.0, &empty)
+            .model_breakdown(0.0, &dynamics.initial_augmented_state(empty.clone()))
             .into_iter()
             .map(|(name, _)| name)
             .collect();
@@ -918,7 +926,7 @@ mod tests {
             "the breakdown drops it too, and named {named:?}"
         );
         let with_thrust: Vec<&str> = dynamics
-            .model_breakdown(0.0, &with_fuel)
+            .model_breakdown(0.0, &dynamics.initial_augmented_state(with_fuel.clone()))
             .into_iter()
             .map(|(name, _)| name)
             .collect();
@@ -1316,7 +1324,7 @@ mod tests {
             .with_model(ConstantAcceleration(accel))
             .with_model(ConstantTorqueModel(torque));
 
-        let breakdown = dyn_sc.model_breakdown(0.0, &sc);
+        let breakdown = dyn_sc.model_breakdown(0.0, &dyn_sc.initial_augmented_state(sc));
         assert_eq!(breakdown.len(), 2);
         assert_eq!(breakdown[0].0, "const_force");
         assert_eq!(
@@ -1740,7 +1748,7 @@ mod tests {
         let dynamics = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
             .with_model(NamedTorqueModel("first", about_x))
             .with_model(NamedTorqueModel("second", about_z));
-        let state = sample_spacecraft();
+        let state = dynamics.initial_augmented_state(sample_spacecraft());
 
         let breakdown = dynamics.torque_breakdown(0.0, &state);
 
@@ -1769,7 +1777,7 @@ mod tests {
     fn torque_breakdown_leaves_out_the_gravity_field() {
         let dynamics = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
             .with_model(NamedTorqueModel("only_model", Vector3::new(0.0, 1.0, 0.0)));
-        let state = sample_spacecraft();
+        let state = dynamics.initial_augmented_state(sample_spacecraft());
 
         let accel = dynamics.acceleration_breakdown(0.0, &state);
         assert!(
@@ -1823,7 +1831,7 @@ mod tests {
             .with_model(Counting {
                 calls: Arc::clone(&calls),
             });
-        let state = sample_spacecraft();
+        let state = dynamics.initial_augmented_state(sample_spacecraft());
 
         let LoadBreakdown {
             accelerations,

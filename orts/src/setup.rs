@@ -587,7 +587,7 @@ mod tests {
                 mass: 100.0,
             };
             system
-                .model_breakdown(0.0, &state)
+                .model_breakdown(0.0, &system.initial_augmented_state(state))
                 .into_iter()
                 .find(|(name, _)| *name == "panel_srp")
                 .map(|(_, loads)| loads.acceleration_inertial.magnitude())

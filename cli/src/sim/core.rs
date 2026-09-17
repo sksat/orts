@@ -231,7 +231,7 @@ pub fn accel_breakdown(
 pub fn spacecraft_loads(
     dynamics: &orts::spacecraft::SpacecraftDynamics<Box<dyn orts::orbital::gravity::GravityField>>,
     t: f64,
-    state: &orts::spacecraft::SpacecraftState,
+    state: &orts::effector::AugmentedState<orts::spacecraft::SpacecraftState>,
 ) -> ModelLoads {
     let breakdown = dynamics.load_breakdown(t, state);
     ModelLoads {

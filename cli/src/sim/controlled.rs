@@ -1808,7 +1808,7 @@ mod tests {
                 .with_epoch(Epoch::from_gregorian(2026, 3, 20, 12, 0, 0.0))
                 .with_model(model);
             sat.dynamics
-                .model_breakdown(0.0, &sat.state.plant)
+                .model_breakdown(0.0, &sat.state)
                 .into_iter()
                 .find(|(name, _)| *name == "mtq_assembly")
                 .expect("the assembly is installed")
@@ -1883,7 +1883,7 @@ mod tests {
 
         let torque = sat
             .dynamics
-            .model_breakdown(0.0, &sat.state.plant)
+            .model_breakdown(0.0, &sat.state)
             .into_iter()
             .find(|(name, _)| *name == "mtq_assembly")
             .expect("the assembly is installed")

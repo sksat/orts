@@ -220,7 +220,7 @@ impl SimGroup {
                         source: AttitudeSource::Propagated,
                         rw_momentum: None,
                     }),
-                    loads: spacecraft_loads(dyn_sys, t, sc),
+                    loads: spacecraft_loads(dyn_sys, t, &entry.state),
                 }
             }
             SimGroup::Controlled(sats) => {
@@ -241,7 +241,7 @@ impl SimGroup {
                         source: AttitudeSource::Propagated,
                         rw_momentum: rw_mom,
                     }),
-                    loads: spacecraft_loads(&sat.dynamics, t, sc),
+                    loads: spacecraft_loads(&sat.dynamics, t, &sat.state),
                 }
             }
         }
@@ -1277,8 +1277,7 @@ impl ServeEngine {
         // Read before the satellite moves into the group: its first sample
         // would otherwise report nothing, where every later one carries both
         // breakdowns.
-        let initial_loads =
-            spacecraft_loads(&new_sat.dynamics, self.current_t, &new_sat.state.plant);
+        let initial_loads = spacecraft_loads(&new_sat.dynamics, self.current_t, &new_sat.state);
         // Same reason, for the same reader: the models this satellite carries.
         let perturbations: Vec<String> = new_sat
             .dynamics
@@ -2037,7 +2036,7 @@ cp_offset = [0.0, 1.5, 0.0]
             };
 
             dynamics
-                .model_breakdown(0.0, &probe)
+                .model_breakdown(0.0, &dynamics.initial_augmented_state(probe))
                 .into_iter()
                 .find(|(name, _)| *name == "panel_srp")
                 .map(|(_, loads)| loads.acceleration_inertial.magnitude())
@@ -2121,7 +2120,7 @@ cp_offset = [0.0, 1.5, 0.0]
             .satellites_with_dynamics()
             .next()
             .expect("one satellite");
-        let accels = spacecraft_loads(dynamics, 0.0, &entry.state.plant).accelerations;
+        let accels = spacecraft_loads(dynamics, 0.0, &entry.state).accelerations;
 
         assert!(accels.contains_key("srp"), "keys: {:?}", accels.keys());
         assert!(accels.contains_key("drag"), "keys: {:?}", accels.keys());
