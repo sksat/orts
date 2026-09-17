@@ -553,7 +553,9 @@ pub fn propagate_controlled<E>(
 where
     E: Fn(f64, &AugmentedState<SpacecraftState>) -> ControlFlow<String>,
 {
-    let span = |e: IntegrationError| format!("integration failed on [{t0:.3}, {t1:.3}]: {e}");
+    // Anything that can say what went wrong: the solver's own errors, and the
+    // system's refusal of the state a boundary walk was handed.
+    let span = |e: &dyn std::fmt::Display| format!("integration failed on [{t0:.3}, {t1:.3}]: {e}");
 
     // Before the no-op guard: `t1 <= t0` is true for a `t0` of `+inf`, so an
     // invalid span would be reported as one already covered. `Segments::new`
@@ -561,7 +563,7 @@ where
     // runs backwards stays the no-op it has always been rather than becoming
     // an error.
     if !t0.is_finite() || !t1.is_finite() {
-        return Err(span(IntegrationError::InvalidTimeSpan { t0, t_end: t1 }));
+        return Err(span(&IntegrationError::InvalidTimeSpan { t0, t_end: t1 }));
     }
     if t1 <= t0 {
         return Ok(None);
@@ -589,7 +591,7 @@ where
     let boundaries = sat.dynamics.boundaries();
     let mut slots = vec![RootSlot::new(); boundaries.len()];
 
-    for segment in Segments::new(&sat.dynamics, t0, t1).map_err(span)? {
+    for segment in Segments::new(&sat.dynamics, t0, t1).map_err(|e| span(&e))? {
         let t = segment.start();
         let segment_end = segment.end();
         let bound = segment.system();
@@ -686,7 +688,7 @@ where
                 event_check,
             ),
         }
-        .map_err(span)?;
+        .map_err(|e| span(&e))?;
 
         state = next_state;
 

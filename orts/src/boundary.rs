@@ -111,7 +111,79 @@ pub trait HasBoundaries: DynamicalSystem {
     fn boundary_is_active(&self, _declared: &DeclaredBoundary, _state: &Self::State) -> bool {
         false
     }
+
+    /// Whether this is a state the system's own constraints can be propagated
+    /// from, with the reason when it is not.
+    ///
+    /// [`walk_to_target`] asks once at its entry, before it settles anything.
+    /// A state that already sits past a one-sided constraint is refused here
+    /// rather than corrected: settling a mass below a propellant floor puts it
+    /// *on* the floor, which adds the mass the input was missing, and settling
+    /// a wheel past its limit turns the body at a rate the caller did not ask
+    /// for. Neither is a trajectory of the state that was handed over.
+    ///
+    /// The question is not "is every boundary value non-negative" — a state
+    /// resting on a bound, or one a command has just released, is a legal place
+    /// to start. Each constraint answers in its own terms, so this reports the
+    /// name of what refused and what it read.
+    ///
+    /// Not asked during a walk: a boundary search steps past a constraint on
+    /// purpose, and its trial states are meant to be evaluable there.
+    fn validate_boundary_walk_start(&self, _state: &Self::State) -> Result<(), String> {
+        Ok(())
+    }
 }
+
+/// What can stop a [`walk_to_target`] before it reaches its target.
+///
+/// The solver's own failures, and the one the system reports about the state
+/// the walk was handed: those come from the caller's input rather than from the
+/// integration, so they are named apart from it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BoundaryWalkError {
+    /// The solver or the boundary search failed.
+    Integration(IntegrationError),
+    /// The system refused the state the walk was asked to start from
+    /// ([`HasBoundaries::validate_boundary_walk_start`]).
+    StartRejected {
+        /// Time the refused state belongs to.
+        t: f64,
+        /// What refused it, and what it read.
+        reason: String,
+    },
+}
+
+impl BoundaryWalkError {
+    /// The integration time the failure belongs to, where it has one.
+    pub fn time(&self) -> Option<f64> {
+        match self {
+            Self::Integration(e) => e.time(),
+            Self::StartRejected { t, .. } => Some(*t),
+        }
+    }
+}
+
+impl From<IntegrationError> for BoundaryWalkError {
+    fn from(e: IntegrationError) -> Self {
+        Self::Integration(e)
+    }
+}
+
+impl core::fmt::Display for BoundaryWalkError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Integration(e) => write!(f, "{e}"),
+            Self::StartRejected { t, reason } => {
+                write!(
+                    f,
+                    "the state at t = {t} cannot start a boundary walk: {reason}"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for BoundaryWalkError {}
 
 /// One declared boundary, read as a root event.
 pub struct BoundaryEvent<'a, Sys> {
@@ -250,7 +322,7 @@ pub fn walk_to_target<Sys, Mk, W, F, E, B>(
     mut make: Mk,
     observer: &mut F,
     check: &E,
-) -> Result<(BoundaryWalk<B>, f64, Sys::State), IntegrationError>
+) -> Result<(BoundaryWalk<B>, f64, Sys::State), BoundaryWalkError>
 where
     Sys: HasBoundaries,
     Mk: FnMut(Sys::State, f64, bool) -> W,
@@ -281,6 +353,12 @@ where
         to: t_target,
         start_is_checked,
     } = span;
+    // Before anything is settled: a state the system's constraints call
+    // invalid is refused rather than corrected, and correcting it is exactly
+    // what the reconciliation below would do.
+    system
+        .validate_boundary_walk_start(&state)
+        .map_err(|reason| BoundaryWalkError::StartRejected { t: from, reason })?;
     let mut state = state;
     let mut t = from;
     // The caller says whether the state it handed over has been through the
@@ -743,7 +821,9 @@ mod tests {
         assert!(
             matches!(
                 outcome,
-                Err(IntegrationError::RootStillCrossed { t, event: 0 }) if t == 0.0
+                Err(BoundaryWalkError::Integration(
+                    IntegrationError::RootStillCrossed { t, event: 0 }
+                )) if t == 0.0
             ),
             "the walk reports which boundary it is still past, at the time it gave up"
         );

@@ -8,7 +8,8 @@ use utsuroi::{
 };
 
 use crate::boundary::{
-    Boundaries, BoundaryWalk, DeclaredBoundary, HasBoundaries, Span, walk_to_target,
+    Boundaries, BoundaryWalk, BoundaryWalkError, DeclaredBoundary, HasBoundaries, Span,
+    walk_to_target,
 };
 
 use super::prop_group::{GroupSnapshot, PropGroupOutcome, SatId, SatelliteTermination};
@@ -664,7 +665,10 @@ where
                             .cloned()
                             .unwrap_or_else(|| SatId::from("unknown")),
                         t,
-                        reason: format!("{e:?}"),
+                        reason: match &e {
+                            BoundaryWalkError::Integration(e) => format!("{e:?}"),
+                            e => e.to_string(),
+                        },
                     };
                     self.termination = Some(term.clone());
                     vec![term]
