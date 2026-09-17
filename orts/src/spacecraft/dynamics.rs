@@ -342,6 +342,26 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
             .collect()
     }
 
+    /// Check that a state carries the modes this system's effectors registered.
+    ///
+    /// Every path that reads a mode goes through here first. A state assembled
+    /// by hand can carry none — the fields are public — and a mode that is not
+    /// there reads as [`ConstraintMode::Free`], which would say "there is
+    /// propellant left" about a tank that has run dry.
+    ///
+    /// # Panics
+    ///
+    /// If the state's mode vector is not the length the registry says.
+    fn check_modes(&self, state: &AugmentedState<SpacecraftState<F>>) {
+        assert_eq!(
+            state.modes.len(),
+            self.registry.total_modes(),
+            "mode vector length ({}) does not match registry ({})",
+            state.modes.len(),
+            self.registry.total_modes()
+        );
+    }
+
     /// Per-model load breakdown at the given state.
     ///
     /// The augmented state rather than the plant alone, because whether the
@@ -355,19 +375,42 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     /// the right-hand side, for the same reason: the acceleration a model
     /// reports there is an infinity, and a record of an infinity says nothing
     /// the trajectory did.
+    ///
+    /// Every registered model gets an entry, in the order
+    /// [`model_names`](Self::model_names) lists them. A propulsion model the
+    /// pool has switched off is not evaluated — that is the point of the mode —
+    /// but its entry is there, a zero: the telemetry that reads this builds one
+    /// column per model, and a row that drops an entry after depletion leaves
+    /// that column sparse where a reader wants to see the thrust go to zero.
+    ///
+    /// # Panics
+    ///
+    /// If the state's mode vector is not the length the registry says (see
+    /// [`check_modes`](Self::check_modes)).
     pub fn model_breakdown(
         &self,
         t: f64,
         state: &AugmentedState<SpacecraftState<F>>,
     ) -> Vec<(&str, ExternalLoads<F>)> {
+        self.check_modes(state);
         let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
         let in_the_domain = mass_is_positive(state.plant.mass);
-        self.models_to_evaluate(self.has_propellant(state))
+        let burning = self.has_propellant(state);
+        let mut breakdown: Vec<(&str, ExternalLoads<F>)> = self
+            .models_to_evaluate(burning)
             .map(|m| {
                 let loads = m.eval(t, &state.plant, epoch.as_ref());
                 (m.name(), keep_what_is_finite(loads, in_the_domain))
             })
-            .collect()
+            .collect();
+        if !burning {
+            breakdown.extend(
+                self.propulsion
+                    .iter()
+                    .map(|m| (m.name(), ExternalLoads::zeros())),
+            );
+        }
+        breakdown
     }
 
     /// The models that act on a spacecraft in this state: all of them, and the
@@ -494,13 +537,7 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
         // Rejected here, on the first evaluation, rather than silently opting
         // out of the constraints. `initial_augmented_state` builds the vector
         // this expects.
-        assert_eq!(
-            state.modes.len(),
-            self.registry.total_modes(),
-            "mode vector length ({}) does not match registry ({})",
-            state.modes.len(),
-            self.registry.total_modes()
-        );
+        self.check_modes(state);
 
         let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
 
@@ -914,6 +951,85 @@ mod tests {
         let _ = dynamics.with_effector(OneModeTwoBoundaries);
     }
 
+    /// An empty tank silences the thrust, and the record still has a column
+    /// for it.
+    ///
+    /// The telemetry that reads a breakdown builds one column per model (see
+    /// `SatSnapshot::torques`, whose doc says every model appears, its entry a
+    /// measured zero). Dropping the propulsion entry once the pool is empty
+    /// would leave that column sparse from the moment of depletion, where what
+    /// a reader wants to see is the thrust going to zero.
+    #[test]
+    fn a_breakdown_keeps_an_entry_for_propulsion_the_pool_switched_off() {
+        use crate::spacecraft::{PropellantPool, Thruster};
+
+        const FLOOR: f64 = 100.0;
+        let dynamics = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
+            .with_model(ConstantAcceleration(Vector3::new(1e-6, 0.0, 0.0)))
+            .with_propellant(PropellantPool::new(FLOOR))
+            .with_propulsion(Thruster::new(10.0, 300.0, Vector3::x()));
+
+        let with_fuel = dynamics.initial_augmented_state(SpacecraftState {
+            mass: FLOOR + 1.0,
+            ..sample_spacecraft()
+        });
+        let empty = dynamics.initial_augmented_state(SpacecraftState {
+            mass: FLOOR,
+            ..sample_spacecraft()
+        });
+
+        let names = |state: &AugmentedState<SpacecraftState>| -> Vec<&str> {
+            dynamics
+                .model_breakdown(0.0, state)
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect()
+        };
+        assert_eq!(
+            names(&with_fuel),
+            dynamics.model_names(),
+            "with propellant left, one entry per registered model"
+        );
+        assert_eq!(
+            names(&empty),
+            dynamics.model_names(),
+            "and an empty tank keeps the same entries, in the same order"
+        );
+
+        let dry = dynamics.model_breakdown(0.0, &empty);
+        let (_, thruster) = dry
+            .iter()
+            .find(|(name, _)| *name == "thruster")
+            .expect("the thruster has an entry");
+        assert_eq!(
+            thruster.acceleration_inertial,
+            arika::frame::Vec3::zeros(),
+            "its entry is a zero, not a thrust"
+        );
+        assert_eq!(thruster.mass_rate, 0.0);
+    }
+
+    /// A breakdown reads the pool's mode, so it holds the state to the same
+    /// contract the right-hand side does: a hand-built state with no modes
+    /// would otherwise read as a full tank and report thrust.
+    #[test]
+    #[should_panic(expected = "mode vector length")]
+    fn a_breakdown_rejects_a_state_without_the_modes_its_effectors_registered() {
+        use crate::spacecraft::{PropellantPool, Thruster};
+
+        let dynamics = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
+            .with_propellant(PropellantPool::new(100.0))
+            .with_propulsion(Thruster::new(10.0, 300.0, Vector3::x()));
+        let state = AugmentedState {
+            plant: sample_spacecraft(),
+            aux: vec![],
+            aux_bounds: vec![],
+            modes: vec![],
+        };
+
+        let _ = dynamics.model_breakdown(0.0, &state);
+    }
+
     /// One pool, one floor, and the system is what reads them: a thruster
     /// fires whatever it is asked to, so a spacecraft with nothing left to
     /// burn has to not be asked. Both places that used to compare
@@ -970,24 +1086,27 @@ mod tests {
         );
 
         // And the record says the same, so a sample cannot show thrust the
-        // trajectory never felt.
-        let named: Vec<&str> = dynamics
-            .model_breakdown(0.0, &dynamics.initial_augmented_state(empty.clone()))
-            .into_iter()
-            .map(|(name, _)| name)
-            .collect();
+        // trajectory never felt. The entry stays — the telemetry's column for
+        // it would otherwise go sparse — and what it carries is a zero, which
+        // `a_breakdown_keeps_an_entry_for_propulsion_the_pool_switched_off`
+        // pins.
+        let dry_record = dynamics.model_breakdown(0.0, &dynamics.initial_augmented_state(empty));
+        let (_, thruster) = dry_record
+            .iter()
+            .find(|(name, _)| *name == "thruster")
+            .expect("the thruster keeps its entry");
+        assert_eq!(thruster.mass_rate, 0.0, "and reports no thrust in it");
+
+        let wet_record =
+            dynamics.model_breakdown(0.0, &dynamics.initial_augmented_state(with_fuel));
+        let (_, thruster) = wet_record
+            .iter()
+            .find(|(name, _)| *name == "thruster")
+            .expect("the thruster has an entry");
         assert!(
-            !named.contains(&"thruster"),
-            "the breakdown drops it too, and named {named:?}"
-        );
-        let with_thrust: Vec<&str> = dynamics
-            .model_breakdown(0.0, &dynamics.initial_augmented_state(with_fuel.clone()))
-            .into_iter()
-            .map(|(name, _)| name)
-            .collect();
-        assert!(
-            with_thrust.contains(&"thruster"),
-            "while there is propellant it is there, and named {with_thrust:?}"
+            thruster.mass_rate < 0.0,
+            "while there is propellant the record shows the burn, at {}",
+            thruster.mass_rate
         );
     }
 
