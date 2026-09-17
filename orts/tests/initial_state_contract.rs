@@ -113,6 +113,33 @@ fn an_empty_mode_with_propellant_above_the_floor_is_refused() {
     );
 }
 
+/// A pool declares no upper bound, so no mode can be held against one.
+///
+/// `Upper` there is a state no propagation writes: `settle_boundary` moves the
+/// mode to `Lower`, and there is no release. Reading it as anything else would
+/// be guessing what a caller meant.
+#[test]
+fn an_upper_mode_on_the_pool_is_refused() {
+    let start = AugmentedState {
+        plant: plant_at(DRY_MASS + 1.0),
+        aux: vec![],
+        aux_bounds: vec![],
+        modes: vec![ConstraintMode::Upper],
+    };
+    let (reason, ended) = walked(start, with_a_pool);
+
+    let reason = reason.expect("the satellite is terminated rather than propagated");
+    assert!(
+        reason.contains("no upper bound"),
+        "the reason says the pool has no bound for that mode, not {reason}"
+    );
+    assert_eq!(
+        ended.plant.mass,
+        DRY_MASS + 1.0,
+        "and nothing was integrated or written"
+    );
+}
+
 /// The floor itself is a legal start: a spacecraft can begin with an empty
 /// tank, and the mode that says so is the one the constructor writes.
 #[test]
