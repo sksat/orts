@@ -22,7 +22,12 @@ use utsuroi::{Integrator, Rk4, RootSearch, SegmentContext, Tolerances};
 
 use orts::boundary::{DeclaredBoundary, HasBoundaries};
 use orts::effector::{AugmentedState, BoundaryKind, ConstraintMode, EffectorBoundary};
-use orts::group::{CoupledGroup, IndependentGroup, IntegratorConfig, RegimeConfig, Scheduler};
+use std::sync::Arc;
+
+use orts::group::coupled::{InterSatelliteForce, PairContext};
+use orts::group::{
+    CoupledGroup, IndependentGroup, IntegratorConfig, PairRegime, RegimeConfig, Scheduler,
+};
 use orts::orbital::OrbitalState;
 use orts::orbital::gravity::PointMass;
 use orts::spacecraft::{ReactionWheelAssembly, RwCommand, SpacecraftDynamics, SpacecraftState};
@@ -791,10 +796,57 @@ fn every_path_that_forwards_the_tolerance_uses_it() {
             .x
     };
 
+    // The scheduler has two branches and one satellite only reaches the
+    // independent one. A declared interaction held at `Coupled` puts a pair in
+    // one component, so the walk goes through `CoupledGroup` — with a force of
+    // zero, so both particles still fly the trajectory the cases above expect.
+    struct NoForce;
+
+    impl InterSatelliteForce for NoForce {
+        fn name(&self) -> &str {
+            "no_force"
+        }
+        fn acceleration_pair(&self, _ctx: &PairContext<'_>) -> (Vector3<f64>, Vector3<f64>) {
+            (Vector3::zeros(), Vector3::zeros())
+        }
+    }
+
+    let scheduled_coupled = |t_tolerance: f64| -> f64 {
+        let mut sched: Scheduler<Wall> = Scheduler::new(
+            RegimeConfig {
+                couple_enter: 1.0,
+                couple_exit: 2.0,
+                sync_enter: 2.0,
+                sync_exit: 3.0,
+                sync_interval: 10.0,
+                min_dwell_time: 0.0,
+            },
+            IntegratorConfig::Rk4 { dt: DT_WALL },
+        )
+        .with_root_search(search(t_tolerance))
+        .add_satellite("a", start(), Wall)
+        .add_satellite(
+            "b",
+            OrbitalState::new(
+                Vector3::new(WALL_START, 0.5, 0.0),
+                Vector3::new(WALL_SPEED, 0.0, 0.0),
+            ),
+            Wall,
+        )
+        .add_interaction_fixed("a", "b", PairRegime::Coupled, Arc::new(NoForce));
+        sched.propagate_to(WALL_SPAN).expect("the walk succeeds");
+        sched
+            .satellite_state(&"a".into())
+            .expect("the first satellite")
+            .position()
+            .x
+    };
+
     for (name, at) in [
         ("independent group", independent(1e-6)),
         ("coupled group", coupled(1e-6)),
         ("scheduler", scheduled(1e-6)),
+        ("scheduler, coupled component", scheduled_coupled(1e-6)),
     ] {
         assert!(
             (at - ends_at(met_at)).abs() < 1e-3,
@@ -806,6 +858,7 @@ fn every_path_that_forwards_the_tolerance_uses_it() {
         ("independent group", independent(1.0)),
         ("coupled group", coupled(1.0)),
         ("scheduler", scheduled(1.0)),
+        ("scheduler, coupled component", scheduled_coupled(1.0)),
     ] {
         // Two halvings of the 2.5 s step: [0, 1.25] is still wider than the
         // tolerance, [0, 0.625] is not.
