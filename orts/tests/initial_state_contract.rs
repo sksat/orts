@@ -494,6 +494,104 @@ fn a_satellite_a_kick_pushes_past_its_limit_is_dropped_before_the_drift() {
     );
 }
 
+/// A system that will not start a walk after a given time, whatever the state.
+///
+/// Contrived on purpose: what it makes visible is *when* the check is asked,
+/// which a constraint reading only the state cannot show.
+struct AfterHours;
+
+const CLOSES_AT: f64 = 1.5;
+
+impl utsuroi::DynamicalSystem for AfterHours {
+    type State = OrbitalState;
+    fn derivatives(&self, _t: f64, state: &OrbitalState) -> OrbitalState {
+        OrbitalState::from_derivative(*state.velocity(), Vector3::zeros())
+    }
+}
+
+impl HasBoundaries for AfterHours {
+    fn validate_boundary_walk_start(
+        &self,
+        t: f64,
+        _state: &OrbitalState,
+    ) -> Result<(), StartStateError> {
+        if t >= CLOSES_AT {
+            return Err(StartStateError::new(format!(
+                "nothing starts after {CLOSES_AT}"
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// A satellite that has reached its own end time is not asked again.
+///
+/// Its state belongs to the instant it stopped at, so asking about it at a
+/// later time would judge it against a context it never reached — and for a
+/// check that reads one, that is a refusal it never earned.
+#[test]
+fn a_satellite_past_its_end_time_is_left_alone() {
+    use orts::group::RegimeConfig;
+    use orts::group::scheduler::Scheduler;
+
+    const SPEED: f64 = 1.0;
+    let mut sched: Scheduler<AfterHours> = Scheduler::new(
+        RegimeConfig {
+            couple_enter: 10.0,
+            couple_exit: 20.0,
+            sync_enter: 20.0,
+            sync_exit: 30.0,
+            sync_interval: DT,
+            min_dwell_time: 0.0,
+        },
+        IntegratorConfig::Rk4 { dt: DT },
+    )
+    // Stops at 1 s, while the check still answers yes.
+    .add_satellite_until(
+        "done",
+        OrbitalState::new(
+            Vector3::new(FLOOR_X, 0.0, 0.0),
+            Vector3::new(SPEED, 0.0, 0.0),
+        ),
+        1.0,
+        AfterHours,
+    )
+    .add_satellite(
+        "running",
+        OrbitalState::new(
+            Vector3::new(FLOOR_X + 1.0, 0.0, 0.0),
+            Vector3::new(SPEED, 0.0, 0.0),
+        ),
+        AfterHours,
+    );
+
+    // Past the time the check closes at, so a satellite still being asked
+    // would be refused here.
+    let outcome = sched.propagate_to(3.0 * DT).expect("the scheduler answers");
+
+    assert!(
+        outcome
+            .terminations
+            .iter()
+            .all(|t| t.satellite_id != orts::group::SatId::from("done")),
+        "the satellite that finished is not reported again: {:?}",
+        outcome
+            .terminations
+            .iter()
+            .map(|t| (t.satellite_id.clone(), t.reason.clone()))
+            .collect::<Vec<_>>()
+    );
+    let x = sched
+        .satellite_state(&orts::group::SatId::from("done"))
+        .expect("it is still in the fleet")
+        .position()
+        .x;
+    assert!(
+        (x - (FLOOR_X + 1.0 * SPEED)).abs() < 1e-9,
+        "and it stays where its own end time left it, not {x}"
+    );
+}
+
 /// The lengths come first, because every other path indexes the same offsets.
 #[test]
 fn a_state_whose_vectors_do_not_match_the_registry_is_refused() {

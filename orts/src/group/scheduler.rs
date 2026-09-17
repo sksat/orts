@@ -302,6 +302,18 @@ struct SatRecord<D: DynamicalSystem> {
     end_time: Option<f64>,
 }
 
+impl<D: DynamicalSystem> SatRecord<D> {
+    /// Whether this satellite is still one to propagate at `t`.
+    ///
+    /// The same answer for the grouping and for the start-state check: a
+    /// satellite that is done carries a state belonging to the instant it
+    /// stopped at, so asking about it at a later `t` would judge it against a
+    /// context it never reached.
+    fn is_to_propagate(&self, t: f64) -> bool {
+        !self.terminated && !self.end_time.is_some_and(|et| t >= et - 1e-9)
+    }
+}
+
 /// Central scheduler that owns all satellites and manages regime transitions.
 ///
 /// Satellites are propagated using ephemeral groups built each sync step.
@@ -660,7 +672,7 @@ where
         let t = self.t;
         let mut dropped = Vec::new();
         for sat in &mut self.satellites {
-            if sat.terminated {
+            if !sat.is_to_propagate(t) {
                 continue;
             }
             let Some(dynamics) = sat.dynamics.as_ref() else {
@@ -684,7 +696,7 @@ where
         let active: Vec<bool> = self
             .satellites
             .iter()
-            .map(|s| !s.terminated && !s.end_time.is_some_and(|et| self.t >= et - 1e-9))
+            .map(|s| s.is_to_propagate(self.t))
             .collect();
 
         let pair_regimes: Vec<(usize, usize, PairRegime)> = self
