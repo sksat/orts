@@ -113,6 +113,73 @@ fn an_empty_mode_with_propellant_above_the_floor_is_refused() {
     );
 }
 
+/// Where a mass below the dry mass comes from without anyone writing one by
+/// hand: a thruster registered as an ordinary model.
+///
+/// `with_propulsion` is the registration the pool gates; `with_model` is not,
+/// so the thrust keeps being integrated after the tank is empty. The walk
+/// settles the floor once — the mode moves to `Lower`, which makes that
+/// boundary inactive — and from there nothing stops the burn. The run ends
+/// below the floor, and it is that state the next call would start from.
+#[test]
+fn a_thruster_registered_as_a_model_runs_the_mass_below_the_floor() {
+    const PROPELLANT: f64 = 0.04;
+    const SPAN: f64 = 5.0;
+
+    let gated = || {
+        SpacecraftDynamics::new(1e-30, PointMass, Matrix3::identity())
+            .with_propellant(PropellantPool::new(DRY_MASS))
+            .with_propulsion(Thruster::new(THRUST_N, ISP_S, Vector3::x()))
+    };
+    let ungated = || {
+        SpacecraftDynamics::new(1e-30, PointMass, Matrix3::identity())
+            .with_propellant(PropellantPool::new(DRY_MASS))
+            .with_model(Thruster::new(THRUST_N, ISP_S, Vector3::x()))
+    };
+
+    let mass_after = |build: &dyn Fn() -> SpacecraftDynamics<PointMass>| {
+        let start = build().initial_augmented_state(plant_at(DRY_MASS + PROPELLANT));
+        let mut group: IndependentGroup<SpacecraftDynamics<PointMass>> = IndependentGroup::new(
+            IntegratorConfig::Rk4 { dt: DT },
+        )
+        .add_satellite("sat", start, build());
+        group.propagate_to(SPAN).expect("the group answers");
+        group
+            .satellites()
+            .next()
+            .expect("one satellite")
+            .state
+            .clone()
+    };
+
+    let with_gate = mass_after(&gated);
+    assert!(
+        (with_gate.plant.mass - DRY_MASS).abs() < 1e-9,
+        "registered as propulsion, the burn stops on the floor, not at {}",
+        with_gate.plant.mass
+    );
+
+    let without_gate = mass_after(&ungated);
+    assert!(
+        without_gate.plant.mass < DRY_MASS - 0.1,
+        "registered as a model, it burns through the floor, not stopping at {}",
+        without_gate.plant.mass
+    );
+
+    // And that state is what the next call starts from: it is refused now
+    // rather than having its mass raised to the floor.
+    let (reason, ended) = walked(without_gate.clone(), ungated);
+    let reason = reason.expect("the next call refuses the state the last one left");
+    assert!(
+        reason.contains("below the dry mass"),
+        "the reason names the floor, not {reason}"
+    );
+    assert_eq!(
+        ended.plant.mass, without_gate.plant.mass,
+        "and the mass is left where the previous run left it"
+    );
+}
+
 /// A pool declares no upper bound, so no mode can be held against one.
 ///
 /// `Upper` there is a state no propagation writes: `settle_boundary` moves the
