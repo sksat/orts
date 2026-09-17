@@ -146,8 +146,10 @@ section is subdivided by package.
   within `MOMENTUM_TOLERANCE` of the bound, which for a limit of zero is any
   momentum up to 5e-13 N·m·s, and a mode already holding the wheel turns off the
   boundary that would have caught it, so the wheel runs the span holding
-  momentum its own limit says it cannot store. The same requirement
-  `PropellantPool::new` makes of a dry mass.
+  momentum its own limit says it cannot store. It is the same requirement that
+  `PropellantPool::new` makes of a dry mass. The limit checked is the one the
+  wheel ends up with, `max_momentum.min(inertia * max_speed)`, since the speed
+  bound is derived by a division that underflows for a large enough inertia.
   ([#529](https://github.com/sksat/orts/issues/529))
 - **BREAKING**: `orts::boundary::walk_to_target` returns `BoundaryWalkError`
   rather than utsuroi's `IntegrationError`, because a state a system's own

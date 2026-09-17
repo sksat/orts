@@ -115,7 +115,9 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   下流のどこも意味を付けられない — 開始 state の検査は境界から `MOMENTUM_TOLERANCE` 以内を
   受け付けるので、上限 0 では 5e-13 N·m·s までが通り、保持モードだと本来捕まえる境界 event も
   無効になる。結果として、自分の上限が「蓄えられない」と言っている角運動量を持ったまま区間を
-  走る。`PropellantPool::new` が dry mass に課しているのと同じ要求である
+  走る。`PropellantPool::new` が dry mass に課しているのと同じ要求である。検査するのはホイールが
+  最終的に持つ上限 `max_momentum.min(inertia * max_speed)` で、速度側の上限は除算で導かれるため
+  慣性が大きいと 0 に落ちる
   ([#529](https://github.com/sksat/orts/issues/529))
 - **BREAKING**: `orts::boundary::walk_to_target` の戻り値が utsuroi の
   `IntegrationError` から `BoundaryWalkError` になった。系の拘束が受け付けない state は
