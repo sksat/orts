@@ -67,10 +67,6 @@ impl Rw {
     /// a negative or non-finite `max_momentum` or `max_torque`, and on a
     /// momentum limit that leaves the wheel no capacity — including one a large
     /// inertia turns into a speed limit of zero.
-    ///
-    /// # Panics
-    /// Panics if `axis` is zero-length, `inertia` is not positive/finite,
-    /// or `max_momentum`/`max_torque` are negative.
     pub fn new(axis: Vector3<f64>, inertia: f64, max_momentum: f64, max_torque: f64) -> Self {
         let norm = axis.magnitude();
         assert!(norm > 1e-15, "Wheel axis must be non-zero");
@@ -229,7 +225,27 @@ pub struct RwAssemblyCore {
 
 impl RwAssemblyCore {
     /// Create an assembly core from a list of reaction wheels.
+    ///
+    /// # Panics
+    ///
+    /// Panics on a wheel that can hold no momentum. The constructors refuse to
+    /// build one, but [`Rw`]'s fields are public and
+    /// [`momentum_limit`](Rw::momentum_limit) reads them, so a wheel can be
+    /// left with no capacity after it was built — `rw.max_speed = 0.0` is
+    /// enough. An assembly is where wheels are put to use, so it is the other
+    /// place the limit has to mean something.
     pub fn new(wheels: Vec<Rw>) -> Self {
+        for (index, wheel) in wheels.iter().enumerate() {
+            let limit = wheel.momentum_limit();
+            assert!(
+                limit > 0.0 && limit.is_finite(),
+                "wheel {index} holds a momentum limit of {limit} N·m·s, so nothing can be \
+                 located against it: max_momentum {}, inertia {}, max_speed {}",
+                wheel.max_momentum,
+                wheel.inertia,
+                wheel.max_speed
+            );
+        }
         let axes: Vec<_> = wheels.iter().map(|w| *w.axis()).collect();
         let alloc_pinv = build_allocation_pinv(&axes);
         let has_motor_lag = wheels.iter().any(|w| w.motor_time_constant.is_some());
@@ -1577,6 +1593,21 @@ mod tests {
     #[should_panic(expected = "max_momentum must be positive")]
     fn a_wheel_that_can_hold_no_momentum_is_refused() {
         Rw::new(Vector3::x(), 0.01, 0.0, 0.1);
+    }
+
+    /// A wheel emptied of capacity after it was built is refused where it is
+    /// used.
+    ///
+    /// The constructors cannot be the only place: `Rw`'s fields are public and
+    /// `momentum_limit` reads them, which is what keeps a hand-set field from
+    /// drifting apart from the bound the propagation watches — and it also
+    /// means `rw.max_speed = 0.0` leaves a wheel with no capacity.
+    #[test]
+    #[should_panic(expected = "holds a momentum limit of 0")]
+    fn a_wheel_emptied_after_construction_is_refused_by_the_assembly() {
+        let mut rw = Rw::new(Vector3::x(), 0.01, 1.0, 0.1);
+        rw.max_speed = 0.0;
+        RwAssemblyCore::new(vec![rw]);
     }
 
     /// The limit a wheel ends up with is the smaller of its two bounds, and the
