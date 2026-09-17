@@ -41,7 +41,7 @@ flowchart TB
 
 | Layer | Crate | Responsibility |
 |-------|-------|----------------|
-| Foundation | [`utsuroi`](utsuroi/) | Generic ODE solvers (RK4, DOP853, Dormand-Prince, Störmer-Verlet, Yoshida). Exposes `OdeState`, `DynamicalSystem`. |
+| Foundation | [`utsuroi`](utsuroi/) | Generic ODE solvers (RK4, DOP853, Dormand-Prince, Störmer-Verlet, Yoshida). Exposes `OdeState`, `DynamicalSystem`, and the root-event search (`RootEvent`, `RootSearch`) that locates a sign change in time. |
 | Foundation | [`arika`](arika/) | Typed coordinate frames (ECI / ECEF / IAU), time scales (UTC / TT / TDB / TAI), Meeus analytic ephemerides, JPL Horizons fetcher, WGS-84, EOP. |
 | Environment | [`tobari`](tobari/) | Atmosphere models (Exponential, Harris-Priester, NRLMSISE-00), spherical-harmonic geopotential (`SphericalHarmonicCoefficients`: ICGEM `.gfc` loader; `SphericalHarmonicField`: Holmes–Featherstone evaluator over a degree × order window), geomagnetic field (IGRF-14, tilted-dipole), space-weather providers (CSSI, GFZ). |
 | Simulation | [`orts`](orts/) | `OrbitalState` / `AttitudeState` / `SpacecraftState`, unified `Model<S>` trait, `OrbitalSystem` / `AttitudeSystem` / `SpacecraftDynamics`, sensors, plugin host, Rerun `.rrd` output. |
@@ -95,9 +95,19 @@ classDiagram
     +eval(t, state, epoch) ExternalLoads~S::Frame~
   }
 
+  class HasBoundaries {
+    <<trait>>
+    +boundaries() Vec~DeclaredBoundary~
+    +boundary_value(declared, t, y) f64
+    +settle_boundary(declared, y)
+    +boundary_is_active(declared, y) bool
+  }
+
   OdeState <|.. OrbitalState
   OdeState <|.. AttitudeState
   OdeState <|.. SpacecraftState
+
+  DynamicalSystem <|-- HasBoundaries
 
   HasFrame <|-- HasOrbit
   HasFrame <|-- HasAttitude
@@ -137,6 +147,21 @@ Key points:
 - Systems come in three flavors — `OrbitalSystem`, `AttitudeSystem`,
   `SpacecraftDynamics` — each a `DynamicalSystem` that bundles a state with
   `Vec<Box<dyn Model<S>>>`.
+- A system that carries one-sided constraints also implements `HasBoundaries`:
+  it answers which boundaries exist, what each one's margin is at a state
+  (positive ahead of it, zero on it, negative past it), and what to put on the
+  bound once one is located. Every method has a default, so a system without
+  constraints writes `impl HasBoundaries for X {}`.
+- `orts::boundary::walk_to_target` is the one loop every propagation path runs:
+  it settles what a state is already past, switches the active boundaries for
+  the modes the state is in, and steps with utsuroi's root search watching the
+  margins. Where it stops is a boundary time located by bisection, and the
+  system settles it there. The paths that share it are `IndependentGroup`,
+  `CoupledGroup`, the CLI's controlled propagation, and `AugmentedAttitudeSystem`.
+- The discrete side of a constraint lives in the state
+  (`AugmentedState::modes`), not in a comparison inside the right-hand side: a
+  search re-steps the same interval at several widths, and a comparison would
+  flip between those steps and converge on the wrong time.
 
 ## 4. Plugin system
 

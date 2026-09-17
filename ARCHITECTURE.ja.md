@@ -41,7 +41,7 @@ flowchart TB
 
 | Layer | Crate | 責務 |
 |-------|-------|------|
-| Foundation | [`utsuroi`](utsuroi/) | 汎用 ODE ソルバ (RK4, DOP853, Dormand-Prince, Störmer-Verlet, Yoshida)。`OdeState`, `DynamicalSystem` trait を提供。 |
+| Foundation | [`utsuroi`](utsuroi/) | 汎用 ODE ソルバ (RK4, DOP853, Dormand-Prince, Störmer-Verlet, Yoshida)。`OdeState`, `DynamicalSystem` trait と、時刻について符号変化を探す root event の探索 (`RootEvent` / `RootSearch`) を提供。 |
 | Foundation | [`arika`](arika/) | 型安全な座標系 (ECI / ECEF / IAU)、時刻系 (UTC / TT / TDB / TAI)、Meeus 解析天体暦、JPL Horizons 取得、WGS-84、EOP。 |
 | Environment | [`tobari`](tobari/) | 大気モデル (Exponential, Harris-Priester, NRLMSISE-00)、球面調和重力場 (`SphericalHarmonicCoefficients`: ICGEM `.gfc` loader、`SphericalHarmonicField`: degree × order 窓の Holmes–Featherstone 評価)、地磁気場 (IGRF-14, 傾斜双極子)、宇宙天気プロバイダ (CSSI, GFZ)。 |
 | Simulation | [`orts`](orts/) | `OrbitalState` / `AttitudeState` / `SpacecraftState`、統一 `Model<S>` trait、`OrbitalSystem` / `AttitudeSystem` / `SpacecraftDynamics`、センサモデル、プラグインホスト、Rerun `.rrd` 出力。 |
@@ -94,9 +94,19 @@ classDiagram
     +eval(t, state, epoch) ExternalLoads~S::Frame~
   }
 
+  class HasBoundaries {
+    <<trait>>
+    +boundaries() Vec~DeclaredBoundary~
+    +boundary_value(declared, t, y) f64
+    +settle_boundary(declared, y)
+    +boundary_is_active(declared, y) bool
+  }
+
   OdeState <|.. OrbitalState
   OdeState <|.. AttitudeState
   OdeState <|.. SpacecraftState
+
+  DynamicalSystem <|-- HasBoundaries
 
   HasFrame <|-- HasOrbit
   HasFrame <|-- HasAttitude
@@ -133,6 +143,18 @@ classDiagram
 - System は 3 種類 — `OrbitalSystem` / `AttitudeSystem` /
   `SpacecraftDynamics` — いずれも state と `Vec<Box<dyn Model<S>>>` を
   束ねる `DynamicalSystem`。
+- 一方向拘束を持つ System は `HasBoundaries` も実装する。どの境界があるか、
+  ある state での各境界の余裕がいくらか (境界の手前で正、境界上で 0、越えると
+  負)、境界に到達したとき何を境界上に載せるかに答える。全 method に既定実装が
+  あるので、拘束のない System は `impl HasBoundaries for X {}` と書く。
+- `orts::boundary::walk_to_target` が、全ての伝播経路が通る唯一のループである。
+  state が既に越えている境界を処理し、state のモードに応じて有効な境界を切り替え、
+  utsuroi の root 探索に余裕を見張らせながら刻む。停止先は二分探索で求めた境界の
+  時刻で、そこで System が境界上に載せる。共有する経路は `IndependentGroup` /
+  `CoupledGroup` / CLI の制御付き伝播 / `AugmentedAttitudeSystem`。
+- 拘束の離散側は state (`AugmentedState::modes`) が持ち、RHS の中の比較では
+  決めない。探索は同じ区間を複数の幅で刻み直すので、比較ならその途中で切り替わり、
+  誤った時刻に収束する。
 
 ## 4. プラグインシステム
 
