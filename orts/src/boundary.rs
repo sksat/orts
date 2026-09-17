@@ -615,7 +615,7 @@ mod tests {
         let mut seen: Vec<(f64, Ramp)> = Vec::new();
         let (walked, t, state) = walk_to_target(
             Boundaries {
-                system: system,
+                system,
                 declared: &boundaries,
                 slots: &mut slots,
                 search: RootSearch::default(),
@@ -641,7 +641,7 @@ mod tests {
         let mut slots = vec![RootSlot::new(); boundaries.len()];
         let (_, t, state) = walk_to_target(
             Boundaries {
-                system: system,
+                system,
                 declared: &boundaries,
                 slots: &mut slots,
                 search: RootSearch::default(),
