@@ -302,6 +302,13 @@ pub struct IntegratorConfig {
     #[serde(default = "default_rtol")]
     #[ts(as = "Option<_>", optional)]
     pub rtol: f64,
+    /// How closely the time a state reaches a limit is located [s].
+    ///
+    /// See `--root-t-tolerance`. Unlike `atol` / `rtol`, this one applies to
+    /// every integrator: the search halves a step whatever took it.
+    #[serde(default = "default_root_t_tolerance")]
+    #[ts(as = "Option<_>", optional)]
+    pub root_t_tolerance: f64,
 }
 
 fn default_integrator() -> String {
@@ -312,6 +319,11 @@ fn default_atol() -> f64 {
 }
 fn default_rtol() -> f64 {
     1e-8
+}
+fn default_root_t_tolerance() -> f64 {
+    // `utsuroi::RootSearch::default`, which is what a caller that says nothing
+    // gets from the library too.
+    1e-3
 }
 
 /// The rules `frame` / `eop` have to satisfy, shared by the config and the
@@ -497,6 +509,7 @@ impl Default for IntegratorConfig {
         Self {
             kind: default_integrator(),
             atol: default_atol(),
+            root_t_tolerance: default_root_t_tolerance(),
             rtol: default_rtol(),
         }
     }
@@ -1920,6 +1933,25 @@ pub fn validate_tolerances(
     Ok(())
 }
 
+/// Reject a tolerance the boundary search cannot narrow a step to.
+///
+/// Zero or negative asks for a bracket no bisection reaches, and a non-finite
+/// one compares false against every width; `utsuroi::RootSearch::validate`
+/// rejects both, but only once a walk has started, which for a long run is
+/// after the output file exists.
+///
+/// How many halvings a tolerance needs is not a reason to refuse it: the count
+/// follows from the tolerance, and
+/// [`root_search`](crate::sim::params::root_search) derives it.
+pub fn validate_root_t_tolerance(t_tolerance: f64) -> Result<(), String> {
+    if !t_tolerance.is_finite() || t_tolerance <= 0.0 {
+        return Err(format!(
+            "integrator.root_t_tolerance must be positive and finite (got {t_tolerance})"
+        ));
+    }
+    Ok(())
+}
+
 impl SimConfig {
     /// Validate the config. Idempotent and side-effect-free (no network /
     /// filesystem access), so it is safe for both `config validate` and the
@@ -1942,6 +1974,7 @@ impl SimConfig {
             self.duration,
         )?;
         validate_tolerances(integrator, self.integrator.atol, self.integrator.rtol)?;
+        validate_root_t_tolerance(self.integrator.root_t_tolerance)?;
         if crate::satellite::try_parse_body(&self.body).is_none() {
             return Err(format!(
                 "unknown body '{}' (expected one of: sun, mercury, venus, earth, \
@@ -2238,6 +2271,7 @@ mod tests {
                 kind: "rk4".into(),
                 atol: 1e-10,
                 rtol: 1e-8,
+                root_t_tolerance: 1e-3,
             },
             atmosphere: "exponential".into(),
             f107: 150.0,
@@ -2467,6 +2501,7 @@ satellites:
                 kind: "dp45".into(),
                 atol: 1e-12,
                 rtol: 1e-10,
+                root_t_tolerance: 1e-3,
             },
             atmosphere: "nrlmsise00".into(),
             f107: 200.0,
@@ -3051,6 +3086,30 @@ altitude = -100.0
         assert!(validate_tolerances(IntegratorChoice::Rk4, 0.0, 0.0).is_ok());
         assert!(validate_tolerances(IntegratorChoice::Dp45, 0.0, 0.0).is_err());
         assert!(validate_tolerances(IntegratorChoice::Dop853, 0.0, 0.0).is_err());
+    }
+
+    /// Every integrator locates a crossing the same way, so the search
+    /// tolerance is rejected for all three — unlike `atol` / `rtol`, which RK4
+    /// never reads. A zero or negative width is one no halving of an interval
+    /// reaches, and the rejection happens at config time rather than partway
+    /// through a run.
+    #[test]
+    fn the_search_tolerance_is_validated_for_every_integrator() {
+        assert!(validate_root_t_tolerance(1e-3).is_ok());
+        for bad in [0.0, -1e-3, f64::NAN, f64::INFINITY] {
+            assert!(
+                validate_root_t_tolerance(bad).is_err(),
+                "{bad} is not a width the search can narrow to"
+            );
+        }
+        // However many halvings it takes is derived, not a reason to refuse.
+        assert!(validate_root_t_tolerance(1e-30).is_ok());
+        for kind in ["rk4", "dp45", "dop853"] {
+            let config = config_with(&format!(
+                "dt = 10.0\n\n[integrator]\ntype = \"{kind}\"\nroot_t_tolerance = 0.0"
+            ));
+            assert!(config.validate().is_err(), "{kind} carries the same search");
+        }
     }
 
     #[test]

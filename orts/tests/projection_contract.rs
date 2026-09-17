@@ -18,10 +18,17 @@
 //! [#446]: https://github.com/sksat/orts/issues/446
 
 use nalgebra::{Matrix3, Vector3};
-use utsuroi::{Integrator, Rk4, Tolerances};
+use utsuroi::{Integrator, Rk4, RootSearch, SegmentContext, Tolerances};
 
-use orts::effector::{AugmentedState, ConstraintMode};
-use orts::group::{IndependentGroup, IntegratorConfig};
+use orts::boundary::{DeclaredBoundary, HasBoundaries};
+use orts::effector::{AugmentedState, BoundaryKind, ConstraintMode, EffectorBoundary};
+use std::sync::Arc;
+
+use orts::group::coupled::{InterSatelliteForce, PairContext};
+use orts::group::{
+    CoupledGroup, IndependentGroup, IntegratorConfig, PairRegime, RegimeConfig, Scheduler,
+};
+use orts::orbital::OrbitalState;
 use orts::orbital::gravity::PointMass;
 use orts::spacecraft::{ReactionWheelAssembly, RwCommand, SpacecraftDynamics, SpacecraftState};
 
@@ -595,4 +602,270 @@ fn a_wheel_a_hair_past_its_bound_is_settled_before_it_runs_further() {
         ConstraintMode::Lower,
         "and its mode says which bound holds it"
     );
+}
+
+/// The search's time tolerance is what the located time can be late by, and it
+/// is the caller's to choose: the z wheel reaches its limit at exactly 5.3 s,
+/// inside the step from 5.25 to 5.5. Asked for a micro-second, the walk halves
+/// that step until it has the instant; asked for a fifth of a second, one
+/// halving already brings the interval inside the tolerance and the crossing
+/// is reported at 5.375 — 0.075 s late, and the momentum for those 75 ms goes
+/// back to the body.
+#[test]
+fn the_tolerance_decides_how_closely_the_time_is_located() {
+    const REACHED_AT: f64 = MAX_MOMENTUM / MAX_TORQUE;
+
+    // The first instant the walk reported the z wheel sitting on its bound.
+    let held_at = |t_tolerance: f64| -> f64 {
+        let system = saturating_system();
+        let initial = system.initial_augmented_state(initial_plant());
+        let mut group: IndependentGroup<Dynamics> =
+            IndependentGroup::new(IntegratorConfig::Rk4 { dt: DT })
+                .with_root_search(RootSearch {
+                    t_tolerance,
+                    ..RootSearch::default()
+                })
+                .add_satellite("sat", initial, saturating_system());
+
+        let mut first = f64::INFINITY;
+        group
+            .propagate_to_with(T_END, |_id, t, state| {
+                if (state.aux[2] + MAX_MOMENTUM).abs() < 1e-12 && t < first {
+                    first = t;
+                }
+            })
+            .expect("the walk succeeds");
+        first
+    };
+
+    let tight = held_at(1e-6);
+    assert!(
+        (tight - REACHED_AT).abs() <= 1e-6,
+        "asked for a micro-second, the bound is reported at {tight}, not {REACHED_AT}"
+    );
+
+    let loose = held_at(0.2);
+    assert!(
+        (loose - 5.375).abs() < 1e-12,
+        "asked for a fifth of a second, one halving of the step from 5.25 gives \
+         5.375, not {loose}"
+    );
+    assert!(
+        loose - REACHED_AT > 0.05,
+        "which is later than the tight answer, by more than the wheel's own \
+         tolerance"
+    );
+}
+
+/// A particle that bounces off a wall, for the paths a spacecraft with
+/// effectors cannot reach: a coupled group and a scheduler keep one state per
+/// satellite and need `FromAcceleration`, which `AugmentedState` does not
+/// have, so nothing they can propagate declares a boundary of its own yet.
+/// They do forward the search, and this is a system that shows it — the
+/// bounce turns *when* the wall was met into where the particle ends up, which
+/// the final state carries on its own.
+struct Wall;
+
+const WALL: f64 = 7000.0;
+const WALL_SPEED: f64 = -100.0;
+/// 31 km out at 100 km/s meets the wall at 310 ms — inside the first step of
+/// the grid below, whose end is at 2.5 s.
+const WALL_START: f64 = 7031.0;
+const DT_WALL: f64 = 2.5;
+const WALL_SPAN: f64 = 10.0;
+
+impl utsuroi::DynamicalSystem for Wall {
+    type State = OrbitalState;
+    fn derivatives(&self, _t: f64, state: &OrbitalState) -> OrbitalState {
+        OrbitalState::from_derivative(*state.velocity(), Vector3::zeros())
+    }
+}
+
+impl HasBoundaries for Wall {
+    fn boundaries(&self) -> Vec<DeclaredBoundary> {
+        vec![DeclaredBoundary {
+            satellite: 0,
+            effector: 0,
+            boundary: EffectorBoundary {
+                kind: BoundaryKind::ReachedLower { index: 0 },
+                boundary_tolerance: 0.0,
+            },
+            aux_offset: 0,
+            aux_dim: 0,
+            mode_offset: 0,
+            mode_dim: 0,
+        }]
+    }
+
+    fn boundary_value(
+        &self,
+        _declared: &DeclaredBoundary,
+        _segment: Option<&SegmentContext>,
+        _t: f64,
+        state: &OrbitalState,
+    ) -> f64 {
+        state.position().x - WALL
+    }
+
+    fn settle_boundary(&self, _declared: &DeclaredBoundary, state: &mut OrbitalState) {
+        // On the wall, and on its way back: the time it turned decides where
+        // it ends up.
+        *state = OrbitalState::new(
+            Vector3::new(WALL, 0.0, 0.0),
+            Vector3::new(-WALL_SPEED, 0.0, 0.0),
+        );
+    }
+
+    fn boundary_is_active(&self, _declared: &DeclaredBoundary, state: &OrbitalState) -> bool {
+        // On its way to the wall, which is the mode this system has instead of
+        // a stored one.
+        state.velocity().x < 0.0
+    }
+}
+
+/// Each path locates the bounce to the tolerance it was given, and the
+/// position at the end of the span says which: a micro-second puts the turn at
+/// 0.31 s, a second needs two halvings of the 2.5 s step and puts it at 0.625,
+/// and the particle ends 31 km apart between the two. A path that dropped the
+/// forwarding would answer the same thing for both.
+#[test]
+fn every_path_that_forwards_the_tolerance_uses_it() {
+    // Where the particle ends up if it turned at `t_hit`.
+    fn ends_at(t_hit: f64) -> f64 {
+        WALL - WALL_SPEED * (WALL_SPAN - t_hit)
+    }
+    let met_at = (WALL_START - WALL) / -WALL_SPEED;
+
+    let search = |t_tolerance: f64| RootSearch {
+        t_tolerance,
+        ..RootSearch::default()
+    };
+    let start = || {
+        OrbitalState::new(
+            Vector3::new(WALL_START, 0.0, 0.0),
+            Vector3::new(WALL_SPEED, 0.0, 0.0),
+        )
+    };
+
+    let independent = |t_tolerance: f64| -> f64 {
+        let mut group: IndependentGroup<Wall> =
+            IndependentGroup::new(IntegratorConfig::Rk4 { dt: DT_WALL })
+                .with_root_search(search(t_tolerance))
+                .add_satellite("a", start(), Wall);
+        group.propagate_to(WALL_SPAN).expect("the walk succeeds");
+        group
+            .satellites()
+            .next()
+            .expect("one satellite")
+            .state
+            .position()
+            .x
+    };
+
+    let coupled = |t_tolerance: f64| -> f64 {
+        let mut group: CoupledGroup<Wall> =
+            CoupledGroup::new(IntegratorConfig::Rk4 { dt: DT_WALL })
+                .with_root_search(search(t_tolerance))
+                .add_satellite("a", start(), Wall);
+        group.propagate_to(WALL_SPAN).expect("the walk succeeds");
+        group.group_state().states[0].position().x
+    };
+
+    let scheduled = |t_tolerance: f64| -> f64 {
+        let mut sched: Scheduler<Wall> = Scheduler::new(
+            RegimeConfig {
+                couple_enter: 1.0,
+                couple_exit: 2.0,
+                sync_enter: 2.0,
+                sync_exit: 3.0,
+                // No regrouping inside the span, so this walks the same
+                // 2.5 s steps the groups above do: a sync interval shorter
+                // than the tolerance would satisfy it with a whole step.
+                sync_interval: 10.0,
+                min_dwell_time: 0.0,
+            },
+            IntegratorConfig::Rk4 { dt: DT_WALL },
+        )
+        .with_root_search(search(t_tolerance))
+        .add_satellite("a", start(), Wall);
+        sched.propagate_to(WALL_SPAN).expect("the walk succeeds");
+        sched
+            .satellite_state(&"a".into())
+            .expect("one satellite")
+            .position()
+            .x
+    };
+
+    // The scheduler has two branches and one satellite only reaches the
+    // independent one. A declared interaction held at `Coupled` puts a pair in
+    // one component, so the walk goes through `CoupledGroup` — with a force of
+    // zero, so both particles still fly the trajectory the cases above expect.
+    struct NoForce;
+
+    impl InterSatelliteForce for NoForce {
+        fn name(&self) -> &str {
+            "no_force"
+        }
+        fn acceleration_pair(&self, _ctx: &PairContext<'_>) -> (Vector3<f64>, Vector3<f64>) {
+            (Vector3::zeros(), Vector3::zeros())
+        }
+    }
+
+    let scheduled_coupled = |t_tolerance: f64| -> f64 {
+        let mut sched: Scheduler<Wall> = Scheduler::new(
+            RegimeConfig {
+                couple_enter: 1.0,
+                couple_exit: 2.0,
+                sync_enter: 2.0,
+                sync_exit: 3.0,
+                sync_interval: 10.0,
+                min_dwell_time: 0.0,
+            },
+            IntegratorConfig::Rk4 { dt: DT_WALL },
+        )
+        .with_root_search(search(t_tolerance))
+        .add_satellite("a", start(), Wall)
+        .add_satellite(
+            "b",
+            OrbitalState::new(
+                Vector3::new(WALL_START, 0.5, 0.0),
+                Vector3::new(WALL_SPEED, 0.0, 0.0),
+            ),
+            Wall,
+        )
+        .add_interaction_fixed("a", "b", PairRegime::Coupled, Arc::new(NoForce));
+        sched.propagate_to(WALL_SPAN).expect("the walk succeeds");
+        sched
+            .satellite_state(&"a".into())
+            .expect("the first satellite")
+            .position()
+            .x
+    };
+
+    for (name, at) in [
+        ("independent group", independent(1e-6)),
+        ("coupled group", coupled(1e-6)),
+        ("scheduler", scheduled(1e-6)),
+        ("scheduler, coupled component", scheduled_coupled(1e-6)),
+    ] {
+        assert!(
+            (at - ends_at(met_at)).abs() < 1e-3,
+            "{name}: a micro-second turns it at {met_at} and ends at {}, not {at}",
+            ends_at(met_at)
+        );
+    }
+    for (name, at) in [
+        ("independent group", independent(1.0)),
+        ("coupled group", coupled(1.0)),
+        ("scheduler", scheduled(1.0)),
+        ("scheduler, coupled component", scheduled_coupled(1.0)),
+    ] {
+        // Two halvings of the 2.5 s step: [0, 1.25] is still wider than the
+        // tolerance, [0, 0.625] is not.
+        assert!(
+            (at - ends_at(0.625)).abs() < 1e-9,
+            "{name}: a second turns it at 0.625 and ends at {}, not {at}",
+            ends_at(0.625)
+        );
+    }
 }

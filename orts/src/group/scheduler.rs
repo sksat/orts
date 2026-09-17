@@ -14,7 +14,7 @@ use std::ops::ControlFlow;
 use crate::boundary::HasBoundaries;
 use std::sync::Arc;
 
-use utsuroi::{DynamicalSystem, IntegrationError, OdeState};
+use utsuroi::{DynamicalSystem, IntegrationError, OdeState, RootSearch};
 
 use super::coupled::{CoupledGroup, InterSatelliteForce, PairContext};
 use super::independent::{IndependentGroup, IntegratorConfig};
@@ -309,6 +309,7 @@ where
     config: RegimeConfig,
     integrator: IntegratorConfig,
     event_checker: Option<SharedEventChecker<D::State>>,
+    search: RootSearch,
     t: f64,
     pair_states: Vec<PairState>,
 }
@@ -324,9 +325,21 @@ where
             config,
             integrator,
             event_checker: None,
+            search: RootSearch::default(),
             t: 0.0,
             pair_states: Vec::new(),
         }
+    }
+
+    /// How closely a boundary's time is located, in place of the default.
+    ///
+    /// The groups a sync step builds are ephemeral, so this is where a caller
+    /// propagating through a scheduler says it; see
+    /// [`IndependentGroup::with_root_search`](super::IndependentGroup::with_root_search)
+    /// for what the tolerance buys and what it costs.
+    pub fn with_root_search(mut self, search: RootSearch) -> Self {
+        self.search = search;
+        self
     }
 
     pub fn with_event_checker(
@@ -640,7 +653,8 @@ where
 
         // Propagate independent satellites
         if !grouping.independent.is_empty() {
-            let mut group: IndependentGroup<D> = IndependentGroup::new(self.integrator.clone());
+            let mut group: IndependentGroup<D> =
+                IndependentGroup::new(self.integrator.clone()).with_root_search(self.search);
 
             if let Some(ref checker) = self.event_checker {
                 let checker = checker.clone();
@@ -674,7 +688,8 @@ where
 
         // Propagate coupled components
         for comp in &grouping.coupled_components {
-            let mut group: CoupledGroup<D> = CoupledGroup::new(self.integrator.clone());
+            let mut group: CoupledGroup<D> =
+                CoupledGroup::new(self.integrator.clone()).with_root_search(self.search);
 
             if let Some(ref checker) = self.event_checker {
                 let checker = checker.clone();

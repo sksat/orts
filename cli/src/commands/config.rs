@@ -31,6 +31,7 @@ atmosphere = "exponential"        # exponential | harris-priester | nrlmsise00
 type = "dp45"                     # rk4 | dp45 | dop853
 atol = 1.0e-10                    # adaptive integrators only
 rtol = 1.0e-8
+root_t_tolerance = 1.0e-3         # [s] how closely a limit's crossing time is located
 
 # Full spherical-harmonic gravity (Earth only). Replaces the J2/J3/J4 zonal
 # model and sets mu to the file's GM. Uncomment and point at an ICGEM .gfc.

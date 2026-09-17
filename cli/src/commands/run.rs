@@ -41,6 +41,7 @@ pub(crate) fn validate_sim_args(sim: &SimArgs) -> Result<(), String> {
         sim.duration,
     )?;
     crate::config::validate_tolerances(sim.integrator, sim.atol, sim.rtol)?;
+    crate::config::validate_root_t_tolerance(sim.root_t_tolerance)?;
     // The frame rules need the fleet's attitude configs, which the direct-CLI
     // path cannot express at all (`--sat` has no attitude), so an empty slice
     // states exactly that.
@@ -70,9 +71,12 @@ fn gravity_flags_given(sim: &SimArgs) -> Vec<&'static str> {
 /// gravity flag next to `--config` (or an auto-detected `orts.toml`) would be
 /// dropped in silence and the run would use the zonal model behind an explicit
 /// request. Refuse it, the way `serve` refuses every unhonored sim arg.
-// TODO: the other tuning flags (`--dt`, `--atmosphere`, …) are still dropped
-// silently on this path; extending `serve`'s `unhonored_sim_args` to `run` is
-// a behaviour change for existing command lines and is left to its own change.
+// TODO: the other tuning flags (`--dt`, `--atol`, `--root-t-tolerance`,
+// `--atmosphere`, …) are still dropped silently on this path, and their values
+// are not validated there either — the config's own `validate` checks the
+// config's. Extending `serve`'s `unhonored_sim_args` to `run` is a behaviour
+// change for existing command lines and is left to its own change; singling
+// out one flag would leave the rest inconsistent with it.
 fn reject_frame_and_gravity_flags_with_config(
     sim: &SimArgs,
     config_path: &str,
@@ -598,9 +602,11 @@ fn run_simulation_in_frame<F: RunFrame>(params: &SimParams) -> Result<Recording,
     use crate::sim::core::sat_params;
     use orts::setup::{build_orbital_system_in_frame, default_third_bodies};
 
-    let mut group = IndependentGroup::new(params.integrator_config()).with_event_checker(
-        crate::sim::core::body_event_checker::<OrbitalState<F>>(params),
-    );
+    let mut group = IndependentGroup::new(params.integrator_config())
+        .with_root_search(params.root_search)
+        .with_event_checker(crate::sim::core::body_event_checker::<OrbitalState<F>>(
+            params,
+        ));
 
     let third_bodies = default_third_bodies(&params.body).map_err(|e| {
         CmdError::failure(format!(
@@ -646,11 +652,11 @@ pub fn run_spacecraft_simulation(params: &SimParams) -> Result<Recording, CmdErr
     use orts::setup::default_third_bodies;
     use orts::spacecraft::SpacecraftState;
 
-    let mut group = IndependentGroup::new(params.integrator_config()).with_event_checker(
-        crate::sim::core::body_event_checker::<orts::effector::AugmentedState<SpacecraftState>>(
-            params,
-        ),
-    );
+    let mut group = IndependentGroup::new(params.integrator_config())
+        .with_root_search(params.root_search)
+        .with_event_checker(crate::sim::core::body_event_checker::<
+            orts::effector::AugmentedState<SpacecraftState>,
+        >(params));
 
     let third_bodies = default_third_bodies(&params.body).map_err(|e| {
         CmdError::failure(format!(
@@ -2503,6 +2509,28 @@ mod tests {
             value.abs() > 1e-9,
             "the gravity-gradient torque should reach the row, got {value:e}: {row}"
         );
+    }
+
+    /// The config path rejects a tolerance the search cannot narrow to, and a
+    /// command line says the same thing: reaching `RootSearch` with it fails
+    /// only once a walk starts, which for a long run is after the output file
+    /// exists.
+    #[test]
+    fn validate_sim_args_rejects_an_unusable_search_tolerance() {
+        assert!(validate_sim_args(&args(&["--root-t-tolerance", "1e-6"])).is_ok());
+        // Joined with `=`, so a negative value is a value rather than a flag.
+        for bad in [
+            "--root-t-tolerance=0",
+            "--root-t-tolerance=-1e-3",
+            "--root-t-tolerance=NaN",
+            "--root-t-tolerance=inf",
+        ] {
+            let err = validate_sim_args(&args(&[bad])).unwrap_err();
+            assert!(
+                err.contains("root_t_tolerance"),
+                "{bad} is named by the error, which said: {err}"
+            );
+        }
     }
 
     /// `--gravity-field` gets the `[gravity_field]` structural rules on the

@@ -129,6 +129,35 @@ section is subdivided by package.
   ([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
+- **BREAKING**: how closely the propagation locates the time a state reaches a
+  limit is a setting rather than the 1 ms default every path hard-coded.
+  `IndependentGroup::with_root_search` and `CoupledGroup::with_root_search` take
+  a `RootSearch`, `propagate_controlled` takes one between the integrator and
+  the event check, and `orts run` / `orts serve` read
+  `--root-t-tolerance` / `[integrator] root_t_tolerance`, which is rejected at
+  config time — for every integrator, since they all locate a crossing the same
+  way — if it is not positive and finite. How many halvings a tolerance needs
+  follows from it rather than bounding it: the CLI asks for
+  `⌈log₂(widest / t_tolerance)⌉` of them, plus 64 for the subnormal range an
+  interval near `t = 0` reaches, where `widest` is the run's own span. `dt`
+  does not bound the interval — it is only the *first* step for the adaptive
+  pair, which multiplies an accepted step by up to 5 (DP45) or 6 (DOP853) and
+  does so repeatedly — but the propagation does, since a step is clamped to the
+  target it walks to. The tolerance is the width the search
+  narrows a crossing's interval to, and so how far the time it returns can be
+  from the sign change it found: a wheel driven at a constant `τ` is held
+  `τ · t_tolerance` past its limit, and the body keeps the momentum for that
+  much of the exchange. It bounds that localization and not the distance to the
+  crossing the spacecraft would really have, which also carries the state's
+  integration error and, where the value is flat there, the slope that turns a
+  small error in the value into a large one in the time. Each halving costs one
+  more re-step of the interval being narrowed, and the spacing of f64 at the
+  time in question is the floor under the tolerance — the search stops once
+  halving no longer changes the interval, so at `t = 1e15` a quarter-second
+  interval halves once and stops whatever was asked for. Measured on a wheel whose limit falls
+  at 5.3 s, inside the step from 5.25 to 5.5: asked for a micro-second the walk
+  reports 5.3, asked for a fifth of a second one halving already brings the
+  interval inside the tolerance and it reports 5.375.
 - **BREAKING**: a `StateEffector` reads its evaluation context from one
   `EffectorInput`, and it declares the boundaries its own state can reach.
   `derivatives(&self, input, aux_rates)` replaces

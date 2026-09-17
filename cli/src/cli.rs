@@ -214,6 +214,20 @@ pub struct SimArgs {
     #[arg(long, default_value_t = 1e-8)]
     pub rtol: f64,
 
+    /// How closely the time a state reaches a limit is located [s].
+    ///
+    /// A reaction wheel filling up happens mid-step, and the propagation
+    /// halves the step until it has the time this narrow. The tolerance is how
+    /// far the time it settles on can be from the sign change it found: a wheel
+    /// driven at a constant 0.1 N·m is held up to 1e-4 N·m·s past its limit at
+    /// the default. It bounds that localization and not the whole error — the
+    /// sign change belongs to the computed trajectory, so the state's own
+    /// integration error is in there too. Every halving costs one more
+    /// evaluation of the step being narrowed, and the spacing of f64 at the
+    /// time in question is the floor under the whole thing.
+    #[arg(long, default_value_t = 1e-3)]
+    pub root_t_tolerance: f64,
+
     /// Atmospheric density model for drag computation
     #[arg(long, default_value = "exponential")]
     pub atmosphere: AtmosphereChoice,

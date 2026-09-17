@@ -348,6 +348,7 @@ where
     is_event_termination: bool,
     integrator: IntegratorConfig,
     event_checker: Option<EventChecker<D::State>>,
+    search: RootSearch,
 }
 
 impl<D: DynamicalSystem + HasBoundaries> CoupledGroup<D>
@@ -365,6 +366,7 @@ where
             is_event_termination: false,
             integrator,
             event_checker: None,
+            search: RootSearch::default(),
         }
     }
 
@@ -374,6 +376,15 @@ where
 
     pub fn rk4(dt: f64) -> Self {
         Self::new(IntegratorConfig::Rk4 { dt })
+    }
+
+    /// How closely a boundary's time is located, in place of the default.
+    ///
+    /// See [`IndependentGroup::with_root_search`](super::IndependentGroup::with_root_search)
+    /// for what the tolerance buys and what it costs.
+    pub fn with_root_search(mut self, search: RootSearch) -> Self {
+        self.search = search;
+        self
     }
 
     pub fn with_event_checker(
@@ -497,11 +508,7 @@ where
         // one's start.
         let boundaries = self.dynamics.boundaries();
         let mut slots = vec![RootSlot::new(); boundaries.len()];
-        // TODO: the default 1 ms tolerance. It bounds how late a boundary is
-        // reported, and so how much momentum `settle_boundary` hands back in
-        // one go; a knob for it belongs beside the integrator's own
-        // tolerances in `IntegratorConfig`.
-        let search = RootSearch::default();
+        let search = self.search;
 
         let segments = Segments::new(&self.dynamics, self.t, t_target)?;
         for segment in segments {

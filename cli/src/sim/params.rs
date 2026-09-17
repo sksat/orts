@@ -3,7 +3,7 @@ use std::sync::Arc;
 use arika::body::KnownBody;
 use arika::elements::ParsedElementSet;
 use arika::epoch::Epoch;
-use utsuroi::Tolerances;
+use utsuroi::{RootSearch, Tolerances};
 
 use crate::cli::FrameChoice;
 use crate::cli::{
@@ -12,6 +12,83 @@ use crate::cli::{
 use crate::config::SimConfig;
 use crate::satellite::{OrbitSpec, SatelliteSpec, parse_body, parse_sat_spec};
 use crate::tle::{fetch_tle_by_norad_id, try_fetch_tle_by_norad_id};
+
+/// Halvings allowed beyond what the widest bracket needs.
+///
+/// Room for the interval near `t = 0`, where f64 keeps halving far below the
+/// spacing it has anywhere else: 64 more covers the subnormal range a bracket
+/// can reach there.
+const HALVINGS_SPARE: u32 = 64;
+
+/// The boundary search narrowed to `t_tolerance`, for a run of `span` in
+/// steps of `dt`.
+///
+/// The halvings follow from the tolerance and the widest interval that can
+/// hold a crossing: `⌈log₂(widest / t_tolerance)⌉` of them bring it inside the
+/// tolerance, and the count is what a tolerance costs rather than a limit on
+/// what it may be.
+///
+/// `dt` alone does not bound the interval. It is the fixed step for RK4 but
+/// only the *first* step for the adaptive pair, which multiplies an accepted
+/// step by up to 5 (DP45) or 6 (DOP853) and does so repeatedly — fourteen such
+/// steps pass 2³². What does bound it is the propagation itself: a step is
+/// clamped to the target it is walking to, so no interval is wider than the
+/// gap between two targets. `span` is that bound: the run's own length where
+/// it has one, and otherwise the output interval, which is how far apart the
+/// targets of a run with no duration are.
+///
+/// Allowing halvings is not spending them: the search stops at the tolerance
+/// or once halving no longer changes the interval in f64, whichever comes
+/// first. Measured, `1e-30` with a 0.25 s step converges after about 48, since
+/// the interval stops changing there. The count only has to be past what a
+/// legitimate search needs, so that what it stops is a value behaving unlike a
+/// continuous function. The spare alone is already past
+/// `RootSearch::default`'s 60, so that count is not used; it is kept for the
+/// pair the validators refuse, where the walk's own error is the answer.
+pub fn root_search(dt: f64, span: f64, t_tolerance: f64) -> RootSearch {
+    let default = RootSearch::default();
+    let widest = [dt, span]
+        .into_iter()
+        .filter(|w| w.is_finite() && *w > 0.0)
+        .fold(0.0_f64, f64::max);
+    let needed = if widest > 0.0 && t_tolerance.is_finite() && t_tolerance > 0.0 {
+        let halvings = (widest / t_tolerance).log2().ceil();
+        // Both operands are finite and positive here, and their ratio still
+        // need not be: `1e308 / 1e-300` is an infinity, whose `log2` is one
+        // too. `as u32` saturates, so such a pair asks for every halving there
+        // is rather than wrapping to none.
+        (halvings.max(0.0) as u32).saturating_add(HALVINGS_SPARE)
+    } else {
+        // A pair `validate_root_t_tolerance` and `validate_time_params` refuse;
+        // the walk refuses it too, and says so with its own error.
+        default.max_iterations
+    };
+    RootSearch {
+        t_tolerance,
+        max_iterations: needed,
+    }
+}
+
+/// The same search, with enough halvings for a bracket this wide.
+///
+/// [`root_search`] derives its count from what the configuration knows: the
+/// run's duration, or the output interval where it has none. A propagation
+/// call can be handed a target further away than that — realtime `serve` steps
+/// one controller tick at a time, and a tick resolved from a plugin's own
+/// sample period is not bounded by the output interval — and a step is clamped
+/// to the target it walks to, so that gap is the widest bracket the call can
+/// give the search. Taking the larger of the two counts means no call can
+/// arrive with fewer halvings than its own span needs.
+///
+/// The tolerance is untouched: this is the cap that stops a value behaving
+/// unlike a continuous function, not the width the search converges to.
+pub fn at_least_for_span(search: RootSearch, span: f64) -> RootSearch {
+    let needed = root_search(0.0, span, search.t_tolerance);
+    RootSearch {
+        t_tolerance: search.t_tolerance,
+        max_iterations: search.max_iterations.max(needed.max_iterations),
+    }
+}
 
 /// Resolved WASM plugin backend selection.
 ///
@@ -174,6 +251,11 @@ pub struct SimParams {
     pub ground_stations: Vec<orts::visibility::GroundStation>,
     pub integrator: IntegratorChoice,
     pub tolerances: Tolerances,
+    /// How closely the propagation locates the time a state reaches a limit.
+    ///
+    /// Every path that walks with boundaries takes this: the groups through
+    /// `with_root_search`, the controlled path through `propagate_controlled`.
+    pub root_search: RootSearch,
     pub atmosphere: AtmosphereChoice,
     pub f107: f64,
     pub ap: f64,
@@ -399,6 +481,16 @@ impl SimParams {
                 atol: args.atol,
                 rtol: args.rtol,
             },
+            root_search: root_search(
+                args.dt,
+                // A run with no duration still walks to a target every output
+                // interval, so that is what bounds a bracket there — `dt` is
+                // not it, and the spare does not cover the difference: a
+                // millionth of a second step with a one-second output interval
+                // and a tolerance below it needs the halvings of the interval.
+                args.duration.unwrap_or(0.0).max(output_interval),
+                args.root_t_tolerance,
+            ),
             atmosphere: args.atmosphere,
             f107: args.f107,
             ap: args.ap,
@@ -477,6 +569,13 @@ impl SimParams {
                 atol: config.integrator.atol,
                 rtol: config.integrator.rtol,
             },
+            root_search: root_search(
+                config.dt,
+                // As on the CLI path: the output interval bounds a bracket
+                // where the run has no duration.
+                config.duration.unwrap_or(0.0).max(output_interval),
+                config.integrator.root_t_tolerance,
+            ),
             atmosphere: config.atmosphere_choice(),
             f107: config.f107,
             ap: config.ap,
@@ -769,6 +868,120 @@ mod tests {
     use super::*;
     use crate::satellite::OrbitSpec;
 
+    /// The halvings follow from the tolerance, so no positive tolerance is out
+    /// of reach: `RootNotLocalized` was what a caller got for asking for one
+    /// below `dt · 2⁻⁶⁰`, in the middle of a run. An ordinary tolerance keeps
+    /// the library's own count, so nothing about those runs changes.
+    #[test]
+    fn the_halvings_follow_from_the_tolerance() {
+        let default = RootSearch::default();
+
+        // 1 ms from a 10 s run needs 14 halvings, and the spare takes it to 78.
+        let ordinary = root_search(10.0, 10.0, 1e-3);
+        assert_eq!(ordinary.t_tolerance, 1e-3);
+        assert_eq!(ordinary.max_iterations, 78);
+
+        // A tolerance as wide as the run needs no halving at all, and the
+        // spare is what is left.
+        let loose = root_search(10.0, 10.0, 10.0);
+        assert_eq!(loose.max_iterations, HALVINGS_SPARE);
+
+        // The span is what bounds the interval, not the step: an hour in
+        // 10 s steps needs log2(3600 / 1e-3) ≈ 22, and the spare carries it
+        // past the floor.
+        let long_run = root_search(10.0, 3600.0, 1e-3);
+        assert!(
+            (86..=90).contains(&long_run.max_iterations),
+            "22 for the span and 64 spare: got {}",
+            long_run.max_iterations
+        );
+
+        // 1e-30 from a one-second span needs about 100.
+        let tight = root_search(1.0, 1.0, 1e-30);
+        assert_eq!(tight.t_tolerance, 1e-30);
+        assert!(
+            (164..=170).contains(&tight.max_iterations),
+            "log2(1e30) is about 100, plus the spare: got {}",
+            tight.max_iterations
+        );
+
+        // A pair the validators refuse is carried through as it is, for the
+        // walk to refuse with its own error.
+        for (dt, tol) in [(0.0, 1e-3), (10.0, 0.0), (f64::NAN, 1e-3), (10.0, f64::NAN)] {
+            let search = root_search(dt, dt, tol);
+            assert_eq!(search.max_iterations, default.max_iterations);
+            assert!(search.t_tolerance.is_nan() || search.t_tolerance == tol);
+        }
+    }
+
+    /// A propagation call whose target is further away than anything the
+    /// configuration knew about still gets the halvings its own span needs.
+    ///
+    /// Realtime `serve` steps one controller tick at a time, and the tick comes
+    /// from the plugin's own sample period, which the output interval does not
+    /// bound. Copilot's case on #517: `output_interval = 1e-30` with
+    /// `t_tolerance = 1e-40` configures 98 halvings, and a one-second
+    /// controller period brackets a crossing that needs 133.
+    #[test]
+    fn a_call_gets_the_halvings_its_own_span_needs() {
+        let configured = root_search(1e-30, 1e-30, 1e-40);
+        assert_eq!(configured.max_iterations, 98, "what the configuration knew");
+
+        let widened = at_least_for_span(configured, 1.0);
+        let needed = (1.0_f64 / 1e-40).log2().ceil() as u32;
+        assert!(
+            widened.max_iterations >= needed,
+            "a one-second tick needs {needed} halvings, and the call gets {}",
+            widened.max_iterations
+        );
+        assert_eq!(
+            widened.t_tolerance, configured.t_tolerance,
+            "the width the search converges to is not what this changes"
+        );
+
+        // A shorter span than the configuration covers keeps the larger count:
+        // the cap only has to be past what a legitimate search needs.
+        let narrow = at_least_for_span(configured, 1e-35);
+        assert_eq!(narrow.max_iterations, configured.max_iterations);
+
+        // A span the validators refuse carries the configured count through,
+        // for the walk to refuse with its own error.
+        for span in [0.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(
+                at_least_for_span(configured, span).max_iterations,
+                configured.max_iterations,
+                "span {span}"
+            );
+        }
+    }
+
+    /// A run with no duration still walks to a target every output interval, so
+    /// that is the widest bracket the search can be handed. `dt` is not: it can
+    /// be orders of magnitude smaller, and the spare does not cover the
+    /// difference.
+    ///
+    /// Measured before this: `dt = 1e-30` with a one-second output interval and
+    /// a tolerance of `1e-40` configured 98 halvings where a one-second bracket
+    /// needs 133, so a boundary located anywhere in the run would have failed
+    /// with `RootNotLocalized` although every input passed validation.
+    #[test]
+    fn a_run_with_no_duration_bounds_the_bracket_by_its_output_interval() {
+        let mut args = sim_args_for_period_tests();
+        args.dt = 1e-30;
+        args.output_interval = Some(1.0);
+        args.duration = None;
+        args.root_t_tolerance = 1e-40;
+
+        let params = SimParams::from_sim_args(&args, false).expect("the arguments are valid");
+
+        let needed = (1.0_f64 / 1e-40).log2().ceil() as u32;
+        assert!(
+            params.root_search.max_iterations >= needed,
+            "a one-second bracket needs {needed} halvings, and the run configures {}",
+            params.root_search.max_iterations
+        );
+    }
+
     /// `duration` is the run's end time, not the satellite's orbital period.
     ///
     /// The two used to share `SatelliteSpec::period`, so `--duration 120` left
@@ -874,6 +1087,7 @@ orbit = { type = "circular", altitude = 400 }
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            root_t_tolerance: 1e-3,
             atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
@@ -908,6 +1122,7 @@ orbit = { type = "circular", altitude = 400 }
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            root_t_tolerance: 1e-3,
             atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
@@ -947,6 +1162,7 @@ orbit = { type = "circular", altitude = 400 }
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            root_t_tolerance: 1e-3,
             atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
@@ -986,6 +1202,7 @@ orbit = { type = "circular", altitude = 400 }
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            root_t_tolerance: 1e-3,
             atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
@@ -1020,6 +1237,7 @@ orbit = { type = "circular", altitude = 400 }
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            root_t_tolerance: 1e-3,
             atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
@@ -1056,6 +1274,7 @@ orbit = { type = "circular", altitude = 400 }
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            root_t_tolerance: 1e-3,
             atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
@@ -1100,6 +1319,7 @@ orbit = { type = "circular", altitude = 400 }
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            root_t_tolerance: 1e-3,
             atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
@@ -1139,6 +1359,7 @@ orbit = { type = "circular", altitude = 400 }
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            root_t_tolerance: 1e-3,
             atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
@@ -1200,6 +1421,7 @@ orbit = { type = "circular", altitude = 400 }
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            root_t_tolerance: 1e-3,
             atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
@@ -1248,6 +1470,7 @@ orbit = { type = "circular", altitude = 400 }
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            root_t_tolerance: 1e-3,
             atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
@@ -1302,6 +1525,7 @@ orbit = { type = "circular", altitude = 400 }
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            root_t_tolerance: 1e-3,
             atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
@@ -1352,6 +1576,7 @@ orbit = { type = "circular", altitude = 400 }
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            root_t_tolerance: 1e-3,
             atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
@@ -1397,6 +1622,7 @@ orbit = { type = "circular", altitude = 400 }
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            root_t_tolerance: 1e-3,
             atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
@@ -1436,6 +1662,7 @@ orbit = { type = "circular", altitude = 400 }
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            root_t_tolerance: 1e-3,
             atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,

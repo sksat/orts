@@ -102,6 +102,24 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   variant で表される。([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
+- **BREAKING**: 状態が限界に達する時刻をどこまで詰めて求めるかを設定にした (これまでは
+  各経路が既定の 1 ms を埋め込んでいた)。`IndependentGroup::with_root_search` と
+  `CoupledGroup::with_root_search` が `RootSearch` を取り、`propagate_controlled` は
+  積分器と event check の間で受け取る。`orts run` / `orts serve` は
+  `--root-t-tolerance` / `[integrator] root_t_tolerance` を読み、正の有限値でなければ
+  config の時点で拒否する (どの積分器も同じ探索を通るので、全てに適用する)。半分割の回数は許容から導く (許容を縛らない):
+  CLI は `⌈log₂(widest / t_tolerance)⌉` 回に、`t = 0` 近傍の subnormal の範囲ぶんとして 64 回を
+  足して要求する。`widest` は run の span である。`dt` は区間を縛らない (adaptive な 2 つでは
+  最初のステップにすぎず、受理したステップを DP45 は最大 5 倍、DOP853 は 6 倍に繰り返し育てる)。
+  縛るのは伝播そのもので、ステップは歩いている目標時刻で切られる。この許容は探索が
+  交差を含む区間を詰める幅であり、返す時刻が「見つけた符号変化」からどれだけ離れうるかである:
+  一定トルク $\tau$ で駆動されるホイールは上限を $\tau \cdot \varepsilon_t$ 超えたところで保持され、
+  body はその分の交換を保つ。縛るのはこの絞り込みの分だけで、宇宙機が実際に境界へ達する時刻との
+  差には state の積分誤差も乗る (符号変化は計算された軌道の上のものである)。
+  下限は f64 の時刻分解能で、探索は半分割しても区間が変わらなくなった時点でも止まる
+  ($t = 10^{15}$ では 0.25 秒の区間が 1 回で止まる)。半分にするごとに、狭めている区間の再計算が 1 回増える。上限が 5.3 秒 (5.25 から
+  5.5 のステップの内側) に来るホイールでの実測では、1 マイクロ秒を指定すると 5.3 を報告し、
+  0.2 秒を指定すると 1 回の半分割で許容に収まって 5.375 を報告する。
 - **BREAKING**: `StateEffector` の評価コンテキストを `EffectorInput` 1 つにまとめ、
   effector が自分の state が到達しうる境界を申告するようにした。
   `derivatives(&self, t, state, aux, aux_rates, epoch)` は
