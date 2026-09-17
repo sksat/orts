@@ -126,6 +126,17 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     /// model registered through `with_model` would keep thrusting on an empty
     /// tank.
     ///
+    /// # What "empty" needs
+    ///
+    /// The pool's mode is what stops the burn, and only a propagation that
+    /// handles boundaries moves it: a group, the CLI's controlled path, or
+    /// [`walk_to_target`](crate::boundary::walk_to_target) directly. Stepping
+    /// this system through [`Integrator`](utsuroi::Integrator) yourself runs no
+    /// search and settles nothing, so the mode stays
+    /// [`Free`](crate::effector::ConstraintMode::Free) and the burn continues
+    /// below the floor — the same limitation the momentum limit of
+    /// [`RwAssembly`](crate::spacecraft::RwAssembly) has.
+    ///
     /// # Panics
     ///
     /// Panics without a pool to draw from: the floor is what says when the
@@ -230,7 +241,11 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
         let mut modes = vec![ConstraintMode::default(); self.registry.total_modes()];
         // A spacecraft can start with an empty tank, and no search would find
         // that: a margin of exactly zero has not been crossed. Its mode says
-        // so from the first step. Starting *below* the floor is refused here.
+        // so from the first step. Starting *below* the floor is refused here —
+        // and here only: `AugmentedState`'s fields are public, so a state
+        // assembled by hand can carry a mass the pool would have rejected, and
+        // the walk then settles it onto the floor, which adds the mass the
+        // input was missing. Issue #523 is where that check belongs.
         if let Some((pool, index)) = self.pool
             && let Some(entry) = self.registry.entries().get(index)
         {

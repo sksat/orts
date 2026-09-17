@@ -1960,6 +1960,103 @@ path = "does-not-exist.wasm"
         }
     }
 
+    /// The controlled loop stops a burn at the propellant floor, and the record
+    /// says so.
+    ///
+    /// This is the path `build_controlled_satellite` sets up: the pool is
+    /// registered with `with_propellant` and the assembly with
+    /// `with_propulsion`, and the loop walks boundaries through
+    /// `propagate_controlled`. The burn case above installs its thruster with
+    /// `with_model` and has no pool at all, so nothing held this wiring.
+    ///
+    /// 0.1 kg of propellant at 10 N and Isp 300 s lasts 29.4 s. The walk is
+    /// given 60 s in 10 s steps, so the crossing falls inside a step.
+    #[test]
+    fn the_controlled_loop_stops_a_burn_at_the_propellant_floor() {
+        use orts::spacecraft::{G0, PropellantPool, Thruster};
+
+        const THRUST_N: f64 = 10.0;
+        const ISP_S: f64 = 300.0;
+        const DRY_MASS: f64 = 500.0;
+        const PROPELLANT: f64 = 0.1;
+
+        let (mut sat, _) = satellite_with(1.0, 0.0);
+        sat.dynamics = std::mem::replace(
+            &mut sat.dynamics,
+            orts::spacecraft::SpacecraftDynamics::new(
+                arika::earth::MU,
+                Box::new(orts::orbital::gravity::PointMass),
+                nalgebra::Matrix3::identity(),
+            ),
+        )
+        .with_propellant(PropellantPool::new(DRY_MASS))
+        .with_propulsion(Thruster::new(THRUST_N, ISP_S, Vector3::x()));
+        // The fixture's state was built before the pool was registered, so it
+        // carries no mode for it.
+        sat.state = sat
+            .dynamics
+            .initial_augmented_state(orts::spacecraft::SpacecraftState {
+                mass: DRY_MASS + PROPELLANT,
+                ..sat.state.plant.clone()
+            });
+
+        propagate_controlled(
+            &mut sat,
+            0.0,
+            60.0,
+            &IntegratorConfig::Rk4 { dt: 10.0 },
+            RootSearch::default(),
+            &never_ends,
+        )
+        .expect("the burn and the orbit are finite everywhere");
+
+        assert!(
+            (sat.state.plant.mass - DRY_MASS).abs() < 1e-6,
+            "the mass ends on the floor, not at {}",
+            sat.state.plant.mass
+        );
+        // 29.4 s of burning is what 0.1 kg at this thrust buys, so the floor is
+        // crossed inside the third step rather than on its edge.
+        let burn_time = PROPELLANT / (THRUST_N / (ISP_S * G0));
+        assert!(
+            (29.0..30.0).contains(&burn_time),
+            "the burn lasts {burn_time} s, inside the 20..30 s step"
+        );
+
+        // And nothing burns after that: another minute leaves the mass where it
+        // is. The ΔV against Tsiolkovsky is `propellant_floor.rs`'s case, in
+        // free space — here the orbit turns under the thrust, so a velocity
+        // difference is mostly the orbit.
+        let on_the_floor = sat.state.plant.mass;
+        propagate_controlled(
+            &mut sat,
+            60.0,
+            120.0,
+            &IntegratorConfig::Rk4 { dt: 10.0 },
+            RootSearch::default(),
+            &never_ends,
+        )
+        .expect("the walk succeeds");
+        assert_eq!(
+            sat.state.plant.mass, on_the_floor,
+            "an empty tank spends nothing"
+        );
+
+        // The record keeps a column for the thruster and reports no thrust in
+        // it, which is what a reader watching the burn end sees.
+        let breakdown = sat.dynamics.model_breakdown(60.0, &sat.state);
+        let (_, thruster) = breakdown
+            .iter()
+            .find(|(name, _)| *name == "thruster")
+            .expect("the thruster keeps its entry after depletion");
+        assert_eq!(thruster.mass_rate, 0.0);
+        assert_eq!(
+            thruster.acceleration_inertial,
+            arika::frame::Vec3::zeros(),
+            "no thrust once the tank is empty"
+        );
+    }
+
     /// A burn shorter than an integration step is flown by the controlled loop.
     ///
     /// `propagate_controlled` used to run the integrator from `t0` straight to
