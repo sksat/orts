@@ -174,7 +174,7 @@ struct Grouping {
 }
 
 /// A pair to receive KDK kicks.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct KickPair {
     sat_i: usize,
     sat_j: usize,
@@ -590,14 +590,20 @@ where
                     all_terminations.extend(kicked_into_refusal);
                     // Without the ones just dropped: a component held together
                     // by a satellite that cannot start is not one component any
-                    // more. The kick bookkeeping keeps the pairs it started
-                    // with, as it does for a satellite an event stops mid-drift.
+                    // more, and a kick pair with a dropped endpoint would read
+                    // that endpoint's position where it was left rather than
+                    // where it would have drifted to.
                     self.build_grouping()
                 });
+                // The rest of the interval — the drift, the accelerations at
+                // its end and the closing kick — uses this grouping. The
+                // opening kick is already spent, so a pair whose partner was
+                // dropped keeps the half it received, as one an event stops
+                // mid-drift does.
+                let flown = after_kick.as_ref().unwrap_or(&grouping);
 
                 // 3. Drift: propagate ephemeral groups
-                let terms = self
-                    .propagate_groups_to(sync_target, after_kick.as_ref().unwrap_or(&grouping))?;
+                let terms = self.propagate_groups_to(sync_target, flown)?;
 
                 // 4. Check for events
                 let has_events = !terms.is_empty();
@@ -605,8 +611,9 @@ where
 
                 if has_events {
                     // Event during drift. Apply second half-kick only to active sats.
-                    let accels_end = self.compute_kick_accels(&grouping.kick_pairs, sync_target);
-                    self.apply_kicks_active(&grouping.kick_pairs, &accels_end, dt_sync / 2.0);
+                    let pairs = flown.kick_pairs.clone();
+                    let accels_end = self.compute_kick_accels(&pairs, sync_target);
+                    self.apply_kicks_active(&pairs, &accels_end, dt_sync / 2.0);
                     // This kick is the last thing the run does — the loop ends
                     // below — so a satellite it puts past a constraint would be
                     // handed back with nothing left to ask about it.
@@ -621,10 +628,11 @@ where
                 }
 
                 // 5. Compute accelerations at new positions (post-drift time)
-                let accels_end = self.compute_kick_accels(&grouping.kick_pairs, sync_target);
+                let pairs = flown.kick_pairs.clone();
+                let accels_end = self.compute_kick_accels(&pairs, sync_target);
 
                 // 6. Second half-kick
-                self.apply_kicks(&grouping.kick_pairs, &accels_end, dt_sync / 2.0);
+                self.apply_kicks(&pairs, &accels_end, dt_sync / 2.0);
 
                 // The closing kick can be what puts a state past a constraint,
                 // and this may be the last thing a run does: nothing would
