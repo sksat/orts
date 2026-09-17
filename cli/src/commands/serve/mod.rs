@@ -89,6 +89,21 @@ fn has_explicit_sim_args(sim: &SimArgs) -> bool {
 /// documented `serve --dt 1 --output-interval 10` served forever without ever
 /// starting a simulation.
 fn reject_unhonored_sim_args(sim: &SimArgs, written: &WrittenFlags) -> Result<(), CmdError> {
+    // First the flags no `serve` path reads: an orbit on the command line
+    // makes the rest honorable, and these stay dropped.
+    let always: Vec<&str> = ALWAYS_UNHONORED
+        .iter()
+        .map(|(_, flag)| *flag)
+        .filter(|flag| written.was_written(flag))
+        .collect();
+    if !always.is_empty() {
+        return Err(CmdError::usage(format!(
+            "serve cannot honor {}: it runs plugins through a deterministic cache \
+             (`WasmPluginCache::new()`) and never resolves a mode. Drop the flag, or run \
+             the simulation with `orts run`, which does.",
+            always.join(", ")
+        )));
+    }
     let unhonored = unhonored_sim_args(sim, written);
     if unhonored.is_empty() {
         return Ok(());
@@ -178,6 +193,7 @@ impl WrittenFlags {
     fn from_matches(matches: &clap::ArgMatches) -> Self {
         let written = VALUE_FLAGS
             .iter()
+            .chain(ALWAYS_UNHONORED.iter())
             .filter(|(id, _)| {
                 matches!(
                     matches.value_source(id),
@@ -198,7 +214,7 @@ impl WrittenFlags {
 ///
 /// Every one of them used to be read as absent when its value happened to
 /// equal the default.
-const VALUE_FLAGS: [(&str, &str); 10] = [
+const VALUE_FLAGS: [(&str, &str); 9] = [
     ("body", "--body"),
     ("dt", "--dt"),
     ("integrator", "--integrator"),
@@ -208,8 +224,16 @@ const VALUE_FLAGS: [(&str, &str); 10] = [
     ("atmosphere", "--atmosphere"),
     ("f107", "--f107"),
     ("ap", "--ap"),
-    ("plugin_backend_async_mode", "--plugin-backend-async-mode"),
 ];
+
+/// Flags no `serve` path reads, whatever else the command line says.
+///
+/// `--plugin-backend-async-mode` is the only one so far. `ServeEngine` builds
+/// its plugin cache with `WasmPluginCache::new()`, the deterministic mode, and
+/// never asks `SimParams::resolve_async_mode` — so the mode is dropped even on
+/// the CLI-orbit path, where every other tuning flag is read.
+const ALWAYS_UNHONORED: [(&str, &str); 1] =
+    [("plugin_backend_async_mode", "--plugin-backend-async-mode")];
 
 fn unhonored_sim_args(sim: &SimArgs, written: &WrittenFlags) -> Vec<&'static str> {
     let optional = [
@@ -535,6 +559,37 @@ mod tests {
             !elsewhere.was_written("--atol"),
             "run's flags are read by run: {elsewhere:?}"
         );
+    }
+
+    /// The plugin async mode is refused even where every other tuning flag is
+    /// honored.
+    ///
+    /// An orbit on the command line makes `SimParams::from_sim_args` the path,
+    /// and it reads all of them — except this one, which reaches no plugin:
+    /// `ServeEngine` builds its cache with `WasmPluginCache::new()`.
+    #[test]
+    fn the_plugin_async_mode_is_refused_on_every_serve_path() {
+        for extra in [
+            vec!["--plugin-backend-async-mode", "throughput"],
+            vec![
+                "--sat",
+                "altitude=400",
+                "--plugin-backend-async-mode",
+                "throughput",
+            ],
+            vec![
+                "--config",
+                "mission.toml",
+                "--plugin-backend-async-mode",
+                "deterministic",
+            ],
+        ] {
+            let msg = refusal(&extra).unwrap_or_else(|| panic!("{extra:?} must be refused"));
+            assert!(
+                msg.contains("--plugin-backend-async-mode"),
+                "{extra:?} names the flag: {msg}"
+            );
+        }
     }
 
     /// A flag written with the value it already had is still a flag the server

@@ -550,8 +550,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   「無い」と読まれ、コマンドラインの指定ではなく config の `atol` が走っていた。この検査が走るのは
   これらの値を誰も読まない経路だけである — config は `SimParams::from_config` が組み、idle server は
   クライアントの `start_simulation` から取る — ので、書かれた値は何であれ落ちる。既定値と一致して
-  いたために受け付けられていたコマンドは、フラグ名を挙げて拒否されるようになった
-  ([#522](https://github.com/sksat/orts/issues/522))
+  いたために受け付けられていたコマンドは、フラグ名を挙げて拒否されるようになった。
+  `--plugin-backend-async-mode` は、他の調整フラグが読まれる「コマンドラインに軌道がある」経路でも
+  拒否する: `ServeEngine` は `WasmPluginCache::new()` でキャッシュを作り、モードを解決しないので、
+  このフラグはどこにも届かない ([#522](https://github.com/sksat/orts/issues/522))
 
 #### Added
 - `frame` / `--frame {simple-eci|gcrs}` と `eop` / `--eop {auto|PATH|zero}`:

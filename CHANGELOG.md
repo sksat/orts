@@ -712,7 +712,11 @@ section is subdivided by package.
   builds them with `SimParams::from_config`, an idle server takes them from its
   client's `start_simulation` — so whatever was written is dropped. A command
   that used to be accepted because its values matched the defaults is now
-  refused by name. ([#522](https://github.com/sksat/orts/issues/522))
+  refused by name. `--plugin-backend-async-mode` is refused on every `serve`
+  path, including the one with an orbit on the command line where the other
+  tuning flags are read: `ServeEngine` builds its plugin cache with
+  `WasmPluginCache::new()` and never resolves a mode, so the flag reaches
+  nothing. ([#522](https://github.com/sksat/orts/issues/522))
 
 #### Added
 - `frame` / `--frame {simple-eci|gcrs}` and `eop` / `--eop {auto|PATH|zero}`:
