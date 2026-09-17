@@ -627,7 +627,7 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
         let overshoot = aux[index] - bound;
         aux[index] = bound;
         Some(BoundaryExchange {
-            angular_momentum_body: overshoot * wheel.axis(),
+            angular_momentum_body: arika::frame::Vec3::from_raw(overshoot * wheel.axis()),
         })
     }
 
@@ -1043,8 +1043,8 @@ mod tests {
     ///
     /// `with_max_speed` tightens `max_momentum` at construction, but the fields
     /// are public and a caller can lower the speed limit afterwards. Both the
-    /// torque the assembly refuses and the bounds the projection enforces read
-    /// the effective limit, so they agree with each other.
+    /// torque the assembly refuses and the boundary the propagation searches for
+    /// read the effective limit, so they agree with each other.
     #[test]
     fn a_speed_limit_set_after_construction_still_binds() {
         let mut rw = Rw::new(Vector3::x(), 0.01, 1.0, 0.1);

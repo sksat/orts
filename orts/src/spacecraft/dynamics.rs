@@ -479,7 +479,7 @@ impl<G: GravityField, F: Eci + 'static> HasBoundaries for SpacecraftDynamics<G, 
             // What the effector gave up goes back to the body, through the
             // inertia that turns angular momentum into a rate.
             state.plant.attitude.angular_velocity +=
-                self.inertia_inv * exchange.angular_momentum_body;
+                self.inertia_inv * exchange.angular_momentum_body.into_inner();
         }
         state.modes[declared.mode_index()] = declared.boundary.kind.mode_after();
     }

@@ -7,7 +7,7 @@
 //! plant state.
 
 use arika::epoch::Epoch;
-use nalgebra::Vector3;
+use arika::frame::{Body, Vec3};
 use utsuroi::{OdeState, Projection, Tolerances};
 
 use crate::model::{ExternalLoads, HasFrame};
@@ -258,8 +258,12 @@ impl BoundaryKind {
 /// that much of a conserved total.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BoundaryExchange {
-    /// Body-frame angular momentum to return to the plant [N·m·s].
-    pub angular_momentum_body: Vector3<f64>,
+    /// Angular momentum to return to the plant [N·m·s].
+    ///
+    /// The body equations are what consume it, through the inertia that turns
+    /// angular momentum into a rate, so the frame is part of the type: a
+    /// correction expressed in any other frame cannot be built here.
+    pub angular_momentum_body: Vec3<Body>,
 }
 
 /// A boundary an effector's state can reach, for the propagation to stop at.

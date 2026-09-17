@@ -328,7 +328,8 @@ impl crate::boundary::HasBoundaries for AugmentedAttitudeSystem {
         if let Some(exchange) =
             self.effectors[declared.effector].settle_boundary(declared.boundary.kind, aux)
         {
-            state.plant.angular_velocity += self.inertia_inv * exchange.angular_momentum_body;
+            state.plant.angular_velocity +=
+                self.inertia_inv * exchange.angular_momentum_body.into_inner();
         }
         state.modes[declared.mode_index()] = declared.boundary.kind.mode_after();
     }
