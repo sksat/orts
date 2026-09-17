@@ -132,15 +132,18 @@ impl<S: HasFrame + HasMass + Send + Sync> StateEffector<S> for PropellantPool {
         input.state.mass() - self.dry_mass
     }
 
-    /// Three bands, because the mode says what the mass alone cannot.
+    /// What the mass says, and then what the mode has to agree with.
     ///
-    /// Below the floor is an input error: no trajectory of this pool reaches a
-    /// mass with less than no propellant, and settling it would put the mass
-    /// *on* the floor, adding what the input was missing. Above the floor the
-    /// tank has propellant, so a mode saying it is empty would silence the
-    /// propulsion for a run that could burn. Within `MASS_TOLERANCE` of the
-    /// floor either mode is accepted: that is where a settled state sits, and
-    /// a picogram is not propellant.
+    /// Any mass below the floor is refused, however little: no trajectory of
+    /// this pool reaches a mass with less than no propellant, and settling such
+    /// a state would put the mass *on* the floor, adding what the input was
+    /// missing.
+    ///
+    /// At or above the floor the mode is what can disagree. A tank with
+    /// propellant in it and a mode saying it is empty would silence the
+    /// propulsion for a run that could burn. Within `MASS_TOLERANCE` *above*
+    /// the floor either mode is accepted — that is where a settled state sits,
+    /// and a picogram is not propellant.
     fn validate_state(
         &self,
         plant: &S,
@@ -171,8 +174,9 @@ impl<S: HasFrame + HasMass + Send + Sync> StateEffector<S> for PropellantPool {
             (ConstraintMode::Upper, _) => {
                 Err("the pool has no upper bound, so its mode cannot be Upper".to_string())
             }
-            // On the floor: a settled state sits here, and a picogram is not
-            // propellant, so either mode describes it.
+            // On the floor, or within a picogram above it: a settled state
+            // sits here, and a picogram is not propellant, so either mode
+            // describes it. (Below the floor never reaches this.)
             (_, true) => Ok(()),
             (ConstraintMode::Free, false) => Ok(()),
             (ConstraintMode::Lower, false) => Err(format!(

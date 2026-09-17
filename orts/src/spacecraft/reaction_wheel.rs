@@ -649,6 +649,25 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
                     "wheel {index} starts at {h} N·m·s, past its limit of {limit} N·m·s"
                 ));
             }
+            if let Some(torques) = self.core.realized_torque_slice(aux) {
+                let torque = torques[index];
+                let max = wheel.max_torque;
+                if !torque.is_finite() {
+                    return Err(format!(
+                        "wheel {index} carries a realized torque of {torque}"
+                    ));
+                }
+                // The projection clamps this to the same bound, but only after
+                // a step has been accepted: the first derivative is taken at
+                // what the state carried, so a torque outside the bound turns
+                // the body before anything clamps it.
+                if torque.abs() > max {
+                    return Err(format!(
+                        "wheel {index} starts at a realized torque of {torque} N·m, past its \
+                         limit of {max} N·m"
+                    ));
+                }
+            }
             let mode = modes.get(index).copied().unwrap_or_default();
             let held_at = match mode {
                 ConstraintMode::Upper => Some(limit),

@@ -1235,6 +1235,31 @@ mod tests {
         assert_eq!(g.independent, vec![0, 2]);
     }
 
+    /// A coupled edge to a satellite that is done is not an edge any more, so
+    /// its peer is propagated on its own rather than as a component of one.
+    ///
+    /// The kick pairs and the independent set already skipped such satellites;
+    /// the components did not, so a finished satellite was pushed into the
+    /// composite walk again and its peer went no further than the refusal that
+    /// walk returned.
+    #[test]
+    fn grouping_excludes_a_coupled_satellite_that_is_done() {
+        let active = vec![true, false, true];
+        let pairs = vec![(0, 1, PairRegime::Coupled), (1, 2, PairRegime::Coupled)];
+        let g = determine_grouping(3, &pairs, &active);
+
+        assert!(
+            g.coupled_components.is_empty(),
+            "both edges went through the satellite that is done: {:?}",
+            g.coupled_components
+        );
+        assert_eq!(
+            g.independent,
+            vec![0, 2],
+            "and its peers are propagated on their own"
+        );
+    }
+
     #[test]
     fn grouping_mixed_regimes() {
         // 4 satellites: 0-1 coupled, 2-3 synchronized, 1-2 independent

@@ -254,6 +254,24 @@ fn a_state_that_dropped_declared_bounds_is_refused() {
         "the reason names the bound that differs from the declared one, not {reason}"
     );
 
+    // A torque outside the wheel's own bound, with the bounds themselves
+    // correct: the projection would clamp it, but only after a step has been
+    // accepted, so the first derivative turns the body with a torque the motor
+    // cannot produce.
+    let system = with_lag();
+    let impossible_torque = AugmentedState {
+        plant: plant_at(DRY_MASS),
+        aux: vec![0.1 * LIMIT, 10.0 * TORQUE],
+        aux_bounds: system.declared_aux_bounds(),
+        modes: vec![ConstraintMode::Free],
+    };
+    let (reason, _) = walked(impossible_torque, with_lag);
+    let reason = reason.expect("the satellite is terminated rather than propagated");
+    assert!(
+        reason.contains("realized torque"),
+        "the reason names the torque and its limit, not {reason}"
+    );
+
     // The same state with the bounds the effectors declared starts.
     let system = with_lag();
     let full = AugmentedState {

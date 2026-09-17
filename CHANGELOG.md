@@ -158,7 +158,8 @@ section is subdivided by package.
   carries, a wheel past its limit or held by its mode away from its bound, and
   a state whose `aux` / `modes` lengths or `aux_bounds` values disagree with
   what the registered effectors declared are now refused at the entry to every
-  propagation path:
+  boundary-aware propagation path — a direct `Integrator::integrate` handles no
+  boundaries and runs no check, the same limit the modes themselves have:
   the independent group, a coupled group (which asks each satellite),
   `AugmentedAttitudeSystem`, the CLI's controlled loop, and a direct
   `walk_to_target`. `Scheduler` asks each satellite before it groups anything,
