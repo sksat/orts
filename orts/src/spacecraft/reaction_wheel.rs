@@ -632,12 +632,19 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
             if !h.is_finite() {
                 return Err(format!("wheel {index} carries a momentum of {h}"));
             }
-            // Strictly: `settle_boundary` writes the bound itself, so no state a
-            // propagation produced lies between the bound and the bound plus a
-            // tolerance. A limit of zero — which `Rw::new` allows — would
-            // otherwise accept a wheel held at 5e-13 N·m·s, and a held mode
-            // turns off the very boundary that would have caught it.
-            if h.abs() > limit {
+            // With the tolerance the wheel declares for sitting on its bound,
+            // deliberately: a state that arrives a hair past a bound — a
+            // restored state, a command applied between walks — is one the
+            // propagation settles at its start, since a margin that is already
+            // negative offers the search no sign change to find
+            // (`projection_contract.rs`'s
+            // `a_wheel_a_hair_past_its_bound_is_settled_before_it_runs_further`
+            // pins that). Settling a wheel returns the overshoot to the body,
+            // so the total is conserved, and a hair's worth of it changes the
+            // body's rate by a hair. That is what makes this different from the
+            // propellant floor, where settling *adds* mass and the comparison
+            // is strict.
+            if h.abs() > limit + MOMENTUM_TOLERANCE {
                 return Err(format!(
                     "wheel {index} starts at {h} N·m·s, past its limit of {limit} N·m·s"
                 ));
