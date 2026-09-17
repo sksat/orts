@@ -216,22 +216,6 @@ fn validate_tick_advances(start_t: f64, sample_period: f64) -> Result<(), String
     }
 }
 
-/// Config からプラグイン制御付き衛星を構築する。
-///
-/// `start_t` is the sim time this satellite starts at [s]: 0 for a fleet built
-/// before the run, the current sim time for one added to a running `serve`. It
-/// sets the phase of the satellite's controller schedule.
-///
-/// 複数衛星をループで構築する場合は、[`ControlledBuildContext`] 内の
-/// `wasm_cache` を使い回すことで WASM コンポーネントのコンパイルが
-/// 1 ファイルにつき 1 回だけで済む。
-/// `initial_epoch` is the wall-clock instant at which the orbital initial
-/// state is evaluated: the simulation epoch for a satellite present from the
-/// start, or the simulation epoch advanced by the current sim time for a
-/// dynamic add (so a TLE/OMM is propagated to the moment it enters). The
-/// dynamics themselves use `params.epoch` as the `t = 0` reference, so
-/// time-dependent force models stay aligned regardless of when the satellite
-/// is added.
 /// Install a spacecraft's propellant and the assembly that draws on it.
 ///
 /// The propellant is the spacecraft's, so the pool is registered with
@@ -253,6 +237,22 @@ fn install_thrusters(
         .with_propulsion(ThrusterAssembly::new(core))
 }
 
+/// Config からプラグイン制御付き衛星を構築する。
+///
+/// `start_t` is the sim time this satellite starts at [s]: 0 for a fleet built
+/// before the run, the current sim time for one added to a running `serve`. It
+/// sets the phase of the satellite's controller schedule.
+///
+/// 複数衛星をループで構築する場合は、[`ControlledBuildContext`] 内の
+/// `wasm_cache` を使い回すことで WASM コンポーネントのコンパイルが
+/// 1 ファイルにつき 1 回だけで済む。
+/// `initial_epoch` is the wall-clock instant at which the orbital initial
+/// state is evaluated: the simulation epoch for a satellite present from the
+/// start, or the simulation epoch advanced by the current sim time for a
+/// dynamic add (so a TLE/OMM is propagated to the moment it enters). The
+/// dynamics themselves use `params.epoch` as the `t = 0` reference, so
+/// time-dependent force models stay aligned regardless of when the satellite
+/// is added.
 pub fn build_controlled_satellite(
     spec: &SatelliteSpec,
     initial_epoch: Option<Epoch>,
