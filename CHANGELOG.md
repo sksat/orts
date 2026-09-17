@@ -164,7 +164,11 @@ section is subdivided by package.
   so one that cannot start is dropped and the rest of its component is still
   flown over that interval — a composite walk refused by one member integrates
   nothing, which would leave its peers at a time the scheduler's clock has
-  already passed.
+  already passed. `CoupledGroupParts::is_event_termination` is replaced by
+  `stop: Option<ComponentStop>`, which says whether the walk ended on an event,
+  on a refused start state or on an integration error: what the scheduler does
+  about a component differs by kind, and one bool could not carry three
+  answers.
   They used to be silent: a hand-built 99.5 kg with a 100 kg floor came back
   from its first step *at* 100 kg — half a kilogram of propellant the input
   never had — because settling a boundary the state already sat past is what

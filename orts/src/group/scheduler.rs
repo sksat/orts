@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use utsuroi::{DynamicalSystem, IntegrationError, OdeState, RootSearch};
 
-use super::coupled::{CoupledGroup, InterSatelliteForce, PairContext};
+use super::coupled::{ComponentStop, CoupledGroup, InterSatelliteForce, PairContext};
 use super::independent::{IndependentGroup, IntegratorConfig};
 use super::prop_group::{GroupSnapshot, PropGroupOutcome, SatId, SatelliteTermination};
 use super::{FromAcceleration, HasPosition};
@@ -758,6 +758,7 @@ where
             }
 
             group.set_t(self.t);
+            let group_started_at = self.t;
 
             // Map: satellite_idx → position within this coupled group
             let mut idx_to_local: Vec<(usize, usize)> = Vec::new();
@@ -801,9 +802,24 @@ where
                 let sat = &mut self.satellites[sat_idx];
                 sat.state = state;
                 sat.dynamics = Some(dynamics);
-                if parts.terminated && !parts.others_can_continue {
-                    // An integration error leaves the composite state on no
-                    // trajectory, so the whole component goes with it.
+                // Who is left running depends on how the walk ended. An
+                // integration error leaves the composite state on no
+                // trajectory, so the whole component goes with it. A refusal
+                // at the interval's start integrated nothing, so the peers
+                // still hold states that belong to this interval's beginning
+                // and the grouping flies them over it; one at a later
+                // segment's start leaves them part-way through instead, with
+                // the clock about to move to the end, and a state from an
+                // instant the run has passed is worse than a stopped
+                // satellite. (A system whose check refuses a state its own
+                // propagation produced contradicts itself: the question is
+                // about what a caller handed over.)
+                let whole_component = match parts.stop {
+                    Some(ComponentStop::IntegrationError) => true,
+                    Some(ComponentStop::StartRefused) => (parts.t - group_started_at).abs() > 1e-12,
+                    Some(ComponentStop::Event) | None => false,
+                };
+                if parts.terminated && whole_component {
                     sat.terminated = true;
                 } else {
                     sat.terminated = term_id.is_some_and(|tid| tid == &sat.id);
