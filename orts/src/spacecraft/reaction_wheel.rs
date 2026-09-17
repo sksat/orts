@@ -72,8 +72,8 @@ impl Rw {
             "inertia must be positive and finite, got {inertia}"
         );
         assert!(
-            max_momentum >= 0.0 && max_momentum.is_finite(),
-            "max_momentum must be non-negative and finite, got {max_momentum}"
+            max_momentum > 0.0 && max_momentum.is_finite(),
+            "max_momentum must be positive and finite, got {max_momentum}"
         );
         assert!(
             max_torque >= 0.0 && max_torque.is_finite(),
@@ -112,6 +112,15 @@ impl Rw {
         rw.max_speed = max_speed.min(derived_max_speed);
         // Tighten momentum bound to match speed limit
         rw.max_momentum = rw.max_momentum.min(inertia * rw.max_speed);
+        // After the tightening, because that is what the wheel ends up with: a
+        // speed limit of zero leaves a wheel that can hold no momentum, which
+        // `Self::new` would have refused had it been passed directly.
+        assert!(
+            rw.max_momentum > 0.0,
+            "max_speed {max_speed} tightens max_momentum to {}, and a wheel that can hold \
+             no momentum stores nothing the propagation could locate a bound in",
+            rw.max_momentum
+        );
         rw
     }
 
@@ -1532,6 +1541,39 @@ mod tests {
     }
 
     #[test]
+    /// A wheel that can hold no momentum is refused where it is built.
+    ///
+    /// Nothing downstream can make sense of one. The start-state check accepts
+    /// a momentum within `MOMENTUM_TOLERANCE` of the bound, which for a limit
+    /// of zero is any momentum up to 5e-13 N·m·s, and a mode already holding
+    /// the wheel turns off the boundary that would have caught it — so it
+    /// would run a whole span storing momentum its own limit says it cannot.
+    #[test]
+    #[should_panic(expected = "max_momentum must be positive")]
+    fn a_wheel_that_can_hold_no_momentum_is_refused() {
+        Rw::new(Vector3::x(), 0.01, 0.0, 0.1);
+    }
+
+    /// The same for a speed limit that tightens the momentum to zero:
+    /// `with_max_speed` decides the limit the wheel ends up with, so the check
+    /// belongs after the tightening.
+    #[test]
+    #[should_panic(expected = "tightens max_momentum")]
+    fn a_speed_limit_of_zero_is_refused_too() {
+        Rw::with_max_speed(Vector3::x(), 0.01, 1.0, 0.1, 0.0);
+    }
+
+    /// And a wheel whose speed limit only tightens the momentum keeps working.
+    #[test]
+    fn a_speed_limit_that_leaves_momentum_is_kept() {
+        let rw = Rw::with_max_speed(Vector3::x(), 0.01, 1.0, 0.1, 50.0);
+        assert!(
+            (rw.momentum_limit() - 0.5).abs() < 1e-15,
+            "{}",
+            rw.momentum_limit()
+        );
+    }
+
     fn momentum_slice_no_lag() {
         let core = RwAssemblyCore::three_axis(0.01, 1.0, 0.1);
         let aux = [1.0, 2.0, 3.0];
