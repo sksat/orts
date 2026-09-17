@@ -328,7 +328,12 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
         slot.map(|slot| std::mem::replace(slot, new_model))
     }
 
-    /// Names of active models, propulsion last.
+    /// Names of the registered models, propulsion last.
+    ///
+    /// Every one of them, whether it acts at a given state or not: this takes
+    /// no state, so it cannot say whether a tank still has propellant. The
+    /// breakdowns do, and they leave the propulsion out where the pool's mode
+    /// says the tank is empty.
     pub fn model_names(&self) -> Vec<&str> {
         self.models
             .iter()
@@ -494,30 +499,40 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
 
         // Accumulate external loads from models.
         //
-        // Not at all where the state has no mass. Every model that turns a
-        // force into an acceleration divides by it — a thruster, a panel's
-        // drag or SRP — so `F/m` is an infinity there and the walk fails on a
-        // state it was going to discard anyway: a boundary search re-steps an
-        // interval under the mode that held before the crossing, so it steps
-        // past the propellant floor on purpose, and a wide enough step takes a
-        // stage below zero mass. Nothing about such a state is physical; what
-        // the bisection needs back from it is a finite number, and zero loads
-        // is the finite answer that leaves the mass where it is. The policy
-        // lives here because it is the state that is outside the domain, not
-        // any one model — and for the same reason it covers the effectors
-        // below, one of which can be a translational force
-        // ([`StateEffector`](crate::effector::StateEffector) says so) and
-        // divide by the mass exactly as a model would.
+        // Only half of it where the state has no mass. Everything that turns a
+        // force into an acceleration divides by the mass — a thruster, a
+        // panel's drag or SRP, and a translational
+        // [`StateEffector`](crate::effector::StateEffector) — so `F/m` is an
+        // infinity there and the walk fails on a state it was going to discard
+        // anyway: a boundary search re-steps an interval under the mode that
+        // held before the crossing, so it steps past the propellant floor on
+        // purpose, and a wide enough step takes a stage below zero mass. The
+        // acceleration such a stage reports is dropped.
+        //
+        // The mass rate is kept, because it is not singular and it is what the
+        // search reads the crossing from: a hundred-second step burning 1 kg/s
+        // through 99 kg of propellant has its last stage at zero mass, and
+        // suppressing that stage's mass rate leaves both ends of the step above
+        // the floor — the crossing inside it then goes unreported until a later
+        // step, which is the defect this whole path exists to fix.
+        //
+        // The policy lives here because it is the state that is outside the
+        // domain, not any one model.
         let mut total = ExternalLoads::<F>::zeros();
         let in_the_domain = matches!(
             state.plant.mass.partial_cmp(&0.0),
             Some(core::cmp::Ordering::Greater)
         );
-        for model in self
-            .models_to_evaluate(self.has_propellant(state))
-            .take(if in_the_domain { usize::MAX } else { 0 })
-        {
-            total += eval_maybe_in_segment(model, segment, t, &state.plant, epoch.as_ref());
+        for model in self.models_to_evaluate(self.has_propellant(state)) {
+            let loads = eval_maybe_in_segment(model, segment, t, &state.plant, epoch.as_ref());
+            total += if in_the_domain {
+                loads
+            } else {
+                ExternalLoads {
+                    acceleration_inertial: arika::frame::Vec3::zeros(),
+                    ..loads
+                }
+            };
         }
 
         // Evaluate state effectors.
@@ -533,15 +548,10 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
         // state's, which is what makes the SimpleEci mislabel from issue #103
         // unrepresentable.
         let mut aux_rates = vec![0.0; self.registry.total_dim()];
-        for (i, eff) in
-            self.effectors
-                .iter()
-                .enumerate()
-                .take(if in_the_domain { usize::MAX } else { 0 })
-        {
+        for (i, eff) in self.effectors.iter().enumerate() {
             let entry = &self.registry.entries()[i];
             let rates_slice = &mut aux_rates[entry.offset..entry.offset + entry.dim];
-            total += eff.derivatives(
+            let loads = eff.derivatives(
                 EffectorInput {
                     t,
                     state: &state.plant,
@@ -559,6 +569,14 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
                 },
                 rates_slice,
             );
+            total += if in_the_domain {
+                loads
+            } else {
+                ExternalLoads {
+                    acceleration_inertial: arika::frame::Vec3::zeros(),
+                    ..loads
+                }
+            };
         }
 
         // Total translational acceleration
@@ -1018,9 +1036,12 @@ mod tests {
                 "at a mass of {mass} the derivative is {:?}",
                 d.plant.orbit.velocity()
             );
-            assert_eq!(
-                d.plant.mass, 0.0,
-                "and nothing burns there, so the mass stays where it is"
+            // The mass rate is the half that is not singular, and the
+            // search reads the crossing from it.
+            assert!(
+                d.plant.mass < 0.0,
+                "and the burn keeps its flow there, at {}",
+                d.plant.mass
             );
         }
     }

@@ -177,8 +177,9 @@ fn bench(c: &mut Criterion) {
         .with_epoch(epoch)
         .with_model(PanelSrp::for_earth(SpacecraftShape::Panels(panels.clone())))
         .with_model(PanelDrag::for_earth(SpacecraftShape::Panels(panels)));
+        let augmented = dynamics.initial_augmented_state(state.clone());
         group.bench_function(format!("{name}_{n}_panels"), |b| {
-            b.iter(|| dynamics.torque_breakdown(0.0, &state))
+            b.iter(|| dynamics.torque_breakdown(0.0, &augmented))
         });
     }
     group.finish();

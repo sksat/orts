@@ -158,6 +158,67 @@ fn a_burn_across_the_floor_spends_the_propellant_it_has() {
     }
 }
 
+/// A step wide enough to take a stage below zero mass still shows the crossing.
+///
+/// The domain guard is what keeps such a stage finite, and what it suppresses
+/// matters: `F/m` is the singular half, while the mass rate is not — it is
+/// `T / (I_sp g_0)`, the same at any mass. Suppressing the rate too would leave
+/// both ends of the step above the floor, and the crossing inside it would go
+/// unreported until a later step, which is the defect this PR is about.
+///
+/// 99 kg of propellant at 1 kg/s crosses the floor at 99 s, inside a
+/// hundred-second step whose last stage sits at zero mass.
+#[test]
+fn a_step_whose_stage_reaches_zero_mass_still_locates_the_floor() {
+    // 1 kg/s at Isp 200 s.
+    const THRUST: f64 = 1.0 * ISP_S * G0;
+    const FLOOR: f64 = 1.0;
+    const PROPELLANT_HERE: f64 = 99.0;
+    const STEP: f64 = 100.0;
+
+    let built = || {
+        SpacecraftDynamics::new(1e-30, PointMass, Matrix3::identity())
+            .with_propellant(PropellantPool::new(FLOOR))
+            .with_propulsion(Thruster::new(THRUST, ISP_S, Vector3::x()))
+    };
+    let system = built();
+    let plant = SpacecraftState {
+        mass: FLOOR + PROPELLANT_HERE,
+        ..initial()
+    };
+    let start = system.initial_augmented_state(plant);
+
+    let mut group: IndependentGroup<SpacecraftDynamics<PointMass>> = IndependentGroup::new(
+        IntegratorConfig::Rk4 { dt: STEP },
+    )
+    .add_satellite("sat", start, built());
+    let mut settled_at = None;
+    group
+        .propagate_to_with(STEP, |_id, t, state| {
+            if settled_at.is_none() && state.modes[0] != ConstraintMode::Free {
+                settled_at = Some(t);
+            }
+        })
+        .expect("the walk succeeds");
+
+    let settled_at = settled_at.expect("the floor is located inside the first step");
+    assert!(
+        (settled_at - PROPELLANT_HERE).abs() < 1e-2,
+        "the floor is crossed at {PROPELLANT_HERE} s and located there, not at {settled_at}"
+    );
+    let ended = group
+        .satellites()
+        .next()
+        .expect("one satellite")
+        .state
+        .clone();
+    assert!(
+        (ended.plant.mass - FLOOR).abs() < 1e-6,
+        "and the mass ends on the floor, not at {}",
+        ended.plant.mass
+    );
+}
+
 /// What locating the floor costs, counted rather than timed.
 ///
 /// The propellant is what decides whether the walk meets the boundary at all,

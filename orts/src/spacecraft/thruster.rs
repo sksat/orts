@@ -210,21 +210,20 @@ impl ThrusterSpec {
         // `F/m` has a singularity at zero mass, and a trial step of a boundary
         // search can reach it: the search re-steps an interval under the mode
         // that held before the crossing, so it steps past the propellant floor
-        // on purpose, and a step wide enough can take a stage below zero. What
-        // it needs back from such a state is a finite number — nothing there
-        // is physical, and the bisection is on its way to an interval that is
-        // — so a state with no mass gets zero loads rather than an infinity
-        // that fails the walk. This is not the depletion decision, which is the
-        // pool's mode: it is the domain of `F/m`.
+        // on purpose, and a step wide enough can take a stage below zero.
+        // Nothing there is physical, and what the search needs back is a finite
+        // number, so the acceleration is zero at such a state — see
+        // `a_inertial` below. The mass flow is not singular and stays: it is
+        // `T / (I_sp g_0)` at any mass, and it is what carries the step's
+        // endpoint across the floor. Zeroing it too would leave both ends of a
+        // wide step above the floor and hide the crossing inside it.
         // `partial_cmp`, so that a mass that is no number is covered too: a
         // NaN is comparable to nothing, and what it means here is the same as
         // no mass.
-        if !matches!(
+        let mass_is_positive = matches!(
             state.mass.partial_cmp(&0.0),
             Some(core::cmp::Ordering::Greater)
-        ) {
-            return ExternalLoads::zeros();
-        }
+        );
 
         // Force in body frame [N]
         let f_body_n = self.thrust_n * throttle * self.direction_body;
@@ -234,8 +233,12 @@ impl ThrusterSpec {
 
         // Acceleration: body → inertial [km/s²]
         // F [N] / mass [kg] = [m/s²], / 1000 = [km/s²]
-        let a_body = arika::frame::Vec3::from_raw(f_body_n / state.mass / 1000.0);
-        let a_inertial = state.attitude_to_inertial().transform(&a_body);
+        let a_inertial = if mass_is_positive {
+            let a_body = arika::frame::Vec3::from_raw(f_body_n / state.mass / 1000.0);
+            state.attitude_to_inertial().transform(&a_body)
+        } else {
+            arika::frame::Vec3::zeros()
+        };
 
         // Mass flow rate [kg/s]
         let mass_rate = -(self.thrust_n * throttle) / (self.isp_s * G0);
@@ -675,22 +678,29 @@ mod tests {
     /// crossing, so it steps past the propellant floor, and a wide enough step
     /// takes a stage below zero. A positive floor puts the *boundary* away
     /// from the singularity; it does not keep a trial from reaching it. What
-    /// the search needs back from there is a finite number.
+    /// the search needs back from there is a finite acceleration — and the
+    /// mass flow, which is not singular: `T / (I_sp g_0)` at any mass. It is
+    /// what carries the step's endpoint across the floor, so dropping it would
+    /// leave both ends of a wide step above the floor and hide the crossing.
     ///
     /// Measured with a floor of 1 kg, an initial mass of 1.1 and a flow of
     /// 2.2 kg/s, RK4's midpoint mass is exactly zero at `dt = 1`.
     #[test]
-    fn a_state_with_no_mass_gets_finite_loads() {
+    fn a_state_with_no_mass_keeps_its_mass_flow_and_loses_its_acceleration() {
         let t = Thruster::new(1.0, 300.0, Vector3::x());
+        let expected_rate = -1.0 / (300.0 * G0);
         for mass in [0.0, -1.0, -1e-9] {
             let loads = t.loads(0.0, &state_with_mass(mass), None);
-            assert_eq!(loads.mass_rate, 0.0, "at a mass of {mass}");
+            assert!(
+                (loads.mass_rate - expected_rate).abs() < 1e-18,
+                "at a mass of {mass} the flow is {}, not {expected_rate}",
+                loads.mass_rate
+            );
             assert_eq!(
                 loads.acceleration_inertial,
                 arika::frame::Vec3::zeros(),
                 "at a mass of {mass}"
             );
-            assert_eq!(loads.torque_body, arika::frame::Vec3::zeros());
         }
     }
 
