@@ -548,7 +548,7 @@ where
             // `sync_target`, holding states that belong to an instant they
             // never reached. Dropping the ones that refuse leaves a grouping
             // whose members can all be flown.
-            all_terminations.extend(self.drop_satellites_that_cannot_start());
+            all_terminations.extend(self.drop_satellites_that_cannot_start_at(self.t));
 
             // Re-evaluate pair regimes based on current distances
             self.update_pair_regimes();
@@ -573,7 +573,7 @@ where
                 // before the drift keeps the refusal out of the composite walk,
                 // which is what would otherwise leave a component's other
                 // members at this interval's start.
-                let kicked_into_refusal = self.drop_satellites_that_cannot_start();
+                let kicked_into_refusal = self.drop_satellites_that_cannot_start_at(self.t);
                 let after_kick = (!kicked_into_refusal.is_empty()).then(|| {
                     all_terminations.extend(kicked_into_refusal);
                     // Without the ones just dropped: a component held together
@@ -604,6 +604,13 @@ where
 
                 // 6. Second half-kick
                 self.apply_kicks(&grouping.kick_pairs, &accels_end, dt_sync / 2.0);
+
+                // The closing kick can be what puts a state past a constraint,
+                // and this may be the last thing a run does: nothing would
+                // propagate from it, so nothing else would ask, and the state
+                // would be published as a satellite's own. Asked about the
+                // instant it now belongs to.
+                all_terminations.extend(self.drop_satellites_that_cannot_start_at(sync_target));
             }
 
             self.t = sync_target;
@@ -668,8 +675,7 @@ where
     /// group directly. Here the answer decides who is in the grouping, because
     /// a scheduler has somewhere to carry on from: the satellites that can
     /// still be flown.
-    fn drop_satellites_that_cannot_start(&mut self) -> Vec<SatelliteTermination> {
-        let t = self.t;
+    fn drop_satellites_that_cannot_start_at(&mut self, t: f64) -> Vec<SatelliteTermination> {
         let mut dropped = Vec::new();
         for sat in &mut self.satellites {
             if !sat.is_to_propagate(t) {

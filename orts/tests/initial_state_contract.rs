@@ -524,6 +524,61 @@ impl HasBoundaries for AfterHours {
     }
 }
 
+/// The closing half-kick can be the last thing a run does, so it is asked
+/// about too.
+///
+/// Each half of the kick adds 3 to the speed: valid at 3 after the opening
+/// half, over the limit of 5 at 6 after the closing one. Nothing propagates
+/// from that state — the run ends there — so without this the state would be
+/// published as the satellite's own and never reported.
+#[test]
+fn the_closing_kick_is_asked_about_before_the_run_ends() {
+    use orts::group::RegimeConfig;
+    use orts::group::scheduler::Scheduler;
+
+    // Half of the interval at this acceleration is 3, and twice that is over
+    // the limit of 5.
+    const SHOVE: f64 = 6.0 / DT;
+
+    let at = |x: f64| OrbitalState::new(Vector3::new(x, 0.0, 0.0), Vector3::zeros());
+    let mut sched: Scheduler<SpeedLimit> = Scheduler::new(
+        RegimeConfig {
+            couple_enter: 10.0,
+            couple_exit: 20.0,
+            sync_enter: 20.0,
+            sync_exit: 30.0,
+            sync_interval: DT,
+            min_dwell_time: 0.0,
+        },
+        IntegratorConfig::Rk4 { dt: DT },
+    )
+    .add_satellite("kicked", at(FLOOR_X), SpeedLimit)
+    .add_satellite("kicker", at(FLOOR_X + 1e6), SpeedLimit)
+    .add_interaction_fixed(
+        "kicked",
+        "kicker",
+        orts::group::PairRegime::Synchronized,
+        std::sync::Arc::new(Shove(SHOVE)),
+    );
+
+    let outcome = sched.propagate_to(DT).expect("the scheduler answers");
+    let refused = outcome
+        .terminations
+        .iter()
+        .find(|t| t.satellite_id == orts::group::SatId::from("kicked"))
+        .expect("the run reports the state the closing kick left behind");
+    assert!(
+        refused.reason.contains("over the speed limit"),
+        "the reason is the speed the kick gave it, not {}",
+        refused.reason
+    );
+    assert!(
+        (refused.t - DT).abs() < 1e-9,
+        "and it belongs to the end of the interval, not {}",
+        refused.t
+    );
+}
+
 /// A satellite that has reached its own end time is not asked again.
 ///
 /// Its state belongs to the instant it stopped at, so asking about it at a

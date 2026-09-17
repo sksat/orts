@@ -140,9 +140,9 @@ pub trait HasBoundaries: DynamicalSystem {
     /// each segment's start, and a system refusing what it just integrated
     /// would be contradicting itself. A caller that moves a state between
     /// walks, as [`Scheduler`](crate::group::Scheduler) does with its KDK
-    /// kicks, is asked about the state it moved *to* before the next walk runs;
-    /// what it holds between calls is checked at the next entry, not at the
-    /// moment it was written.
+    /// kicks, is asked about the state it moved *to*: before the next walk
+    /// runs, and — since a kick can be the last thing a run does — before it
+    /// hands the state back.
     fn validate_boundary_walk_start(
         &self,
         _t: f64,
