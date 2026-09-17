@@ -141,9 +141,11 @@ section is subdivided by package.
 - **BREAKING**: `orts::boundary::walk_to_target` returns `BoundaryWalkError`
   rather than utsuroi's `IntegrationError`, because a state a system's own
   constraints refuse is not an integration failure:
-  `BoundaryWalkError::StartRejected { t, reason }` carries what refused it and
-  what it read, and the solver's failures stay as
-  `BoundaryWalkError::Integration`. A caller that matches on the error wraps
+  `BoundaryWalkError::StartRejected { t, error }` carries a `StartStateError`
+  with what refused it, what it read, and — for a group, walked as one
+  composite state — which satellite, so a termination is recorded against the
+  spacecraft a caller has to fix rather than the one walked first. The solver's
+  failures stay as `BoundaryWalkError::Integration`. A caller that matches on the error wraps
   its arms in `Integration`; one that only formats it can keep doing so, and
   the reason a group records for a terminated satellite is unchanged.
   `HasBoundaries::validate_boundary_walk_start` and
@@ -151,7 +153,10 @@ section is subdivided by package.
   A mass below the propellant floor, a pool mode disagreeing with the mass it
   carries, a wheel past its limit or held by its mode away from its bound, and
   a state whose `aux` / `modes` / `aux_bounds` lengths disagree with the
-  registered effectors are now refused at the entry to every propagation path.
+  registered effectors are now refused at the entry to every propagation path:
+  the independent group, a coupled group (which asks each satellite),
+  `AugmentedAttitudeSystem`, the CLI's controlled loop, and a direct
+  `walk_to_target`.
   They used to be silent: a hand-built 99.5 kg with a 100 kg floor came back
   from its first step *at* 100 kg — half a kilogram of propellant the input
   never had — because settling a boundary the state already sat past is what

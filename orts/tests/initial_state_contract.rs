@@ -17,7 +17,7 @@
 use nalgebra::{Matrix3, Vector3};
 
 use orts::attitude::AttitudeState;
-use orts::boundary::HasBoundaries;
+use orts::boundary::{HasBoundaries, StartStateError};
 use orts::effector::{AugmentedState, ConstraintMode};
 use orts::group::IntegratorConfig;
 use orts::group::independent::IndependentGroup;
@@ -221,10 +221,12 @@ impl utsuroi::DynamicalSystem for Floor {
 }
 
 impl HasBoundaries for Floor {
-    fn validate_boundary_walk_start(&self, state: &OrbitalState) -> Result<(), String> {
+    fn validate_boundary_walk_start(&self, state: &OrbitalState) -> Result<(), StartStateError> {
         let x = state.position().x;
         if x < FLOOR_X {
-            return Err(format!("{x} is below the floor at {FLOOR_X}"));
+            return Err(StartStateError::new(format!(
+                "{x} is below the floor at {FLOOR_X}"
+            )));
         }
         Ok(())
     }
@@ -245,14 +247,19 @@ fn a_coupled_group_asks_each_satellite_about_its_own_state() {
         .add_satellite("below", below, Floor);
 
     let outcome = group.propagate_to(DT).expect("the group answers");
-    let reason = outcome
+    let termination = outcome
         .terminations
         .first()
-        .map(|t| t.reason.clone())
         .expect("the group is terminated rather than propagated");
+    let reason = termination.reason.clone();
     assert!(
         reason.contains("satellite 1") && reason.contains("below the floor"),
         "the reason says which satellite refused the state, not {reason}"
+    );
+    assert_eq!(
+        termination.satellite_id,
+        orts::group::SatId::from("below"),
+        "and the record names the satellite that refused, which is the one to fix"
     );
     assert_eq!(
         group.group_state().states[1].position().x,

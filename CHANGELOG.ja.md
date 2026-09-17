@@ -111,15 +111,17 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 #### Changed
 - **BREAKING**: `orts::boundary::walk_to_target` の戻り値が utsuroi の
   `IntegrationError` から `BoundaryWalkError` になった。系の拘束が受け付けない state は
-  積分の失敗ではないので分けている: `BoundaryWalkError::StartRejected { t, reason }` が
-  「何が拒否し、何を読んだか」を持ち、solver の失敗は `BoundaryWalkError::Integration` の
-  ままである。エラーを match する呼び出し側は腕を `Integration` で包む。整形するだけの
+  積分の失敗ではないので分けている: `BoundaryWalkError::StartRejected { t, error }` が
+  `StartStateError` を持ち、「何が拒否し、何を読んだか」に加えて、群の場合はどの衛星かを
+  持つ (群は 1 つの合成 state として刻むため、直せばよい衛星ではなく最初に刻んだ衛星を
+  記録してしまう)。solver の失敗は `BoundaryWalkError::Integration` のままである。エラーを match する呼び出し側は腕を `Integration` で包む。整形するだけの
   呼び出し側はそのままで、group が終了した衛星に記録する理由の文面も変わらない。答えるのは
   `HasBoundaries::validate_boundary_walk_start` と `StateEffector::validate_state` で、
   どちらも既定は `Ok(())` である。dry mass を下回る質量、質量と食い違うプールのモード、
   上限を超えたホイール、上限から離れているのに保持と言っているモード、そして `aux` /
   `modes` / `aux_bounds` の長さが登録した effector と合わない state は、どの伝播経路でも
-  入口で拒否される。以前はどれも無言だった: dry mass 100 kg に対して手組みした 99.5 kg の
+  入口で拒否される (独立群、結合群 (各衛星に聞く)、`AugmentedAttitudeSystem`、CLI の
+  制御付きループ、`walk_to_target` の直接呼び出し)。以前はどれも無言だった: dry mass 100 kg に対して手組みした 99.5 kg の
   state は、最初のステップを終えると 100 kg になっていた — 入力に無かった 0.5 kg の推進剤が
   増えていた。state が既に越えている境界を処理するのは、伝播ループの仕事だからである
   ([#523](https://github.com/sksat/orts/issues/523))

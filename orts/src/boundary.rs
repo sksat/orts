@@ -129,8 +129,55 @@ pub trait HasBoundaries: DynamicalSystem {
     ///
     /// Not asked during a walk: a boundary search steps past a constraint on
     /// purpose, and its trial states are meant to be evaluable there.
-    fn validate_boundary_walk_start(&self, _state: &Self::State) -> Result<(), String> {
+    fn validate_boundary_walk_start(&self, _state: &Self::State) -> Result<(), StartStateError> {
         Ok(())
+    }
+}
+
+/// Why a state cannot start a boundary walk.
+///
+/// The reason is what a reader needs; `satellite` is what a caller acts on. A
+/// group walks its satellites as one composite state, so the one that refused
+/// has to be named apart from the message — a termination recorded against the
+/// wrong spacecraft would have a caller resetting or re-commanding one that was
+/// fine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartStateError {
+    /// Which satellite of a group refused, where a group was asked. `None`
+    /// where the system is one spacecraft.
+    pub satellite: Option<usize>,
+    /// What refused the state, and what it read.
+    pub reason: String,
+}
+
+impl StartStateError {
+    /// A refusal by a system that is one spacecraft.
+    pub fn new(reason: impl Into<String>) -> Self {
+        Self {
+            satellite: None,
+            reason: reason.into(),
+        }
+    }
+
+    /// The same refusal, attributed to a satellite's place in its group.
+    pub fn from_satellite(mut self, index: usize) -> Self {
+        self.satellite = Some(index);
+        self
+    }
+}
+
+impl From<String> for StartStateError {
+    fn from(reason: String) -> Self {
+        Self::new(reason)
+    }
+}
+
+impl core::fmt::Display for StartStateError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.satellite {
+            Some(index) => write!(f, "satellite {index}: {}", self.reason),
+            None => write!(f, "{}", self.reason),
+        }
     }
 }
 
@@ -148,8 +195,8 @@ pub enum BoundaryWalkError {
     StartRejected {
         /// Time the refused state belongs to.
         t: f64,
-        /// What refused it, and what it read.
-        reason: String,
+        /// Which satellite refused, and why.
+        error: StartStateError,
     },
 }
 
@@ -173,10 +220,10 @@ impl core::fmt::Display for BoundaryWalkError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Integration(e) => write!(f, "{e}"),
-            Self::StartRejected { t, reason } => {
+            Self::StartRejected { t, error } => {
                 write!(
                     f,
-                    "the state at t = {t} cannot start a boundary walk: {reason}"
+                    "the state at t = {t} cannot start a boundary walk: {error}"
                 )
             }
         }
@@ -358,7 +405,7 @@ where
     // what the reconciliation below would do.
     system
         .validate_boundary_walk_start(&state)
-        .map_err(|reason| BoundaryWalkError::StartRejected { t: from, reason })?;
+        .map_err(|error| BoundaryWalkError::StartRejected { t: from, error })?;
     let mut state = state;
     let mut t = from;
     // The caller says whether the state it handed over has been through the

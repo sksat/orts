@@ -9,7 +9,7 @@ use utsuroi::{
 
 use crate::boundary::{
     Boundaries, BoundaryWalk, BoundaryWalkError, DeclaredBoundary, HasBoundaries, Span,
-    walk_to_target,
+    StartStateError, walk_to_target,
 };
 
 use super::prop_group::{GroupSnapshot, PropGroupOutcome, SatId, SatelliteTermination};
@@ -243,6 +243,14 @@ where
 /// A coupled group keeps one state per satellite and integrates them together,
 /// so a boundary is one satellite's: the index rides along in the declaration
 /// and every question about it is forwarded to that satellite's own system.
+/// The satellite a refused start state belongs to, where the error names one.
+fn refusing_satellite(e: &BoundaryWalkError) -> Option<usize> {
+    match e {
+        BoundaryWalkError::StartRejected { error, .. } => error.satellite,
+        BoundaryWalkError::Integration(_) => None,
+    }
+}
+
 impl<D: DynamicalSystem + HasBoundaries> HasBoundaries for CoupledGroupDynamics<D>
 where
     D::State: HasPosition + FromAcceleration,
@@ -290,18 +298,18 @@ where
     /// A composite answering the default `Ok(())` would let a coupled group
     /// start from exactly the states the check exists to refuse, since one walk
     /// covers the whole group: the children never see the question.
-    fn validate_boundary_walk_start(&self, state: &Self::State) -> Result<(), String> {
+    fn validate_boundary_walk_start(&self, state: &Self::State) -> Result<(), StartStateError> {
         if state.states.len() != self.dynamics.len() {
-            return Err(format!(
+            return Err(StartStateError::new(format!(
                 "the group state carries {} satellites where the group has {}",
                 state.states.len(),
                 self.dynamics.len()
-            ));
+            )));
         }
         for (index, (dynamics, sat)) in self.dynamics.iter().zip(&state.states).enumerate() {
             dynamics
                 .validate_boundary_walk_start(sat)
-                .map_err(|reason| format!("satellite {index}: {reason}"))?;
+                .map_err(|e| e.from_satellite(index))?;
         }
         Ok(())
     }
@@ -680,9 +688,14 @@ where
                     // asked to start.
                     let t = e.time().unwrap_or(self.t);
                     let term = SatelliteTermination {
-                        satellite_id: self
-                            .ids
-                            .first()
+                        // A group is walked as one composite state, so a
+                        // solver failure belongs to the group and is recorded
+                        // against its first satellite. A refused start state
+                        // belongs to the satellite that refused it, which is
+                        // the one a caller has to fix.
+                        satellite_id: refusing_satellite(&e)
+                            .and_then(|index| self.ids.get(index))
+                            .or_else(|| self.ids.first())
                             .cloned()
                             .unwrap_or_else(|| SatId::from("unknown")),
                         t,
