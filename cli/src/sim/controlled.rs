@@ -479,7 +479,9 @@ pub fn advance_controlled(
     }
 
     let integrator = params.integrator_config();
-    let search = params.root_search;
+    // The count `SimParams` derived came from the run's own span, and this
+    // call's target can be further away than that (see `at_least_for_span`).
+    let search = crate::sim::params::at_least_for_span(params.root_search, to - from);
     let epoch = params.epoch.as_ref();
     let check = crate::sim::core::body_event_checker::<AugmentedState<SpacecraftState>>(params);
 

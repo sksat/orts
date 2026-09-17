@@ -66,6 +66,27 @@ pub fn root_search(dt: f64, span: f64, t_tolerance: f64) -> RootSearch {
     }
 }
 
+/// The same search, with enough halvings for a bracket this wide.
+///
+/// [`root_search`] derives its count from what the configuration knows: the
+/// run's duration, or the output interval where it has none. A propagation
+/// call can be handed a target further away than that — realtime `serve` steps
+/// one controller tick at a time, and a tick resolved from a plugin's own
+/// sample period is not bounded by the output interval — and a step is clamped
+/// to the target it walks to, so that gap is the widest bracket the call can
+/// give the search. Taking the larger of the two counts means no call can
+/// arrive with fewer halvings than its own span needs.
+///
+/// The tolerance is untouched: this is the cap that stops a value behaving
+/// unlike a continuous function, not the width the search converges to.
+pub fn at_least_for_span(search: RootSearch, span: f64) -> RootSearch {
+    let needed = root_search(0.0, span, search.t_tolerance);
+    RootSearch {
+        t_tolerance: search.t_tolerance,
+        max_iterations: search.max_iterations.max(needed.max_iterations),
+    }
+}
+
 /// Resolved WASM plugin backend selection.
 ///
 /// Produced by [`SimParams::resolve_plugin_backend`] from the CLI
@@ -887,6 +908,47 @@ mod tests {
             let search = root_search(dt, dt, tol);
             assert_eq!(search.max_iterations, default.max_iterations);
             assert!(search.t_tolerance.is_nan() || search.t_tolerance == tol);
+        }
+    }
+
+    /// A propagation call whose target is further away than anything the
+    /// configuration knew about still gets the halvings its own span needs.
+    ///
+    /// Realtime `serve` steps one controller tick at a time, and the tick comes
+    /// from the plugin's own sample period, which the output interval does not
+    /// bound. Copilot's case on #517: `output_interval = 1e-30` with
+    /// `t_tolerance = 1e-40` configures 98 halvings, and a one-second
+    /// controller period brackets a crossing that needs 133.
+    #[test]
+    fn a_call_gets_the_halvings_its_own_span_needs() {
+        let configured = root_search(1e-30, 1e-30, 1e-40);
+        assert_eq!(configured.max_iterations, 98, "what the configuration knew");
+
+        let widened = at_least_for_span(configured, 1.0);
+        let needed = (1.0_f64 / 1e-40).log2().ceil() as u32;
+        assert!(
+            widened.max_iterations >= needed,
+            "a one-second tick needs {needed} halvings, and the call gets {}",
+            widened.max_iterations
+        );
+        assert_eq!(
+            widened.t_tolerance, configured.t_tolerance,
+            "the width the search converges to is not what this changes"
+        );
+
+        // A shorter span than the configuration covers keeps the larger count:
+        // the cap only has to be past what a legitimate search needs.
+        let narrow = at_least_for_span(configured, 1e-35);
+        assert_eq!(narrow.max_iterations, configured.max_iterations);
+
+        // A span the validators refuse carries the configured count through,
+        // for the walk to refuse with its own error.
+        for span in [0.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(
+                at_least_for_span(configured, span).max_iterations,
+                configured.max_iterations,
+                "span {span}"
+            );
         }
     }
 
