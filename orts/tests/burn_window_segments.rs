@@ -62,6 +62,7 @@ fn initial_state() -> AugmentedState<SpacecraftState> {
         },
         aux: vec![],
         aux_bounds: vec![],
+        modes: vec![],
     }
 }
 
@@ -339,8 +340,8 @@ fn an_epoch_scheduled_burn_applies_the_delta_v_it_was_given() {
 mod scheduled_effector {
     use super::*;
     use arika::epoch::Epoch;
-    use orts::effector::StateEffector;
-    use orts::model::{EvalSegment, ExternalLoads};
+    use orts::effector::{EffectorInput, StateEffector};
+    use orts::model::ExternalLoads;
 
     struct WindowedCounter {
         start: f64,
@@ -375,26 +376,12 @@ mod scheduled_effector {
 
         fn derivatives(
             &self,
-            t: f64,
-            _state: &SpacecraftState,
-            _aux: &[f64],
+            input: EffectorInput<'_, SpacecraftState>,
             aux_rates: &mut [f64],
-            _epoch: Option<&Epoch>,
         ) -> ExternalLoads {
-            aux_rates[0] = self.rate_at(t);
-            ExternalLoads::zeros()
-        }
-
-        fn derivatives_in_segment(
-            &self,
-            segment: &EvalSegment<'_>,
-            _t: f64,
-            _state: &SpacecraftState,
-            _aux: &[f64],
-            aux_rates: &mut [f64],
-            _epoch: Option<&Epoch>,
-        ) -> ExternalLoads {
-            aux_rates[0] = self.rate_at(segment.start);
+            // The segment's own start when there is one, so the stage landing
+            // on a window's edge belongs to the segment before it.
+            aux_rates[0] = self.rate_at(input.segment.map_or(input.t, |s| s.start));
             ExternalLoads::zeros()
         }
     }
@@ -660,8 +647,6 @@ mod event_checks {
     use super::*;
     use std::ops::ControlFlow;
     use std::sync::{Arc, Mutex};
-
-    use orts::spacecraft::SpacecraftDynamics;
 
     fn times_checked(windows: Vec<BurnWindow>, integrator: IntegratorConfig) -> Vec<f64> {
         let seen: Arc<Mutex<Vec<f64>>> = Arc::new(Mutex::new(Vec::new()));

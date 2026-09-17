@@ -93,6 +93,9 @@ impl AttitudeSystem {
     }
 }
 
+/// Attitude with torque models holds nothing against a bound.
+impl crate::boundary::HasBoundaries for AttitudeSystem {}
+
 impl DynamicalSystem for AttitudeSystem {
     type State = AttitudeState;
 

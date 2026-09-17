@@ -14,11 +14,25 @@
 //! integration. [`RwAssembly`] wraps the core as a [`StateEffector`] that
 //! integrates wheel angular momentum.
 
-use arika::epoch::Epoch;
 use nalgebra::Vector3;
 
 use super::ExternalLoads;
-use crate::effector::StateEffector;
+use crate::effector::{
+    BoundaryExchange, BoundaryKind, ConstraintMode, EffectorBoundary, EffectorInput, StateEffector,
+};
+
+/// Margin within which a wheel counts as still on its momentum bound
+/// [N·m·s].
+///
+/// A held wheel exchanges nothing, so its momentum stays where the boundary
+/// handling put it and only rounding moves it. The width is what keeps that
+/// rounding from reading as a fresh crossing; it is far below any momentum a
+/// wheel is built to hold.
+const MOMENTUM_TOLERANCE: f64 = 1e-12;
+
+/// Margin within which the torque holding a wheel against its bound counts as
+/// still holding it [N·m].
+const RELEASE_TOLERANCE: f64 = 1e-12;
 use crate::model::{HasAttitude, HasFrame};
 
 /// A single reaction wheel with physical limits.
@@ -117,6 +131,19 @@ impl Rw {
     /// Get the spin axis unit vector.
     pub fn axis(&self) -> &Vector3<f64> {
         &self.axis
+    }
+
+    /// The momentum this wheel can hold [N·m·s].
+    ///
+    /// A speed limit is a momentum limit through the rotor's inertia, so the
+    /// two bound the same quantity and the smaller one binds.
+    /// [`with_max_speed`](Self::with_max_speed) already tightens
+    /// `max_momentum` to match, but the fields are public: reading the bound
+    /// here keeps the momentum the boundary handling settles on, the torque
+    /// the assembly refuses, and the boundary a root event watches from
+    /// drifting apart when a caller sets one of them by hand.
+    pub fn momentum_limit(&self) -> f64 {
+        self.max_momentum.min(self.inertia * self.max_speed)
     }
 
     /// Current spin speed from angular momentum [rad/s].
@@ -259,6 +286,41 @@ impl RwAssemblyCore {
             .collect()
     }
 
+    /// The torque the motor is being commanded to produce, after the driver's
+    /// own range.
+    ///
+    /// The constraint is not in it: what a held wheel does with this torque is
+    /// [`constrained_rate`](Self::constrained_rate)'s answer.
+    pub fn commanded_torques(&self, command: &RwCommand, aux: &[f64], gain: f64) -> Vec<f64> {
+        let momentum = self.momentum_slice(aux);
+        let effective = match command {
+            RwCommand::Torques(t) => t.clone(),
+            RwCommand::Speeds(s) => self.speed_to_torque(s, momentum, gain),
+        };
+        self.clamp_command(&effective)
+    }
+
+    /// The rate a wheel exchanges, given the mode its constraint is in.
+    ///
+    /// `nu` is what `dh/dt` would be with no constraint: the torque the motor
+    /// asks for. Held against a bound, the wheel takes nothing further out —
+    /// an ideal speed limiter absorbs it — so the exchange is zero and the body
+    /// feels no reaction from this wheel. What it still feels is the
+    /// gyroscopic term, since the wheel's momentum vector turns with the body.
+    ///
+    /// Held, a rate pointing back inside passes through. The mode ends at a
+    /// root the search locates on `nu` crossing zero, so while the mode is the
+    /// one the boundary handling set, this is the same as zero; a caller that
+    /// resumes without acting on that root gets a wheel that can still slow
+    /// down rather than one stuck at its bound.
+    pub fn constrained_rate(nu: f64, mode: ConstraintMode) -> f64 {
+        match mode {
+            ConstraintMode::Free => nu,
+            ConstraintMode::Upper => nu.min(0.0),
+            ConstraintMode::Lower => nu.max(0.0),
+        }
+    }
+
     /// Physical constraint clamp: zero out torques that would push a
     /// wheel past its momentum or speed limits.
     ///
@@ -276,17 +338,11 @@ impl RwAssemblyCore {
             .enumerate()
             .map(|(i, wheel)| {
                 let mut tau = torques[i];
-                // Momentum saturation: prevent exceeding limits
-                if (momentum[i] >= wheel.max_momentum && tau > 0.0)
-                    || (momentum[i] <= -wheel.max_momentum && tau < 0.0)
-                {
-                    tau = 0.0;
-                }
-                // Speed saturation: prevent exceeding max_speed
-                let speed = wheel.speed_from_momentum(momentum[i]);
-                if (speed >= wheel.max_speed && tau > 0.0)
-                    || (speed <= -wheel.max_speed && tau < 0.0)
-                {
+                // A wheel at its bound cannot be driven further out. The bound
+                // covers the speed limit too, since speed is momentum over the
+                // rotor's inertia.
+                let limit = wheel.momentum_limit();
+                if (momentum[i] >= limit && tau > 0.0) || (momentum[i] <= -limit && tau < 0.0) {
                     tau = 0.0;
                 }
                 tau
@@ -382,6 +438,18 @@ const DEFAULT_SPEED_CONTROL_BANDWIDTH: f64 = 10.0;
 ///
 /// Aux state: angular momentum `h_i` [N·m·s] for each wheel.
 /// Reaction torque on spacecraft: `τ_body = -Σ (dh_i/dt · axis_i) − ω × H_rw`.
+///
+/// # The momentum limit is the propagation's to keep
+///
+/// A wheel holds its limit through the boundaries it declares, which only a
+/// propagation that runs [`walk_to_target`](crate::boundary::walk_to_target)
+/// locates: the groups, the CLI's controlled path, or that function called
+/// directly. Stepping a system that holds this effector through
+/// `Integrator::integrate` instead leaves every wheel in
+/// [`crate::effector::ConstraintMode::Free`] — a 0.53 N·m·s wheel driven at
+/// 0.1 N·m for 20 s ends at 2.0 N·m·s. The body still receives the matching
+/// reaction, so the total is conserved; it is held by a wheel that cannot spin
+/// that fast.
 #[derive(Clone)]
 pub struct RwAssembly {
     core: RwAssemblyCore,
@@ -435,6 +503,36 @@ impl RwAssembly {
 // reaction + gyroscopic torque, and the inertial acceleration is identically
 // zero. The loads come back in whatever frame the state is propagated in, so
 // `RwAssembly` works in any of them without naming one.
+impl RwAssembly {
+    /// What `dh/dt` would be for each wheel with nothing in the way.
+    ///
+    /// The torque the motor asks for: the realized one where the wheel has a
+    /// motor lag, and the command itself where it does not. The boundary that
+    /// releases a held wheel is a crossing of this, and the derivatives apply
+    /// the mode to it, so both read the same quantity.
+    pub fn unconstrained_rates(&self, aux: &[f64]) -> Vec<f64> {
+        let commanded = self
+            .core
+            .commanded_torques(&self.command, aux, self.speed_control_gain);
+        match self.core.realized_torque_slice(aux) {
+            Some(realized) => self
+                .core
+                .wheels
+                .iter()
+                .enumerate()
+                .map(|(i, w)| {
+                    if w.motor_time_constant.is_some() {
+                        realized[i]
+                    } else {
+                        commanded[i]
+                    }
+                })
+                .collect(),
+            None => commanded,
+        }
+    }
+}
+
 impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
     fn name(&self) -> &str {
         "reaction_wheels"
@@ -445,12 +543,14 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
     }
 
     fn aux_bounds(&self) -> Vec<(f64, f64)> {
-        let mut bounds: Vec<_> = self
-            .core
-            .wheels
-            .iter()
-            .map(|w| (-w.max_momentum, w.max_momentum))
-            .collect();
+        // The momentum bound is deliberately not one of these. Clamping the
+        // momentum would destroy whatever the wheel took past its bound before
+        // the boundary handling can give it back to the body, and the body has
+        // already integrated the reaction that carried it there — which is the
+        // angular momentum #446 measured going missing. Reaching the bound is a
+        // boundary the propagation locates, and `settle_boundary` is what puts
+        // the momentum on it.
+        let mut bounds: Vec<_> = vec![(f64::NEG_INFINITY, f64::INFINITY); self.core.num_wheels()];
         if self.core.has_motor_lag() {
             // τ_realized bounds: [-max_torque, max_torque] per wheel
             for w in &self.core.wheels {
@@ -460,66 +560,153 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
         bounds
     }
 
+    fn mode_dim(&self) -> usize {
+        self.core.num_wheels()
+    }
+
+    /// # What the step has to be small enough for
+    ///
+    /// A crossing is found from the sign of a margin at a step's ends, so a
+    /// step that holds two sign changes of the same margin holds none the
+    /// search can report — an obligation on the caller's step size that
+    /// `DESIGN.md` states and no search can check.
+    ///
+    /// A wheel with motor lag can hold such a pair: braking a wheel that is
+    /// still accelerating outward, from just inside its limit, sends the
+    /// momentum past the limit and brings it back as the realized torque
+    /// decays through zero. Measured with `h = 0.999`, a limit of 1, a
+    /// realized torque of +0.1 N·m against a command of -0.1, and a time
+    /// constant of 50 ms: the momentum peaks at 1.0005 N·m·s after 35 ms and
+    /// is back under the limit by 100 ms, so a 100 ms step reports nothing
+    /// while a 10 ms step holds the wheel. Resolving the lag — a step well
+    /// inside the time constant, which its own exponential needs anyway — is
+    /// what keeps each step to one sign change.
+    ///
+    /// [#516](https://github.com/sksat/orts/issues/516) would take the
+    /// obligation off the caller, by declaring the momentum's turning point as
+    /// a boundary that splits the step.
+    fn boundaries(&self) -> Vec<EffectorBoundary> {
+        // Three per wheel: either bound, and one release whose value the mode
+        // signs.
+        (0..self.core.num_wheels())
+            .flat_map(|index| {
+                [
+                    BoundaryKind::ReachedUpper { index },
+                    BoundaryKind::ReachedLower { index },
+                    BoundaryKind::Released { index },
+                ]
+            })
+            .map(|kind| EffectorBoundary {
+                kind,
+                // A held wheel sits on its bound for many steps, and the
+                // momentum jitters around it. The width is in the value's own
+                // units: newton-metre-seconds of margin for a bound, and
+                // newton-metres of torque for a release.
+                boundary_tolerance: match kind {
+                    BoundaryKind::Released { .. } => RELEASE_TOLERANCE,
+                    _ => MOMENTUM_TOLERANCE,
+                },
+            })
+            .collect()
+    }
+
+    fn settle_boundary(&self, kind: BoundaryKind, aux: &mut [f64]) -> Option<BoundaryExchange> {
+        let index = kind.index();
+        let wheel = &self.core.wheels[index];
+        let limit = wheel.momentum_limit();
+        let bound = match kind {
+            BoundaryKind::ReachedUpper { .. } => limit,
+            BoundaryKind::ReachedLower { .. } => -limit,
+            // A release moves nothing: the wheel is where it was, and only the
+            // mode changes.
+            BoundaryKind::Released { .. } => return None,
+        };
+        // What the wheel took past its bound goes back to the body, along the
+        // spin axis: the exchange that carried it there was momentum leaving
+        // the body, and the total is conserved.
+        let overshoot = aux[index] - bound;
+        aux[index] = bound;
+        Some(BoundaryExchange {
+            angular_momentum_body: arika::frame::Vec3::from_raw(overshoot * wheel.axis()),
+        })
+    }
+
+    fn boundary_value(&self, kind: BoundaryKind, input: EffectorInput<'_, S>) -> f64 {
+        let momentum = self.core.momentum_slice(input.aux);
+        let index = kind.index();
+        let limit = self.core.wheels[index].momentum_limit();
+        match kind {
+            // The margin left before the wheel can take no more.
+            BoundaryKind::ReachedUpper { .. } => limit - momentum[index],
+            BoundaryKind::ReachedLower { .. } => momentum[index] + limit,
+            // The rate that has to turn around for the wheel to come off its
+            // bound, signed so that it too is a margin running out.
+            BoundaryKind::Released { .. } => {
+                let nu = self.unconstrained_rates(input.aux);
+                match input.modes.get(index).copied().unwrap_or_default() {
+                    ConstraintMode::Upper => nu[index],
+                    ConstraintMode::Lower => -nu[index],
+                    // Asked about a release with nothing held: no boundary to
+                    // reach, and `is_active` keeps the search from looking.
+                    ConstraintMode::Free => 1.0,
+                }
+            }
+        }
+    }
+
     fn derivatives(
         &self,
-        _t: f64,
-        state: &S,
-        aux: &[f64],
+        input: EffectorInput<'_, S>,
         aux_rates: &mut [f64],
-        _epoch: Option<&Epoch>,
     ) -> ExternalLoads<S::Frame> {
+        let EffectorInput {
+            state, aux, modes, ..
+        } = input;
         let n = self.core.num_wheels();
         let omega = &state.attitude().angular_velocity;
         let momentum = self.core.momentum_slice(aux);
 
-        // Resolve the command variant into effective torques.
-        let effective_torques = match &self.command {
-            RwCommand::Torques(t) => t.clone(),
-            RwCommand::Speeds(s) => self
-                .core
-                .speed_to_torque(s, momentum, self.speed_control_gain),
-        };
+        // The torque the motor asks for, and what the wheel would do with it if
+        // nothing were in the way.
+        let accepted = self
+            .core
+            .commanded_torques(&self.command, aux, self.speed_control_gain);
+        let nu = self.unconstrained_rates(aux);
 
-        // Command acceptance clamp (motor driver range)
-        let accepted = self.core.clamp_command(&effective_torques);
-
-        let applied = if self.core.has_motor_lag() {
-            let tau_realized = self.core.realized_torque_slice(aux).unwrap();
-
-            // Motor lag ODE: dτ_realized/dt = (τ_target - τ_realized) / T_m
-            let tau_target = self.core.clamp_physical(&accepted, momentum);
+        if let Some(tau_realized) = self.core.realized_torque_slice(aux) {
+            // Motor lag ODE: dτ_realized/dt = (τ_target - τ_realized) / T_m.
+            // The target is the command, not the command held at the bound:
+            // holding it there would make the realized torque lag the release
+            // as well.
             for (i, wheel) in self.core.wheels.iter().enumerate() {
                 if let Some(t_m) = wheel.motor_time_constant {
-                    aux_rates[n + i] = (tau_target[i] - tau_realized[i]) / t_m;
+                    aux_rates[n + i] = (accepted[i] - tau_realized[i]) / t_m;
                 } else {
-                    // Instantaneous wheel in 2n layout: snap realized to
-                    // target via a fast tracking rate. Physics uses
-                    // tau_target directly (see effective_realized below),
-                    // so this only affects telemetry convergence.
-                    // Effective T_m ≈ 0.01s; stable with dt ≤ 0.028s (RK4).
-                    // For larger dt the aux_bounds projection keeps it bounded.
-                    aux_rates[n + i] = (tau_target[i] - tau_realized[i]) * 100.0;
+                    // Instantaneous wheel in 2n layout: snap realized to the
+                    // command via a fast tracking rate. `nu` uses the command
+                    // directly for such a wheel, so this only affects telemetry
+                    // convergence. Effective T_m ≈ 0.01s; stable with
+                    // dt ≤ 0.028s (RK4). For larger dt the aux_bounds
+                    // projection keeps it bounded.
+                    aux_rates[n + i] = (accepted[i] - tau_realized[i]) * 100.0;
                 }
             }
+        }
 
-            // Physical constraint on realized torque for dh/dt
-            let effective_realized: Vec<f64> = self
-                .core
-                .wheels
-                .iter()
-                .enumerate()
-                .map(|(i, w)| {
-                    if w.motor_time_constant.is_some() {
-                        tau_realized[i]
-                    } else {
-                        tau_target[i]
-                    }
-                })
-                .collect();
-            self.core.clamp_physical(&effective_realized, momentum)
+        // The mode decides what the wheel exchanges. A set built without modes
+        // falls back to the per-stage comparison, which is what a walk with no
+        // boundary handling has always done, and such a state ends up sitting
+        // one step's overshoot past the limit since the momentum is no longer
+        // an `aux_bounds` entry for the projection to clamp. A system that
+        // registered this effector rejects such a state before evaluating it,
+        // so this arm is for a caller driving the effector directly.
+        let applied: Vec<f64> = if modes.len() == n {
+            nu.iter()
+                .zip(modes)
+                .map(|(&rate, &mode)| RwAssemblyCore::constrained_rate(rate, mode))
+                .collect()
         } else {
-            // No motor lag: combined clamp (legacy path)
-            self.core.clamp_physical(&accepted, momentum)
+            self.core.clamp_physical(&nu, momentum)
         };
 
         // Set aux rates: dh_i/dt = τ_applied_i
@@ -558,13 +745,221 @@ mod tests {
     // Calls `derivatives` at `t = 0` with no epoch, which is what every test
     // below wants. `S` comes from the `state` argument, so the loads frame is
     // `AttitudeState`'s: simple-ECI.
+    fn rw_derivatives_with_modes(
+        rw: &RwAssembly,
+        state: &AttitudeState,
+        aux: &[f64],
+        modes: &[ConstraintMode],
+        rates: &mut [f64],
+    ) -> ExternalLoads {
+        rw.derivatives(
+            EffectorInput {
+                t: 0.0,
+                state,
+                aux,
+                modes,
+                epoch: None,
+                segment: None,
+            },
+            rates,
+        )
+    }
+
+    /// Three boundaries per wheel, and which of them the mode makes worth
+    /// looking at.
+    #[test]
+    fn a_wheel_declares_two_bounds_and_one_release() {
+        let rw = RwAssembly::three_axis(0.01, 1.0, 0.1);
+        let declared = StateEffector::<AttitudeState>::boundaries(&rw);
+        assert_eq!(declared.len(), 9, "three per wheel");
+        assert_eq!(
+            declared.iter().map(|b| b.kind).take(3).collect::<Vec<_>>(),
+            vec![
+                BoundaryKind::ReachedUpper { index: 0 },
+                BoundaryKind::ReachedLower { index: 0 },
+                BoundaryKind::Released { index: 0 },
+            ]
+        );
+
+        let free = [ConstraintMode::Free; 3];
+        let held = [
+            ConstraintMode::Upper,
+            ConstraintMode::Free,
+            ConstraintMode::Free,
+        ];
+        let active = |modes: &[ConstraintMode]| {
+            declared
+                .iter()
+                .filter(|b| b.kind.is_active(modes))
+                .map(|b| b.kind)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            active(&free).len(),
+            6,
+            "a free wheel can reach either bound and has nothing to release"
+        );
+        assert!(
+            active(&held).contains(&BoundaryKind::Released { index: 0 }),
+            "a held wheel is watched for its release"
+        );
+        assert!(
+            !active(&held).contains(&BoundaryKind::ReachedUpper { index: 0 }),
+            "and cannot reach a bound it is already on"
+        );
+    }
+
+    /// The value of a bound is the margin left, and of a release the torque
+    /// that has to turn around.
+    #[test]
+    fn a_boundary_value_is_a_margin_that_runs_out() {
+        let wheel = Rw::new(Vector3::x(), 0.01, 1.0, 0.1);
+        let mut rw = RwAssembly::new(vec![wheel]);
+        rw.command = RwCommand::Torques(vec![0.05]);
+        let state = test_state_at_rest();
+
+        let value = |kind, aux: &[f64], modes: &[ConstraintMode]| {
+            rw.boundary_value(
+                kind,
+                EffectorInput {
+                    t: 0.0,
+                    state: &state,
+                    aux,
+                    modes,
+                    epoch: None,
+                    segment: None,
+                },
+            )
+        };
+
+        let free = [ConstraintMode::Free];
+        assert!(
+            (value(BoundaryKind::ReachedUpper { index: 0 }, &[0.6], &free) - 0.4).abs() < 1e-15
+        );
+        assert!(
+            (value(BoundaryKind::ReachedLower { index: 0 }, &[0.6], &free) - 1.6).abs() < 1e-15
+        );
+
+        // Held up, pushing further out: the release is still 0.05 away.
+        let up = [ConstraintMode::Upper];
+        assert!((value(BoundaryKind::Released { index: 0 }, &[1.0], &up) - 0.05).abs() < 1e-15);
+
+        // The same command read from the lower bound is already past the
+        // release, which is why the value is signed by the mode.
+        let down = [ConstraintMode::Lower];
+        assert!((value(BoundaryKind::Released { index: 0 }, &[-1.0], &down) + 0.05).abs() < 1e-15);
+    }
+
+    /// A wheel held against its bound exchanges nothing, and the body keeps
+    /// feeling the wheel's momentum turn with it.
+    ///
+    /// An ideal speed limiter absorbs the torque the motor keeps producing, so
+    /// `dh/dt` is zero and this wheel's reaction on the body is zero with it.
+    /// What remains is `−ω × H_rw`, which follows from the momentum the wheel
+    /// still holds rather than from any change in it.
+    #[test]
+    fn a_held_wheel_exchanges_nothing_and_keeps_its_gyro_term() {
+        let wheel = Rw::new(Vector3::x(), 0.01, 1.0, 0.1);
+        let mut rw = RwAssembly::new(vec![wheel]);
+        rw.command = RwCommand::Torques(vec![0.05]);
+        // Turning about another axis, so the gyroscopic term is not zero.
+        let mut state = AttitudeState::identity();
+        state.angular_velocity = Vector3::new(0.0, 0.2, 0.0);
+        let aux = [1.0];
+        let mut rates = [0.0];
+
+        let loads =
+            rw_derivatives_with_modes(&rw, &state, &aux, &[ConstraintMode::Upper], &mut rates);
+        assert_eq!(rates[0], 0.0, "a held wheel takes no more momentum");
+
+        let gyro = rw.core.gyroscopic_torque(&state.angular_velocity, &aux);
+        assert_eq!(
+            loads.torque_body.into_inner(),
+            gyro,
+            "the body feels the gyroscopic term and nothing from this wheel's spin-up"
+        );
+        assert!(
+            gyro.magnitude() > 1e-9,
+            "the case is only worth anything with a non-zero gyro term: {gyro:?}"
+        );
+    }
+
+    /// A held wheel still slows down.
+    ///
+    /// The mode ends at a root on the torque crossing zero, so while the mode
+    /// is the one the boundary handling set this is the same as zero. A caller
+    /// that resumes without acting on that root gets a wheel that can come
+    /// back inside rather than one stuck at its bound.
+    #[test]
+    fn a_held_wheel_still_slows_down() {
+        let wheel = Rw::new(Vector3::x(), 0.01, 1.0, 0.1);
+        let mut rw = RwAssembly::new(vec![wheel]);
+        rw.command = RwCommand::Torques(vec![-0.05]);
+        let state = test_state_at_rest();
+        let mut rates = [0.0];
+
+        let loads =
+            rw_derivatives_with_modes(&rw, &state, &[1.0], &[ConstraintMode::Upper], &mut rates);
+        assert!(
+            (rates[0] - (-0.05)).abs() < 1e-15,
+            "an inward torque passes through: {}",
+            rates[0]
+        );
+        assert!(
+            (loads.torque_body.into_inner().x - 0.05).abs() < 1e-15,
+            "and the body feels its reaction: {:?}",
+            loads.torque_body
+        );
+    }
+
+    /// In `Free` the wheel exchanges what the motor asks for, whatever its
+    /// momentum is.
+    ///
+    /// The mode is the authority on whether a constraint is held: a comparison
+    /// here would be a second one, and it would flip in the middle of a step —
+    /// which is what a root search re-stepping the step cannot have. Reaching
+    /// the bound is a boundary the search locates, and the caller sets the mode
+    /// there.
+    #[test]
+    fn a_free_wheel_exchanges_what_the_motor_asks() {
+        let wheel = Rw::new(Vector3::x(), 0.01, 1.0, 0.1);
+        let mut rw = RwAssembly::new(vec![wheel]);
+        rw.command = RwCommand::Torques(vec![0.05]);
+        let state = test_state_at_rest();
+        let mut rates = [0.0];
+
+        rw_derivatives_with_modes(
+            &rw,
+            &state,
+            // Past the bound, which only the boundary handling gets to judge.
+            &[1.5],
+            &[ConstraintMode::Free],
+            &mut rates,
+        );
+        assert!(
+            (rates[0] - 0.05).abs() < 1e-15,
+            "the mode says free, so the rate is the motor's: {}",
+            rates[0]
+        );
+    }
+
     fn rw_derivatives(
         rw: &RwAssembly,
         state: &AttitudeState,
         aux: &[f64],
         rates: &mut [f64],
     ) -> ExternalLoads {
-        rw.derivatives(0.0, state, aux, rates, None)
+        rw.derivatives(
+            EffectorInput {
+                t: 0.0,
+                state,
+                aux,
+                modes: &[],
+                epoch: None,
+                segment: None,
+            },
+            rates,
+        )
     }
 
     // Core tests
@@ -642,6 +1037,58 @@ mod tests {
     }
 
     // clamp_physical tests
+
+    /// The bound that binds is the smaller of the two, whichever way a caller
+    /// set them.
+    ///
+    /// `with_max_speed` tightens `max_momentum` at construction, but the fields
+    /// are public and a caller can lower the speed limit afterwards. Both the
+    /// torque the assembly refuses and the boundary the propagation searches for
+    /// read the effective limit, so they agree with each other.
+    #[test]
+    fn a_speed_limit_set_after_construction_still_binds() {
+        let mut rw = Rw::new(Vector3::x(), 0.01, 1.0, 0.1);
+        assert!((rw.momentum_limit() - 1.0).abs() < 1e-15);
+
+        // 0.5 N·m·s at this inertia.
+        rw.max_speed = 50.0;
+        assert!(
+            (rw.momentum_limit() - 0.5).abs() < 1e-15,
+            "limit is {}",
+            rw.momentum_limit()
+        );
+
+        let assembly = RwAssembly::new(vec![rw.clone()]);
+        let core = &assembly.core;
+        assert_eq!(
+            core.clamp_physical(&[0.05], &[0.6]),
+            vec![0.0],
+            "a wheel past the speed limit takes no more torque outward"
+        );
+        assert_eq!(
+            core.clamp_physical(&[-0.05], &[0.6]),
+            vec![-0.05],
+            "torque back toward the middle is always allowed"
+        );
+
+        // And the boundary the propagation watches is at the same place: the
+        // margin runs out where the tightened limit is.
+        let margin = assembly.boundary_value(
+            BoundaryKind::ReachedUpper { index: 0 },
+            EffectorInput {
+                t: 0.0,
+                state: &test_state_at_rest(),
+                aux: &[0.5],
+                modes: &[ConstraintMode::Free],
+                epoch: None,
+                segment: None,
+            },
+        );
+        assert!(
+            margin.abs() < 1e-15,
+            "the boundary is at the tightened limit: margin {margin} at h = 0.5"
+        );
+    }
 
     #[test]
     fn clamp_physical_saturation_positive() {
@@ -1034,10 +1481,13 @@ mod tests {
         ]);
         let bounds = StateEffector::<AttitudeState>::aux_bounds(&rw);
         assert_eq!(bounds.len(), 4); // 2n = 4
-        // First 2: momentum bounds
-        assert_eq!(bounds[0], (-1.0, 1.0));
-        assert_eq!(bounds[1], (-1.0, 1.0));
-        // Next 2: torque bounds
+        // The momentum is left to the boundary handling, which is the only
+        // thing that can put it on its bound without losing the overshoot.
+        assert_eq!(bounds[0], (f64::NEG_INFINITY, f64::INFINITY));
+        assert_eq!(bounds[1], (f64::NEG_INFINITY, f64::INFINITY));
+        // The realized torque follows the command through a lag and has no
+        // exchange to conserve, so the projection keeps it in the motor's
+        // range.
         assert_eq!(bounds[2], (-0.1, 0.1));
         assert_eq!(bounds[3], (-0.1, 0.1));
     }

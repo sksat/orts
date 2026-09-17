@@ -10,6 +10,9 @@ pub struct TwoBodySystem {
     pub mu: f64,
 }
 
+/// Two-body motion holds nothing against a bound.
+impl crate::boundary::HasBoundaries for TwoBodySystem {}
+
 impl DynamicalSystem for TwoBodySystem {
     type State = OrbitalState;
     fn derivatives(&self, _t: f64, state: &OrbitalState) -> OrbitalState {

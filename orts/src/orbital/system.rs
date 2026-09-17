@@ -99,6 +99,10 @@ impl<F: Eci> OrbitalSystem<F> {
     }
 }
 
+/// An orbit with force models holds nothing against a bound: a model is a
+/// function of the state rather than a thing with state of its own.
+impl<F: Eci> crate::boundary::HasBoundaries for OrbitalSystem<F> {}
+
 impl<F: Eci> DynamicalSystem for OrbitalSystem<F> {
     type State = OrbitalState<F>;
 

@@ -1,9 +1,11 @@
 use std::ops::ControlFlow;
 
 use utsuroi::{
-    AdvanceOutcome, Dop853, DormandPrince, DynamicalSystem, IntegrationError, Integrator, OdeState,
-    Rk4, Segments, Tolerances, validate_step_size,
+    Dop853, DormandPrince, DynamicalSystem, IntegrationError, Integrator, OdeState, Rk4,
+    RootSearch, RootSlot, SegmentContext, Segments, Tolerances, validate_step_size,
 };
+
+use crate::boundary::{Boundaries, BoundaryWalk, HasBoundaries, Span, walk_to_target};
 
 use super::HasPosition;
 use super::prop_group::{GroupSnapshot, PropGroupOutcome, SatId, SatelliteTermination};
@@ -78,7 +80,7 @@ where
     event_checker: Option<EventChecker<D::State>>,
 }
 
-impl<D: DynamicalSystem> IndependentGroup<D>
+impl<D: DynamicalSystem + HasBoundaries> IndependentGroup<D>
 where
     D::State: HasPosition,
 {
@@ -349,6 +351,18 @@ where
                 continue;
             }
 
+            // The boundaries this satellite's effectors declare, and one slot
+            // each for the search state. Both live across the segments: a
+            // guard is what keeps a boundary reported at one segment's end
+            // from being reported again at the next one's start.
+            let boundaries = dynamics.boundaries();
+            let mut slots = vec![RootSlot::new(); boundaries.len()];
+            // TODO: the default 1 ms tolerance. It bounds how late a boundary is
+            // reported, and so how much momentum `settle_boundary` hands back in
+            // one go; a knob for it belongs beside the integrator's own
+            // tolerances in `IntegratorConfig`.
+            let search = RootSearch::default();
+
             // One segment at a time, so that no switch of the right-hand side
             // falls strictly inside a step and the stage on a segment's end
             // reads the mode that held inside it. A fresh stepper per segment
@@ -370,66 +384,97 @@ where
                 // what happens to the satellite afterwards is written once
                 // below rather than per solver: the state the segment ended
                 // on, the time the stepper reached, and how it ended.
-                let (outcome, reached_t, state) = match &integrator {
-                    IntegratorConfig::Dp45 { dt, tolerances } => {
-                        let mut stepper = DormandPrince.stepper(
-                            bound,
-                            entry.state.clone(),
-                            entry.t,
-                            *dt,
-                            tolerances.clone(),
-                        );
-                        // The state a later segment starts from is the one the
-                        // previous segment ended on, and the loop checked it
-                        // after that segment's last accepted step.
-                        if segment.is_continuation() {
-                            stepper = stepper.from_checked_state();
-                        }
-                        let outcome = stepper.advance_to(
-                            segment_end,
-                            |t, s| observer(&entry.id, t, s),
-                            check,
-                        );
-                        (outcome, stepper.t(), stepper.into_state())
-                    }
-                    IntegratorConfig::Dop853 { dt, tolerances } => {
-                        let mut stepper = Dop853.stepper(
-                            bound,
-                            entry.state.clone(),
-                            entry.t,
-                            *dt,
-                            tolerances.clone(),
-                        );
-                        if segment.is_continuation() {
-                            stepper = stepper.from_checked_state();
-                        }
-                        let outcome = stepper.advance_to(
-                            segment_end,
-                            |t, s| observer(&entry.id, t, s),
-                            check,
-                        );
-                        (outcome, stepper.t(), stepper.into_state())
-                    }
-                    IntegratorConfig::Rk4 { dt } => {
-                        let mut stepper = Rk4.stepper(bound, entry.state.clone(), entry.t, *dt);
-                        if segment.is_continuation() {
-                            stepper = stepper.from_checked_state();
-                        }
-                        let outcome = stepper.advance_to(
-                            segment_end,
-                            |t, s| observer(&entry.id, t, s),
-                            check,
-                        );
-                        (outcome, stepper.t(), stepper.into_state())
-                    }
+                // The state a later segment starts from is the one the
+                // previous segment ended on, and the loop checked it after that
+                // segment's last accepted step.
+                let started_checked = segment.is_continuation();
+                let segment_times = SegmentContext::new(segment.start(), segment_end);
+                let mut observe = |t: f64, s: &D::State| observer(&entry.id, t, s);
+                let walk = match &integrator {
+                    IntegratorConfig::Dp45 { dt, tolerances } => walk_to_target(
+                        Boundaries {
+                            system: &*dynamics,
+                            declared: &boundaries,
+                            slots: &mut slots,
+                            search,
+                            segment: Some(&segment_times),
+                        },
+                        Span {
+                            from: entry.t,
+                            to: segment_end,
+                            start_is_checked: started_checked,
+                        },
+                        entry.state.clone(),
+                        |state, t, checked| {
+                            let stepper =
+                                DormandPrince.stepper(bound, state, t, *dt, tolerances.clone());
+                            if checked {
+                                stepper.from_checked_state()
+                            } else {
+                                stepper
+                            }
+                        },
+                        &mut observe,
+                        &check,
+                    ),
+                    IntegratorConfig::Dop853 { dt, tolerances } => walk_to_target(
+                        Boundaries {
+                            system: &*dynamics,
+                            declared: &boundaries,
+                            slots: &mut slots,
+                            search,
+                            segment: Some(&segment_times),
+                        },
+                        Span {
+                            from: entry.t,
+                            to: segment_end,
+                            start_is_checked: started_checked,
+                        },
+                        entry.state.clone(),
+                        |state, t, checked| {
+                            let stepper = Dop853.stepper(bound, state, t, *dt, tolerances.clone());
+                            if checked {
+                                stepper.from_checked_state()
+                            } else {
+                                stepper
+                            }
+                        },
+                        &mut observe,
+                        &check,
+                    ),
+                    IntegratorConfig::Rk4 { dt } => walk_to_target(
+                        Boundaries {
+                            system: &*dynamics,
+                            declared: &boundaries,
+                            slots: &mut slots,
+                            search,
+                            segment: Some(&segment_times),
+                        },
+                        Span {
+                            from: entry.t,
+                            to: segment_end,
+                            start_is_checked: started_checked,
+                        },
+                        entry.state.clone(),
+                        |state, t, checked| {
+                            let stepper = Rk4.stepper(bound, state, t, *dt);
+                            if checked {
+                                stepper.from_checked_state()
+                            } else {
+                                stepper
+                            }
+                        },
+                        &mut observe,
+                        &check,
+                    ),
                 };
 
-                match outcome {
-                    Ok(AdvanceOutcome::Reached) => {
+                match walk {
+                    Ok((BoundaryWalk::Reached, _, state)) => {
                         entry.state = state;
                         entry.t = segment_end;
                     }
-                    Ok(AdvanceOutcome::Event { reason }) => {
+                    Ok((BoundaryWalk::Stopped(reason), reached_t, state)) => {
                         entry.state = state;
                         entry.t = reached_t;
                         entry.terminated = true;
@@ -475,7 +520,7 @@ where
     }
 }
 
-impl<D: DynamicalSystem + Send> super::prop_group::PropGroup for IndependentGroup<D>
+impl<D: DynamicalSystem + HasBoundaries + Send> super::prop_group::PropGroup for IndependentGroup<D>
 where
     D::State: HasPosition + Send,
 {

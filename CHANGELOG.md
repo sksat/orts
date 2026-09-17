@@ -129,6 +129,50 @@ section is subdivided by package.
   ([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
+- **BREAKING**: a `StateEffector` reads its evaluation context from one
+  `EffectorInput`, and it declares the boundaries its own state can reach.
+  `derivatives(&self, input, aux_rates)` replaces
+  `derivatives(&self, t, state, aux, aux_rates, epoch)`: `t`, `state`, `aux`
+  and `epoch` are the input's fields, the buffer it writes its rates into stays
+  the second argument, and the input also carries the state's discrete `modes`
+  and the segment being stepped. The new trait
+  methods — `boundaries`, `boundary_value`, `settle_boundary`, `mode_dim` — are
+  all defaulted, so an effector with no boundaries declares none. Alongside
+  them, `AugmentedState` gains a `modes: Vec<ConstraintMode>` field that a
+  struct literal has to name, `AuxRegistry::register` takes the effector's
+  `mode_dim` as a third argument, and a `DynamicalSystem` propagated by a group
+  must also implement `HasBoundaries` (every method defaulted, so
+  `impl HasBoundaries for X {}` is enough for a system with no boundaries).
+  A boundary's value is read in the segment the step belongs to, the one the
+  derivatives were taken in, so a part that holds a value across a segment — a
+  commanded burn — answers the boundary with what the state was integrated
+  under rather than with the value from the other side of a switch.
+  A boundary's value is a margin: positive while the boundary is ahead, exactly
+  zero on it, negative past it — and a state the walk starts from is settled
+  onto the boundary whenever that margin is negative at all, since from there
+  the margin only goes further negative and no sign change is left for the
+  search to report. What an effector's `boundary_tolerance` suppresses is a
+  second report of a crossing already located, which is the search's own guard, so `EffectorBoundary` carries no crossing direction —
+  reaching one is the margin running out, and a bound a value would rise into
+  is written with its sign flipped. One side being the crossed side is what
+  lets the propagation recognise a state that is *already* past a boundary,
+  which no search can find, and settle it before it steps.
+  A state handed to one of these systems must carry a mode for every one its
+  effectors registered; the first evaluation panics otherwise, as it already
+  does for an auxiliary vector of the wrong length. A state without them could
+  not say which constraints hold, so every boundary declared for those
+  effectors would read as inactive and a group would walk a wheel past its
+  limit with the walk running. `initial_augmented_state` builds the vector.
+  A wheel's momentum limit is now the propagation's to keep, and only a path
+  that runs `orts::boundary::walk_to_target` — the groups, the CLI's controlled
+  path, or that function called directly — keeps it. A caller stepping such a
+  system through `Integrator::integrate` leaves every wheel in `Free`, and a
+  0.53 N·m·s wheel driven at 0.1 N·m for 20 s ends at 2.0 N·m·s.
+  A saturating constraint cannot be a comparison inside the right-hand side: the
+  root search re-steps the same interval with different widths, and a comparison
+  that flips mid-step mixes modes across the RK stages, which makes the search
+  converge on a time `0.2r` late (measured, `DESIGN.md`). The mode therefore
+  lives in the state, and nothing in the integration writes it.
 - `IndependentGroup` and `CoupledGroup` advance every solver through the same
   three calls (`stepper`, `from_checked_state`, `advance_to`), where the RK4
   branch used to run a step loop of its own. Two things that loop did
@@ -226,6 +270,22 @@ section is subdivided by package.
   ([#469](https://github.com/sksat/orts/pull/469))
 
 #### Fixed
+- A reaction wheel that reached its momentum limit took angular momentum out of
+  the spacecraft: over a 20 s run of a 0.53 N·m·s wheel driven at 0.1 N·m, the
+  body-frame total `I·ω + Σ aᵢ hᵢ` lost 7.5e-3 N·m·s under RK4 at `dt = 0.25`
+  and 8.4e-2 N·m·s — 16% of the wheel's own limit — under DP45 at
+  `atol = rtol = 1e-3`. The wheel's momentum was an `aux_bounds` entry, so the
+  projection clamped it back to the limit after every step, while the body had
+  already integrated the reaction that carried it past: the clamp destroyed
+  exactly that much of a conserved total, and the looser the step, the more
+  there was to destroy. Reaching the limit is now a boundary the propagation
+  locates by bisection, and `settle_boundary` puts the momentum on the limit and
+  returns the overshoot to the body as `ω += I⁻¹ (δh a)`. While a wheel is held
+  at its limit it exchanges no torque with the body but keeps its gyroscopic
+  term `−ω × H_RW`, and it comes loose when the torque the motor asks for turns
+  inward. The same run now conserves the total to 1e-9 N·m·s under every
+  integrator the configuration offers.
+  ([#446](https://github.com/sksat/orts/issues/446))
 - **Breaking**: `SunSensor` reported a direction that was not a unit vector
   once noise was enabled, and `SunDirectionBody::new` now returns
   `Option<SunDirectionBody>` rather than `SunDirectionBody`. A caller that built
@@ -703,6 +763,11 @@ section is subdivided by package.
   under RK4 when `output_interval` equals `dt`. ([#466](https://github.com/sksat/orts/pull/466))
 
 #### Fixed
+- The angular momentum a saturating reaction wheel used to lose (see `orts`
+  above) was lost on the `mode = "controlled"` path too — `orts run
+  --controller` and `orts serve` — which stepped with `advance_to` and so had no
+  boundary to stop at. It now runs the same walk the groups do, with one guard
+  per declared boundary kept across the segments of a span.
 - With `--duration` omitted, a `mode = "controlled"` run lasted one orbit of
   whichever satellite the config listed first, so a fleet of a 5500 s and a
   7000 s orbit ran for 5500 s or 7000 s depending on the order they were
@@ -1161,6 +1226,12 @@ section is subdivided by package.
 ### `utsuroi` (Rust, crates.io)
 
 #### Added
+- `IntegrationError::RootStillCrossed` reports a `RootEvent` whose value is
+  still on its crossed side after the caller was given every chance to move the
+  state off it. The search reads a crossing from a change of sign, and a value
+  that already starts on the crossed side has none left to give, so a walk
+  cannot go on from there. The alternative was to walk on with it, which
+  propagates a state past a constraint for the rest of the span.
 - `RootEvent`, for a boundary the state decides rather than the clock. A burn
   window's edges are known times, so a `Segments` walk cuts the span at them; a
   reaction wheel saturating or a tank running dry has no known time, and the

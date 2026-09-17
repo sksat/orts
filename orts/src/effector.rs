@@ -7,6 +7,7 @@
 //! plant state.
 
 use arika::epoch::Epoch;
+use arika::frame::{Body, Vec3};
 use utsuroi::{OdeState, Projection, Tolerances};
 
 use crate::model::{ExternalLoads, HasFrame};
@@ -56,29 +57,116 @@ pub trait StateEffector<S: HasFrame>: Send + Sync + std::any::Any {
     /// Number of scalar state variables this effector contributes.
     fn state_dim(&self) -> usize;
 
-    /// Compute loads on spacecraft and derivatives of auxiliary state.
+    /// The boundaries this effector's state can reach.
     ///
-    /// `aux` is the current auxiliary state slice (length = `state_dim()`).
-    /// `aux_rates` is the output buffer for derivatives (length = `state_dim()`).
-    /// Returns the [`ExternalLoads`] contribution to the plant dynamics,
-    /// already expressed in the frame the state is propagated in
+    /// One per side of each one-sided constraint, plus one for its release: a
+    /// reaction wheel assembly declares three per wheel. Empty, unless
+    /// overridden.
+    ///
+    /// The propagation turns these into root events, so the modes change only
+    /// where a walk stopped — which is what keeps the right-hand side fixed
+    /// for the search that found the stopping point.
+    ///
+    /// Declaring a boundary binds nothing by itself: the constraint it stands
+    /// for holds on the paths that run
+    /// [`walk_to_target`](crate::boundary::walk_to_target) — the groups and the
+    /// CLI's controlled path — and a plain `Integrator::integrate` steps
+    /// straight past it with every mode left as it was.
+    fn boundaries(&self) -> Vec<EffectorBoundary> {
+        Vec::new()
+    }
+
+    /// The signed value one declared boundary is found in, at this stage.
+    ///
+    /// Zero is the boundary, and the sign says which side of it the state is
+    /// on. For a bound this is the margin left — the quantity against its
+    /// limit — and for a release it is the rate that has to turn around, so
+    /// that both are crossings of zero from the side the mode was entered on.
+    ///
+    /// Only asked about boundaries this effector declared, and only in a mode
+    /// where [`BoundaryKind::is_active`] holds.
+    fn boundary_value(&self, _kind: BoundaryKind, _input: EffectorInput<'_, S>) -> f64 {
+        0.0
+    }
+
+    /// Put this effector's state exactly on a boundary it just reached, and
+    /// report what the overshoot gives back to the plant.
+    ///
+    /// The quantity is a little past its bound — by the rate times the width of
+    /// the bracket the search ended on — and the plant has already integrated
+    /// the exchange that carried it there. Moving the quantity back without
+    /// returning that much would lose it from a total that is conserved.
+    ///
+    /// `None` for a boundary that moves nothing, such as a release.
+    fn settle_boundary(&self, _kind: BoundaryKind, _aux: &mut [f64]) -> Option<BoundaryExchange> {
+        None
+    }
+
+    /// Number of discrete modes this effector carries.
+    ///
+    /// One per one-sided constraint it can be held against — a reaction wheel
+    /// assembly has one per wheel. Zero, unless overridden, for an effector
+    /// whose right-hand side is the same whatever the state is.
+    fn mode_dim(&self) -> usize {
+        0
+    }
+
+    /// Loads on the spacecraft and derivatives of this effector's auxiliary
+    /// state, at the stage [`EffectorInput`] describes.
+    ///
+    /// `aux_rates` is the output buffer (length = `state_dim()`). The returned
+    /// [`ExternalLoads`] are already in the frame the state is propagated in
     /// ([`HasFrame::Frame`]).
     fn derivatives(
         &self,
-        t: f64,
-        state: &S,
-        aux: &[f64],
+        input: EffectorInput<'_, S>,
         aux_rates: &mut [f64],
-        epoch: Option<&Epoch>,
     ) -> ExternalLoads<S::Frame>;
 
-    /// Loads and auxiliary rates for the segment a solver is stepping through.
+    /// Per-element (min, max) bounds for auxiliary state projection.
+    ///
+    /// By default returns unbounded `(-INF, +INF)` for each element. Override
+    /// for a quantity whose bound can be imposed by moving that element alone
+    /// — a reaction wheel's realized motor torque, which tracks a command the
+    /// driver already limits.
+    ///
+    /// A bound that a conserved total is shared across does not belong here:
+    /// clamping one side of an exchange the rest of the state has already
+    /// integrated destroys that much of the total. Such a bound is a boundary
+    /// the propagation locates, through
+    /// [`boundaries`](Self::boundaries) and
+    /// [`settle_boundary`](Self::settle_boundary), which is where a wheel's
+    /// momentum limit is kept.
+    fn aux_bounds(&self) -> Vec<(f64, f64)> {
+        vec![(f64::NEG_INFINITY, f64::INFINITY); self.state_dim()]
+    }
+}
+
+/// Everything a [`StateEffector`] is evaluated at.
+///
+/// One value rather than a row of arguments, so that an input the effectors
+/// did not have before — the discrete modes — reaches every implementation
+/// without touching the ones that ignore it.
+pub struct EffectorInput<'a, S> {
+    /// Integration time of the stage.
+    pub t: f64,
+    /// The plant state at that stage.
+    pub state: &'a S,
+    /// This effector's slice of the auxiliary state (length = `state_dim()`).
+    pub aux: &'a [f64],
+    /// This effector's slice of the discrete modes (length = `mode_dim()`).
+    ///
+    /// Read-only here: a mode changes where a walk stops, never inside a step.
+    pub modes: &'a [ConstraintMode],
+    /// The epoch of the stage, for a schedule written in epochs.
+    pub epoch: Option<&'a Epoch>,
+    /// The segment the solver is stepping through, when there is one.
     ///
     /// An effector that reports a boundary through
-    /// [`next_discontinuity_after`](Self::next_discontinuity_after) has its
-    /// switch turned into the end of a segment, and the stage that lands there
-    /// belongs to the step integrating the segment before it. Answering for
-    /// [`segment.start`](crate::model::EvalSegment::start) — and
+    /// [`next_discontinuity_after`](StateEffector::next_discontinuity_after)
+    /// has its switch turned into the end of a segment, and the stage that
+    /// lands there belongs to the step integrating the segment before it.
+    /// Answering for [`segment.start`](crate::model::EvalSegment::start) — and
     /// [`segment.start_epoch`](crate::model::EvalSegment::start_epoch) for a
     /// schedule written in epochs — keeps that stage on the inside of a
     /// half-open interval ending there.
@@ -86,49 +174,168 @@ pub trait StateEffector<S: HasFrame>: Send + Sync + std::any::Any {
     /// `t`, `state`, `aux` and `epoch` still describe the stage, so an effector
     /// whose contribution varies continuously — a reaction wheel following its
     /// own momentum — keeps using them. Only a switch in time is held.
-    ///
-    /// The default ignores the segment and forwards to
-    /// [`derivatives`](Self::derivatives).
-    fn derivatives_in_segment(
-        &self,
-        _segment: &crate::model::EvalSegment<'_>,
-        t: f64,
-        state: &S,
-        aux: &[f64],
-        aux_rates: &mut [f64],
-        epoch: Option<&Epoch>,
-    ) -> ExternalLoads<S::Frame> {
-        self.derivatives(t, state, aux, aux_rates, epoch)
-    }
+    pub segment: Option<&'a crate::model::EvalSegment<'a>>,
+}
 
-    /// Per-element (min, max) bounds for auxiliary state projection.
-    ///
-    /// By default returns unbounded `(-INF, +INF)` for each element.
-    /// Override to enforce physical constraints (e.g., reaction wheel
-    /// momentum saturation).
-    fn aux_bounds(&self) -> Vec<(f64, f64)> {
-        vec![(f64::NEG_INFINITY, f64::INFINITY); self.state_dim()]
+// Written out rather than derived: the state is behind a reference, so neither
+// copying nor cloning an input asks anything of the state's own type.
+impl<S> Clone for EffectorInput<'_, S> {
+    fn clone(&self) -> Self {
+        *self
     }
 }
 
-/// Loads and auxiliary rates from `effector`, for the segment when there is one.
+impl<S> Copy for EffectorInput<'_, S> {}
+
+// Boundaries
+
+/// Which boundary of a one-sided constraint an effector declared.
 ///
-/// Every system that holds effectors evaluates them through this, so the
-/// segment reaches the effector instead of stopping at the system.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn effector_derivatives<S: HasFrame>(
-    effector: &(impl StateEffector<S> + ?Sized),
-    segment: Option<&crate::model::EvalSegment<'_>>,
-    t: f64,
-    state: &S,
-    aux: &[f64],
-    aux_rates: &mut [f64],
-    epoch: Option<&Epoch>,
-) -> ExternalLoads<S::Frame> {
-    match segment {
-        Some(segment) => effector.derivatives_in_segment(segment, t, state, aux, aux_rates, epoch),
-        None => effector.derivatives(t, state, aux, aux_rates, epoch),
+/// Reaching a bound and releasing from it are separate boundaries, because they
+/// are found in different quantities: the first in the constrained quantity
+/// itself, the second in the rate whatever pushes against the bound is asking
+/// for. Only one of them means anything in a given mode, which is what
+/// [`is_active`](Self::is_active) answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoundaryKind {
+    /// The constrained quantity `index` reaches its upper bound.
+    ReachedUpper {
+        /// Which of this effector's constrained quantities.
+        index: usize,
+    },
+    /// The constrained quantity `index` reaches its lower bound.
+    ReachedLower {
+        /// Which of this effector's constrained quantities.
+        index: usize,
+    },
+    /// The constraint held at `index` releases: what pushed it against the
+    /// bound has turned around.
+    Released {
+        /// Which of this effector's constrained quantities.
+        index: usize,
+    },
+}
+
+impl BoundaryKind {
+    /// Which of this effector's constrained quantities this boundary belongs
+    /// to.
+    pub fn index(self) -> usize {
+        match self {
+            Self::ReachedUpper { index }
+            | Self::ReachedLower { index }
+            | Self::Released { index } => index,
+        }
     }
+
+    /// Whether this boundary is one the search should look at, in the mode the
+    /// state is in.
+    ///
+    /// A bound cannot be reached while the constraint is already held against
+    /// one, and there is nothing to release while it is free.
+    pub fn is_active(self, modes: &[ConstraintMode]) -> bool {
+        let mode = modes.get(self.index()).copied().unwrap_or_default();
+        match self {
+            Self::ReachedUpper { .. } | Self::ReachedLower { .. } => mode == ConstraintMode::Free,
+            Self::Released { .. } => mode != ConstraintMode::Free,
+        }
+    }
+
+    /// The mode the constraint is in once this boundary has been handled.
+    pub fn mode_after(self) -> ConstraintMode {
+        match self {
+            Self::ReachedUpper { .. } => ConstraintMode::Upper,
+            Self::ReachedLower { .. } => ConstraintMode::Lower,
+            Self::Released { .. } => ConstraintMode::Free,
+        }
+    }
+}
+
+/// What the plant takes back when an effector's state is put on a boundary.
+///
+/// The search stops on the far side of a bracket, so the quantity is a little
+/// past its bound and the plant has already felt the exchange that carried it
+/// there. Putting the quantity back on the bound without this would destroy
+/// that much of a conserved total.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BoundaryExchange {
+    /// Angular momentum to return to the plant [N·m·s].
+    ///
+    /// The body equations are what consume it, through the inertia that turns
+    /// angular momentum into a rate, so the frame is part of the type: a
+    /// correction expressed in any other frame cannot be built here.
+    pub angular_momentum_body: Vec3<Body>,
+}
+
+/// Check that every boundary an effector declares names a mode it registered.
+///
+/// [`BoundaryKind::index`] selects the mode inside the effector's own block, so
+/// an index past its `mode_dim` reads a mode that is not there — the boundary
+/// then looks active, because a missing mode reads as
+/// [`ConstraintMode::Free`], and settling it writes into the *next* effector's
+/// block or past the end of the vector. Registration is where this is caught:
+/// `boundaries` takes only `&self`, so what an effector declares cannot change
+/// afterwards.
+///
+/// # Panics
+///
+/// If any declared boundary's index is not below `mode_dim`.
+pub(crate) fn check_declared_modes(name: &str, boundaries: &[EffectorBoundary], mode_dim: usize) {
+    for boundary in boundaries {
+        let index = boundary.kind.index();
+        assert!(
+            index < mode_dim,
+            "effector {name} declared a boundary on mode {index}, but registered \
+             {mode_dim} mode(s): a boundary can only name a mode of its own effector"
+        );
+    }
+}
+
+/// A boundary an effector's state can reach, for the propagation to stop at.
+///
+/// The value it is found in is the effector's to compute
+/// ([`StateEffector::boundary_value`]), and it is a *margin*: positive while
+/// the boundary is still ahead, zero on it, negative past it. Reaching a
+/// boundary is therefore one direction — the margin running out — and a bound
+/// whose value would rise into it is written with its sign flipped. That is
+/// what lets the propagation recognise a state that is *already* past a
+/// boundary, which no search can find: there is one side to be past.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EffectorBoundary {
+    /// Which boundary of which constrained quantity.
+    pub kind: BoundaryKind,
+    /// Width of the value within which the state still counts as being on the
+    /// boundary, in the value's own units.
+    ///
+    /// A constraint the state moves *along* — a wheel held at its bound — has
+    /// its value jittering around zero for many steps, and each change of sign
+    /// in that jitter would otherwise be a fresh crossing.
+    pub boundary_tolerance: f64,
+}
+
+// ConstraintMode
+
+/// Which side of a one-sided constraint an effector is held against.
+///
+/// A reaction wheel at its momentum bound cannot be driven further out, and a
+/// tank that has run dry cannot deliver propellant: the right-hand side changes
+/// when the boundary is reached, and changes back when the thing pushing
+/// against it turns around. That switch is discrete, so it belongs to the
+/// state rather than to a comparison inside the right-hand side — a comparison
+/// would flip mid-step, and a root search re-stepping across the flip converges
+/// on the wrong time (see the root-event contract in DESIGN.md).
+///
+/// Nothing in the integration writes a mode. It changes where the walk stops:
+/// at a boundary a [`RootEvent`](utsuroi::RootEvent) located, or at a time the
+/// caller reconciles the modes with a command it just applied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConstraintMode {
+    /// Inside the bounds: the unconstrained right-hand side holds.
+    #[default]
+    Free,
+    /// Held at the upper bound.
+    Upper,
+    /// Held at the lower bound.
+    Lower,
 }
 
 // AugmentedState
@@ -150,6 +357,12 @@ pub struct AugmentedState<S: OdeState> {
     /// Per-element (min, max) bounds for auxiliary state projection.
     /// Empty means no bounds (unconstrained).
     pub aux_bounds: Vec<(f64, f64)>,
+    /// Concatenated discrete modes from all registered effectors.
+    ///
+    /// Carried through every state operation as it is: a mode is not a quantity
+    /// to scale or add, and a trajectory that mixed two of them would be a
+    /// trajectory of neither.
+    pub modes: Vec<ConstraintMode>,
 }
 
 impl<S: OdeState> From<S> for AugmentedState<S> {
@@ -159,6 +372,7 @@ impl<S: OdeState> From<S> for AugmentedState<S> {
             plant,
             aux: vec![],
             aux_bounds: vec![],
+            modes: vec![],
         }
     }
 }
@@ -169,6 +383,7 @@ impl<S: OdeState> OdeState for AugmentedState<S> {
             plant: self.plant.zero_like(),
             aux: vec![0.0; self.aux.len()],
             aux_bounds: self.aux_bounds.clone(),
+            modes: self.modes.clone(),
         }
     }
 
@@ -181,6 +396,7 @@ impl<S: OdeState> OdeState for AugmentedState<S> {
             plant: self.plant.axpy(scale, &other.plant),
             aux,
             aux_bounds: self.aux_bounds.clone(),
+            modes: self.modes.clone(),
         }
     }
 
@@ -189,6 +405,7 @@ impl<S: OdeState> OdeState for AugmentedState<S> {
             plant: self.plant.scale(factor),
             aux: self.aux.iter().map(|v| v * factor).collect(),
             aux_bounds: self.aux_bounds.clone(),
+            modes: self.modes.clone(),
         }
     }
 
@@ -239,6 +456,10 @@ pub struct AuxEntry {
     pub offset: usize,
     /// Number of scalar variables in this block.
     pub dim: usize,
+    /// Starting index within the concatenated mode vector.
+    pub mode_offset: usize,
+    /// Number of discrete modes in this block.
+    pub mode_dim: usize,
 }
 
 /// Registry mapping [`StateEffector`]s to their auxiliary state slices.
@@ -249,6 +470,7 @@ pub struct AuxEntry {
 pub struct AuxRegistry {
     entries: Vec<AuxEntry>,
     total_dim: usize,
+    total_modes: usize,
 }
 
 impl AuxRegistry {
@@ -258,20 +480,28 @@ impl AuxRegistry {
     }
 
     /// Register a new effector and return its offset into the aux vector.
-    pub fn register(&mut self, name: &str, dim: usize) -> usize {
+    pub fn register(&mut self, name: &str, dim: usize, mode_dim: usize) -> usize {
         let offset = self.total_dim;
         self.entries.push(AuxEntry {
             name: name.to_string(),
             offset,
             dim,
+            mode_offset: self.total_modes,
+            mode_dim,
         });
         self.total_dim += dim;
+        self.total_modes += mode_dim;
         offset
     }
 
     /// Total number of auxiliary state variables across all effectors.
     pub fn total_dim(&self) -> usize {
         self.total_dim
+    }
+
+    /// Total number of discrete modes across all effectors.
+    pub fn total_modes(&self) -> usize {
+        self.total_modes
     }
 
     /// All registered entries.
@@ -291,7 +521,7 @@ mod tests {
     #[test]
     fn registry_single_effector() {
         let mut reg = AuxRegistry::new();
-        let offset = reg.register("rw", 3);
+        let offset = reg.register("rw", 3, 0);
         assert_eq!(offset, 0);
         assert_eq!(reg.total_dim(), 3);
         assert_eq!(reg.entries().len(), 1);
@@ -303,8 +533,8 @@ mod tests {
     #[test]
     fn registry_multiple_effectors() {
         let mut reg = AuxRegistry::new();
-        let o1 = reg.register("rw", 3);
-        let o2 = reg.register("gimbal", 2);
+        let o1 = reg.register("rw", 3, 0);
+        let o2 = reg.register("gimbal", 2, 0);
         assert_eq!(o1, 0);
         assert_eq!(o2, 3);
         assert_eq!(reg.total_dim(), 5);
@@ -321,6 +551,7 @@ mod tests {
             },
             aux: vec![1.0, 2.0, 3.0],
             aux_bounds: vec![],
+            modes: vec![],
         }
     }
 
@@ -347,11 +578,13 @@ mod tests {
             plant: AttitudeState::identity(),
             aux: vec![1.0, 2.0],
             aux_bounds: vec![],
+            modes: vec![],
         };
         let other = AugmentedState {
             plant: AttitudeState::identity(),
             aux: vec![10.0, 20.0],
             aux_bounds: vec![],
+            modes: vec![],
         };
         let result = s.axpy(0.5, &other);
         assert!((result.aux[0] - 6.0).abs() < 1e-15);
@@ -387,6 +620,34 @@ mod tests {
         assert!(!s.is_finite());
     }
 
+    /// A mode is carried through every state operation as it is.
+    ///
+    /// A solver combines stages with `axpy` and `scale`, and a mode is not a
+    /// quantity to add or scale: a state holding the modes of two different
+    /// right-hand sides would describe neither. `axpy` keeps the modes of the
+    /// state being stepped from, since the increment is a derivative and
+    /// carries the modes it was taken at. `project` leaves them alone too —
+    /// which side a constraint is held against is not something to clamp.
+    #[test]
+    fn a_mode_is_carried_through_every_state_operation() {
+        let mut s = sample_augmented();
+        s.modes = vec![ConstraintMode::Upper, ConstraintMode::Free];
+        let mut other = sample_augmented();
+        other.modes = vec![ConstraintMode::Lower, ConstraintMode::Lower];
+
+        assert_eq!(s.zero_like().modes, s.modes);
+        assert_eq!(s.scale(0.5).modes, s.modes);
+        assert_eq!(
+            s.axpy(2.0, &other).modes,
+            s.modes,
+            "the modes of the state being stepped from, not the increment's"
+        );
+
+        let before = s.modes.clone();
+        let _ = s.project(0.0);
+        assert_eq!(s.modes, before, "the projection does not touch a mode");
+    }
+
     #[test]
     fn project_normalizes_quaternion() {
         let mut s = AugmentedState {
@@ -396,6 +657,7 @@ mod tests {
             },
             aux: vec![5.0, 10.0],
             aux_bounds: vec![],
+            modes: vec![],
         };
         assert_eq!(s.project(0.0), Projection::Changed);
         let norm = s.plant.quaternion.magnitude();
@@ -410,6 +672,7 @@ mod tests {
             plant: AttitudeState::identity(),
             aux: vec![15.0, -5.0, 3.0],
             aux_bounds: vec![(-10.0, 10.0), (-2.0, 2.0), (0.0, 100.0)],
+            modes: vec![],
         };
         assert_eq!(s.project(0.0), Projection::Changed);
         assert!((s.aux[0] - 10.0).abs() < 1e-15); // clamped from 15 to 10
@@ -423,6 +686,7 @@ mod tests {
             plant: AttitudeState::identity(),
             aux: vec![3.0, -1.0],
             aux_bounds: vec![(-10.0, 10.0), (-2.0, 2.0)],
+            modes: vec![],
         };
         assert_eq!(s.project(0.0), Projection::Unchanged);
         assert_eq!(s.aux, vec![3.0, -1.0]);
@@ -434,6 +698,7 @@ mod tests {
             plant: AttitudeState::identity(),
             aux: vec![],
             aux_bounds: vec![],
+            modes: vec![],
         };
         let y_next = s.clone();
         let error = AugmentedState {
@@ -443,6 +708,7 @@ mod tests {
             },
             aux: vec![],
             aux_bounds: vec![],
+            modes: vec![],
         };
         let tol = Tolerances {
             atol: 1e-10,
@@ -464,6 +730,7 @@ mod tests {
             },
             aux: vec![1e-8, 1e-8, 1e-8],
             aux_bounds: vec![],
+            modes: vec![],
         };
         let tol = Tolerances {
             atol: 1e-10,

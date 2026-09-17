@@ -102,6 +102,40 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   variant で表される。([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
+- **BREAKING**: `StateEffector` の評価コンテキストを `EffectorInput` 1 つにまとめ、
+  effector が自分の state が到達しうる境界を申告するようにした。
+  `derivatives(&self, t, state, aux, aux_rates, epoch)` は
+  `derivatives(&self, input, aux_rates)` になる: `t` / `state` / `aux` / `epoch` は
+  input のフィールドになり、rates を書き込む buffer は第 2 引数に残る。input は
+  state の離散モード (`modes`) と積分中の segment も運ぶ。追加した trait method
+  (`boundaries` / `boundary_value` / `settle_boundary` / `mode_dim`) は全て既定
+  実装を持つので、境界のない effector は何も申告しない。併せて `AugmentedState` に
+  `modes: Vec<ConstraintMode>` が増え (struct literal は名前を書く必要がある)、
+  `AuxRegistry::register` は第 3 引数に effector の `mode_dim` を取り、group が
+  伝播する `DynamicalSystem` は `HasBoundaries` も実装する必要がある (全 method が
+  既定実装なので、境界のない系は `impl HasBoundaries for X {}` で足りる)。
+  境界の値は導関数と同じ segment で読む。segment の間だけ値を保持する部分 (指令された燃焼など) は
+  segment の始点について答えるので、評価している state が経験していない切替の向こう側の値を
+  見なくなる。
+  境界の値は残余である: 境界の手前で正、境界上でちょうど 0、越えると負。歩き始めの state は
+  残余が負であれば (幅を持たせずに) 境界へ載せる — 負のままから先も負で、探索が報告できる符号変化は
+  残っていない。effector の `boundary_tolerance` が抑えるのは、既に局在化した交差の 2 度目の報告で、
+  それは探索側の guard である。到達は残余が尽きる 1 方向なので
+  `EffectorBoundary` は交差の向きを持たず、上がって境界に入る量は符号を反転して書く。越えた側が
+  1 つに決まることが、「歩き始めの state が既に境界を越えている」場合 (探索では見つけられない) を
+  判定して刻む前に境界へ載せる根拠になる。
+  これらの系に渡す state は、effector が登録した分のモードを必ず持つ。持たない state は最初の
+  評価で panic する (長さの合わない aux vector と同じ扱い)。モードのない state はどの拘束が
+  held かを言えないので、その effector が申告した境界は全て inactive と読まれ、group は walk を
+  走らせたままホイールを上限の外へ運んでしまう。`initial_augmented_state` がこの vector を作る。
+  ホイールの角運動量の上限を守るのは伝播になり、`orts::boundary::walk_to_target` を走らせる
+  経路 — group、CLI の制御付き経路、あるいはこの関数を直接呼ぶ経路 — でだけ守られる。
+  `Integrator::integrate` で直接刻む呼び出し側では全てのホイールが `Free` のままで、
+  0.53 N·m·s のホイールを 0.1 N·m で 20 秒駆動すると 2.0 N·m·s に達する。
+  飽和のような拘束を RHS の中の比較で表すことはできない: root の探索は同じ区間を
+  幅を変えて再計算するので、ステップの途中で切り替わる比較は RK のステージ間でモードを
+  混ぜ、到達時刻を `0.2r` 遅く報告する (実測、`DESIGN.md`)。モードは state が持ち、
+  積分の中では誰も書き換えない。
 - `IndependentGroup` と `CoupledGroup` が、どの solver も同じ 3 つの呼び出し
   (`stepper` / `from_checked_state` / `advance_to`) で進めるようになった (RK4 の枝だけが
   自前の step ループを持っていた)。それに伴い、そのループが adaptive stepper と違っていた
@@ -181,6 +215,18 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   1 つ足すのは `with_occulter`。古いフィールドを名前で書いた struct literal は
   コンパイルできなくなる。([#469](https://github.com/sksat/orts/pull/469))
 #### Fixed
+- 角運動量の上限に達した reaction wheel が、宇宙機の全角運動量を減らしていた。
+  0.53 N·m·s のホイールを 0.1 N·m で駆動する 20 秒の伝播で、body frame の合計
+  `I·ω + Σ aᵢ hᵢ` は `dt = 0.25` の RK4 で 7.5e-3 N·m·s、`atol = rtol = 1e-3` の
+  DP45 で 8.4e-2 N·m·s — ホイールの上限の 16% — 失われていた。ホイールの角運動量が
+  `aux_bounds` の項だったため、射影が毎ステップ後に上限へ clamp する一方、body は
+  そこまで運んだ反作用をすでに積分し終えている: clamp はその分だけ保存量を捨てており、
+  刻みが粗いほど捨てる量が増えた。上限への到達は二分探索で時刻を求める境界になり、
+  `settle_boundary` が角運動量を上限に載せ、超過分を `ω += I⁻¹ (δh a)` で body に
+  返す。上限で保持されている間、ホイールは body とトルクを交換しないがジャイロ結合の項
+  `−ω × H_RW` は残り、モータが要求するトルクが内向きに変わった時点で解除される。同じ
+  伝播は、設定が提供する全ての積分器で合計を 1e-9 N·m·s まで保存するようになった。
+  ([#446](https://github.com/sksat/orts/issues/446))
 - **破壊的変更**: `SunSensor` が、noise を有効にすると単位ベクトルでない方向を返していた。
   あわせて `SunDirectionBody::new` の戻り値が `SunDirectionBody` から
   `Option<SunDirectionBody>` になった。自分で構築していた呼び出し元は、方向を持たない
@@ -575,6 +621,11 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `dt` と同じなら、モデル評価の作業が 4 分の 1 ほど増える。([#466](https://github.com/sksat/orts/pull/466))
 
 #### Fixed
+- 飽和した reaction wheel が角運動量を失う問題 (上の `orts` を参照) は
+  `mode = "controlled"` の経路 — `orts run --controller` と `orts serve` — でも
+  起きていた。この経路は `advance_to` で刻んでおり、止まる境界を持っていなかった。
+  group と同じ walk を通るようにし、申告された境界ごとの guard を span の segment を
+  越えて保持する。
 - `--duration` を省略した `mode = "controlled"` の run が、config に最初に書かれた衛星の軌道周期
   ぶんで終わっていた。周期 5500 s と 7000 s の 2 機なら、記述順だけで run の長さが 5500 s か
   7000 s に変わる。fleet は時計を共有するので、「一周」は最長周期にした。全機に少なくとも 1 周期ぶんの
@@ -974,6 +1025,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `utsuroi` (Rust, crates.io)
 
 #### Added
+- `IntegrationError::RootStillCrossed` を追加した。呼び出し側が state を動かす機会を
+  与えられた後もなお越えた側に残っている `RootEvent` を報告する。探索は符号の変化から交差を
+  見つけるので、最初から越えた側にある値には残っていない。そこから walk は続けられない。
+  続けると、その span の残りをずっと拘束の外で伝播する。
 - `RootEvent` を追加。時刻ではなく状態が決める境界を表す。燃焼窓の端は既知の時刻なので
   `Segments` で span を刻めるが、reaction wheel の飽和や推進剤の枯渇は時刻が分からず、
   それを起こすステップの内側で交差を見つける必要がある。event は符号付き関数の零点で、

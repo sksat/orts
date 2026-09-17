@@ -176,6 +176,9 @@ impl DecoupledAttitudeSystem {
     }
 }
 
+/// Attitude propagated beside a fixed orbit holds nothing against a bound.
+impl crate::boundary::HasBoundaries for DecoupledAttitudeSystem {}
+
 impl DynamicalSystem for DecoupledAttitudeSystem {
     type State = AttitudeState;
 

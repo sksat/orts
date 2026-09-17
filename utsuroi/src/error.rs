@@ -104,6 +104,16 @@ pub enum IntegrationError {
     /// the tolerance, so the crossing was never pinned down. A value that
     /// changes sign without being continuous in `t` does this.
     RootNotLocalized { t: f64, bracket: f64 },
+    /// A [`RootEvent`](crate::RootEvent) whose value is still on its crossed
+    /// side after the caller was given every chance to move the state off it.
+    ///
+    /// The search locates a crossing from a change of sign, so a value that
+    /// already starts on the crossed side has none left to give. A caller
+    /// driving a [`RootSet`](crate::RootSet) itself is the one that moves the
+    /// state off such an event before walking on; where its own handling
+    /// leaves the value where it was — or puts it past another event — there
+    /// is nothing left for the walk to search for.
+    RootStillCrossed { t: f64, event: usize },
     /// A step of width `h` taken while narrowing a bracket failed the adaptive
     /// solver's own error control, with error norm `err`.
     ///
@@ -151,7 +161,8 @@ impl IntegrationError {
             | Self::LandingUnreachable { t, .. }
             | Self::NonFiniteRootValue { t, .. }
             | Self::RootNotLocalized { t, .. }
-            | Self::RootTrialRejected { t, .. } => Some(*t),
+            | Self::RootTrialRejected { t, .. }
+            | Self::RootStillCrossed { t, .. } => Some(*t),
             Self::InvalidTimeSpan { t0, .. } => Some(*t0),
             Self::InvalidStepSize { .. }
             | Self::InvalidTolerances { .. }
@@ -269,6 +280,14 @@ impl core::fmt::Display for IntegrationError {
                     f,
                     "the root search from t = {t} ran out of iterations with the bracket \
                      still {bracket} wide"
+                )
+            }
+            Self::RootStillCrossed { t, event } => {
+                write!(
+                    f,
+                    "root event {event} is still on its crossed side at t = {t} after \
+                     the caller was given every chance to move the state off it, so \
+                     there is no change of sign left to search for"
                 )
             }
             Self::RootSlotCount { events, slots } => {

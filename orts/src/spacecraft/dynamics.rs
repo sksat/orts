@@ -1,6 +1,7 @@
 use std::marker::PhantomData;
 
-use crate::effector::{AugmentedState, AuxRegistry, StateEffector, effector_derivatives};
+use crate::boundary::{DeclaredBoundary, HasBoundaries};
+use crate::effector::{AugmentedState, AuxRegistry, ConstraintMode, EffectorInput, StateEffector};
 use crate::model::{EvalSegment, Model, eval_maybe_in_segment};
 use crate::orbital::gravity::GravityField;
 use arika::epoch::Epoch;
@@ -96,7 +97,9 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
         effector: impl StateEffector<SpacecraftState<F>> + 'static,
     ) -> Self {
         let dim = effector.state_dim();
-        self.registry.register(effector.name(), dim);
+        let mode_dim = effector.mode_dim();
+        crate::effector::check_declared_modes(effector.name(), &effector.boundaries(), mode_dim);
+        self.registry.register(effector.name(), dim, mode_dim);
         self.effectors.push(Box::new(effector));
         self
     }
@@ -129,6 +132,7 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
             plant,
             aux: vec![0.0; self.registry.total_dim()],
             aux_bounds: bounds,
+            modes: vec![ConstraintMode::default(); self.registry.total_modes()],
         }
     }
 
@@ -324,6 +328,21 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
         t: f64,
         state: &AugmentedState<SpacecraftState<F>>,
     ) -> AugmentedState<SpacecraftState<F>> {
+        // A state whose mode vector does not match what the effectors
+        // registered cannot say which constraints are held, and every boundary
+        // declared for them would read as inactive: the propagation would walk
+        // past a wheel's limit with the walk running and nothing to stop it.
+        // Rejected here, on the first evaluation, rather than silently opting
+        // out of the constraints. `initial_augmented_state` builds the vector
+        // this expects.
+        assert_eq!(
+            state.modes.len(),
+            self.registry.total_modes(),
+            "mode vector length ({}) does not match registry ({})",
+            state.modes.len(),
+            self.registry.total_modes()
+        );
+
         let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
 
         // Gravitational acceleration
@@ -352,16 +371,24 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
         let mut aux_rates = vec![0.0; self.registry.total_dim()];
         for (i, eff) in self.effectors.iter().enumerate() {
             let entry = &self.registry.entries()[i];
-            let aux_slice = &state.aux[entry.offset..entry.offset + entry.dim];
             let rates_slice = &mut aux_rates[entry.offset..entry.offset + entry.dim];
-            total += effector_derivatives(
-                eff.as_ref(),
-                segment,
-                t,
-                &state.plant,
-                aux_slice,
+            total += eff.derivatives(
+                EffectorInput {
+                    t,
+                    state: &state.plant,
+                    aux: &state.aux[entry.offset..entry.offset + entry.dim],
+                    // A state assembled by hand carries no modes; an
+                    // effector reading none falls back to judging its own
+                    // constraint, which is what a walk with no boundary
+                    // handling has always done.
+                    modes: state
+                        .modes
+                        .get(entry.mode_offset..entry.mode_offset + entry.mode_dim)
+                        .unwrap_or(&[]),
+                    epoch: epoch.as_ref(),
+                    segment,
+                },
                 rates_slice,
-                epoch.as_ref(),
             );
         }
 
@@ -386,7 +413,80 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
             ),
             aux: aux_rates,
             aux_bounds: state.aux_bounds.clone(),
+            modes: state.modes.clone(),
         }
+    }
+}
+
+impl<G: GravityField, F: Eci + 'static> HasBoundaries for SpacecraftDynamics<G, F> {
+    fn boundaries(&self) -> Vec<DeclaredBoundary> {
+        self.effectors
+            .iter()
+            .enumerate()
+            .flat_map(|(index, eff)| {
+                let entry = &self.registry.entries()[index];
+                eff.boundaries()
+                    .into_iter()
+                    .map(move |boundary| DeclaredBoundary {
+                        satellite: 0,
+                        effector: index,
+                        boundary,
+                        aux_offset: entry.offset,
+                        aux_dim: entry.dim,
+                        mode_offset: entry.mode_offset,
+                        mode_dim: entry.mode_dim,
+                    })
+            })
+            .collect()
+    }
+
+    fn boundary_value(
+        &self,
+        declared: &DeclaredBoundary,
+        segment: Option<&SegmentContext>,
+        t: f64,
+        state: &Self::State,
+    ) -> f64 {
+        let effector = &self.effectors[declared.effector];
+        let aux = &state.aux[declared.aux_offset..declared.aux_offset + declared.aux_dim];
+        let modes = state
+            .modes
+            .get(declared.mode_offset..declared.mode_offset + declared.mode_dim)
+            .unwrap_or(&[]);
+        let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
+        let segment_epoch = segment.and_then(|s| self.epoch_0.map(|e| e.add_si_seconds(s.start)));
+        let eval_segment = segment.map(|s| EvalSegment::new(s, segment_epoch.as_ref()));
+        effector.boundary_value(
+            declared.boundary.kind,
+            EffectorInput {
+                t,
+                state: &state.plant,
+                aux,
+                modes,
+                epoch: epoch.as_ref(),
+                // The same segment the derivatives were taken in, with the
+                // absolute time at its start, so an effector holding a value
+                // for the segment answers the boundary with the one the state
+                // was integrated under.
+                segment: eval_segment.as_ref(),
+            },
+        )
+    }
+
+    fn settle_boundary(&self, declared: &DeclaredBoundary, state: &mut Self::State) {
+        let effector = &self.effectors[declared.effector];
+        let aux = &mut state.aux[declared.aux_offset..declared.aux_offset + declared.aux_dim];
+        if let Some(exchange) = effector.settle_boundary(declared.boundary.kind, aux) {
+            // What the effector gave up goes back to the body, through the
+            // inertia that turns angular momentum into a rate.
+            state.plant.attitude.angular_velocity +=
+                self.inertia_inv * exchange.angular_momentum_body.into_inner();
+        }
+        state.modes[declared.mode_index()] = declared.boundary.kind.mode_after();
+    }
+
+    fn boundary_is_active(&self, declared: &DeclaredBoundary, state: &Self::State) -> bool {
+        declared.is_active(&state.modes)
     }
 }
 
@@ -465,12 +565,136 @@ mod tests {
         }
     }
 
+    /// A wheel's two bounds and its release are not all live at once: the
+    /// search looks for a bound to be reached only while the wheel is running
+    /// free, and for a release only while it is held against one. The
+    /// propagation switches the set from what this answers, so a boundary that
+    /// stayed live would be searched for in a mode where its value says
+    /// nothing.
+    #[test]
+    fn a_held_wheels_bound_is_no_longer_one_to_search_for() {
+        use crate::effector::{BoundaryKind, ConstraintMode};
+        use crate::spacecraft::ReactionWheelAssembly;
+
+        let dynamics = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
+            .with_effector(ReactionWheelAssembly::three_axis(0.01, 0.5, 0.1));
+        let boundaries = dynamics.boundaries();
+        let mut state = dynamics.initial_augmented_state(sample_spacecraft());
+
+        let find = |kind: BoundaryKind| {
+            *boundaries
+                .iter()
+                .find(|d| d.boundary.kind == kind)
+                .expect("the wheel declared it")
+        };
+        let upper = find(BoundaryKind::ReachedUpper { index: 0 });
+        let lower = find(BoundaryKind::ReachedLower { index: 0 });
+        let release = find(BoundaryKind::Released { index: 0 });
+
+        // A wheel that is running: either bound is still ahead of it, and
+        // there is nothing to release.
+        assert!(dynamics.boundary_is_active(&upper, &state));
+        assert!(dynamics.boundary_is_active(&lower, &state));
+        assert!(!dynamics.boundary_is_active(&release, &state));
+
+        state.modes[0] = ConstraintMode::Upper;
+
+        // Held against the upper bound: that bound is where it already is, the
+        // other one is not reachable without coming off this one first, and
+        // the release is what the search now looks for.
+        assert!(!dynamics.boundary_is_active(&upper, &state));
+        assert!(!dynamics.boundary_is_active(&lower, &state));
+        assert!(dynamics.boundary_is_active(&release, &state));
+
+        // The other wheels are untouched by the first one's mode.
+        assert!(
+            dynamics.boundary_is_active(&find(BoundaryKind::ReachedUpper { index: 1 }), &state)
+        );
+    }
+
+    /// A hand-built state can carry auxiliary values without the modes that
+    /// say which constraints hold, and `AugmentedState`'s fields are public, so
+    /// nothing stops one from reaching a group. Every boundary declared for
+    /// those effectors would then read as inactive and the propagation would
+    /// walk a wheel past its limit with the walk running — so the first
+    /// evaluation rejects it instead.
+    #[test]
+    #[should_panic(expected = "mode vector length")]
+    fn a_state_without_the_modes_its_effectors_registered_is_rejected() {
+        use crate::spacecraft::ReactionWheelAssembly;
+
+        let dynamics = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
+            .with_effector(ReactionWheelAssembly::three_axis(0.01, 0.5, 0.1));
+        let state = AugmentedState {
+            plant: sample_spacecraft(),
+            aux: vec![0.0; 3],
+            aux_bounds: vec![],
+            modes: vec![],
+        };
+
+        dynamics.derivatives(0.0, &state);
+    }
+
+    /// An effector that declares a boundary on a mode it never registered.
+    ///
+    /// The index selects a mode inside the effector's own block, so one past
+    /// `mode_dim` reads a mode that is not there — and a missing mode reads as
+    /// `Free`, which is what makes a bound look reachable. Settling it would
+    /// then write into the next effector's block, or past the end of the
+    /// vector. Registration refuses it, where the declaration is already fixed
+    /// and the panic can name the effector.
+    #[test]
+    #[should_panic(expected = "declared a boundary on mode 1, but registered 1 mode(s)")]
+    fn a_boundary_on_a_mode_the_effector_never_registered_is_refused() {
+        use crate::effector::{BoundaryKind, EffectorBoundary, EffectorInput, StateEffector};
+        use crate::model::{ExternalLoads, HasFrame};
+
+        struct OneModeTwoBoundaries;
+
+        impl<S: HasFrame + Send + Sync> StateEffector<S> for OneModeTwoBoundaries {
+            fn name(&self) -> &str {
+                "one_mode_two_boundaries"
+            }
+            fn state_dim(&self) -> usize {
+                1
+            }
+            fn mode_dim(&self) -> usize {
+                1
+            }
+            fn boundaries(&self) -> Vec<EffectorBoundary> {
+                vec![
+                    EffectorBoundary {
+                        kind: BoundaryKind::ReachedUpper { index: 0 },
+                        boundary_tolerance: 0.0,
+                    },
+                    // One past the block it registered.
+                    EffectorBoundary {
+                        kind: BoundaryKind::ReachedUpper { index: 1 },
+                        boundary_tolerance: 0.0,
+                    },
+                ]
+            }
+            fn derivatives(
+                &self,
+                _input: EffectorInput<'_, S>,
+                _aux_rates: &mut [f64],
+            ) -> ExternalLoads<S::Frame> {
+                ExternalLoads::zeros()
+            }
+        }
+
+        let dynamics: SpacecraftDynamics<PointMass> =
+            SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0));
+        let _ = dynamics.with_effector(OneModeTwoBoundaries);
+    }
+
     /// Wrap a plant state as an augmented state with no effectors.
     fn augment(plant: SpacecraftState) -> AugmentedState<SpacecraftState> {
         AugmentedState {
             plant,
             aux: vec![],
             aux_bounds: vec![],
+            modes: vec![],
         }
     }
 
@@ -992,11 +1216,8 @@ mod tests {
         }
         fn derivatives(
             &self,
-            _t: f64,
-            _state: &S,
-            _aux: &[f64],
+            _input: EffectorInput<'_, S>,
             _aux_rates: &mut [f64],
-            _epoch: Option<&Epoch>,
         ) -> ExternalLoads<S::Frame> {
             ExternalLoads::<S::Frame>::acceleration(self.accel)
         }
@@ -1018,12 +1239,10 @@ mod tests {
         }
         fn derivatives(
             &self,
-            _t: f64,
-            state: &S,
-            _aux: &[f64],
+            input: EffectorInput<'_, S>,
             _aux_rates: &mut [f64],
-            _epoch: Option<&Epoch>,
         ) -> ExternalLoads<F> {
+            let state = input.state;
             let a_body = FrameVec3::<Body>::from_raw(self.accel_body);
             let a_inertial = state.attitude_to_inertial().transform(&a_body);
             ExternalLoads {

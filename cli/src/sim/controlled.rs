@@ -18,14 +18,17 @@ use orts::setup::default_third_bodies;
 use crate::sim::core::spacecraft_dynamics_for;
 use core::ops::ControlFlow;
 use nalgebra::Vector3;
+use orts::boundary::{Boundaries, BoundaryWalk, HasBoundaries, Span, walk_to_target};
 use orts::group::IntegratorConfig;
 use orts::spacecraft::{
     MtqAssembly, ReactionWheelAssembly, SpacecraftDynamics, SpacecraftState, ThrusterAssembly,
     ThrusterAssemblyCore, ThrusterSpec,
 };
 use tobari::magnetic::igrf::Igrf;
-use utsuroi::AdvanceOutcome;
-use utsuroi::{Dop853, DormandPrince, IntegrationError, Integrator, Rk4, Segments};
+use utsuroi::{
+    Dop853, DormandPrince, IntegrationError, Integrator, Rk4, RootSearch, RootSlot, SegmentContext,
+    Segments,
+};
 
 use crate::config::{ControllerConfig, MtqConfig, ReactionWheelConfig, SensorChoice};
 use crate::satellite::SatelliteSpec;
@@ -559,68 +562,123 @@ where
     // still holds `t0` — and serve pauses on such an error and can resume from
     // there, propagating a state that belongs to a later instant.
     let mut state = sat.state.clone();
+
+    // The boundaries this satellite's effectors declare, and one guard each.
+    // Both live across the segments below, so that a boundary reported at one
+    // segment's end is not reported again at the next one's start.
+    let boundaries = sat.dynamics.boundaries();
+    let mut slots = vec![RootSlot::new(); boundaries.len()];
+    // TODO: the default 1 ms tolerance. It bounds how late a boundary is
+    // reported, and so how much momentum `settle_boundary` hands back in
+    // one go; a knob for it belongs beside the integrator's own
+    // tolerances in `IntegratorConfig`.
+    let search = RootSearch::default();
+
     for segment in Segments::new(&sat.dynamics, t0, t1).map_err(span)? {
         let t = segment.start();
         let segment_end = segment.end();
         let bound = segment.system();
 
-        // Each arm answers the same triple, so the commit rule below is
-        // written once. `stepper` is asked for its time before `into_state`
-        // consumes it: that is where an event stopped.
-        let (outcome, reached_t, next_state) = match integrator {
-            IntegratorConfig::Rk4 { dt } => {
-                // The stepper rather than `try_integrate`: the same walk, but
-                // it takes the event predicate. `integrate` panics on a bad
-                // step or a stalled clock, and this path returns `Result` so
-                // serve can send the client an Error down its graceful-halt
-                // path. A `dt` wider than the segment is not clamped — the
-                // last step of a segment lands on `segment_end` itself, which
-                // is what a segment ending at a switch of the right-hand side
-                // needs.
-                let mut stepper = Rk4.stepper(bound, state.clone(), t, *dt);
-                // As in the adaptive arms: a later segment starts from a state
-                // the check has already accepted, and `FixedStepper` documents
-                // that asking again about the same `(t, state)` can change what
-                // a stateful predicate answers.
-                if segment.is_continuation() {
-                    stepper = stepper.from_checked_state();
-                }
-                let outcome = stepper
-                    .advance_to(segment_end, |_, _| {}, event_check)
-                    .map_err(span)?;
-                (outcome, stepper.t(), stepper.into_state())
-            }
-            IntegratorConfig::Dp45 { dt, tolerances } => {
-                let mut stepper =
-                    DormandPrince.stepper(bound, state.clone(), t, *dt, tolerances.clone());
-                // A later segment starts from the state the previous one ended
-                // on, which the predicate has already accepted.
-                if segment.is_continuation() {
-                    stepper = stepper.from_checked_state();
-                }
-                let outcome = stepper
-                    .advance_to(segment_end, |_, _| {}, event_check)
-                    .map_err(span)?;
-                (outcome, stepper.t(), stepper.into_state())
-            }
-            IntegratorConfig::Dop853 { dt, tolerances } => {
-                let mut stepper = Dop853.stepper(bound, state.clone(), t, *dt, tolerances.clone());
-                if segment.is_continuation() {
-                    stepper = stepper.from_checked_state();
-                }
-                let outcome = stepper
-                    .advance_to(segment_end, |_, _| {}, event_check)
-                    .map_err(span)?;
-                (outcome, stepper.t(), stepper.into_state())
-            }
-        };
+        // A later segment starts from a state the check has already
+        // accepted, and the steppers document that asking again about the same
+        // `(t, state)` can change what a stateful predicate answers.
+        let started_checked = segment.is_continuation();
+        let segment_times = SegmentContext::new(t, segment_end);
+        let mut observe = |_: f64, _: &AugmentedState<SpacecraftState>| {};
+
+        // The walk rather than `try_integrate`: the same steps, but it takes
+        // the event predicate and stops at the boundaries the effectors
+        // declared. `integrate` panics on a bad step or a stalled clock, and
+        // this path returns `Result` so serve can send the client an Error
+        // down its graceful-halt path. A `dt` wider than the segment is not
+        // clamped — the last step of a segment lands on `segment_end` itself,
+        // which is what a segment ending at a switch of the right-hand side
+        // needs.
+        let (walk, reached_t, next_state) = match integrator {
+            IntegratorConfig::Rk4 { dt } => walk_to_target(
+                Boundaries {
+                    system: &sat.dynamics,
+                    declared: &boundaries,
+                    slots: &mut slots,
+                    search,
+                    segment: Some(&segment_times),
+                },
+                Span {
+                    from: t,
+                    to: segment_end,
+                    start_is_checked: started_checked,
+                },
+                state.clone(),
+                |state, t, checked| {
+                    let stepper = Rk4.stepper(bound, state, t, *dt);
+                    if checked {
+                        stepper.from_checked_state()
+                    } else {
+                        stepper
+                    }
+                },
+                &mut observe,
+                event_check,
+            ),
+            IntegratorConfig::Dp45 { dt, tolerances } => walk_to_target(
+                Boundaries {
+                    system: &sat.dynamics,
+                    declared: &boundaries,
+                    slots: &mut slots,
+                    search,
+                    segment: Some(&segment_times),
+                },
+                Span {
+                    from: t,
+                    to: segment_end,
+                    start_is_checked: started_checked,
+                },
+                state.clone(),
+                |state, t, checked| {
+                    let stepper = DormandPrince.stepper(bound, state, t, *dt, tolerances.clone());
+                    if checked {
+                        stepper.from_checked_state()
+                    } else {
+                        stepper
+                    }
+                },
+                &mut observe,
+                event_check,
+            ),
+            IntegratorConfig::Dop853 { dt, tolerances } => walk_to_target(
+                Boundaries {
+                    system: &sat.dynamics,
+                    declared: &boundaries,
+                    slots: &mut slots,
+                    search,
+                    segment: Some(&segment_times),
+                },
+                Span {
+                    from: t,
+                    to: segment_end,
+                    start_is_checked: started_checked,
+                },
+                state.clone(),
+                |state, t, checked| {
+                    let stepper = Dop853.stepper(bound, state, t, *dt, tolerances.clone());
+                    if checked {
+                        stepper.from_checked_state()
+                    } else {
+                        stepper
+                    }
+                },
+                &mut observe,
+                event_check,
+            ),
+        }
+        .map_err(span)?;
 
         state = next_state;
 
         // An event is a normal early stop: commit where it stopped and leave
         // the remaining segments alone. No propagation to the segment end, and
         // no rounding of the time.
-        if let AdvanceOutcome::Event { reason } = outcome {
+        if let BoundaryWalk::Stopped(reason) = walk {
             sat.state = state;
             sat.state_t = reached_t;
             let term = Termination {
@@ -1015,6 +1073,67 @@ mod tests {
             Vector3::new(-1.0, 0.0, 0.0),
         );
         (sat, ticks)
+    }
+
+    /// The controlled path walks with the boundaries the effectors declare, so
+    /// a wheel that saturates inside a span is held at its limit and what it
+    /// stops taking stays with the spacecraft. Stepping without that handling
+    /// would carry the wheel past its limit for the rest of the span, and the
+    /// body would keep the reaction.
+    #[test]
+    fn a_saturating_wheel_is_held_on_the_controlled_path() {
+        use orts::spacecraft::{ReactionWheelAssembly, RwCommand};
+
+        const MAX_MOMENTUM: f64 = 0.53;
+        const MAX_TORQUE: f64 = 0.1;
+        const BODY_INERTIA: f64 = 10.0;
+
+        // The z wheel takes a torque about z alone, and reaches its limit at
+        // t = 5.3 s: between the ticks of the 0.25 s grid below.
+        let (mut sat, _ticks) = satellite_with(1000.0, 0.0);
+        let mut rw = ReactionWheelAssembly::three_axis(0.01, MAX_MOMENTUM, MAX_TORQUE);
+        rw.command = RwCommand::Torques(rw.core().allocate(&Vector3::new(0.0, 0.0, MAX_TORQUE)));
+        sat.dynamics = std::mem::replace(
+            &mut sat.dynamics,
+            orts::spacecraft::SpacecraftDynamics::new(
+                arika::body::KnownBody::Earth.properties().mu,
+                Box::new(orts::orbital::gravity::PointMass) as Box<dyn GravityField>,
+                nalgebra::Matrix3::identity(),
+            ),
+        )
+        .with_effector(rw);
+        sat.state = sat
+            .dynamics
+            .initial_augmented_state(sat.state.plant.clone());
+
+        // Body-frame total: the body's own plus the three wheels', which spin
+        // about x, y and z. With an isotropic inertia and one axis driven, the
+        // vector itself is constant.
+        let total = |state: &AugmentedState<SpacecraftState>| {
+            BODY_INERTIA * state.plant.attitude.angular_velocity
+                + Vector3::new(state.aux[0], state.aux[1], state.aux[2])
+        };
+        let started_with = total(&sat.state);
+
+        propagate_controlled(
+            &mut sat,
+            0.0,
+            20.0,
+            &IntegratorConfig::Rk4 { dt: 0.25 },
+            &|_: f64, _: &AugmentedState<SpacecraftState>| ControlFlow::Continue(()),
+        )
+        .expect("the span is finite");
+
+        assert!(
+            (sat.state.aux[2] + MAX_MOMENTUM).abs() < 1e-6,
+            "the z wheel ends held at its lower bound, not at {}",
+            sat.state.aux[2]
+        );
+        let lost = (total(&sat.state) - started_with).magnitude();
+        assert!(
+            lost < 1e-9,
+            "{lost:.3e} N·m·s of the body-frame total went missing"
+        );
     }
 
     #[test]
