@@ -104,16 +104,16 @@ pub enum IntegrationError {
     /// the tolerance, so the crossing was never pinned down. A value that
     /// changes sign without being continuous in `t` does this.
     RootNotLocalized { t: f64, bracket: f64 },
-    /// A state still on a boundary's crossed side after every mode it holds
-    /// could have moved once.
+    /// A [`RootEvent`](crate::RootEvent) whose value is still on its crossed
+    /// side after the caller was given every chance to move the state off it.
     ///
-    /// Settling a boundary is what puts the state on it, so one pass per mode
-    /// is enough for a state to reach one that agrees with itself. A caller
-    /// whose settle leaves the state past the boundary — or moves it past
-    /// another — never reaches one, and a walk cannot go on: the search finds a
-    /// crossing from a change of sign, and a value already on the crossed side
-    /// has none left to give.
-    BoundaryUnsettled { t: f64, boundary: usize },
+    /// The search locates a crossing from a change of sign, so a value that
+    /// already starts on the crossed side has none left to give. A caller
+    /// driving a [`RootSet`](crate::RootSet) itself is the one that moves the
+    /// state off such an event before walking on; where its own handling
+    /// leaves the value where it was — or puts it past another event — there
+    /// is nothing left for the walk to search for.
+    RootStillCrossed { t: f64, event: usize },
     /// A step of width `h` taken while narrowing a bracket failed the adaptive
     /// solver's own error control, with error norm `err`.
     ///
@@ -162,7 +162,7 @@ impl IntegrationError {
             | Self::NonFiniteRootValue { t, .. }
             | Self::RootNotLocalized { t, .. }
             | Self::RootTrialRejected { t, .. }
-            | Self::BoundaryUnsettled { t, .. } => Some(*t),
+            | Self::RootStillCrossed { t, .. } => Some(*t),
             Self::InvalidTimeSpan { t0, .. } => Some(*t0),
             Self::InvalidStepSize { .. }
             | Self::InvalidTolerances { .. }
@@ -282,12 +282,12 @@ impl core::fmt::Display for IntegrationError {
                      still {bracket} wide"
                 )
             }
-            Self::BoundaryUnsettled { t, boundary } => {
+            Self::RootStillCrossed { t, event } => {
                 write!(
                     f,
-                    "boundary {boundary} is still on its crossed side at t = {t} after \
-                     every mode could have moved once: settling it is what puts the \
-                     state on it"
+                    "root event {event} is still on its crossed side at t = {t} after \
+                     the caller was given every chance to move the state off it, so \
+                     there is no change of sign left to search for"
                 )
             }
             Self::RootSlotCount { events, slots } => {

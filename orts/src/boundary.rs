@@ -362,7 +362,7 @@ where
 /// a state to reach a mode that agrees with itself. Where it is not, the state
 /// is still past a boundary the search cannot find — a value already on the
 /// crossed side has no change of sign left to give — so this reports
-/// [`IntegrationError::BoundaryUnsettled`] rather than walking on with it.
+/// [`IntegrationError::RootStillCrossed`] rather than walking on with it.
 fn settle_what_is_already_past<Sys: HasBoundaries>(
     system: &Sys,
     boundaries: &[DeclaredBoundary],
@@ -412,9 +412,9 @@ fn settle_what_is_already_past<Sys: HasBoundaries>(
                 && system.boundary_value(declared, segment, t, state) < 0.0
         })
         .unwrap_or(0);
-    Err(IntegrationError::BoundaryUnsettled {
+    Err(IntegrationError::RootStillCrossed {
         t,
-        boundary: unsettled,
+        event: unsettled,
     })
 }
 
@@ -743,7 +743,7 @@ mod tests {
         assert!(
             matches!(
                 outcome,
-                Err(IntegrationError::BoundaryUnsettled { t, boundary: 0 }) if t == 0.0
+                Err(IntegrationError::RootStillCrossed { t, event: 0 }) if t == 0.0
             ),
             "the walk reports which boundary it is still past, at the time it gave up"
         );
