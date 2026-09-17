@@ -89,42 +89,53 @@ fn has_explicit_sim_args(sim: &SimArgs) -> bool {
 /// documented `serve --dt 1 --output-interval 10` served forever without ever
 /// starting a simulation.
 fn reject_unhonored_sim_args(sim: &SimArgs, written: &WrittenFlags) -> Result<(), CmdError> {
-    // First the flags no `serve` path reads: an orbit on the command line
-    // makes the rest honorable, and these stay dropped.
+    // Both sets in one error: a caller fixing one flag should not have to run
+    // the command again to hear about the next.
+    let mut problems: Vec<String> = Vec::new();
+
+    // The flags no `serve` path reads. An orbit on the command line makes the
+    // rest honorable; these stay dropped.
     let always: Vec<&str> = ALWAYS_UNHONORED
         .iter()
         .map(|(_, flag)| *flag)
         .filter(|flag| written.was_written(flag))
         .collect();
     if !always.is_empty() {
-        return Err(CmdError::usage(format!(
+        problems.push(format!(
             "serve cannot honor {}: it runs plugins through a deterministic cache \
              (`WasmPluginCache::new()`) and never resolves a mode. Drop the flag, or run \
              the simulation with `orts run`, which does.",
             always.join(", ")
-        )));
+        ));
     }
+
     let unhonored = unhonored_sim_args(sim, written);
-    if unhonored.is_empty() {
-        return Ok(());
+    if !unhonored.is_empty() {
+        let flags = unhonored.join(", ");
+        match &sim.config {
+            // A config describes the whole simulation, so the command line has
+            // nowhere to put these. (The `--plugin-backend` and
+            // `--plugin-backend-threshold` flags do get applied on top, which
+            // is why they are not on the list.)
+            Some(path) => problems.push(format!(
+                "{flags} cannot be honored: `serve --config {path}` builds its simulation from \
+                 the config alone. Set the value in the config instead, or drop the flag."
+            )),
+            None if !sim.has_orbit_args() => problems.push(format!(
+                "{flags} cannot be honored: without an orbit or a config, `serve` comes up idle \
+                 and takes its simulation parameters from the client's start_simulation. Give \
+                 it a simulation to apply them to (--sat altitude=400, --tle, --omm, \
+                 --norad-id, or --config), or drop them."
+            )),
+            // The CLI-orbit path: `SimParams::from_sim_args` reads all of them.
+            None => {}
+        }
     }
-    let flags = unhonored.join(", ");
-    match &sim.config {
-        // A config describes the whole simulation, so the command line has
-        // nowhere to put these. (The `--plugin-backend*` flags do get applied
-        // on top, which is why they are not on the list.)
-        Some(path) => Err(CmdError::usage(format!(
-            "{flags} cannot be honored: `serve --config {path}` builds its simulation from the \
-             config alone. Set the value in the config instead, or drop the flag."
-        ))),
-        None if !sim.has_orbit_args() => Err(CmdError::usage(format!(
-            "{flags} cannot be honored: without an orbit or a config, `serve` comes up idle and \
-             takes its simulation parameters from the client's start_simulation. Give it a \
-             simulation to apply them to (--sat altitude=400, --tle, --omm, --norad-id, or \
-             --config), or drop them."
-        ))),
-        // The CLI-orbit path: `SimParams::from_sim_args` reads all of them.
-        None => Ok(()),
+
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(CmdError::usage(problems.join("\n")))
     }
 }
 
@@ -558,6 +569,30 @@ mod tests {
         assert!(
             !elsewhere.was_written("--atol"),
             "run's flags are read by run: {elsewhere:?}"
+        );
+    }
+
+    /// Every dropped flag is named at once, so fixing one does not uncover the
+    /// next on the following run.
+    #[test]
+    fn both_kinds_of_dropped_flag_are_named_together() {
+        let msg = refusal(&[
+            "--config",
+            "mission.toml",
+            "--plugin-backend-async-mode",
+            "deterministic",
+            "--atol",
+            "1e-10",
+        ])
+        .expect("must be refused");
+        assert!(
+            msg.contains("--plugin-backend-async-mode"),
+            "the mode is named: {msg}"
+        );
+        assert!(msg.contains("--atol"), "and so is the tuning flag: {msg}");
+        assert!(
+            msg.contains("mission.toml"),
+            "with the config that leaves no room for it: {msg}"
         );
     }
 
