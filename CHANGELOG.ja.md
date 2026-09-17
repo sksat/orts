@@ -109,6 +109,14 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   variant で表される。([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
+- **BREAKING**: reaction wheel は角運動量を保持できなければならない。`Rw::new` と
+  `Rw::with_max_speed` は上限 0 で panic する。従来は `new` が 0 を受け付け、
+  `with_max_speed` は速度上限 0 で正の上限を 0 まで絞っていた。容量 0 のホイールは何も蓄えられず、
+  下流のどこも意味を付けられない — 開始 state の検査は境界から `MOMENTUM_TOLERANCE` 以内を
+  受け付けるので、上限 0 では 5e-13 N·m·s までが通り、保持モードだと本来捕まえる境界 event も
+  無効になる。結果として、自分の上限が「蓄えられない」と言っている角運動量を持ったまま区間を
+  走る。`PropellantPool::new` が dry mass に課しているのと同じ要求である
+  ([#529](https://github.com/sksat/orts/issues/529))
 - **BREAKING**: `orts::boundary::walk_to_target` の戻り値が utsuroi の
   `IntegrationError` から `BoundaryWalkError` になった。系の拘束が受け付けない state は
   積分の失敗ではないので分けている: `BoundaryWalkError::StartRejected { t, error }` が

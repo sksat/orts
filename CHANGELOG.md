@@ -138,6 +138,17 @@ section is subdivided by package.
   ([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
+- **BREAKING**: a reaction wheel has to be able to hold momentum: `Rw::new` and
+  `Rw::with_max_speed` panic on a momentum limit of zero, where `new` used to
+  accept one and `with_max_speed` used to produce one by tightening a positive
+  limit with a speed limit of zero. Such a wheel stores nothing and nothing
+  downstream can make sense of it — the start-state check accepts a momentum
+  within `MOMENTUM_TOLERANCE` of the bound, which for a limit of zero is any
+  momentum up to 5e-13 N·m·s, and a mode already holding the wheel turns off the
+  boundary that would have caught it, so the wheel runs the span holding
+  momentum its own limit says it cannot store. The same requirement
+  `PropellantPool::new` makes of a dry mass.
+  ([#529](https://github.com/sksat/orts/issues/529))
 - **BREAKING**: `orts::boundary::walk_to_target` returns `BoundaryWalkError`
   rather than utsuroi's `IntegrationError`, because a state a system's own
   constraints refuse is not an integration failure:
