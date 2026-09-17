@@ -134,6 +134,15 @@ pub trait HasBoundaries: DynamicalSystem {
     ///
     /// Not asked during a walk: a boundary search steps past a constraint on
     /// purpose, and its trial states are meant to be evaluable there.
+    ///
+    /// The question is about a state a caller committed to, so a system has to
+    /// accept every state its own propagation produces — the walk asks again at
+    /// each segment's start, and a system refusing what it just integrated
+    /// would be contradicting itself. A caller that moves a state between
+    /// walks, as [`Scheduler`](crate::group::Scheduler) does with its KDK
+    /// kicks, is asked about the state it moved *to* before the next walk runs;
+    /// what it holds between calls is checked at the next entry, not at the
+    /// moment it was written.
     fn validate_boundary_walk_start(
         &self,
         _t: f64,
