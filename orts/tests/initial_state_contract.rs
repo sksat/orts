@@ -377,6 +377,123 @@ fn a_scheduler_drops_only_the_satellite_that_refused() {
     );
 }
 
+/// A system whose start state is about how fast it is going, so that a
+/// velocity kick can be what makes the state unusable.
+struct SpeedLimit;
+
+const SPEED_LIMIT: f64 = 5.0;
+
+impl utsuroi::DynamicalSystem for SpeedLimit {
+    type State = OrbitalState;
+    fn derivatives(&self, _t: f64, state: &OrbitalState) -> OrbitalState {
+        OrbitalState::from_derivative(*state.velocity(), Vector3::zeros())
+    }
+}
+
+impl HasBoundaries for SpeedLimit {
+    fn validate_boundary_walk_start(
+        &self,
+        _t: f64,
+        state: &OrbitalState,
+    ) -> Result<(), StartStateError> {
+        let speed = state.velocity().magnitude();
+        if speed > SPEED_LIMIT {
+            return Err(StartStateError::new(format!(
+                "{speed} is over the speed limit of {SPEED_LIMIT}"
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// A one-sided shove, for the pair that is kicked rather than integrated.
+struct Shove(f64);
+
+impl orts::group::coupled::InterSatelliteForce for Shove {
+    fn name(&self) -> &str {
+        "shove"
+    }
+
+    fn acceleration_pair(
+        &self,
+        _ctx: &orts::group::coupled::PairContext<'_>,
+    ) -> (Vector3<f64>, Vector3<f64>) {
+        (Vector3::new(self.0, 0.0, 0.0), Vector3::zeros())
+    }
+}
+
+/// The scheduler's KDK path kicks velocities before it drifts, so what can
+/// start has to be asked again after the kick.
+///
+/// The case needs three satellites: the kicked one shares a coupled component
+/// with a second, and takes its kick from a third. Asking only before the kick
+/// leaves the refusal to the composite walk, which integrates nothing — and
+/// the component's other member would then sit at this interval's start while
+/// the scheduler's clock moves to its end.
+#[test]
+fn a_satellite_a_kick_pushes_past_its_limit_is_dropped_before_the_drift() {
+    use orts::group::RegimeConfig;
+    use orts::group::scheduler::Scheduler;
+
+    const SPEED: f64 = 1.0;
+    // Half of the interval at this acceleration is 10, twice the limit.
+    const SHOVE: f64 = 20.0 / DT;
+
+    let at =
+        |x: f64, vx: f64| OrbitalState::new(Vector3::new(x, 0.0, 0.0), Vector3::new(vx, 0.0, 0.0));
+    let mut sched: Scheduler<SpeedLimit> = Scheduler::new(
+        RegimeConfig {
+            couple_enter: 10.0,
+            couple_exit: 20.0,
+            sync_enter: 20.0,
+            sync_exit: 30.0,
+            sync_interval: DT,
+            min_dwell_time: 0.0,
+        },
+        IntegratorConfig::Rk4 { dt: DT },
+    )
+    .add_satellite("kicked", at(FLOOR_X, 0.0), SpeedLimit)
+    .add_satellite("peer", at(FLOOR_X + 1.0, SPEED), SpeedLimit)
+    .add_satellite("kicker", at(FLOOR_X + 1e6, 0.0), SpeedLimit)
+    .add_interaction_fixed(
+        "kicked",
+        "peer",
+        orts::group::PairRegime::Coupled,
+        std::sync::Arc::new(NoForce),
+    )
+    .add_interaction_fixed(
+        "kicked",
+        "kicker",
+        orts::group::PairRegime::Synchronized,
+        std::sync::Arc::new(Shove(SHOVE)),
+    );
+
+    let outcome = sched.propagate_to(DT).expect("the scheduler answers");
+    let refused = outcome
+        .terminations
+        .iter()
+        .find(|t| t.satellite_id == orts::group::SatId::from("kicked"))
+        .expect("the kicked satellite is over its limit once the half-kick lands");
+    assert!(
+        refused.reason.contains("over the speed limit"),
+        "the reason is the speed the kick gave it, not {}",
+        refused.reason
+    );
+
+    let x_of = |id: &str| {
+        sched
+            .satellite_state(&orts::group::SatId::from(id))
+            .expect("the satellite is still in the fleet")
+            .position()
+            .x
+    };
+    assert!(
+        (x_of("peer") - (FLOOR_X + 1.0 + DT * SPEED)).abs() < 1e-9,
+        "its coupled peer flies the interval it was asked for, not {}",
+        x_of("peer")
+    );
+}
+
 /// The lengths come first, because every other path indexes the same offsets.
 #[test]
 fn a_state_whose_vectors_do_not_match_the_registry_is_refused() {

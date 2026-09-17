@@ -239,10 +239,16 @@ fn determine_grouping(
     pair_regimes: &[(usize, usize, PairRegime)],
     active: &[bool],
 ) -> Grouping {
-    // Collect Coupled edges for connected components
+    // Collect Coupled edges for connected components.
+    //
+    // Only between satellites that are still being propagated, as the kick
+    // pairs and the independent set below are: an edge to one that is done
+    // would keep it in a component, and a component is walked as one composite
+    // state — so it would be integrated again, and the satellite it was coupled
+    // to would go no further than the walk that refused it.
     let coupled_edges: Vec<(usize, usize)> = pair_regimes
         .iter()
-        .filter(|&&(_, _, regime)| regime == PairRegime::Coupled)
+        .filter(|&&(i, j, regime)| regime == PairRegime::Coupled && active[i] && active[j])
         .map(|&(i, j, _)| (i, j))
         .collect();
 
@@ -550,8 +556,24 @@ where
                 // 2. Half-kick (apply dt_sync/2 velocity impulse)
                 self.apply_kicks(&grouping.kick_pairs, &accels_start, dt_sync / 2.0);
 
+                // A kick changes velocities, so a constraint that reads one
+                // answers differently now than it did above. Asking again
+                // before the drift keeps the refusal out of the composite walk,
+                // which is what would otherwise leave a component's other
+                // members at this interval's start.
+                let kicked_into_refusal = self.drop_satellites_that_cannot_start();
+                let after_kick = (!kicked_into_refusal.is_empty()).then(|| {
+                    all_terminations.extend(kicked_into_refusal);
+                    // Without the ones just dropped: a component held together
+                    // by a satellite that cannot start is not one component any
+                    // more. The kick bookkeeping keeps the pairs it started
+                    // with, as it does for a satellite an event stops mid-drift.
+                    self.build_grouping()
+                });
+
                 // 3. Drift: propagate ephemeral groups
-                let terms = self.propagate_groups_to(sync_target, &grouping)?;
+                let terms = self
+                    .propagate_groups_to(sync_target, after_kick.as_ref().unwrap_or(&grouping))?;
 
                 // 4. Check for events
                 let has_events = !terms.is_empty();
