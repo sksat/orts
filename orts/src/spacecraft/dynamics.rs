@@ -97,8 +97,9 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
         effector: impl StateEffector<SpacecraftState<F>> + 'static,
     ) -> Self {
         let dim = effector.state_dim();
-        self.registry
-            .register(effector.name(), dim, effector.mode_dim());
+        let mode_dim = effector.mode_dim();
+        crate::effector::check_declared_modes(effector.name(), &effector.boundaries(), mode_dim);
+        self.registry.register(effector.name(), dim, mode_dim);
         self.effectors.push(Box::new(effector));
         self
     }
@@ -632,6 +633,59 @@ mod tests {
         };
 
         dynamics.derivatives(0.0, &state);
+    }
+
+    /// An effector that declares a boundary on a mode it never registered.
+    ///
+    /// The index selects a mode inside the effector's own block, so one past
+    /// `mode_dim` reads a mode that is not there — and a missing mode reads as
+    /// `Free`, which is what makes a bound look reachable. Settling it would
+    /// then write into the next effector's block, or past the end of the
+    /// vector. Registration refuses it, where the declaration is already fixed
+    /// and the panic can name the effector.
+    #[test]
+    #[should_panic(expected = "declared a boundary on mode 1, but registered 1 mode(s)")]
+    fn a_boundary_on_a_mode_the_effector_never_registered_is_refused() {
+        use crate::effector::{BoundaryKind, EffectorBoundary, EffectorInput, StateEffector};
+        use crate::model::{ExternalLoads, HasFrame};
+
+        struct OneModeTwoBoundaries;
+
+        impl<S: HasFrame + Send + Sync> StateEffector<S> for OneModeTwoBoundaries {
+            fn name(&self) -> &str {
+                "one_mode_two_boundaries"
+            }
+            fn state_dim(&self) -> usize {
+                1
+            }
+            fn mode_dim(&self) -> usize {
+                1
+            }
+            fn boundaries(&self) -> Vec<EffectorBoundary> {
+                vec![
+                    EffectorBoundary {
+                        kind: BoundaryKind::ReachedUpper { index: 0 },
+                        boundary_tolerance: 0.0,
+                    },
+                    // One past the block it registered.
+                    EffectorBoundary {
+                        kind: BoundaryKind::ReachedUpper { index: 1 },
+                        boundary_tolerance: 0.0,
+                    },
+                ]
+            }
+            fn derivatives(
+                &self,
+                _input: EffectorInput<'_, S>,
+                _aux_rates: &mut [f64],
+            ) -> ExternalLoads<S::Frame> {
+                ExternalLoads::zeros()
+            }
+        }
+
+        let dynamics: SpacecraftDynamics<PointMass> =
+            SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0));
+        let _ = dynamics.with_effector(OneModeTwoBoundaries);
     }
 
     /// Wrap a plant state as an augmented state with no effectors.

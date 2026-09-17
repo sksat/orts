@@ -266,6 +266,30 @@ pub struct BoundaryExchange {
     pub angular_momentum_body: Vec3<Body>,
 }
 
+/// Check that every boundary an effector declares names a mode it registered.
+///
+/// [`BoundaryKind::index`] selects the mode inside the effector's own block, so
+/// an index past its `mode_dim` reads a mode that is not there — the boundary
+/// then looks active, because a missing mode reads as
+/// [`ConstraintMode::Free`], and settling it writes into the *next* effector's
+/// block or past the end of the vector. Registration is where this is caught:
+/// `boundaries` takes only `&self`, so what an effector declares cannot change
+/// afterwards.
+///
+/// # Panics
+///
+/// If any declared boundary's index is not below `mode_dim`.
+pub(crate) fn check_declared_modes(name: &str, boundaries: &[EffectorBoundary], mode_dim: usize) {
+    for boundary in boundaries {
+        let index = boundary.kind.index();
+        assert!(
+            index < mode_dim,
+            "effector {name} declared a boundary on mode {index}, but registered \
+             {mode_dim} mode(s): a boundary can only name a mode of its own effector"
+        );
+    }
+}
+
 /// A boundary an effector's state can reach, for the propagation to stop at.
 ///
 /// The value it is found in is the effector's to compute

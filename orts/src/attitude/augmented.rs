@@ -96,8 +96,9 @@ impl AugmentedAttitudeSystem {
         effector: impl StateEffector<DecoupledContext> + 'static,
     ) -> Self {
         let dim = effector.state_dim();
-        self.registry
-            .register(effector.name(), dim, effector.mode_dim());
+        let mode_dim = effector.mode_dim();
+        crate::effector::check_declared_modes(effector.name(), &effector.boundaries(), mode_dim);
+        self.registry.register(effector.name(), dim, mode_dim);
         self.effectors.push(Box::new(effector));
         self
     }

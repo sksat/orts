@@ -129,11 +129,13 @@ section is subdivided by package.
   ([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
-- **BREAKING**: a `StateEffector` is evaluated with one `EffectorInput` rather
-  than four arguments, and it declares the boundaries its own state can reach.
+- **BREAKING**: a `StateEffector` reads its evaluation context from one
+  `EffectorInput`, and it declares the boundaries its own state can reach.
   `derivatives(&self, input, aux_rates)` replaces
-  `derivatives(&self, t, state, aux, aux_rates, epoch)`; the input also carries
-  the state's discrete `modes` and the segment being stepped. The new trait
+  `derivatives(&self, t, state, aux, aux_rates, epoch)`: `t`, `state`, `aux`
+  and `epoch` are the input's fields, the buffer it writes its rates into stays
+  the second argument, and the input also carries the state's discrete `modes`
+  and the segment being stepped. The new trait
   methods — `boundaries`, `boundary_value`, `settle_boundary`, `mode_dim` — are
   all defaulted, so an effector with no boundaries declares none. Alongside
   them, `AugmentedState` gains a `modes: Vec<ConstraintMode>` field that a

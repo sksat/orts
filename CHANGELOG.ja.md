@@ -102,11 +102,12 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   variant で表される。([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
-- **BREAKING**: `StateEffector` の評価を引数 4 つから `EffectorInput` 1 つに変え、
+- **BREAKING**: `StateEffector` の評価コンテキストを `EffectorInput` 1 つにまとめ、
   effector が自分の state が到達しうる境界を申告するようにした。
   `derivatives(&self, t, state, aux, aux_rates, epoch)` は
-  `derivatives(&self, input, aux_rates)` になり、input は state の離散モード
-  (`modes`) と積分中の segment も運ぶ。追加した trait method
+  `derivatives(&self, input, aux_rates)` になる: `t` / `state` / `aux` / `epoch` は
+  input のフィールドになり、rates を書き込む buffer は第 2 引数に残る。input は
+  state の離散モード (`modes`) と積分中の segment も運ぶ。追加した trait method
   (`boundaries` / `boundary_value` / `settle_boundary` / `mode_dim`) は全て既定
   実装を持つので、境界のない effector は何も申告しない。併せて `AugmentedState` に
   `modes: Vec<ConstraintMode>` が増え (struct literal は名前を書く必要がある)、

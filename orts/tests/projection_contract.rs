@@ -412,6 +412,144 @@ fn a_step_coarser_than_the_motor_lag_misses_a_brief_excursion() {
     );
 }
 
+/// A held wheel comes off its bound when the motor turns around, and the walk
+/// is what hands the mode back.
+///
+/// Holding is half of a one-sided constraint; a wheel that never releases is an
+/// actuator lost for the rest of the run. Two motors exercise the two ways the
+/// release can arrive. One reverses at once, so the release margin is already
+/// negative when the walk starts and settling before the first step is what
+/// catches it. The other has a 50 ms lag, so its realized torque passes zero
+/// inside a step and the search is what locates it.
+#[test]
+fn a_held_wheel_is_released_when_the_motor_turns_around() {
+    // Driven onto its bound first, by the same walk the cases above measure.
+    let (_, started_with, _, held) = walk(IntegratorConfig::Rk4 { dt: DT });
+    assert_eq!(
+        held.modes[2],
+        ConstraintMode::Lower,
+        "the z wheel ends this walk held on its lower bound"
+    );
+
+    // The command reverses: a torque about +z drove the wheel to its lower
+    // bound, so one about -z drives it back inward.
+    let inward = || {
+        let inertia = Matrix3::from_diagonal(&Vector3::repeat(BODY_INERTIA));
+        let mut rw = ReactionWheelAssembly::three_axis(WHEEL_INERTIA, MAX_MOMENTUM, MAX_TORQUE);
+        rw.command = RwCommand::Torques(rw.core().allocate(&Vector3::new(0.0, 0.0, -MAX_TORQUE)));
+        SpacecraftDynamics::new(arika::earth::MU, PointMass, inertia).with_effector(rw)
+    };
+
+    let mut group: IndependentGroup<Dynamics> =
+        IndependentGroup::new(IntegratorConfig::Rk4 { dt: DT }).add_satellite(
+            "sat",
+            held.clone(),
+            inward(),
+        );
+    let mut released_at = None;
+    group
+        .propagate_to_with(5.0, |_id, t, state| {
+            if released_at.is_none() && state.modes[2] == ConstraintMode::Free {
+                released_at = Some(t);
+            }
+        })
+        .expect("the walk succeeds");
+    let after = group
+        .satellites()
+        .next()
+        .expect("one satellite")
+        .state
+        .clone();
+
+    assert_eq!(
+        released_at,
+        Some(0.0),
+        "an instant reversal is already past its release when the walk starts, \
+         so settling before the first step is what reports it"
+    );
+    assert_eq!(
+        after.modes[2],
+        ConstraintMode::Free,
+        "and the wheel runs free for the rest of the walk"
+    );
+    // Five seconds of MAX_TORQUE inward from the bound.
+    let expected = -MAX_MOMENTUM + MAX_TORQUE * 5.0;
+    assert!(
+        (after.aux[2] - expected).abs() < 1e-9,
+        "the momentum moves inward at the commanded rate: {} against {expected}",
+        after.aux[2]
+    );
+    let lost = (total_momentum(&after) - started_with).magnitude();
+    assert!(
+        lost < 1e-9,
+        "and the total is still conserved across hold and release: {lost:.3e} N·m·s"
+    );
+
+    // A motor that takes 50 ms to reverse: the realized torque still pushes
+    // outward when the command arrives, so the release is a crossing inside a
+    // step rather than a state the walk starts past.
+    const LIMIT: f64 = 1.0;
+    const T_M: f64 = 0.05;
+    let lagged = || {
+        let inertia = Matrix3::from_diagonal(&Vector3::repeat(BODY_INERTIA));
+        let wheel = orts::spacecraft::reaction_wheel::Rw::new(
+            Vector3::z(),
+            WHEEL_INERTIA,
+            LIMIT,
+            MAX_TORQUE,
+        )
+        .with_motor_lag(T_M);
+        let mut rw = ReactionWheelAssembly::new(vec![wheel]);
+        rw.command = RwCommand::Torques(vec![MAX_TORQUE]);
+        SpacecraftDynamics::new(arika::earth::MU, PointMass, inertia).with_effector(rw)
+    };
+    let system = lagged();
+    let mut initial = system.initial_augmented_state(initial_plant());
+    // On the lower bound, with the motor still driving it outward.
+    initial.aux[0] = -LIMIT;
+    initial.aux[1] = -MAX_TORQUE;
+    initial.modes[0] = ConstraintMode::Lower;
+
+    // A 50 ms motor asks for a step to match: RK4 on this lag is unstable past
+    // about 28 ms, and a quarter-second step leaves the realized torque pinned
+    // to its own bound instead of following the command.
+    let mut group: IndependentGroup<Dynamics> =
+        IndependentGroup::new(IntegratorConfig::Rk4 { dt: 0.01 }).add_satellite(
+            "sat",
+            initial,
+            lagged(),
+        );
+    let mut released_at = None;
+    group
+        .propagate_to_with(1.0, |_id, t, state| {
+            if released_at.is_none() && state.modes[0] == ConstraintMode::Free {
+                released_at = Some(t);
+            }
+        })
+        .expect("the walk succeeds");
+    let released_at = released_at.expect("the lagged motor releases the wheel");
+    // The realized torque decays from -MAX_TORQUE toward +MAX_TORQUE with a
+    // 50 ms time constant, so it passes zero at t_m * ln 2 = 34.7 ms.
+    let analytic = T_M * 2.0_f64.ln();
+    assert!(
+        (released_at - analytic).abs() < 1e-3,
+        "the release is located where the realized torque turns around: \
+         {released_at} against {analytic}"
+    );
+    let after = group
+        .satellites()
+        .next()
+        .expect("one satellite")
+        .state
+        .clone();
+    assert_eq!(after.modes[0], ConstraintMode::Free);
+    assert!(
+        after.aux[0] > -LIMIT,
+        "and the wheel has moved inward off the bound, to {}",
+        after.aux[0]
+    );
+}
+
 /// A state can arrive a hair past a boundary — a caller restoring a state it
 /// saved, a command applied between walks — and however small the overshoot,
 /// the search cannot find it: the margin is already negative and only goes
