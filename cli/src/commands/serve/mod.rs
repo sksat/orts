@@ -20,8 +20,6 @@ use axum::routing::get;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc};
 
-use clap::Parser;
-
 use crate::cli::SimArgs;
 use crate::commands::CmdError;
 use crate::sim::params::SimParams;
@@ -55,7 +53,7 @@ pub fn run_server(sim: &SimArgs, port: u16, stream_stdio: Option<&str>) -> Resul
     // Sim args nothing will read are a usage error, in the same spirit as the
     // config `[[command]]` rejection below: the server would otherwise come
     // up having silently dropped every one of them.
-    reject_unhonored_sim_args(sim)?;
+    reject_unhonored_sim_args(sim, &WrittenFlags::from_this_process())?;
     let rt = tokio::runtime::Runtime::new()
         .map_err(|e| CmdError::failure(format!("creating the tokio runtime: {e}")))?;
     rt.block_on(async_server(sim, port, stdio_key))
@@ -90,8 +88,8 @@ fn has_explicit_sim_args(sim: &SimArgs) -> bool {
 /// `SimParams::from_config`. Both used to drop every flag in silence — the
 /// documented `serve --dt 1 --output-interval 10` served forever without ever
 /// starting a simulation.
-fn reject_unhonored_sim_args(sim: &SimArgs) -> Result<(), CmdError> {
-    let unhonored = unhonored_sim_args(sim);
+fn reject_unhonored_sim_args(sim: &SimArgs, written: &WrittenFlags) -> Result<(), CmdError> {
+    let unhonored = unhonored_sim_args(sim, written);
     if unhonored.is_empty() {
         return Ok(());
     }
@@ -122,79 +120,112 @@ fn reject_unhonored_sim_args(sim: &SimArgs) -> Result<(), CmdError> {
 /// applies them to every `SimParams` the manager builds, whoever started the
 /// simulation.
 ///
-/// Presence is decided by comparing against what the flag-less command line
-/// would mean rather than by asking whether the flag appeared (that needs the
-/// `ArgMatches` this layer never sees). The question is whether dropping the
-/// value changes anything: `--dt 10` asks for the default, `--dt 1` does not,
-/// and `--output-interval` equal to `dt` asks for the fallback that
-/// `from_sim_args` would have picked anyway. The blind spot is a flag written
-/// with its default value alongside a `--config` that sets a different one;
-/// silence there is the pre-existing behavior, not a new one.
-fn unhonored_sim_args(sim: &SimArgs) -> Vec<&'static str> {
-    let default = SimArgs::try_parse_from(["orts"])
-        .expect("every SimArgs field is optional or has a default");
-    // `from_sim_args`: output_interval falls back to dt, stream_interval to
-    // output_interval.
-    let output_interval = sim.output_interval.unwrap_or(sim.dt);
-    // `SimParams::from_sim_args` clamps the stream interval into
-    // `[min(dt, output_interval), output_interval]`, so a written value outside
-    // that range resolves to the same interval a bare command line would give.
-    // Comparing the written value would refuse `serve --stream-interval 20`
-    // (bare defaults clamp both to 10), which changes nothing when dropped.
-    //
-    // `f64::clamp` panics on a `NaN` bound, and clap takes `NaN` for these
-    // flags: measured, `serve --output-interval NaN --stream-interval 1`
-    // panicked here with "min > max, or either was NaN". A non-finite interval
-    // is named as written, which is what the caller has to fix anyway — and
-    // `validate_sim_args` refuses it a moment later.
-    let clamp_stream = |v: f64| {
-        let low = sim.dt.min(output_interval);
-        if !low.is_finite() || !output_interval.is_finite() {
-            return v;
+/// A flag counts because it was written, not because its value differs from the
+/// default. This check only runs where nothing reads these values at all — a
+/// `--config` builds them with `SimParams::from_config`, and an idle server
+/// takes them from the client's `start_simulation` — so whatever was written
+/// is dropped, default-valued or not. Comparing values missed exactly that:
+/// `serve --config cfg.toml --atol 1e-10` writes the default, read as absent,
+/// and the config's `atol` ran without a word.
+/// Which tuning flags the caller wrote, whatever value they wrote.
+///
+/// A comparison against the default cannot answer that question: `serve --atol
+/// 1e-10` writes the default, so the value is the same as a bare command
+/// line's and the flag reads as absent. With a config supplying a different
+/// `atol`, the config's value is what runs — and the guard that exists to say
+/// so stayed quiet.
+///
+/// The flags carrying an `Option` need none of this: their `None` already
+/// means the caller left them out.
+#[derive(Debug, Default)]
+struct WrittenFlags(Vec<&'static str>);
+
+impl WrittenFlags {
+    /// The flags on this process's own command line.
+    ///
+    /// The arguments are parsed a second time, because the first parse happens
+    /// inside `parse_with_license_notice` and does not hand back the matches
+    /// that carry each value's source. A second parse of an argv the same
+    /// command already accepted does not fail; where it somehow does, nothing
+    /// is reported as written and the value comparison below still answers, as
+    /// it did before this existed.
+    fn from_this_process() -> Self {
+        use clap::CommandFactory;
+
+        let Ok(matches) = crate::cli::Cli::command().try_get_matches_from(std::env::args_os())
+        else {
+            return Self::default();
+        };
+        match matches.subcommand_matches("serve") {
+            Some(serve) => Self::from_matches(serve),
+            None => Self::default(),
         }
-        v.clamp(low, output_interval)
-    };
-    [
-        ("--body", sim.body != default.body),
-        ("--dt", sim.dt != default.dt),
-        (
-            "--output-interval",
-            sim.output_interval.is_some_and(|v| v != sim.dt),
-        ),
-        (
-            "--stream-interval",
-            sim.stream_interval.is_some_and(|v| {
-                // A value `validate_time_params` refuses is honored nowhere, so
-                // it is named whatever the clamp would make of it. Measured
-                // before this: `serve --stream-interval inf` clamped to the
-                // default, read as inert, and started the idle server without a
-                // word, while `--dt inf` was named.
-                !v.is_finite() || v <= 0.0 || clamp_stream(v) != output_interval
-            }),
-        ),
+    }
+
+    /// The flags written in one set of matches, whose ids are the field names
+    /// `SimArgs` derives them from.
+    fn from_matches(matches: &clap::ArgMatches) -> Self {
+        let written = VALUE_FLAGS
+            .iter()
+            .filter(|(id, _)| {
+                matches!(
+                    matches.value_source(id),
+                    Some(clap::parser::ValueSource::CommandLine)
+                )
+            })
+            .map(|(_, flag)| *flag)
+            .collect();
+        Self(written)
+    }
+
+    fn was_written(&self, flag: &str) -> bool {
+        self.0.contains(&flag)
+    }
+}
+
+/// The flags whose value has a default, paired with the id `SimArgs` gives it.
+///
+/// Every one of them used to be read as absent when its value happened to
+/// equal the default.
+const VALUE_FLAGS: [(&str, &str); 9] = [
+    ("body", "--body"),
+    ("dt", "--dt"),
+    ("integrator", "--integrator"),
+    ("atol", "--atol"),
+    ("rtol", "--rtol"),
+    ("root_t_tolerance", "--root-t-tolerance"),
+    ("atmosphere", "--atmosphere"),
+    ("f107", "--f107"),
+    ("ap", "--ap"),
+];
+
+fn unhonored_sim_args(sim: &SimArgs, written: &WrittenFlags) -> Vec<&'static str> {
+    let optional = [
+        ("--output-interval", sim.output_interval.is_some()),
+        ("--stream-interval", sim.stream_interval.is_some()),
         ("--epoch", sim.epoch.is_some()),
         ("--duration", sim.duration.is_some()),
-        ("--integrator", sim.integrator != default.integrator),
-        ("--atol", sim.atol != default.atol),
-        ("--rtol", sim.rtol != default.rtol),
-        (
-            "--root-t-tolerance",
-            sim.root_t_tolerance != default.root_t_tolerance,
-        ),
-        ("--atmosphere", sim.atmosphere != default.atmosphere),
-        ("--f107", sim.f107 != default.f107),
-        ("--ap", sim.ap != default.ap),
         ("--space-weather", sim.space_weather.is_some()),
         ("--gravity-field", sim.gravity_field.is_some()),
         ("--gravity-degree", sim.gravity_degree.is_some()),
         ("--gravity-order", sim.gravity_order.is_some()),
         ("--eop", sim.eop.is_some()),
         ("--frame", sim.frame_arg.is_some()),
-    ]
-    .into_iter()
-    .filter_map(|(flag, differs)| differs.then_some(flag))
-    .collect()
+    ];
+    // In a fixed order, so the message reads the same way twice.
+    let mut named: Vec<&'static str> = Vec::new();
+    for (flag, given) in VALUE_FLAGS
+        .iter()
+        .map(|(_, flag)| (*flag, written.was_written(flag)))
+        .chain(optional)
+    {
+        if given {
+            named.push(flag);
+        }
+    }
+    named
 }
+
 /// The largest control message `/ws` will read.
 ///
 /// Every inbound frame is parsed into a `serde_json::Value` so the keys nothing
@@ -424,7 +455,8 @@ async fn async_server(
 #[cfg(test)]
 mod tests {
     use super::{
-        has_explicit_sim_args, parse_stream_stdio, reject_unhonored_sim_args, unhonored_sim_args,
+        WrittenFlags, has_explicit_sim_args, parse_stream_stdio, reject_unhonored_sim_args,
+        unhonored_sim_args,
     };
     use crate::cli::SimArgs;
     use clap::Parser;
@@ -435,9 +467,21 @@ mod tests {
         SimArgs::try_parse_from(argv).expect("valid args")
     }
 
+    /// What the same argv wrote, which is what the guard asks about.
+    fn written(extra: &[&str]) -> WrittenFlags {
+        use clap::CommandFactory;
+
+        let mut argv = vec!["orts"];
+        argv.extend_from_slice(extra);
+        let matches = SimArgs::command()
+            .try_get_matches_from(argv)
+            .expect("valid args");
+        WrittenFlags::from_matches(&matches)
+    }
+
     /// The refusal message, or `None` when the args are accepted.
     fn refusal(extra: &[&str]) -> Option<String> {
-        reject_unhonored_sim_args(&args(extra))
+        reject_unhonored_sim_args(&args(extra), &written(extra))
             .err()
             .map(|e| e.to_string())
     }
@@ -458,87 +502,171 @@ mod tests {
         assert!(parse_stream_stdio("sat0/a/b").is_err());
     }
 
+    /// A flag written with the value it already had is still a flag the server
+    /// will not honor.
+    ///
+    /// This is what a comparison against the default cannot see: with a config
+    /// supplying a different `atol`, `serve --config cfg.toml --atol 1e-10`
+    /// runs the config's value while the command line asked for something, and
+    /// the guard used to stay quiet about it.
+    #[test]
+    fn a_flag_written_with_the_default_value_is_still_named() {
+        let default = SimArgs::try_parse_from(["orts"]).expect("valid args");
+        for (flag, value) in [
+            ("--dt", format!("{}", default.dt)),
+            ("--atol", format!("{}", default.atol)),
+            ("--rtol", format!("{}", default.rtol)),
+            ("--body", default.body.clone()),
+            ("--f107", format!("{}", default.f107)),
+            ("--ap", format!("{}", default.ap)),
+            (
+                "--root-t-tolerance",
+                format!("{}", default.root_t_tolerance),
+            ),
+        ] {
+            let extra = [flag, value.as_str()];
+            let named = unhonored_sim_args(&args(&extra), &written(&extra));
+            assert!(
+                named.contains(&flag),
+                "{flag} {value} is named although it matches the default: {named:?}"
+            );
+        }
+    }
+
     #[test]
     fn bare_serve_has_no_sim_args_to_honor() {
         let sim = args(&[]);
         assert!(!has_explicit_sim_args(&sim));
-        assert!(unhonored_sim_args(&sim).is_empty());
+        assert!(unhonored_sim_args(&sim, &written(&[])).is_empty());
         assert!(refusal(&[]).is_none());
     }
 
     #[test]
     fn tuning_args_are_reported_by_flag_name() {
-        assert_eq!(unhonored_sim_args(&args(&["--dt", "1"])), vec!["--dt"]);
         assert_eq!(
-            unhonored_sim_args(&args(&["--dt", "1", "--output-interval", "10"])),
+            unhonored_sim_args(&args(&["--dt", "1"]), &written(&["--dt", "1"])),
+            vec!["--dt"]
+        );
+        assert_eq!(
+            unhonored_sim_args(
+                &args(&["--dt", "1", "--output-interval", "10"]),
+                &written(&["--dt", "1", "--output-interval", "10"])
+            ),
             vec!["--dt", "--output-interval"]
         );
         assert_eq!(
-            unhonored_sim_args(&args(&["--body", "mars"])),
+            unhonored_sim_args(&args(&["--body", "mars"]), &written(&["--body", "mars"])),
             vec!["--body"]
         );
         assert_eq!(
-            unhonored_sim_args(&args(&["--epoch", "2024-03-20T12:00:00Z"])),
+            unhonored_sim_args(
+                &args(&["--epoch", "2024-03-20T12:00:00Z"]),
+                &written(&["--epoch", "2024-03-20T12:00:00Z"])
+            ),
             vec!["--epoch"]
         );
         assert_eq!(
-            unhonored_sim_args(&args(&["--duration", "600"])),
+            unhonored_sim_args(
+                &args(&["--duration", "600"]),
+                &written(&["--duration", "600"])
+            ),
             vec!["--duration"]
         );
         // Every path that walks with boundaries takes the search from
         // `SimParams`, and `serve` idle or with `--config` never builds one
         // from these args: a written tolerance would be dropped in silence.
         assert_eq!(
-            unhonored_sim_args(&args(&["--root-t-tolerance", "1e-6"])),
+            unhonored_sim_args(
+                &args(&["--root-t-tolerance", "1e-6"]),
+                &written(&["--root-t-tolerance", "1e-6"])
+            ),
             vec!["--root-t-tolerance"]
         );
         assert_eq!(
-            unhonored_sim_args(&args(&["--integrator", "rk4", "--rtol", "1e-6"])),
+            unhonored_sim_args(
+                &args(&["--integrator", "rk4", "--rtol", "1e-6"]),
+                &written(&["--integrator", "rk4", "--rtol", "1e-6"])
+            ),
             vec!["--integrator", "--rtol"]
         );
         assert_eq!(
-            unhonored_sim_args(&args(&["--atmosphere", "nrlmsise00", "--f107", "200"])),
+            unhonored_sim_args(
+                &args(&["--atmosphere", "nrlmsise00", "--f107", "200"]),
+                &written(&["--atmosphere", "nrlmsise00", "--f107", "200"])
+            ),
             vec!["--atmosphere", "--f107"]
         );
         assert_eq!(
-            unhonored_sim_args(&args(&["--space-weather", "auto"])),
+            unhonored_sim_args(
+                &args(&["--space-weather", "auto"]),
+                &written(&["--space-weather", "auto"])
+            ),
             vec!["--space-weather"]
         );
     }
 
-    /// A value equal to what the flag-less command line would mean changes
-    /// nothing, so there is nothing to refuse — the point of the check is
-    /// dropped *meaning*, not dropped text. For the two interval flags that
-    /// baseline is their documented fallback, not a literal default value.
+    /// A value equal to what a bare command line would mean is still named.
+    ///
+    /// This expectation is the opposite of the one this test carried before
+    /// ([#522](https://github.com/sksat/orts/issues/522)): the old rule asked
+    /// whether dropping the value changes anything, and answered from the
+    /// value. But the check only runs where nothing reads these values — a
+    /// `--config` builds them itself, an idle server takes them from its
+    /// client — so what was written is dropped either way, and with a config
+    /// setting something else the two are not even the same number.
     #[test]
-    fn args_that_ask_for_the_default_are_not_reported() {
-        assert!(unhonored_sim_args(&args(&["--dt", "10"])).is_empty());
-        assert!(unhonored_sim_args(&args(&["--body", "earth"])).is_empty());
-        assert!(unhonored_sim_args(&args(&["--integrator", "dp45"])).is_empty());
-        // output_interval falls back to dt, stream_interval to output_interval.
-        assert!(unhonored_sim_args(&args(&["--output-interval", "10"])).is_empty());
-        assert!(
-            unhonored_sim_args(&args(&[
-                "--output-interval",
-                "30",
-                "--stream-interval",
-                "30"
-            ])) == vec!["--output-interval"]
+    fn a_value_equal_to_the_default_is_still_named() {
+        assert_eq!(
+            unhonored_sim_args(&args(&["--dt", "10"]), &written(&["--dt", "10"])),
+            vec!["--dt"]
         );
-        assert!(unhonored_sim_args(&args(&["--stream-interval", "10"])).is_empty());
+        assert_eq!(
+            unhonored_sim_args(&args(&["--body", "earth"]), &written(&["--body", "earth"])),
+            vec!["--body"]
+        );
+        assert_eq!(
+            unhonored_sim_args(
+                &args(&["--integrator", "dp45"]),
+                &written(&["--integrator", "dp45"])
+            ),
+            vec!["--integrator"]
+        );
+        // The fallback `output_interval` would have taken is `dt`, and writing
+        // it is still writing it.
+        assert_eq!(
+            unhonored_sim_args(
+                &args(&["--output-interval", "10"]),
+                &written(&["--output-interval", "10"])
+            ),
+            vec!["--output-interval"]
+        );
+        assert_eq!(
+            unhonored_sim_args(
+                &args(&["--output-interval", "30", "--stream-interval", "30"]),
+                &written(&["--output-interval", "30", "--stream-interval", "30"])
+            ),
+            vec!["--output-interval", "--stream-interval"]
+        );
     }
-
     /// The plugin backend flags survive into a client-started simulation via
     /// `PluginBackendOverrides`, so they must not be refused.
     #[test]
     fn plugin_backend_args_are_honored_when_idle() {
         assert!(
-            unhonored_sim_args(&args(&[
-                "--plugin-backend",
-                "sync",
-                "--plugin-backend-threshold",
-                "64",
-            ]))
+            unhonored_sim_args(
+                &args(&[
+                    "--plugin-backend",
+                    "sync",
+                    "--plugin-backend-threshold",
+                    "64",
+                ]),
+                &written(&[
+                    "--plugin-backend",
+                    "sync",
+                    "--plugin-backend-threshold",
+                    "64",
+                ])
+            )
             .is_empty()
         );
         assert!(
@@ -585,58 +713,39 @@ mod tests {
         );
     }
 
-    /// A stream interval the clamp erases is accepted; one it keeps is refused.
+    /// A stream interval is named whatever the clamp would make of it.
     ///
     /// `SimParams::from_sim_args` clamps the value into
     /// `[min(dt, output_interval), output_interval]`, so `--stream-interval 20`
     /// against the bare defaults resolves to the same 10 s a bare command line
-    /// gives. Refusing it would fail a command that changes nothing.
+    /// gives — but `from_sim_args` is not what runs here, and the value written
+    /// reaches nothing. This too is the opposite of what the test asserted
+    /// before ([#522](https://github.com/sksat/orts/issues/522)).
     #[test]
-    fn a_stream_interval_the_clamp_erases_is_accepted() {
-        // Bare defaults: dt = output_interval = 10, so the clamp range is
-        // [10, 10] and any written value lands on 10.
+    fn a_stream_interval_is_named_whatever_the_clamp_would_do() {
+        for value in ["20", "0.001", "5"] {
+            let extra = ["--stream-interval", value];
+            assert_eq!(
+                unhonored_sim_args(&args(&extra), &written(&extra)),
+                vec!["--stream-interval"],
+                "--stream-interval {value} is written, so it is named"
+            );
+        }
+        // And alongside an output interval, both are named.
+        let extra = [
+            "--dt",
+            "1",
+            "--output-interval",
+            "10",
+            "--stream-interval",
+            "5",
+        ];
         assert_eq!(
-            unhonored_sim_args(&args(&["--stream-interval", "20"])),
-            Vec::<&str>::new()
-        );
-        assert_eq!(
-            unhonored_sim_args(&args(&["--stream-interval", "0.001"])),
-            Vec::<&str>::new()
-        );
-
-        // With room between dt and output_interval, a value inside the range
-        // survives the clamp and does change the resolved parameters.
-        assert_eq!(
-            unhonored_sim_args(&args(&[
-                "--dt",
-                "1",
-                "--output-interval",
-                "10",
-                "--stream-interval",
-                "5"
-            ])),
+            unhonored_sim_args(&args(&extra), &written(&extra)),
             vec!["--dt", "--output-interval", "--stream-interval"]
-        );
-        // Above the range it is clamped back to `output_interval`, which is
-        // where a bare `--dt 1 --output-interval 10` would leave it anyway.
-        assert_eq!(
-            unhonored_sim_args(&args(&[
-                "--dt",
-                "1",
-                "--output-interval",
-                "10",
-                "--stream-interval",
-                "50"
-            ])),
-            vec!["--dt", "--output-interval"]
         );
     }
 
-    /// A non-finite interval is named, not a panic.
-    ///
-    /// `f64::clamp` panics on a `NaN` bound, and clap takes `NaN` for these
-    /// flags. Measured before the guard: `serve --output-interval NaN
-    /// --stream-interval 1` panicked with "min > max, or either was NaN".
     #[test]
     fn a_non_finite_interval_is_named_rather_than_panicking() {
         for extra in [
@@ -649,7 +758,7 @@ mod tests {
             vec!["--stream-interval", "inf"],
             vec!["--stream-interval", "0"],
         ] {
-            let named = unhonored_sim_args(&args(&extra));
+            let named = unhonored_sim_args(&args(&extra), &written(&extra));
             assert!(
                 named.contains(&"--stream-interval"),
                 "{extra:?} names the stream interval: {named:?}"
@@ -668,14 +777,24 @@ mod tests {
     #[test]
     fn gravity_field_flags_are_named_when_unhonored() {
         assert_eq!(
-            unhonored_sim_args(&args(&[
-                "--gravity-field",
-                "x.gfc",
-                "--gravity-degree",
-                "8",
-                "--gravity-order",
-                "8",
-            ])),
+            unhonored_sim_args(
+                &args(&[
+                    "--gravity-field",
+                    "x.gfc",
+                    "--gravity-degree",
+                    "8",
+                    "--gravity-order",
+                    "8",
+                ]),
+                &written(&[
+                    "--gravity-field",
+                    "x.gfc",
+                    "--gravity-degree",
+                    "8",
+                    "--gravity-order",
+                    "8",
+                ])
+            ),
             vec!["--gravity-field", "--gravity-degree", "--gravity-order"]
         );
         let err = refusal(&["--config", "mission.toml", "--gravity-field", "x.gfc"])
@@ -688,7 +807,10 @@ mod tests {
     #[test]
     fn serve_names_the_frame_flag_when_it_cannot_honor_it() {
         assert_eq!(
-            unhonored_sim_args(&args(&["--frame", "gcrs", "--eop", "zero"])),
+            unhonored_sim_args(
+                &args(&["--frame", "gcrs", "--eop", "zero"]),
+                &written(&["--frame", "gcrs", "--eop", "zero"])
+            ),
             vec!["--eop", "--frame"]
         );
         let err = refusal(&["--config", "mission.toml", "--frame", "gcrs"])

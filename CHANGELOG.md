@@ -703,6 +703,17 @@ section is subdivided by package.
 
 ### `orts-cli` (Rust, crates.io, binary)
 
+#### Changed
+- **BREAKING**: `serve` names a tuning flag because it was written, not because
+  its value differs from the default. `serve --config mission.toml --atol 1e-10`
+  used to start in silence: the value equals the default, so the flag read as
+  absent, and the config's `atol` ran rather than what the command line asked
+  for. The check only runs where nothing reads these values — a `--config`
+  builds them with `SimParams::from_config`, an idle server takes them from its
+  client's `start_simulation` — so whatever was written is dropped. A command
+  that used to be accepted because its values matched the defaults is now
+  refused by name. ([#522](https://github.com/sksat/orts/issues/522))
+
 #### Added
 - `frame` / `--frame {simple-eci|gcrs}` and `eop` / `--eop {auto|PATH|zero}`:
   propagate `orts run`'s orbit-only path in `Gcrs` — the IAU 2006/2000A CIO
