@@ -1479,6 +1479,17 @@ section is subdivided by package.
   satellite-centred view always collapsed to LVLH. ([#111](https://github.com/sksat/orts/pull/111), [#90](https://github.com/sksat/orts/issues/90))
 
 #### Changed
+- **Breaking:** `SatelliteState` says which of three things a satellite states
+  about its orientation. `attitude` had no way to express "an orientation was
+  claimed and cannot be used", so a caller holding that fact had to pass values
+  the viewer happens to reject — NaN, or all zeros — a spelling that appears
+  nowhere in the public type. A quaternion and a refusal are exclusive by type:
+  `attitudeRefused: true` beside a `Quat` is an error, while `attitude:
+  undefined` sits either side. Passing `attitude` alone, including as
+  `Quat | undefined`, compiles unchanged. The scene resolves the state at the
+  boundary and carries it beside the positions, so a refusal is not encoded
+  into an `OrbitPoint`.
+  ([#479](https://github.com/sksat/orts/pull/479))
 - What a sample says about its orientation is resolved in one place.
   `resolveAttitude` answers `absent`, `refused` or `usable`, replacing a pair of
   predicates that six consumers combined — the structure behind six of the ten

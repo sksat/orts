@@ -554,6 +554,89 @@ test("the environment is scaled for the spacecraft that is drawn", async ({ page
     (refused as number) / (marker as number),
     "a refused attitude scales the scene for the marker it draws",
   ).toBeCloseTo(1, 6);
+
+  // The caller's own refusal reaches the same scale. It arrives by a different
+  // route — a state the caller supplies, rather than a quaternion the viewer
+  // judges — and the scale is derived separately from what gets drawn, so each
+  // route has to be measured where it lands.
+  await open(page, `sats=0:${SAT_A}&${centred}&name=ISS&attRefused=1`);
+  await arrowsAt(page, 0, ["nadir", "sun"]);
+  const refusedByCaller = await centralBodyDistance(page, "fixture-sat-0");
+  expect(
+    (refusedByCaller as number) / (marker as number),
+    "a caller's own refusal scales the scene for the marker too",
+  ).toBeCloseTo(1, 6);
+});
+
+/** Which visual this satellite's component selected, per the dev-only hook. */
+async function selectedVisual(page: Page, satId: string): Promise<string | null> {
+  return await page.evaluate(
+    (id) =>
+      (
+        window as unknown as { __debug_spacecraft_visual?: Map<string, string> }
+      ).__debug_spacecraft_visual?.get(id) ?? null,
+    satId,
+  );
+}
+
+test("a caller's own refusal suppresses the model, as a refused quaternion does", async ({
+  page,
+}) => {
+  // Two routes reach the same state. `att=0,0,0,0` is a quaternion the viewer
+  // refuses; `attRefused=1` is a caller that already knows — and that one
+  // carries no quaternion, so a consumer re-deriving the state from the sample
+  // reads "nothing claimed" and selects the registered model anyway.
+  //
+  // Measured on the visual the component selected rather than on the
+  // environment's scale: the amplification is derived separately from the same
+  // facts, so it agrees with the marker even when the model is the selection.
+  const centred = `centre=0&frame=localOrbital&epoch=${EPOCH}&arrows=sun,nadir`;
+
+  await open(page, `sats=0:${SAT_A}&${centred}&name=ISS&att=1,0,0,0`);
+  await arrowsAt(page, 0, ["nadir", "sun"]);
+  expect(await selectedVisual(page, "fixture-sat-0"), "a usable attitude draws the model").toBe(
+    "model",
+  );
+
+  await open(page, `sats=0:${SAT_A}&${centred}&name=ISS&att=0,0,0,0`);
+  await arrowsAt(page, 0, ["nadir", "sun"]);
+  expect(
+    await selectedVisual(page, "fixture-sat-0"),
+    "a quaternion the viewer refuses draws the marker",
+  ).toBe("marker");
+
+  await open(page, `sats=0:${SAT_A}&${centred}&name=ISS&attRefused=1`);
+  await arrowsAt(page, 0, ["nadir", "sun"]);
+  expect(
+    await selectedVisual(page, "fixture-sat-0"),
+    "and so does a caller that says its claim was refused",
+  ).toBe("marker");
+
+  // A refusal can be withdrawn: the next sample names a rotation the viewer can
+  // use, and the model comes back. The two states are exclusive, so supplying
+  // one has to clear the other — carrying the refusal alongside would keep the
+  // marker on screen for a satellite that is now saying where it points.
+  await page.evaluate(() => window.__fixture_set_attitude?.([1, 0, 0, 0]));
+  await expect
+    .poll(async () => await selectedVisual(page, "fixture-sat-0"), { timeout: 15000 })
+    .toBe("model");
+
+  // The satellite the view is centred on and the rest of the fleet are drawn by
+  // two separate calls, each handed the state on its own. With a second
+  // satellite present, the one that is not centred is the other call.
+  await open(page, `sats=0:${SAT_A};0:${SAT_B}&${centred}&name=ISS&att=1,0,0,0`);
+  await arrowsAt(page, 0, ["nadir", "sun"]);
+  expect(
+    await selectedVisual(page, "fixture-sat-1"),
+    "a usable attitude selects the model off-centre too",
+  ).toBe("model");
+
+  await open(page, `sats=0:${SAT_A};0:${SAT_B}&${centred}&name=ISS&attRefused=1`);
+  await arrowsAt(page, 0, ["nadir", "sun"]);
+  expect(
+    await selectedVisual(page, "fixture-sat-1"),
+    "and a refusal reaches the off-centre satellite as well",
+  ).toBe("marker");
 });
 
 test("a marker that keeps its cube gives up its rotation with the attitude", async ({ page }) => {

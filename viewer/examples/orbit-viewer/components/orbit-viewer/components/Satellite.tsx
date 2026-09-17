@@ -1,4 +1,4 @@
-import { resolveAttitude } from "../attitude.js";
+import { type AttitudeState, resolveAttitude } from "../attitude.js";
 import {
   displayPosition,
   displayQuaternion,
@@ -48,6 +48,15 @@ interface SatelliteProps {
    * a sphere). A GLTF model, when available, always takes precedence.
    */
   markerShape?: MarkerShape;
+  /**
+   * What this satellite says about its orientation, resolved by the caller.
+   *
+   * The sample's own components are read when this is absent. A caller that
+   * knows its claim was refused can only say so here: the sample has no
+   * spelling for a refusal, so re-deriving the state from it would read as
+   * "nothing claimed" and leave the registered model drawn.
+   */
+  attitude?: AttitudeState;
 }
 
 const DEFAULT_REF_FRAME: ReferenceFrame = {
@@ -71,6 +80,7 @@ export function Satellite({
   originPosition = null,
   lvlhAxes = null,
   markerShape,
+  attitude: suppliedAttitude,
 }: SatelliteProps) {
   // One display frame drives both the position and the attitude, so they can
   // never end up in different bases (the LVLH axis order and the ECEF rotation
@@ -95,7 +105,7 @@ export function Satellite({
   // back as the identity, so the scene would report an orientation nobody
   // measured. What cannot be normalised is reported as no attitude, which draws
   // the marker unrotated — the answer a satellite without attitude already gets.
-  const attitude = resolveAttitude(position);
+  const attitude = suppliedAttitude ?? resolveAttitude(position);
   const rawQuaternion: Quat | undefined =
     attitude.kind === "usable" ? attitude.quaternion : undefined;
   // Whether this sample claimed an orientation the viewer could not use. A model
