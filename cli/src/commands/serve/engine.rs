@@ -953,9 +953,9 @@ impl ServeEngine {
         self.pump_streams_inbound(streams)?;
 
         // Controlled satellites: step in dt_ctrl increments up to target_t.
-        // Into the engine's own queue: an error here halts the step, and
-        // whatever stopped before it still has to reach the client, which
-        // the next step that succeeds does.
+        // Into the engine's own queue: an error here halts the step, and what
+        // stopped before it is reported by `step_chunk`'s failure branch,
+        // since the serve layer pauses the run rather than stepping again.
         self.group.step_controlled_to(
             self.current_t,
             target_t,
