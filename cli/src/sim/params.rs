@@ -224,8 +224,9 @@ pub(crate) fn validate_element_set_body(
 /// orbit reset time. It also reaches the CSV header, the recording's
 /// `meta/sim/period` and the WebSocket `SatelliteInfo`.
 ///
-/// Measured: `orbit = { type = "circular", altitude = 1e103 }` is accepted by
-/// the config's own validation, `r0^3` overflows and the period is infinite.
+/// Measured before this check existed:
+/// `orbit = { type = "circular", altitude = 1e103 }` was accepted by the
+/// config's own validation, `r0^3` overflowed and the period was infinite.
 pub(crate) fn validate_derived_periods(satellites: &[SatelliteSpec]) -> Result<(), String> {
     for sat in satellites {
         ensure_usable_period(&sat.id, sat.period)?;
