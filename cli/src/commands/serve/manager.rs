@@ -364,38 +364,43 @@ struct Delivery {
 /// Send what a chunk produced, and say what is left to do.
 ///
 /// A chunk that failed partway hands back the samples and broadcasts its
-/// finished intervals produced, and those reach the clients that are connected
-/// here: the terminations first, then the samples, then the error and the
-/// paused status. Those samples are not paced — a fault that does not clear
-/// means no later chunk, so anything held back for the wall clock would never
-/// be sent — and the caller has nothing left to pace.
+/// finished intervals produced, and both reach the clients that are connected
+/// here, because the caller pauses the run instead of pacing them out over the
+/// next chunks.
+///
+/// The samples go out before the terminations on that path. The channel holds
+/// 256 messages and drops the oldest once a receiver falls behind, so a chunk
+/// with more samples than that would push a termination sent first out of a
+/// slow client's buffer. A dropped sample is recoverable — the history holds
+/// it, and a client can query the range — while a termination reaches a
+/// running client only here.
 fn deliver_chunk(
     tx: &broadcast::Sender<String>,
     chunk: Result<StepOutput, ChunkFailure>,
 ) -> Delivery {
-    let (output, failed) = match chunk {
-        Ok(output) => (output, None),
-        Err(failure) => (failure.partial, Some(failure.error)),
-    };
-
-    // Immediate (non-paced) broadcasts: `simulation_terminated` events.
-    for msg in &output.broadcasts {
-        let _ = tx.send(msg.clone());
-    }
-
-    let Some(error) = failed else {
-        return Delivery {
-            to_pace: output.states,
-            halted: false,
-        };
+    let (partial, error) = match chunk {
+        Ok(output) => {
+            // Immediate (non-paced) broadcasts: `simulation_terminated` events.
+            for msg in &output.broadcasts {
+                let _ = tx.send(msg.clone());
+            }
+            return Delivery {
+                to_pace: output.states,
+                halted: false,
+            };
+        }
+        Err(ChunkFailure { error, partial }) => (partial, error),
     };
 
     // Controller fault (bad command / guest trap / stream-io overrun) or
     // integration error. The sim state can no longer be trusted, so the caller
     // pauses instead of integrating forward, and the clients are told.
     log::error!("simulation halted: {error}");
-    for out in &output.states {
+    for out in &partial.states {
         let _ = tx.send(state_json(out));
+    }
+    for msg in &partial.broadcasts {
+        let _ = tx.send(msg.clone());
     }
     let msg = serde_json::to_string(&WsMessage::Error {
         message: format!("simulation halted: {error}"),
@@ -708,9 +713,9 @@ mod tests {
         )
     }
 
-    /// A chunk that failed partway reaches the connected clients: the
-    /// termination its finished intervals produced, then their samples, then
-    /// the error and the paused status.
+    /// A chunk that failed partway reaches the connected clients: the samples
+    /// its finished intervals produced, then the termination, then the error
+    /// and the paused status.
     ///
     /// The samples are sent here rather than handed back, because a fault that
     /// does not clear means no later chunk to pace them with.
@@ -739,16 +744,16 @@ mod tests {
         assert_eq!(
             sent.len(),
             4,
-            "termination, sample, error, status: {sent:?}"
+            "sample, termination, error, status: {sent:?}"
         );
         assert!(
-            sent[0].contains("simulation_terminated"),
-            "the termination goes out first: {}",
+            sent[0].contains("\"state\""),
+            "the sample the finished interval produced goes out first: {}",
             sent[0]
         );
         assert!(
-            sent[1].contains("\"state\""),
-            "then the sample the finished interval produced: {}",
+            sent[1].contains("simulation_terminated"),
+            "then the termination: {}",
             sent[1]
         );
         assert!(
@@ -760,6 +765,58 @@ mod tests {
             sent[3].contains("paused"),
             "and the status the client's UI reads: {}",
             sent[3]
+        );
+    }
+
+    /// More samples than the channel holds must not cost the termination.
+    ///
+    /// `tokio::sync::broadcast` drops the oldest message once a receiver falls
+    /// behind, and `serve` runs a 256-message channel
+    /// (`super::super::run_server`). A fleet large enough to fill it in one
+    /// chunk would lose whatever was sent first, which is why the samples go
+    /// before the termination.
+    #[test]
+    fn a_termination_survives_more_samples_than_the_channel_holds() {
+        const CAPACITY: usize = 256;
+
+        let (tx, mut rx) = broadcast::channel(CAPACITY);
+        let states: Vec<crate::sim::core::HistoryState> =
+            (0..CAPACITY + 50).map(|i| a_sample(i as f64)).collect();
+        let delivery = deliver_chunk(
+            &tx,
+            Err(ChunkFailure {
+                error: "guest trap".to_string(),
+                partial: StepOutput {
+                    states,
+                    broadcasts: vec![r#"{"type":"simulation_terminated","t":9.0}"#.to_string()],
+                },
+            }),
+        );
+        assert!(delivery.halted);
+
+        // The receiver never drained, so the oldest messages are gone: what is
+        // left has to still carry the termination, the error and the status.
+        let mut kept = Vec::new();
+        loop {
+            match rx.try_recv() {
+                Ok(msg) => kept.push(msg),
+                Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
+                Err(_) => break,
+            }
+        }
+        assert!(
+            kept.iter().any(|m| m.contains("simulation_terminated")),
+            "the termination was evicted by the samples ({} messages kept)",
+            kept.len()
+        );
+        assert!(
+            kept.iter().any(|m| m.contains("simulation halted")),
+            "and so was the error ({} messages kept)",
+            kept.len()
+        );
+        assert!(
+            kept.last().is_some_and(|m| m.contains("paused")),
+            "the status is the last thing the clients hear"
         );
     }
 
