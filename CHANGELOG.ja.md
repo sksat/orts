@@ -868,6 +868,14 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   キーがある場合 (TLE の行と `altitude` では `altitude` が捨てられていた) も拒否する。config の
   `orbit = { type = ... }` と同じく、1 つの衛星は 1 つの軌道を持つ。`orts run --help` の `--sat` の説明に全部の
   キーを載せた ([#558](https://github.com/sksat/orts/issues/558))
+- 導出した軌道周期が overflow するほど大きい軌道が受け付けられ、無限になった周期をモードごとに
+  別の意味で読んでいた。周期は導出値 (円軌道なら `2 pi sqrt(r0^3 / mu)`、TLE/OMM なら mean motion)
+  で、`--duration` がなければ衛星の終了時刻になる。`orbit = { type = "circular", altitude = 1e103 }`
+  は受け付けられて `r0^3` が overflow するので、orbit-only と spacecraft の経路では「終わらない」、
+  controlled の経路では「次に長い周期で終わる」(実測: 500 km の衛星と並べると 5676.98 s、巨大軌道の
+  1000 分の 1 も回らない)、1 機だけなら「従来どおり 3600 s 走る」になっていた。simulation parameters
+  を組む時点で拒否するようにしてモードの答えを揃え、config の検証も円軌道の周期を導出するので
+  `orts config validate` でも拒否される ([#492](https://github.com/sksat/orts/issues/492))。
 - 飽和した reaction wheel が角運動量を失う問題 (上の `orts` を参照) は
   `mode = "controlled"` の経路 — `orts run --controller` と `orts serve` — でも
   起きていた。この経路は `advance_to` で刻んでおり、止まる境界を持っていなかった。
