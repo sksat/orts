@@ -608,31 +608,27 @@ where
                 // 4. Record what the drift ended
                 all_terminations.extend(terms);
 
-                // 5. The closing kick, over the pairs that still have both
-                // endpoints. A pair one endpoint left mid-drift is dropped:
-                // its two states belong to different instants, so an
-                // acceleration read at the interval's end would mix the
-                // survivor's position there with its partner's where that
-                // partner stopped, and only one side would receive it. The
-                // opening kick the survivor already took stays, as the drift a
-                // component's survivors already flew does.
+                // 5. The closing kick, over the pairs whose two states belong
+                // to the interval's end. A pair one endpoint left part-way
+                // through is dropped: an acceleration read at the interval's
+                // end would mix the survivor's position there with its
+                // partner's where that partner stopped, and only one side
+                // would receive it. The opening kick the survivor already took
+                // stays, as the drift a component's survivors already flew
+                // does. An endpoint whose own computation ended exactly at the
+                // interval's end is a state at that instant like any other, so
+                // its pair is kicked — `apply_kicks` leaves the ended
+                // satellite's own state where it was handed back.
                 let pairs: Vec<KickPair> = flown
                     .kick_pairs
                     .iter()
                     .copied()
                     .filter(|kp| {
-                        !self.satellites[kp.sat_i].terminated
-                            && !self.satellites[kp.sat_j].terminated
-                    })
-                    .collect();
-                debug_assert!(
-                    pairs.iter().all(|kp| {
                         [kp.sat_i, kp.sat_j].iter().all(|&index| {
                             (self.satellites[index].state_t - sync_target).abs() < 1e-9
                         })
-                    }),
-                    "a kicked pair's endpoints must both have reached {sync_target}"
-                );
+                    })
+                    .collect();
                 let accels_end = self.compute_kick_accels(&pairs, sync_target);
                 self.apply_kicks(&pairs, &accels_end, dt_sync / 2.0);
 
@@ -3108,6 +3104,66 @@ mod tests {
         assert!(
             times.iter().all(|&t| t < 101.0),
             "nothing is evaluated once one endpoint has stopped: {times:?}"
+        );
+    }
+
+    /// An endpoint whose computation ends exactly at the interval's end still
+    /// closes that interval's kick for its partner.
+    ///
+    /// Both states belong to the same instant there, so an acceleration read
+    /// at the interval's end mixes nothing. Dropping the pair would leave the
+    /// survivor's velocity short by `a * dt_sync / 2`.
+    #[test]
+    fn a_partner_that_ends_at_the_interval_end_still_closes_the_kick() {
+        const ACCEL: f64 = 0.02;
+        const SPEED: f64 = 0.5;
+        const IV: f64 = 60.0; // default_config()'s sync_interval
+
+        let a0 = OrbitalState::new(Vector3::zeros(), Vector3::new(0.0, SPEED, 0.0));
+        // Reaches x = 60 exactly at t = 60, the interval's end.
+        let b0 = OrbitalState::new(Vector3::new(0.0, 100.0, 0.0), Vector3::new(1.0, 0.0, 0.0));
+        let pull = Arc::new(ConstantPull {
+            accel: Vector3::new(0.0, ACCEL, 0.0),
+        });
+
+        let mut sched: Scheduler<FreeParticle> =
+            Scheduler::new(default_config(), IntegratorConfig::Rk4 { dt: 1.0 })
+                .with_event_checker(|_t, state: &OrbitalState| {
+                    if state.position().x >= IV {
+                        ControlFlow::Break("on the line".to_string())
+                    } else {
+                        ControlFlow::Continue(())
+                    }
+                })
+                .add_satellite("a", a0, FreeParticle)
+                .add_satellite("b", b0, FreeParticle)
+                .add_interaction_fixed("a", "b", PairRegime::Synchronized, pull);
+
+        let outcome = sched.propagate_to(IV).expect("propagation");
+
+        let stopped: Vec<(SatId, f64)> = outcome
+            .terminations
+            .iter()
+            .map(|t| (t.satellite_id.clone(), t.t))
+            .collect();
+        assert_eq!(stopped.len(), 1, "only \"b\" reaches the line: {stopped:?}");
+        assert_eq!(stopped[0].0, SatId::from("b"));
+        assert!(
+            (stopped[0].1 - IV).abs() < 1e-9,
+            "it ends exactly at the interval's end: {stopped:?}"
+        );
+
+        let a = sched.satellite_state(&SatId::from("a")).expect("a");
+        assert!(
+            (a.velocity().y - (SPEED + ACCEL * IV)).abs() < 1e-12,
+            "both halves of the interval's kick land: {} where {} is v + a t",
+            a.velocity().y,
+            SPEED + ACCEL * IV
+        );
+        assert!(
+            (a.position().y - (SPEED * IV + 0.5 * ACCEL * IV * IV)).abs() < 1e-9,
+            "and the position is the closed form: {}",
+            a.position().y
         );
     }
 }
