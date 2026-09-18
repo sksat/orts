@@ -1098,6 +1098,10 @@ impl ServeEngine {
 
         let sat_index = self.metas.len();
         let spec = satellite.to_satellite_spec(sat_index, self.params.body, self.params.mu);
+        // The rules a built spec answers to, the controlled add path's included
+        // (#492): the derived period is this satellite's orbit reset time here,
+        // and an orbit large enough overflows it.
+        crate::sim::mode::validate_satellite_spec(&spec)?;
         // Sensors / actuators only act through a control loop; say so instead
         // of accepting them into an orbit-only fleet unnoticed.
         for w in unhonored_config_warnings(std::slice::from_ref(&spec), SimMode::OrbitOnly) {
@@ -1690,6 +1694,25 @@ orbit = { type = "circular", altitude = 50 }
             second.broadcasts
         );
         assert_eq!(init.engine.status_data().terminated_events.len(), 1);
+    }
+
+    /// A satellite a client adds with an orbit whose derived period overflows
+    /// is refused: that period is its orbit reset time here (#492).
+    #[test]
+    fn add_refuses_an_orbit_whose_derived_period_overflows() {
+        let mut init = engine_from_toml(ORBIT_ONLY).expect("engine builds");
+        let cfg: SatelliteConfig = serde_json::from_str(
+            r#"{ "id": "huge", "orbit": { "type": "circular", "altitude": 1e103 } }"#,
+        )
+        .expect("valid satellite config");
+        let err = match init.engine.add_satellite(cfg) {
+            Err(e) => e,
+            Ok(_) => panic!("an infinite period must be refused"),
+        };
+        assert!(
+            err.contains("huge") && err.contains("period"),
+            "the message names the satellite and what is wrong: {err}"
+        );
     }
 
     #[test]
