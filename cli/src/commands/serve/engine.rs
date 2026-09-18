@@ -389,7 +389,7 @@ impl std::fmt::Debug for ChunkFailure {
         f.debug_struct("ChunkFailure")
             .field("error", &self.error)
             .field("states", &self.partial.states.len())
-            .field("broadcasts", &self.partial.broadcasts)
+            .field("broadcasts", &self.partial.broadcasts.len())
             .finish()
     }
 }
