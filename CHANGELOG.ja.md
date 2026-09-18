@@ -721,7 +721,8 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 
 #### Fixed
 - 導出した軌道周期が overflow するほど大きい軌道が受け付けられ、無限になった周期をモードごとに
-  別の意味で読んでいた。周期は導出値 (円軌道なら `2 pi sqrt(r0^3 / mu)`、TLE/OMM なら mean motion)
+  別の意味で読んでいた。周期は導出値 (円軌道なら `2 pi sqrt(r0^3 / mu)`、TLE/OMM なら mean motion `n`
+  から `2 pi / n`)
   で、`--duration` がなければ衛星の終了時刻になる。`orbit = { type = "circular", altitude = 1e103 }`
   は受け付けられて `r0^3` が overflow するので、orbit-only と spacecraft の経路では「終わらない」、
   controlled の経路では「次に長い周期で終わる」(実測: 500 km の衛星と並べると 5676.98 s、巨大軌道の
