@@ -1106,6 +1106,19 @@ section is subdivided by package.
   refused too: one satellite takes one orbit, as a config's
   `orbit = { type = ... }` does. The `--sat` help in `orts run --help` lists every key.
   ([#558](https://github.com/sksat/orts/issues/558))
+- `orts serve` dropped the terminations a chunk had already produced when a
+  later interval of the same chunk failed, so a client that was connected never
+  heard about them. The engine steps `outputs_per_chunk` intervals (10 by
+  default) and returned the samples and the `simulation_terminated` messages at
+  the end; a controller fault, a stream-io overflow or an integration error in
+  a later interval returned an error instead, and the serve loop paused the run
+  without delivering what the earlier intervals had finished. The event stayed
+  in the replay list, so a client connecting afterwards read it while the ones
+  already connected did not — and a permanent fault (a guest trap, a bad
+  command) means there is no later chunk to carry it. A failed chunk now hands
+  back both the error and what it produced, and the serve loop broadcasts that
+  before it pauses (the state samples unpaced, since nothing follows them)
+  ([#487](https://github.com/sksat/orts/issues/487)).
 - The angular momentum a saturating reaction wheel used to lose (see `orts`
   above) was lost on the `mode = "controlled"` path too — `orts run
   --controller` and `orts serve` — which stepped with `advance_to` and so had no
