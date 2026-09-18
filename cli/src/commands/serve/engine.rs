@@ -407,11 +407,9 @@ pub(super) struct ServeEngine {
     /// stepping a later satellite of the same interval therefore leaves the
     /// entries here.
     ///
-    /// A chunk that fails *after* these were taken still loses the live
-    /// broadcast — `StepOutput` reaches the manager only for a chunk that
-    /// succeeds, while the replay ring already holds the entry. That belongs to
-    /// `step_chunk`'s return contract, which the orbit-only terminations of the
-    /// same chunk share (#487).
+    /// Entries taken in an interval that then fails are reported all the same:
+    /// their broadcast is part of the [`ChunkFailure::partial`] the chunk hands
+    /// back, and the serve layer sends that before it pauses the run.
     pending_terminations: Vec<(SatId, crate::sim::controlled::Termination)>,
     current_t: f64,
     /// How many `stream_step` boundaries have been crossed. The next boundary
