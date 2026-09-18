@@ -1838,6 +1838,16 @@ impl SatelliteConfig {
                     body.properties().radius
                 ));
             }
+            // The period every mode takes as this satellite's end time, which
+            // an orbit large enough overflows (#492). `orts run` derives it
+            // the same way, so refusing it here keeps `orts config validate`
+            // and a run on the same answer.
+            let mu = body.properties().mu;
+            let period = 2.0 * std::f64::consts::PI * (r0.powi(3) / mu).sqrt();
+            crate::sim::params::ensure_usable_period(
+                self.id.as_deref().unwrap_or("(unnamed)"),
+                period,
+            )?;
         }
         Ok(())
     }
