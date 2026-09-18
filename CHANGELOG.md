@@ -383,6 +383,19 @@ section is subdivided by package.
   ([#469](https://github.com/sksat/orts/pull/469))
 
 #### Fixed
+- A satellite that receives `Synchronized` velocity kicks lost the rest of a
+  `propagate_to` call whenever a termination check ended any satellite's
+  computation in the same sync interval. The KDK path applied its closing kick
+  and left the loop, so the clock stopped at that interval's end while the call
+  returned `Ok` with nothing to say about the span it skipped: measured with
+  two satellites pulled by a constant 0.02 m/s² and an unrelated third leaving
+  its range at t = 101 s, one `propagate_to(300)` came back at 120 s with the
+  kicked satellite at 204 m where the closed form gives 1050 m — 180 s of the
+  requested span integrated by nobody. The run now carries on to the requested
+  instant. A pair one endpoint left mid-interval is also dropped from the
+  closing kick, which used to read that endpoint's position from where it
+  stopped and apply the reaction to one side only
+  ([#530](https://github.com/sksat/orts/issues/530)).
 - A burn that crossed the propellant floor inside a step spent propellant the
   spacecraft did not have. The thruster asked whether the mass was at its floor
   and answered from the state it was handed, so a step that crossed burned at

@@ -605,33 +605,35 @@ where
                 // 3. Drift: propagate ephemeral groups
                 let terms = self.propagate_groups_to(sync_target, flown)?;
 
-                // 4. Check for events
-                let has_events = !terms.is_empty();
+                // 4. Record what the drift ended
                 all_terminations.extend(terms);
 
-                if has_events {
-                    // Event during drift. Apply second half-kick only to active sats.
-                    let pairs = flown.kick_pairs.clone();
-                    let accels_end = self.compute_kick_accels(&pairs, sync_target);
-                    self.apply_kicks_active(&pairs, &accels_end, dt_sync / 2.0);
-                    // This kick is the last thing the run does — the loop ends
-                    // below — so a satellite it puts past a constraint would be
-                    // handed back with nothing left to ask about it.
-                    // Each satellite is asked at the instant its own state
-                    // belongs to, which for a component an event stopped early
-                    // is where that walk stopped rather than the interval's end.
-                    let interval_started_at = self.t;
-                    all_terminations
-                        .extend(self.drop_satellites_that_cannot_start(interval_started_at));
-                    self.t = sync_target;
-                    break;
-                }
-
-                // 5. Compute accelerations at new positions (post-drift time)
-                let pairs = flown.kick_pairs.clone();
+                // 5. The closing kick, over the pairs that still have both
+                // endpoints. A pair one endpoint left mid-drift is dropped:
+                // its two states belong to different instants, so an
+                // acceleration read at the interval's end would mix the
+                // survivor's position there with its partner's where that
+                // partner stopped, and only one side would receive it. The
+                // opening kick the survivor already took stays, as the drift a
+                // component's survivors already flew does.
+                let pairs: Vec<KickPair> = flown
+                    .kick_pairs
+                    .iter()
+                    .copied()
+                    .filter(|kp| {
+                        !self.satellites[kp.sat_i].terminated
+                            && !self.satellites[kp.sat_j].terminated
+                    })
+                    .collect();
+                debug_assert!(
+                    pairs.iter().all(|kp| {
+                        [kp.sat_i, kp.sat_j].iter().all(|&index| {
+                            (self.satellites[index].state_t - sync_target).abs() < 1e-9
+                        })
+                    }),
+                    "a kicked pair's endpoints must both have reached {sync_target}"
+                );
                 let accels_end = self.compute_kick_accels(&pairs, sync_target);
-
-                // 6. Second half-kick
                 self.apply_kicks(&pairs, &accels_end, dt_sync / 2.0);
 
                 // The closing kick can be what puts a state past a constraint,
@@ -980,34 +982,6 @@ where
         // Apply kicks
         for (idx, accel) in sat_accel.into_iter().enumerate() {
             if accel.magnitude_squared() > 0.0 && !self.satellites[idx].terminated {
-                let delta = D::State::from_acceleration(accel);
-                self.satellites[idx].state = self.satellites[idx].state.axpy(dt, &delta);
-            }
-        }
-    }
-
-    /// Apply velocity kicks only to non-terminated, active satellites.
-    ///
-    /// Same as `apply_kicks` but also skips satellites that have reached
-    /// their `end_time`. Used after event interruption.
-    fn apply_kicks_active(
-        &mut self,
-        kick_pairs: &[KickPair],
-        accels: &[(nalgebra::Vector3<f64>, nalgebra::Vector3<f64>)],
-        dt: f64,
-    ) {
-        let n = self.satellites.len();
-        let mut sat_accel = vec![nalgebra::Vector3::<f64>::zeros(); n];
-        for (kp, &(a_i, a_j)) in kick_pairs.iter().zip(accels) {
-            sat_accel[kp.sat_i] += a_i;
-            sat_accel[kp.sat_j] += a_j;
-        }
-        for (idx, accel) in sat_accel.into_iter().enumerate() {
-            let sat = &self.satellites[idx];
-            if accel.magnitude_squared() > 0.0
-                && !sat.terminated
-                && !sat.end_time.is_some_and(|et| self.t >= et - 1e-9)
-            {
                 let delta = D::State::from_acceleration(accel);
                 self.satellites[idx].state = self.satellites[idx].state.axpy(dt, &delta);
             }
@@ -1592,6 +1566,44 @@ mod tests {
         }
     }
 
+    /// Constant acceleration, whatever the positions are.
+    ///
+    /// KDK is exact for a constant acceleration, so a satellite that only ever
+    /// receives this force has a closed-form position: `v t + a t² / 2`.
+    struct ConstantPull {
+        accel: Vector3<f64>,
+    }
+
+    impl InterSatelliteForce for ConstantPull {
+        fn name(&self) -> &str {
+            "constant_pull"
+        }
+
+        fn acceleration_pair(&self, _ctx: &PairContext<'_>) -> (Vector3<f64>, Vector3<f64>) {
+            (self.accel, -self.accel)
+        }
+    }
+
+    /// [`ConstantPull`] that records the instants it was asked about.
+    ///
+    /// The kicks are the only thing that evaluates a `Synchronized` pair's
+    /// force, so the recorded instants are the kicks this pair received.
+    struct RecordingPull {
+        accel: Vector3<f64>,
+        evaluated_at: Arc<std::sync::Mutex<Vec<f64>>>,
+    }
+
+    impl InterSatelliteForce for RecordingPull {
+        fn name(&self) -> &str {
+            "recording_pull"
+        }
+
+        fn acceleration_pair(&self, ctx: &PairContext<'_>) -> (Vector3<f64>, Vector3<f64>) {
+            self.evaluated_at.lock().expect("not poisoned").push(ctx.t);
+            (self.accel, -self.accel)
+        }
+    }
+
     #[test]
     fn scheduler_coupled_rk4_matches_group() {
         // Two satellites with Fixed(Coupled) spring interaction.
@@ -1987,8 +1999,10 @@ mod tests {
     }
 
     #[test]
-    fn kdk_event_interrupts_sync_step() {
-        // Event during KDK drift phase should stop propagation and correct kick.
+    fn kdk_run_continues_past_the_interval_an_event_fell_in() {
+        // An event during the KDK drift ends that satellite; the rest of the
+        // run continues, with the closing kick applied over the pairs that
+        // still have both endpoints.
         let k = 0.01;
         let rest = 10.0;
         let s0 = OrbitalState::new(Vector3::zeros(), Vector3::zeros());
@@ -2026,10 +2040,32 @@ mod tests {
 
         // "b" should have triggered the event
         assert!(!outcome.terminations.is_empty());
-        // Scheduler time should have stopped before 100
-        assert!(sched.current_t() < 100.0);
-        // "a" should still be fine (IndependentGroup events are per-satellite)
-        assert!(sched.satellite_state(&SatId::from("a")).is_some());
+        // The run goes on past the interval "b" stopped in: the spring's kicks
+        // carry "a" out of the range too, at a later instant, and the run ends
+        // once nothing is left to propagate. This used to assert
+        // `current_t() < 100.0`, which was the defect (#530) rather than a
+        // property worth keeping.
+        let stopped: Vec<(SatId, f64)> = outcome
+            .terminations
+            .iter()
+            .map(|t| (t.satellite_id.clone(), t.t))
+            .collect();
+        assert_eq!(
+            stopped.len(),
+            2,
+            "both satellites leave the range: {stopped:?}"
+        );
+        assert_eq!(stopped[0].0, SatId::from("b"), "{stopped:?}");
+        assert_eq!(stopped[1].0, SatId::from("a"), "{stopped:?}");
+        assert!(
+            stopped[1].1 > stopped[0].1,
+            "\"a\" is carried out later than \"b\": {stopped:?}"
+        );
+        assert!(
+            sched.current_t() > 5.0 + 1e-9,
+            "the clock passes the interval the first event fell in: {}",
+            sched.current_t()
+        );
     }
 
     #[test]
@@ -2353,8 +2389,11 @@ mod tests {
         .add_satellite("b", sb, FreeParticle)
         .add_interaction_fixed("a", "b", PairRegime::Synchronized, spring);
 
-        // First propagation: b should terminate
-        sched.propagate_to(100.0).unwrap();
+        // First propagation: b should terminate. The target stops before the
+        // spring's kicks carry "a" out of the range as well — until #530 the
+        // run returned at the interval the first event fell in, so any target
+        // left "a" alive here.
+        sched.propagate_to(10.0).unwrap();
 
         // b is terminated, only a in snapshot
         let snap = sched.snapshot();
@@ -2362,7 +2401,7 @@ mod tests {
         assert_eq!(snap.positions[0].0, SatId::from("a"));
 
         // Further propagation should work (a alone, no interactions)
-        sched.propagate_to(200.0).unwrap();
+        sched.propagate_to(20.0).unwrap();
         let a = sched.satellite_state(&SatId::from("a")).unwrap();
         assert!(
             a.position().x.is_finite() && a.position().y.is_finite() && a.position().z.is_finite()
@@ -2679,11 +2718,12 @@ mod tests {
         let outcome = sched.propagate_to(100.0).unwrap();
 
         assert!(!outcome.terminations.is_empty());
-        // Key assertion: scheduler time must have advanced from 0
-        // Before fix: self.t stays at 0 because the break skips self.t = sync_target
+        // The clock advances past the interval the event fell in, and keeps
+        // going to the requested instant (`>= 5.0` alone passed while the run
+        // stopped at the first interval — #530).
         assert!(
-            sched.current_t() >= 5.0 - 1e-9,
-            "scheduler time should be at sync_target=5: got {}",
+            (sched.current_t() - 100.0).abs() < 1e-9,
+            "scheduler time should reach the requested 100 s: got {}",
             sched.current_t()
         );
     }
@@ -2958,6 +2998,116 @@ mod tests {
             "surviving satellite should continue: before_y={}, after_y={}",
             a_before.position().y,
             a_after.position().y,
+        );
+    }
+
+    /// A kicked pair keeps flying to the requested instant when an unrelated
+    /// satellite's computation ends inside the interval.
+    ///
+    /// No force acts on anything, apart from a constant acceleration between
+    /// the pair, and KDK is exact for a constant acceleration: satellite "a"
+    /// has to end up at `v t + a t² / 2`. The run used to return with the
+    /// clock at the end of the interval the event fell in (#530), leaving the
+    /// rest of the requested span unintegrated.
+    #[test]
+    fn a_kicked_pair_flies_the_whole_span_when_another_satellite_stops() {
+        const ACCEL: f64 = 0.02;
+        const SPEED: f64 = 0.5;
+        const SPAN: f64 = 300.0;
+
+        let a0 = OrbitalState::new(Vector3::zeros(), Vector3::new(0.0, SPEED, 0.0));
+        let b0 = OrbitalState::new(Vector3::new(10.0, 0.0, 0.0), Vector3::new(0.0, SPEED, 0.0));
+        // Crosses x = 200 at t = 100, inside the interval [60, 120).
+        let c0 = OrbitalState::new(Vector3::new(100.0, 0.0, 0.0), Vector3::new(1.0, 0.0, 0.0));
+        let pull = Arc::new(ConstantPull {
+            accel: Vector3::new(0.0, ACCEL, 0.0),
+        });
+
+        let mut sched: Scheduler<FreeParticle> =
+            Scheduler::new(default_config(), IntegratorConfig::Rk4 { dt: 1.0 })
+                .with_event_checker(|_t, state: &OrbitalState| {
+                    if state.position().x > 200.0 {
+                        ControlFlow::Break("out of range".to_string())
+                    } else {
+                        ControlFlow::Continue(())
+                    }
+                })
+                .add_satellite("a", a0, FreeParticle)
+                .add_satellite("b", b0, FreeParticle)
+                .add_satellite("c", c0, FreeParticle)
+                .add_interaction_fixed("a", "b", PairRegime::Synchronized, pull);
+
+        let outcome = sched.propagate_to(SPAN).unwrap();
+
+        let stopped: Vec<&SatId> = outcome
+            .terminations
+            .iter()
+            .map(|t| &t.satellite_id)
+            .collect();
+        assert_eq!(
+            stopped,
+            vec![&SatId::from("c")],
+            "only the satellite that left the range stops"
+        );
+        assert!(
+            (sched.current_t() - SPAN).abs() < 1e-9,
+            "the run reaches the requested instant: {}",
+            sched.current_t()
+        );
+
+        let y = sched
+            .satellite_state(&SatId::from("a"))
+            .expect("a")
+            .position()
+            .y;
+        let exact = SPEED * SPAN + 0.5 * ACCEL * SPAN * SPAN;
+        assert!(
+            (y - exact).abs() < 1e-6,
+            "the kicked satellite flies the whole span: {y} where {exact} is v t + a t^2 / 2"
+        );
+    }
+
+    /// A pair one endpoint left mid-interval is not evaluated at that
+    /// interval's end.
+    ///
+    /// The two states belong to different instants there: the survivor is at
+    /// the interval's end, its partner where the event stopped it. The kicks
+    /// are the only thing that evaluates a `Synchronized` pair's force, so the
+    /// instants the force was asked about are the kicks the pair received.
+    #[test]
+    fn a_pair_whose_partner_stopped_is_not_evaluated_at_the_interval_end() {
+        let evaluated_at = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let a0 = OrbitalState::new(Vector3::zeros(), Vector3::new(0.0, 0.5, 0.0));
+        // Crosses x = 200 at t = 100, inside the interval [60, 120).
+        let b0 = OrbitalState::new(Vector3::new(100.0, 0.0, 0.0), Vector3::new(1.0, 0.0, 0.0));
+        let pull = Arc::new(RecordingPull {
+            accel: Vector3::new(0.0, 0.02, 0.0),
+            evaluated_at: Arc::clone(&evaluated_at),
+        });
+
+        let mut sched: Scheduler<FreeParticle> =
+            Scheduler::new(default_config(), IntegratorConfig::Rk4 { dt: 1.0 })
+                .with_event_checker(|_t, state: &OrbitalState| {
+                    if state.position().x > 200.0 {
+                        ControlFlow::Break("out of range".to_string())
+                    } else {
+                        ControlFlow::Continue(())
+                    }
+                })
+                .add_satellite("a", a0, FreeParticle)
+                .add_satellite("b", b0, FreeParticle)
+                .add_interaction_fixed("a", "b", PairRegime::Synchronized, pull);
+
+        sched.propagate_to(300.0).expect("propagation");
+
+        let times = evaluated_at.lock().expect("not poisoned").clone();
+        assert!(
+            times.iter().any(|t| (t - 60.0).abs() < 1e-9),
+            "the interval's opening kick is applied: {times:?}"
+        );
+        assert!(
+            times.iter().all(|&t| t < 101.0),
+            "nothing is evaluated once one endpoint has stopped: {times:?}"
         );
     }
 }
