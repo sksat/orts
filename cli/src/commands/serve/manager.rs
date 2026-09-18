@@ -374,6 +374,12 @@ struct Delivery {
 /// slow client's buffer. A dropped sample is recoverable — the history holds
 /// it, and a client can query the range — while a termination reaches a
 /// running client only here.
+///
+/// The order is what this can do, not a guarantee: a fleet that stops more
+/// satellites in one chunk than the channel holds still outruns a client that
+/// is not draining. Every termination is in `terminated_events` as well, which
+/// a client reads on (re)connect, so what a lagged client loses it can still
+/// recover — over a reconnect rather than in place.
 fn deliver_chunk(
     tx: &broadcast::Sender<String>,
     chunk: Result<StepOutput, ChunkFailure>,

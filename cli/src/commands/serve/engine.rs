@@ -855,6 +855,10 @@ impl ServeEngine {
             if let Err(error) =
                 self.step_one_interval(streams, body_radius, &mut all_outputs, &mut broadcasts)
             {
+                // A satellite this interval stopped before it failed is
+                // reported here: the interval turns its entry into a message
+                // only after every satellite has been stepped.
+                self.report_pending_terminations(&mut broadcasts);
                 all_outputs.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap());
                 return Err(ChunkFailure {
                     error,
@@ -999,26 +1003,51 @@ impl ServeEngine {
         }
 
         for term in &outcome.terminations {
-            eprintln!(
-                "Simulation terminated for {} at t={:.2}s: {}",
-                term.satellite_id, term.t, term.reason
-            );
-            let sid_str: &str = term.satellite_id.as_ref();
-            let term_entity_path =
-                orts::record::entity_path::EntityPath::parse(&format!("/world/sat/{}", sid_str));
-            let msg = serde_json::to_string(&WsMessage::SimulationTerminated {
-                entity_path: term_entity_path,
-                t: term.t,
-                reason: term.reason.clone(),
-            })
-            .expect("failed to serialize termination message");
-            push_terminated_capped(&mut self.terminated_events, msg.clone());
-            broadcasts.push(msg);
+            self.report_termination(&term.satellite_id, term.t, &term.reason, broadcasts);
         }
 
         self.current_t = target_t;
         self.steps_done += 1;
         Ok(())
+    }
+
+    /// Announce one satellite's termination: the log line, the replay list and
+    /// the broadcast the connected clients receive.
+    fn report_termination(
+        &mut self,
+        satellite_id: &SatId,
+        t: f64,
+        reason: &str,
+        broadcasts: &mut Vec<String>,
+    ) {
+        eprintln!("Simulation terminated for {satellite_id} at t={t:.2}s: {reason}");
+        let sid_str: &str = satellite_id.as_ref();
+        let term_entity_path =
+            orts::record::entity_path::EntityPath::parse(&format!("/world/sat/{sid_str}"));
+        let msg = serde_json::to_string(&WsMessage::SimulationTerminated {
+            entity_path: term_entity_path,
+            t,
+            reason: reason.to_string(),
+        })
+        .expect("failed to serialize termination message");
+        push_terminated_capped(&mut self.terminated_events, msg.clone());
+        broadcasts.push(msg);
+    }
+
+    /// Report the controlled terminations an interval confirmed before it
+    /// failed.
+    ///
+    /// `step_controlled_to` stops a satellite and leaves it in
+    /// `pending_terminations`; the interval turns those into messages after it
+    /// has stepped every satellite, so a failure in between (a later
+    /// satellite's controller, the outbound pump, the integration) would leave
+    /// them in the queue. A fault that does not clear means no later interval
+    /// takes them, and they would reach neither the connected clients nor the
+    /// replay list.
+    fn report_pending_terminations(&mut self, broadcasts: &mut Vec<String>) {
+        for (id, term) in std::mem::take(&mut self.pending_terminations) {
+            self.report_termination(&id, term.t, &term.reason, broadcasts);
+        }
     }
 
     /// Record a satellite added at runtime in the retained Info.
@@ -1895,6 +1924,126 @@ orbit = { type = "circular", altitude = 500 }
             after.broadcasts
         );
         assert_eq!(init.engine.status_data().terminated_events.len(), 1);
+    }
+
+    /// A termination the failing interval itself confirmed is reported too.
+    ///
+    /// `step_controlled_to` stops a satellite and leaves it in
+    /// `pending_terminations`; the interval turns those into messages after
+    /// every satellite has been stepped, so a failure in between — here the
+    /// outbound pump meeting a stuck peer — used to leave the entry in the
+    /// queue, out of reach of both the connected clients and the replay list.
+    #[test]
+    fn a_termination_confirmed_before_the_failure_is_reported() {
+        use orts::plugin::{Command, PluginController, PluginError, TickInput};
+        use orts::spacecraft::SpacecraftState;
+
+        /// Writes a byte every tick, so the outbound pump has something to push.
+        struct Chatty;
+        impl PluginController for Chatty {
+            fn name(&self) -> &str {
+                "chatty"
+            }
+            fn sample_period(&self) -> f64 {
+                1.0
+            }
+            fn update(&mut self, _input: &TickInput<'_>) -> Result<Option<Command>, PluginError> {
+                Ok(None)
+            }
+            fn stream_take(&mut self, _stream: &str) -> Vec<u8> {
+                vec![0x42]
+            }
+        }
+
+        /// The peer a `--stream-stdio` client would be: connected and stuck.
+        struct StuckPeer;
+        impl StreamIo for StuckPeer {
+            fn take_inbound(&mut self, _sat_idx: usize, _name: &str) -> (Vec<u8>, bool) {
+                (Vec::new(), false)
+            }
+            fn push_outbound(
+                &mut self,
+                _sat_idx: usize,
+                _name: &str,
+                _bytes: Vec<u8>,
+            ) -> OutboundPush {
+                OutboundPush::Stuck
+            }
+        }
+
+        let mut init = engine_from_toml(
+            r#"
+[[satellites]]
+id = "doomed"
+orbit = { type = "circular", altitude = 50 }
+"#,
+        )
+        .expect("engine builds");
+
+        let body = arika::body::KnownBody::Earth;
+        let mu = body.properties().mu;
+        let dynamics = orts::setup::build_spacecraft_dynamics(
+            &body,
+            orts::setup::CentralGravity::Zonal { mu },
+            None,
+            &orts::setup::SatelliteParams {
+                has_drag: false,
+                ballistic_coeff: None,
+                srp_area_to_mass: None,
+                srp_cr: None,
+                disturbances: orts::setup::DisturbanceTorques::default(),
+                shape: None,
+            },
+            &[],
+            nalgebra::Matrix3::identity() * 10.0,
+            None,
+        )
+        .expect("Earth has a Sun ephemeris");
+        // 50 km up: inside the atmosphere at t=0, so this interval stops it.
+        let r = body.properties().radius + 50.0;
+        let v = (mu / r).sqrt();
+        let plant = SpacecraftState {
+            orbit: orts::orbital::OrbitalState::new(
+                nalgebra::Vector3::new(r, 0.0, 0.0),
+                nalgebra::Vector3::new(0.0, v, 0.0),
+            ),
+            attitude: orts::attitude::AttitudeState {
+                quaternion: nalgebra::Vector4::new(1.0, 0.0, 0.0, 0.0),
+                angular_velocity: nalgebra::Vector3::zeros(),
+            },
+            mass: 500.0,
+        };
+        let state = dynamics.initial_augmented_state(plant);
+        init.engine.group = SimGroup::Controlled(vec![ControlledSatellite::for_test(
+            dynamics,
+            state,
+            Box::new(Chatty),
+            body,
+        )]);
+        init.engine.sat_streams = vec![vec!["tm".to_string()]];
+
+        let failure = init
+            .engine
+            .step_chunk(1, &mut StuckPeer)
+            .expect_err("the outbound pump meets a stuck peer");
+
+        assert!(
+            failure.error.contains("not draining"),
+            "the error is the peer's: {}",
+            failure.error
+        );
+        assert_eq!(
+            failure.partial.broadcasts.len(),
+            1,
+            "the termination this interval confirmed is reported: {:?}",
+            failure.partial.broadcasts
+        );
+        assert!(failure.partial.broadcasts[0].contains("simulation_terminated"));
+        assert_eq!(
+            init.engine.status_data().terminated_events.len(),
+            1,
+            "and a client that connects later reads it once"
+        );
     }
 
     #[test]
