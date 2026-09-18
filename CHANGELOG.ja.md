@@ -109,6 +109,16 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   variant で表される。([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
+- **BREAKING**: reaction wheel は角運動量を保持できなければならない。`Rw::new` と
+  `Rw::with_max_speed` は、ホイールが最終的に持つ上限 `max_momentum.min(inertia * max_speed)` が
+  正でなければ panic する。`RwAssemblyCore::new` も、作られた後に容量を失ったホイールで panic する:
+  `Rw` のフィールドは pub で `momentum_limit` がそれを読むので、`rw.max_speed = 0.0` だけで
+  容量 0 になる。上限 0 では境界を位置付ける対象がない — 角運動量の余裕が 0 から始まるので探索は
+  「すでに越えた」と読み、ホイールは最初のステップから保持されて何も吸収できず、境界付近の丸めの
+  ために置いた許容幅 (1e-12 N·m·s) がホイールの可動範囲そのものになる。検査を最終的な上限に対して
+  行うのは、`Rw::new` が速度上限を除算で導いており、慣性が大きいとアンダーフローするためである
+  (`f64::MIN_POSITIVE / f64::MAX` は 0 rad/s)。`PropellantPool::new` が dry mass に課しているのと
+  同じ要求である ([#529](https://github.com/sksat/orts/issues/529))
 - **BREAKING**: `orts::boundary::walk_to_target` の戻り値が utsuroi の
   `IntegrationError` から `BoundaryWalkError` になった。系の拘束が受け付けない state は
   積分の失敗ではないので分けている: `BoundaryWalkError::StartRejected { t, error }` が

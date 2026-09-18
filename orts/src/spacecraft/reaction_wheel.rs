@@ -62,8 +62,11 @@ impl Rw {
     /// speed limit (e.g., bearing-limited), use [`Rw::with_max_speed`].
     ///
     /// # Panics
-    /// Panics if `axis` is zero-length, `inertia` is not positive/finite,
-    /// or `max_momentum`/`max_torque` are negative.
+    ///
+    /// Panics on a zero axis, on an inertia that is not positive and finite, on
+    /// a negative or non-finite `max_momentum` or `max_torque`, and on a
+    /// momentum limit that leaves the wheel no capacity — including one a large
+    /// inertia turns into a speed limit of zero.
     pub fn new(axis: Vector3<f64>, inertia: f64, max_momentum: f64, max_torque: f64) -> Self {
         let norm = axis.magnitude();
         assert!(norm > 1e-15, "Wheel axis must be non-zero");
@@ -72,14 +75,26 @@ impl Rw {
             "inertia must be positive and finite, got {inertia}"
         );
         assert!(
-            max_momentum >= 0.0 && max_momentum.is_finite(),
-            "max_momentum must be non-negative and finite, got {max_momentum}"
+            max_momentum > 0.0 && max_momentum.is_finite(),
+            "max_momentum must be positive and finite, got {max_momentum}"
         );
         assert!(
             max_torque >= 0.0 && max_torque.is_finite(),
             "max_torque must be non-negative and finite, got {max_torque}"
         );
         let max_speed = max_momentum / inertia;
+        // What `momentum_limit` will answer, which is the smaller of the two
+        // bounds: the division above underflows to zero for an inertia large
+        // enough against the momentum (measured: `f64::MIN_POSITIVE` over
+        // `f64::MAX`), and a wheel whose effective limit is zero is the one
+        // this refuses.
+        assert!(
+            max_momentum.min(inertia * max_speed) > 0.0,
+            "a momentum limit of {max_momentum} over an inertia of {inertia} leaves a speed \
+             limit of {max_speed} rad/s, so the limit this wheel would hold is \
+             {} N·m·s",
+            max_momentum.min(inertia * max_speed)
+        );
         Self {
             axis: axis / norm,
             inertia,
@@ -96,6 +111,13 @@ impl Rw {
     /// The effective max momentum is also tightened to
     /// `min(max_momentum, inertia * max_speed)` so that ODE auxiliary
     /// bounds are consistent with the speed limit.
+    /// # Panics
+    ///
+    /// Panics unless `max_speed` is non-negative and finite, and unless the
+    /// momentum limit left after the speed limit tightens it is positive: the
+    /// bound the wheel ends up with is `max_momentum.min(inertia * max_speed)`,
+    /// so a `max_speed` of zero leaves a wheel that can hold nothing. Panics
+    /// too for everything [`Rw::new`](Self::new) refuses, which it calls first.
     pub fn with_max_speed(
         axis: Vector3<f64>,
         inertia: f64,
@@ -112,6 +134,15 @@ impl Rw {
         rw.max_speed = max_speed.min(derived_max_speed);
         // Tighten momentum bound to match speed limit
         rw.max_momentum = rw.max_momentum.min(inertia * rw.max_speed);
+        // After the tightening, because that is what the wheel ends up with: a
+        // speed limit of zero leaves a wheel that can hold no momentum, which
+        // `Self::new` would have refused had it been passed directly.
+        assert!(
+            rw.max_momentum > 0.0,
+            "max_speed {max_speed} tightens max_momentum to {}, and a wheel that can hold \
+             no momentum stores nothing the propagation could locate a bound in",
+            rw.max_momentum
+        );
         rw
     }
 
@@ -194,7 +225,27 @@ pub struct RwAssemblyCore {
 
 impl RwAssemblyCore {
     /// Create an assembly core from a list of reaction wheels.
+    ///
+    /// # Panics
+    ///
+    /// Panics on a wheel that can hold no momentum. The constructors refuse to
+    /// build one, but [`Rw`]'s fields are public and
+    /// [`momentum_limit`](Rw::momentum_limit) reads them, so a wheel can be
+    /// left with no capacity after it was built — `rw.max_speed = 0.0` is
+    /// enough. An assembly is where wheels are put to use, so it is the other
+    /// place the limit has to mean something.
     pub fn new(wheels: Vec<Rw>) -> Self {
+        for (index, wheel) in wheels.iter().enumerate() {
+            let limit = wheel.momentum_limit();
+            assert!(
+                limit > 0.0 && limit.is_finite(),
+                "wheel {index} holds a momentum limit of {limit} N·m·s, so nothing can be \
+                 located against it: max_momentum {}, inertia {}, max_speed {}",
+                wheel.max_momentum,
+                wheel.inertia,
+                wheel.max_speed
+            );
+        }
         let axes: Vec<_> = wheels.iter().map(|w| *w.axis()).collect();
         let alloc_pinv = build_allocation_pinv(&axes);
         let has_motor_lag = wheels.iter().any(|w| w.motor_time_constant.is_some());
@@ -1529,6 +1580,66 @@ mod tests {
         ]);
         assert!(core.has_motor_lag());
         assert_eq!(core.state_dim(), 6); // 2n
+    }
+
+    /// A wheel that can hold no momentum is refused where it is built.
+    ///
+    /// Nothing downstream can make sense of one. The start-state check accepts
+    /// a momentum within `MOMENTUM_TOLERANCE` of the bound, which for a limit
+    /// of zero is any momentum up to 5e-13 N·m·s, and a mode already holding
+    /// the wheel turns off the boundary that would have caught it — so it
+    /// would run a whole span storing momentum its own limit says it cannot.
+    #[test]
+    #[should_panic(expected = "max_momentum must be positive")]
+    fn a_wheel_that_can_hold_no_momentum_is_refused() {
+        Rw::new(Vector3::x(), 0.01, 0.0, 0.1);
+    }
+
+    /// A wheel emptied of capacity after it was built is refused where it is
+    /// used.
+    ///
+    /// The constructors cannot be the only place: `Rw`'s fields are public and
+    /// `momentum_limit` reads them, which is what keeps a hand-set field from
+    /// drifting apart from the bound the propagation watches — and it also
+    /// means `rw.max_speed = 0.0` leaves a wheel with no capacity.
+    #[test]
+    #[should_panic(expected = "holds a momentum limit of 0")]
+    fn a_wheel_emptied_after_construction_is_refused_by_the_assembly() {
+        let mut rw = Rw::new(Vector3::x(), 0.01, 1.0, 0.1);
+        rw.max_speed = 0.0;
+        RwAssemblyCore::new(vec![rw]);
+    }
+
+    /// The limit a wheel ends up with is the smaller of its two bounds, and the
+    /// speed one is derived by a division that can underflow.
+    ///
+    /// Measured: `f64::MIN_POSITIVE` over an inertia of `f64::MAX` leaves a
+    /// speed limit of 0 rad/s, so `momentum_limit()` answers zero however
+    /// positive `max_momentum` was.
+    #[test]
+    #[should_panic(expected = "leaves a speed limit of 0")]
+    fn a_momentum_limit_that_underflows_the_speed_limit_is_refused() {
+        Rw::new(Vector3::x(), f64::MAX, f64::MIN_POSITIVE, 0.1);
+    }
+
+    /// The same for a speed limit that tightens the momentum to zero:
+    /// `with_max_speed` decides the limit the wheel ends up with, so the check
+    /// belongs after the tightening.
+    #[test]
+    #[should_panic(expected = "tightens max_momentum")]
+    fn a_speed_limit_of_zero_is_refused_too() {
+        Rw::with_max_speed(Vector3::x(), 0.01, 1.0, 0.1, 0.0);
+    }
+
+    /// And a wheel whose speed limit only tightens the momentum keeps working.
+    #[test]
+    fn a_speed_limit_that_leaves_momentum_is_kept() {
+        let rw = Rw::with_max_speed(Vector3::x(), 0.01, 1.0, 0.1, 50.0);
+        assert!(
+            (rw.momentum_limit() - 0.5).abs() < 1e-15,
+            "{}",
+            rw.momentum_limit()
+        );
     }
 
     #[test]

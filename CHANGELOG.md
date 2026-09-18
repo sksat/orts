@@ -138,6 +138,20 @@ section is subdivided by package.
   ([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
+- **BREAKING**: a reaction wheel has to be able to hold momentum. `Rw::new` and
+  `Rw::with_max_speed` panic unless the limit the wheel ends up with —
+  `max_momentum.min(inertia * max_speed)` — is positive, and
+  `RwAssemblyCore::new` panics on a wheel that lost its capacity after it was
+  built: `Rw`'s fields are public and `momentum_limit` reads them, so
+  `rw.max_speed = 0.0` is enough to empty one. A limit of zero leaves nothing to
+  locate a boundary against — the momentum margin starts at zero, which a search
+  reads as already crossed, so the wheel is held from the first step and absorbs
+  nothing, and the boundary tolerance meant for rounding around a bound
+  (1e-12 N·m·s) becomes the whole range the wheel can be in. The check is on the
+  limit the wheel ends up with because `Rw::new` derives the speed limit by a
+  division that underflows for a large enough inertia (`f64::MIN_POSITIVE` over
+  `f64::MAX` gives 0 rad/s). The same requirement `PropellantPool::new` makes of
+  a dry mass. ([#529](https://github.com/sksat/orts/issues/529))
 - **BREAKING**: `orts::boundary::walk_to_target` returns `BoundaryWalkError`
   rather than utsuroi's `IntegrationError`, because a state a system's own
   constraints refuse is not an integration failure:
