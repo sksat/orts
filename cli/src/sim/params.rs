@@ -210,6 +210,47 @@ pub(crate) fn validate_element_set_body(
     Ok(())
 }
 
+/// Reject a satellite whose derived orbital period is not a usable end time.
+///
+/// The period is derived — `2 pi sqrt(r0^3 / mu)` for a circular orbit,
+/// `2 pi / n` from an element set's mean motion — and every mode takes it as a
+/// satellite's
+/// end time when `--duration` is absent, so a value that is not positive and
+/// finite means something different on each of them: `orts run`'s orbit-only
+/// and spacecraft paths take `duration.unwrap_or(period)` per satellite and
+/// never finish, the controlled path skips it when it picks the fleet's
+/// horizon (so a fleet of one runs the historical 3600 s, and a mixed fleet
+/// ends before the satellite has flown an orbit), and `serve` uses it as the
+/// orbit reset time. It also reaches the CSV header, the recording's
+/// `meta/sim/period` and the WebSocket `SatelliteInfo`.
+///
+/// Measured before this check existed:
+/// `orbit = { type = "circular", altitude = 1e103 }` was accepted by the
+/// config's own validation, `r0^3` overflowed and the period was infinite.
+pub(crate) fn validate_derived_periods(satellites: &[SatelliteSpec]) -> Result<(), String> {
+    for sat in satellites {
+        ensure_usable_period(&sat.id, sat.period)?;
+    }
+    Ok(())
+}
+
+/// The check [`validate_derived_periods`] makes for one satellite.
+///
+/// Shared with [`crate::config::SimConfig::validate`], which derives the
+/// period of a circular orbit from the body it names, so `orts config
+/// validate` refuses what a run would.
+pub(crate) fn ensure_usable_period(id: &str, period: f64) -> Result<(), String> {
+    if period.is_finite() && period > 0.0 {
+        return Ok(());
+    }
+    Err(format!(
+        "Satellite '{id}' has an orbital period of {period}, which no run can use as an end \
+         time. It is derived from the orbit (2 pi sqrt(r0^3 / mu) for a circular orbit, \
+         2 pi / n from a TLE's or OMM's mean motion), so an orbit this large overflows it: \
+         give an orbit whose period is a positive finite number."
+    ))
+}
+
 /// The half of [`validate_element_set_body`] that a config settles on its own.
 ///
 /// Shared with [`crate::config::SimConfig::validate`], which knows a satellite
@@ -463,6 +504,7 @@ impl SimParams {
             .or_else(|| Some(Epoch::now()));
 
         validate_element_set_body(body, &satellites)?;
+        validate_derived_periods(&satellites)?;
 
         Ok(Self {
             body,
@@ -548,6 +590,7 @@ impl SimParams {
             .or_else(|| Some(Epoch::now()));
 
         validate_element_set_body(body, &satellites)?;
+        validate_derived_periods(&satellites)?;
 
         Ok(Self {
             body,
@@ -1502,6 +1545,119 @@ orbit = { type = "circular", altitude = 400 }
         );
         // ISS velocity ~7.66 km/s
         assert!((v - 7.66).abs() < 0.2, "ISS velocity: {v:.3} km/s");
+    }
+
+    /// An orbit large enough to overflow the derived period is refused, by the
+    /// run and by `orts config validate` alike.
+    ///
+    /// Measured before this: the config was accepted and the period was
+    /// infinite, which each mode read differently — the orbit-only and
+    /// spacecraft paths take it as this satellite's end time and never finish,
+    /// the controlled path skips it and ends the fleet at the next longest
+    /// period (5676.98 s for the 500 km satellite here, so the huge orbit
+    /// stops less than a thousandth of the way round), and a fleet of one runs
+    /// the historical 3600 s.
+    #[test]
+    fn an_orbit_whose_period_overflows_is_refused() {
+        use crate::config::SimConfig;
+
+        let config: SimConfig = toml::from_str(
+            r#"
+body = "earth"
+dt = 10.0
+
+[[satellites]]
+id = "huge"
+orbit = { type = "circular", altitude = 1e103 }
+
+[[satellites]]
+id = "normal"
+orbit = { type = "circular", altitude = 500 }
+"#,
+        )
+        .expect("config parses");
+
+        let from_validate = config
+            .validate()
+            .expect_err("`orts config validate` refuses it");
+        assert!(
+            from_validate.contains("huge") && from_validate.contains("period"),
+            "the message names the satellite and what is wrong: {from_validate}"
+        );
+
+        let from_run = match SimParams::from_config(&config) {
+            Err(e) => e,
+            Ok(_) => panic!("a run must refuse it too"),
+        };
+        assert!(
+            from_run.contains("huge") && from_run.contains("period"),
+            "and so does the run's: {from_run}"
+        );
+    }
+
+    /// A config entry with no `id` is named by the id a run gives it.
+    #[test]
+    fn an_unnamed_satellite_is_named_by_its_resolved_id() {
+        use crate::config::SimConfig;
+
+        let config: SimConfig = toml::from_str(
+            r#"
+body = "earth"
+dt = 10.0
+
+[[satellites]]
+orbit = { type = "circular", altitude = 1e103 }
+"#,
+        )
+        .expect("config parses");
+        let err = config.validate().expect_err("the orbit is refused");
+        assert!(
+            err.contains("sat-0"),
+            "the message names the resolved id: {err}"
+        );
+    }
+
+    /// The `--sat` path derives the same period and refuses the same orbit.
+    #[test]
+    fn a_sat_argument_whose_period_overflows_is_refused() {
+        let mut args = sim_args_for_period_tests();
+        args.sats = vec!["altitude=1e103".to_string()];
+        let err = match SimParams::from_sim_args(&args, false) {
+            Err(e) => e,
+            Ok(_) => panic!("`--sat altitude=1e103` must be refused"),
+        };
+        assert!(
+            err.contains("period"),
+            "the message says what is wrong: {err}"
+        );
+    }
+
+    /// The same orbits at ordinary sizes stay accepted.
+    #[test]
+    fn ordinary_orbits_keep_their_derived_period() {
+        use crate::config::SimConfig;
+
+        let config: SimConfig = toml::from_str(
+            r#"
+body = "earth"
+dt = 10.0
+
+[[satellites]]
+id = "normal"
+orbit = { type = "circular", altitude = 500 }
+"#,
+        )
+        .expect("config parses");
+        config.validate().expect("an ordinary orbit is fine");
+        let params = match SimParams::from_config(&config) {
+            Ok(params) => params,
+            Err(e) => panic!("a run takes an ordinary orbit: {e}"),
+        };
+        let period = params.satellites[0].period;
+        assert!(
+            (period - 5676.978_028_525_858_5).abs() < 1e-6,
+            "the period is the derived one: {period}"
+        );
     }
 
     #[test]

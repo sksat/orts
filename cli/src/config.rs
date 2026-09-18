@@ -1827,7 +1827,9 @@ impl SatelliteConfig {
     ///
     /// Split from [`validate`](Self::validate) because `a = R_body + altitude`
     /// needs the central body, which lives on [`SimConfig`].
-    fn validate_against_body(&self, body: KnownBody) -> Result<(), String> {
+    /// `id` is the satellite's resolved id (`resolved_id`), so the period's
+    /// error names the satellite a run would name rather than "(unnamed)".
+    fn validate_against_body(&self, body: KnownBody, id: &str) -> Result<(), String> {
         if let OrbitConfig::Circular { altitude, .. } = &self.orbit {
             let r0 = body.properties().radius + altitude;
             if r0 <= 0.0 {
@@ -1838,6 +1840,13 @@ impl SatelliteConfig {
                     body.properties().radius
                 ));
             }
+            // The period every mode takes as this satellite's end time, which
+            // an orbit large enough overflows (#492). `orts run` derives it
+            // the same way, so refusing it here keeps `orts config validate`
+            // and a run on the same answer.
+            let mu = body.properties().mu;
+            let period = 2.0 * std::f64::consts::PI * (r0.powi(3) / mu).sqrt();
+            crate::sim::params::ensure_usable_period(id, period)?;
         }
         Ok(())
     }
@@ -2055,7 +2064,7 @@ impl SimConfig {
         for (i, sat) in self.satellites.iter().enumerate() {
             sat.validate()
                 .map_err(|e| format!("satellites[{i}]: {e}"))?;
-            sat.validate_against_body(body)
+            sat.validate_against_body(body, &sat.resolved_id(i))
                 .map_err(|e| format!("satellites[{i}]: {e}"))?;
             // Parse inline TLE lines with the same parser `from_config` uses, so
             // a malformed element set is rejected here rather than panicking.
