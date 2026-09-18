@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-use super::engine::{EngineInit, ServeEngine, StreamIo};
+use super::engine::{ChunkFailure, EngineInit, ServeEngine, StepOutput, StreamIo};
 use super::history::HistoryBuffer;
 use super::protocol::WsMessage;
 use super::stream_bridge::{OutboundPush, StreamBridge, StreamEndpoint, StreamKey};
@@ -353,6 +353,80 @@ pub(super) async fn simulation_manager(
 }
 
 /// Serialize one history state as a `WsMessage::State` JSON string.
+/// What [`deliver_chunk`] left for the caller to do.
+struct Delivery {
+    /// State samples still to be sent, paced to the wall clock.
+    to_pace: Vec<crate::sim::core::HistoryState>,
+    /// Whether the chunk ended on a fault, so the run has to pause.
+    halted: bool,
+}
+
+/// Send what a chunk produced, and say what is left to do.
+///
+/// A chunk that failed partway hands back the samples and broadcasts its
+/// finished intervals produced, and both reach the clients that are connected
+/// here, because the caller pauses the run instead of pacing them out over the
+/// next chunks.
+///
+/// The samples go out before the terminations on that path. The channel holds
+/// 256 messages and drops the oldest once a receiver falls behind, so a chunk
+/// with more samples than that would push a termination sent first out of a
+/// slow client's buffer. A dropped sample is recoverable — the history holds
+/// it, and a client can query the range — while a termination reaches a
+/// running client only here.
+///
+/// The order is what this can do, not a guarantee: a fleet that stops more
+/// satellites in one chunk than the channel holds still outruns a client that
+/// is not draining. Every termination is in `terminated_events` as well, which
+/// a client reads on (re)connect, so what a lagged client loses it can still
+/// recover — over a reconnect rather than in place.
+fn deliver_chunk(
+    tx: &broadcast::Sender<String>,
+    chunk: Result<StepOutput, ChunkFailure>,
+) -> Delivery {
+    let (partial, error) = match chunk {
+        Ok(output) => {
+            // Immediate (non-paced) broadcasts: `simulation_terminated` events.
+            for msg in &output.broadcasts {
+                let _ = tx.send(msg.clone());
+            }
+            return Delivery {
+                to_pace: output.states,
+                halted: false,
+            };
+        }
+        Err(ChunkFailure { error, partial }) => (partial, error),
+    };
+
+    // Controller fault (bad command / guest trap / stream-io overrun) or
+    // integration error. The sim state can no longer be trusted, so the caller
+    // pauses instead of integrating forward, and the clients are told.
+    log::error!("simulation halted: {error}");
+    for out in &partial.states {
+        let _ = tx.send(state_json(out));
+    }
+    for msg in &partial.broadcasts {
+        let _ = tx.send(msg.clone());
+    }
+    let msg = serde_json::to_string(&WsMessage::Error {
+        message: format!("simulation halted: {error}"),
+    })
+    .expect("failed to serialize error");
+    let _ = tx.send(msg);
+    // Clients drive their server-state UI off `status` messages; without this
+    // they'd show a stale "running" after the halt.
+    let status = serde_json::to_string(&WsMessage::Status {
+        state: "paused".to_string(),
+    })
+    .expect("failed to serialize status");
+    let _ = tx.send(status);
+
+    Delivery {
+        to_pace: Vec::new(),
+        halted: true,
+    }
+}
+
 fn state_json(out: &crate::sim::core::HistoryState) -> String {
     serde_json::to_string(&WsMessage::State {
         entity_path: out.entity_path.clone(),
@@ -590,36 +664,12 @@ async fn run_simulation_loop(
         engine = engine_back;
         streams = streams_back;
 
-        let step_output = match chunk_result {
-            Ok(output) => output,
-            Err(e) => {
-                // Controller fault (bad command / guest trap / stream-io
-                // overrun) or integration error. The sim state can no longer
-                // be trusted; halt (pause) instead of integrating forward, and
-                // tell clients.
-                log::error!("simulation halted: {e}");
-                let msg = serde_json::to_string(&WsMessage::Error {
-                    message: format!("simulation halted: {e}"),
-                })
-                .expect("failed to serialize error");
-                let _ = tx.send(msg);
-                paused = true;
-                // Clients drive their server-state UI off `status` messages;
-                // without this they'd show a stale "running" after the halt.
-                let status = serde_json::to_string(&WsMessage::Status {
-                    state: "paused".to_string(),
-                })
-                .expect("failed to serialize status");
-                let _ = tx.send(status);
-                continue;
-            }
-        };
-
-        // Immediate (non-paced) broadcasts: `simulation_terminated` events.
-        for msg in &step_output.broadcasts {
-            let _ = tx.send(msg.clone());
+        let delivery = deliver_chunk(&tx, chunk_result);
+        if delivery.halted {
+            paused = true;
+            continue;
         }
-        let all_outputs = step_output.states;
+        let all_outputs = delivery.to_pace;
 
         if realtime {
             // Realtime: ship states immediately, then sync this tick to the
@@ -654,6 +704,151 @@ async fn run_simulation_loop(
 mod tests {
     use super::*;
     use arika::body::KnownBody;
+
+    /// One state sample, enough to be recognised in the broadcast channel.
+    fn a_sample(t: f64) -> crate::sim::core::HistoryState {
+        crate::sim::core::make_history_state(
+            orts::record::entity_path::EntityPath::parse("/world/sat/healthy"),
+            t,
+            &nalgebra::Vector3::new(6878.0, 0.0, 0.0),
+            &nalgebra::Vector3::new(0.0, 7.6, 0.0),
+            KnownBody::Earth.properties().mu,
+            KnownBody::Earth.properties().radius,
+            crate::sim::core::ModelLoads::default(),
+            None,
+        )
+    }
+
+    /// A chunk that failed partway reaches the connected clients: the samples
+    /// its finished intervals produced, then the termination, then the error
+    /// and the paused status.
+    ///
+    /// The samples are sent here rather than handed back, because a fault that
+    /// does not clear means no later chunk to pace them with.
+    #[test]
+    fn a_failed_chunk_is_sent_before_the_run_is_paused() {
+        let (tx, mut rx) = broadcast::channel(16);
+        let delivery = deliver_chunk(
+            &tx,
+            Err(ChunkFailure {
+                error: "stream-io: inbound staging overflow on doomed/tc".to_string(),
+                partial: StepOutput {
+                    states: vec![a_sample(1.0)],
+                    broadcasts: vec![r#"{"type":"simulation_terminated","t":1.0}"#.to_string()],
+                },
+            }),
+        );
+
+        assert!(delivery.halted, "the caller pauses the run");
+        assert!(
+            delivery.to_pace.is_empty(),
+            "nothing is left for the caller to pace: {:?}",
+            delivery.to_pace.len()
+        );
+
+        let sent: Vec<String> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        assert_eq!(
+            sent.len(),
+            4,
+            "sample, termination, error, status: {sent:?}"
+        );
+        assert!(
+            sent[0].contains("\"state\""),
+            "the sample the finished interval produced goes out first: {}",
+            sent[0]
+        );
+        assert!(
+            sent[1].contains("simulation_terminated"),
+            "then the termination: {}",
+            sent[1]
+        );
+        assert!(
+            sent[2].contains("simulation halted") && sent[2].contains("overflow"),
+            "then the error, naming the fault: {}",
+            sent[2]
+        );
+        assert!(
+            sent[3].contains("paused"),
+            "and the status the client's UI reads: {}",
+            sent[3]
+        );
+    }
+
+    /// More samples than the channel holds must not cost the termination.
+    ///
+    /// `tokio::sync::broadcast` drops the oldest message once a receiver falls
+    /// behind, and `serve` runs a 256-message channel
+    /// (`super::super::run_server`). A fleet large enough to fill it in one
+    /// chunk would lose whatever was sent first, which is why the samples go
+    /// before the termination.
+    #[test]
+    fn a_termination_survives_more_samples_than_the_channel_holds() {
+        const CAPACITY: usize = 256;
+
+        let (tx, mut rx) = broadcast::channel(CAPACITY);
+        let states: Vec<crate::sim::core::HistoryState> =
+            (0..CAPACITY + 50).map(|i| a_sample(i as f64)).collect();
+        let delivery = deliver_chunk(
+            &tx,
+            Err(ChunkFailure {
+                error: "guest trap".to_string(),
+                partial: StepOutput {
+                    states,
+                    broadcasts: vec![r#"{"type":"simulation_terminated","t":9.0}"#.to_string()],
+                },
+            }),
+        );
+        assert!(delivery.halted);
+
+        // The receiver never drained, so the oldest messages are gone: what is
+        // left has to still carry the termination, the error and the status.
+        let mut kept = Vec::new();
+        loop {
+            match rx.try_recv() {
+                Ok(msg) => kept.push(msg),
+                Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
+                Err(_) => break,
+            }
+        }
+        assert!(
+            kept.iter().any(|m| m.contains("simulation_terminated")),
+            "the termination was evicted by the samples ({} messages kept)",
+            kept.len()
+        );
+        assert!(
+            kept.iter().any(|m| m.contains("simulation halted")),
+            "and so was the error ({} messages kept)",
+            kept.len()
+        );
+        assert!(
+            kept.last().is_some_and(|m| m.contains("paused")),
+            "the status is the last thing the clients hear"
+        );
+    }
+
+    /// A chunk that finished sends its broadcasts and leaves its samples to be
+    /// paced against the wall clock.
+    #[test]
+    fn a_finished_chunk_leaves_its_samples_to_be_paced() {
+        let (tx, mut rx) = broadcast::channel(16);
+        let delivery = deliver_chunk(
+            &tx,
+            Ok(StepOutput {
+                states: vec![a_sample(1.0), a_sample(2.0)],
+                broadcasts: vec![r#"{"type":"simulation_terminated","t":1.0}"#.to_string()],
+            }),
+        );
+
+        assert!(!delivery.halted, "a termination is not a fault");
+        assert_eq!(delivery.to_pace.len(), 2, "the samples are the caller's");
+        let sent: Vec<String> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        assert_eq!(
+            sent.len(),
+            1,
+            "only the broadcast goes out from here: {sent:?}"
+        );
+        assert!(sent[0].contains("simulation_terminated"));
+    }
 
     /// A WebSocket `start_simulation` goes through the same config gate as
     /// `orts serve --config`: the serve loop never drains a `[[command]]`
