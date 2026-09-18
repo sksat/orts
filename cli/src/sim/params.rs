@@ -244,8 +244,8 @@ pub(crate) fn ensure_usable_period(id: &str, period: f64) -> Result<(), String> 
     Err(format!(
         "Satellite '{id}' has an orbital period of {period}, which no run can use as an end \
          time. It is derived from the orbit (2 pi sqrt(r0^3 / mu) for a circular orbit, the mean \
-         motion for a TLE or OMM), so an orbit this large overflows it: give a smaller altitude, \
-         or set an explicit duration."
+         motion for a TLE or OMM), so an orbit this large overflows it: give an orbit whose \
+         period is a positive finite number."
     ))
 }
 
