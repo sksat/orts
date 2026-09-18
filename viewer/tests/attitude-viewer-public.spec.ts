@@ -465,10 +465,13 @@ test("both triads are drawn as meshes with letters, and no GL lines remain", asy
   expect(scene, "the scene graph should be reachable").not.toBeNull();
   if (scene == null) return;
 
-  // Six letters: X, Y and Z on the body triad and on the reference frame's.
-  expect(scene.counts.Sprite, "one letter per axis on each triad").toBe(6);
-  // Each is drawn last and without a depth test, so a letter on an axis pointing
-  // away from the reader stays readable rather than buried in the spacecraft.
+  // Six letters — X, Y and Z on the body triad and on the reference frame's — and
+  // one name per arrow, which is what the scene has instead of a legend entry.
+  const arrows = await drawnArrows(page);
+  expect(scene.counts.Sprite, "a letter per axis and a name per arrow").toBe(6 + arrows.length);
+  // Each is drawn last and without a depth test, so text on an axis or an arrow
+  // pointing away from the reader stays readable rather than buried in the
+  // spacecraft.
   for (const sprite of scene.sprites) {
     expect(sprite.depthTest).toBe(false);
     expect(sprite.renderOrder).toBeGreaterThan(0);
