@@ -590,29 +590,11 @@ async fn run_simulation_loop(
         engine = engine_back;
         streams = streams_back;
 
-        let step_output = match chunk_result {
-            Ok(output) => output,
-            Err(e) => {
-                // Controller fault (bad command / guest trap / stream-io
-                // overrun) or integration error. The sim state can no longer
-                // be trusted; halt (pause) instead of integrating forward, and
-                // tell clients.
-                log::error!("simulation halted: {e}");
-                let msg = serde_json::to_string(&WsMessage::Error {
-                    message: format!("simulation halted: {e}"),
-                })
-                .expect("failed to serialize error");
-                let _ = tx.send(msg);
-                paused = true;
-                // Clients drive their server-state UI off `status` messages;
-                // without this they'd show a stale "running" after the halt.
-                let status = serde_json::to_string(&WsMessage::Status {
-                    state: "paused".to_string(),
-                })
-                .expect("failed to serialize status");
-                let _ = tx.send(status);
-                continue;
-            }
+        // A chunk that failed partway hands back what its finished intervals
+        // produced, and that goes out the same way a whole chunk's does.
+        let (step_output, failed) = match chunk_result {
+            Ok(output) => (output, None),
+            Err(failure) => (failure.partial, Some(failure.error)),
         };
 
         // Immediate (non-paced) broadcasts: `simulation_terminated` events.
@@ -620,6 +602,33 @@ async fn run_simulation_loop(
             let _ = tx.send(msg.clone());
         }
         let all_outputs = step_output.states;
+
+        if let Some(e) = failed {
+            // Controller fault (bad command / guest trap / stream-io overrun)
+            // or integration error. The sim state can no longer be trusted;
+            // halt (pause) instead of integrating forward, and tell clients.
+            // The samples of the intervals that did finish go out first and
+            // unpaced: a permanent fault means no later chunk, so anything
+            // held back for the wall clock would never be sent.
+            log::error!("simulation halted: {e}");
+            for out in &all_outputs {
+                let _ = tx.send(state_json(out));
+            }
+            let msg = serde_json::to_string(&WsMessage::Error {
+                message: format!("simulation halted: {e}"),
+            })
+            .expect("failed to serialize error");
+            let _ = tx.send(msg);
+            paused = true;
+            // Clients drive their server-state UI off `status` messages;
+            // without this they'd show a stale "running" after the halt.
+            let status = serde_json::to_string(&WsMessage::Status {
+                state: "paused".to_string(),
+            })
+            .expect("failed to serialize status");
+            let _ = tx.send(status);
+            continue;
+        }
 
         if realtime {
             // Realtime: ship states immediately, then sync this tick to the
