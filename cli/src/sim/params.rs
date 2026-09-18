@@ -212,8 +212,9 @@ pub(crate) fn validate_element_set_body(
 
 /// Reject a satellite whose derived orbital period is not a usable end time.
 ///
-/// The period is derived — `2 pi sqrt(r0^3 / mu)` for a circular orbit, the
-/// mean motion for an element set — and every mode takes it as a satellite's
+/// The period is derived — `2 pi sqrt(r0^3 / mu)` for a circular orbit,
+/// `2 pi / n` from an element set's mean motion — and every mode takes it as a
+/// satellite's
 /// end time when `--duration` is absent, so a value that is not positive and
 /// finite means something different on each of them: `orts run`'s orbit-only
 /// and spacecraft paths take `duration.unwrap_or(period)` per satellite and
@@ -243,9 +244,9 @@ pub(crate) fn ensure_usable_period(id: &str, period: f64) -> Result<(), String> 
     }
     Err(format!(
         "Satellite '{id}' has an orbital period of {period}, which no run can use as an end \
-         time. It is derived from the orbit (2 pi sqrt(r0^3 / mu) for a circular orbit, the mean \
-         motion for a TLE or OMM), so an orbit this large overflows it: give an orbit whose \
-         period is a positive finite number."
+         time. It is derived from the orbit (2 pi sqrt(r0^3 / mu) for a circular orbit, \
+         2 pi / n from a TLE's or OMM's mean motion), so an orbit this large overflows it: \
+         give an orbit whose period is a positive finite number."
     ))
 }
 
@@ -1603,6 +1604,28 @@ orbit = { type = "circular", altitude = 500 }
         assert!(
             from_run.contains("huge") && from_run.contains("period"),
             "and so does the run's: {from_run}"
+        );
+    }
+
+    /// A config entry with no `id` is named by the id a run gives it.
+    #[test]
+    fn an_unnamed_satellite_is_named_by_its_resolved_id() {
+        use crate::config::SimConfig;
+
+        let config: SimConfig = toml::from_str(
+            r#"
+body = "earth"
+dt = 10.0
+
+[[satellites]]
+orbit = { type = "circular", altitude = 1e103 }
+"#,
+        )
+        .expect("config parses");
+        let err = config.validate().expect_err("the orbit is refused");
+        assert!(
+            err.contains("sat-0"),
+            "the message names the resolved id: {err}"
         );
     }
 

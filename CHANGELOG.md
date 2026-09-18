@@ -1108,8 +1108,9 @@ section is subdivided by package.
   ([#558](https://github.com/sksat/orts/issues/558))
 - An orbit large enough to overflow its derived period was accepted, and each
   mode then read the infinite period differently. The period is derived
-  (`2 pi sqrt(r0^3 / mu)` for a circular orbit, the mean motion for a TLE or
-  OMM) and is a satellite's end time whenever `--duration` is absent, so
+  (`2 pi sqrt(r0^3 / mu)` for a circular orbit, `2 pi / n` from a TLE's or
+  OMM's mean motion) and is a satellite's end time whenever `--duration` is
+  absent, so
   `orbit = { type = "circular", altitude = 1e103 }` — accepted, `r0^3`
   overflows — meant "never finishes" on the orbit-only and spacecraft paths,
   "ends at the next longest period" on the controlled path (measured: 5676.98 s
