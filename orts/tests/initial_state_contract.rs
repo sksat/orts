@@ -761,12 +761,11 @@ fn the_closing_kick_is_asked_about_before_the_run_ends() {
 }
 
 /// An event during the drift ends the interval early, and the closing kick
-/// still lands on the satellites that are left — so it is asked about there
-/// too.
+/// still lands on the pairs that kept both endpoints — so it is asked about
+/// there too.
 ///
-/// The event path applies its closing kick and leaves the loop, so a survivor
-/// kicked past its constraint would be handed back with nothing left to ask
-/// about it.
+/// A survivor kicked past its constraint would otherwise be handed back as a
+/// state of its own, with the run's caller none the wiser.
 #[test]
 fn a_kick_after_an_event_is_asked_about_too() {
     use core::ops::ControlFlow;
@@ -791,7 +790,10 @@ fn a_kick_after_an_event_is_asked_about_too() {
     // Out beyond the line the checker draws, so the drift ends on an event.
     .add_satellite("stopper", at(STOPS_BEYOND + 1.0), SpeedLimit)
     .add_satellite("kicked", at(FLOOR_X), SpeedLimit)
-    .add_satellite("kicker", at(FLOOR_X + 1e6), SpeedLimit)
+    // Inside the range the checker draws: a pair one endpoint left is not
+    // kicked at the interval's end any more (#530), and the shove this pair
+    // applies does not depend on the distance anyway.
+    .add_satellite("kicker", at(FLOOR_X + 10.0), SpeedLimit)
     .add_interaction_fixed(
         "kicked",
         "kicker",
