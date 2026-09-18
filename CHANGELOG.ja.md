@@ -563,6 +563,17 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 
 ### `orts-cli` (Rust, crates.io, binary)
 
+#### Changed
+- **BREAKING**: `serve` は、値が既定と違うからではなく「書かれたから」調整フラグを報告する。
+  `serve --config mission.toml --atol 1e-10` は無言で起動していた: 値が既定と同じなのでフラグが
+  「無い」と読まれ、コマンドラインの指定ではなく config の `atol` が走っていた。この検査が走るのは
+  これらの値を誰も読まない経路だけである — config は `SimParams::from_config` が組み、idle server は
+  クライアントの `start_simulation` から取る — ので、書かれた値は何であれ落ちる。既定値と一致して
+  いたために受け付けられていたコマンドは、フラグ名を挙げて拒否されるようになった。
+  `--plugin-backend-async-mode` は、他の調整フラグが読まれる「コマンドラインに軌道がある」経路でも
+  拒否する: `ServeEngine` は `WasmPluginCache::new()` でキャッシュを作り、モードを解決しないので、
+  このフラグはどこにも届かない ([#522](https://github.com/sksat/orts/issues/522))
+
 #### Added
 - `frame` / `--frame {simple-eci|gcrs}` と `eop` / `--eop {auto|PATH|zero}`:
   `orts run` の軌道のみの経路を `Gcrs` (IAU 2006/2000A CIO chain + 観測 IERS
