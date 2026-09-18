@@ -806,92 +806,129 @@ where
 
         // Propagate coupled components
         for comp in &grouping.coupled_components {
-            let mut group: CoupledGroup<D> =
-                CoupledGroup::new(self.integrator.clone()).with_root_search(self.search);
-
-            if let Some(ref checker) = self.event_checker {
-                let checker = checker.clone();
-                group = group.with_event_checker(move |t, s| checker(t, s));
-            }
-
-            group.set_t(self.t);
-            let group_started_at = self.t;
-
-            // Map: satellite_idx → position within this coupled group
-            let mut idx_to_local: Vec<(usize, usize)> = Vec::new();
-            for (local, &sat_idx) in comp.iter().enumerate() {
-                let sat = &mut self.satellites[sat_idx];
-                let dynamics = sat.dynamics.take().expect("dynamics should be present");
-                group.push_satellite(sat.id.clone(), sat.state.clone(), dynamics);
-                idx_to_local.push((sat_idx, local));
-            }
-
-            // Add interactions whose both endpoints are in this component
-            for (spec, ps) in self.interactions.iter().zip(self.pair_states.iter()) {
-                if ps.regime != PairRegime::Coupled {
-                    continue;
+            // A walk an event stops hands its members back at the event's
+            // time, so the survivors still owe the rest of the interval.
+            // Each pass either reaches the target or stops another member,
+            // so the component cannot outlast its own membership.
+            let mut members: Vec<usize> = comp.clone();
+            let mut from = self.t;
+            for _ in 0..=comp.len() {
+                let (terms, reached) = self.propagate_component(&members, from, t_target)?;
+                terminations.extend(terms);
+                members.retain(|&index| !self.satellites[index].terminated);
+                if members.is_empty() || reached >= t_target - 1e-12 {
+                    break;
                 }
-                let i_global = self.satellites.iter().position(|s| s.id == spec.sat_i);
-                let j_global = self.satellites.iter().position(|s| s.id == spec.sat_j);
-                if let (Some(ig), Some(jg)) = (i_global, j_global) {
-                    let i_local = idx_to_local.iter().find(|(g, _)| *g == ig).map(|(_, l)| *l);
-                    let j_local = idx_to_local.iter().find(|(g, _)| *g == jg).map(|(_, l)| *l);
-                    if let (Some(il), Some(jl)) = (i_local, j_local) {
-                        group.push_interaction(il, jl, spec.force.clone());
-                    }
-                }
-            }
-
-            let outcome = group.propagate_to(t_target)?;
-            terminations.extend(outcome.terminations);
-
-            let parts = group.into_parts();
-            // The component's own time: a walk that stopped early hands back
-            // states from where it stopped, not from the interval's end.
-            let parts_t = parts.t;
-            // Recover state and dynamics for each satellite.
-            // For event terminations: only the triggering satellite is "dead".
-            // For integration errors: all satellites in the group are corrupted.
-            let term_id = parts.termination.as_ref().map(|t| &t.satellite_id);
-            for ((state, dynamics), &sat_idx) in parts
-                .states
-                .into_iter()
-                .zip(parts.dynamics)
-                .zip(comp.iter())
-            {
-                let sat = &mut self.satellites[sat_idx];
-                sat.state = state;
-                // The component's own time: a walk that stopped early hands
-                // back states from where it stopped.
-                sat.state_t = parts_t;
-                sat.dynamics = Some(dynamics);
-                // Who is left running depends on how the walk ended. An
-                // integration error leaves every satellite at the end of the
-                // last segment that finished — an instant this interval has
-                // passed — so the whole component goes with it. A refusal
-                // at the interval's start integrated nothing, so the peers
-                // still hold states that belong to this interval's beginning
-                // and the grouping flies them over it; one at a later
-                // segment's start leaves them part-way through instead, with
-                // the clock about to move to the end, and a state from an
-                // instant the run has passed is worse than a stopped
-                // satellite. (A system whose check refuses a state its own
-                // propagation produced contradicts itself: the question is
-                // about what a caller handed over.)
-                let whole_component = match parts.stop {
-                    Some(ComponentStop::IntegrationError) => true,
-                    Some(ComponentStop::StartRefused) => (parts.t - group_started_at).abs() > 1e-12,
-                    Some(ComponentStop::Event) | None => false,
-                };
-                if parts.terminated && whole_component {
-                    sat.terminated = true;
-                } else {
-                    sat.terminated = term_id.is_some_and(|tid| tid == &sat.id);
-                }
+                from = reached;
             }
         }
 
         Ok(terminations)
+    }
+
+    /// Propagate one coupled component from `from` to `to`, and report how
+    /// far it got.
+    ///
+    /// `members` are the satellites to walk as one composite state, which is
+    /// not always the whole component: a walk an event stopped hands its
+    /// members back at the event's time, and the survivors are walked on
+    /// under the coupling that remains between them.
+    fn propagate_component(
+        &mut self,
+        members: &[usize],
+        from: f64,
+        to: f64,
+    ) -> Result<(Vec<SatelliteTermination>, f64), IntegrationError>
+    where
+        D::State: 'static,
+    {
+        let mut terminations = Vec::new();
+        let mut reached = from;
+        let mut group: CoupledGroup<D> =
+            CoupledGroup::new(self.integrator.clone()).with_root_search(self.search);
+
+        if let Some(ref checker) = self.event_checker {
+            let checker = checker.clone();
+            group = group.with_event_checker(move |t, s| checker(t, s));
+        }
+
+        group.set_t(from);
+        let group_started_at = from;
+
+        // Map: satellite_idx → position within this coupled group
+        let mut idx_to_local: Vec<(usize, usize)> = Vec::new();
+        for (local, &sat_idx) in members.iter().enumerate() {
+            let sat = &mut self.satellites[sat_idx];
+            let dynamics = sat.dynamics.take().expect("dynamics should be present");
+            group.push_satellite(sat.id.clone(), sat.state.clone(), dynamics);
+            idx_to_local.push((sat_idx, local));
+        }
+
+        // Add interactions whose both endpoints are in this component
+        for (spec, ps) in self.interactions.iter().zip(self.pair_states.iter()) {
+            if ps.regime != PairRegime::Coupled {
+                continue;
+            }
+            let i_global = self.satellites.iter().position(|s| s.id == spec.sat_i);
+            let j_global = self.satellites.iter().position(|s| s.id == spec.sat_j);
+            if let (Some(ig), Some(jg)) = (i_global, j_global) {
+                let i_local = idx_to_local.iter().find(|(g, _)| *g == ig).map(|(_, l)| *l);
+                let j_local = idx_to_local.iter().find(|(g, _)| *g == jg).map(|(_, l)| *l);
+                if let (Some(il), Some(jl)) = (i_local, j_local) {
+                    group.push_interaction(il, jl, spec.force.clone());
+                }
+            }
+        }
+
+        let outcome = group.propagate_to(to)?;
+        terminations.extend(outcome.terminations);
+
+        let parts = group.into_parts();
+        // The component's own time: a walk that stopped early hands back
+        // states from where it stopped, not from the interval's end.
+        let parts_t = parts.t;
+        // Recover state and dynamics for each satellite.
+        // For event terminations: only the triggering satellite is "dead".
+        // For integration errors: all satellites in the group are corrupted.
+        let term_id = parts.termination.as_ref().map(|t| &t.satellite_id);
+        for ((state, dynamics), &sat_idx) in parts
+            .states
+            .into_iter()
+            .zip(parts.dynamics)
+            .zip(members.iter())
+        {
+            let sat = &mut self.satellites[sat_idx];
+            sat.state = state;
+            // The component's own time: a walk that stopped early hands
+            // back states from where it stopped.
+            sat.state_t = parts_t;
+            sat.dynamics = Some(dynamics);
+            // Who is left running depends on how the walk ended. An
+            // integration error leaves every satellite at the end of the
+            // last segment that finished — an instant this interval has
+            // passed — so the whole component goes with it. A refusal
+            // at the interval's start integrated nothing, so the peers
+            // still hold states that belong to this interval's beginning
+            // and the grouping flies them over it; one at a later
+            // segment's start leaves them part-way through instead, with
+            // the clock about to move to the end, and a state from an
+            // instant the run has passed is worse than a stopped
+            // satellite. (A system whose check refuses a state its own
+            // propagation produced contradicts itself: the question is
+            // about what a caller handed over.)
+            let whole_component = match parts.stop {
+                Some(ComponentStop::IntegrationError) => true,
+                Some(ComponentStop::StartRefused) => (parts.t - group_started_at).abs() > 1e-12,
+                Some(ComponentStop::Event) | None => false,
+            };
+            if parts.terminated && whole_component {
+                sat.terminated = true;
+            } else {
+                sat.terminated = term_id.is_some_and(|tid| tid == &sat.id);
+            }
+        }
+        reached = reached.max(parts_t);
+        Ok((terminations, reached))
     }
 
     // KDK helpers
@@ -2739,6 +2776,127 @@ mod tests {
             snap.positions.len()
         );
         assert_eq!(snap.positions[0].0, SatId::from("a"));
+    }
+
+    /// A satellite whose coupled partner stopped mid-interval keeps the whole
+    /// span, not the part after the interval it stopped in.
+    ///
+    /// Free particles with no force between them, so the answer is analytic:
+    /// after `t` seconds at 0.5 m/s the survivor is at `y = 0.5 t`. A component
+    /// is walked as one composite state, so the event that stops one member
+    /// stops the walk for both — and what this asserts is that the survivor is
+    /// walked on from the event's time to the interval's end, rather than being
+    /// left where the interrupted walk put it while the clock moves on.
+    #[test]
+    fn a_survivor_keeps_the_interval_its_partner_stopped_in() {
+        const SPEED: f64 = 0.5;
+        const SPAN: f64 = 300.0;
+
+        let still = OrbitalState::new(Vector3::zeros(), Vector3::new(0.0, SPEED, 0.0));
+        let leaving = OrbitalState::new(Vector3::new(100.0, 0.0, 0.0), Vector3::new(1.0, 0.0, 0.0));
+        // No force: the trajectories are straight lines whatever the grouping.
+        let none = Arc::new(Spring {
+            stiffness: 0.0,
+            rest_length: 0.0,
+        });
+
+        let mut sched: Scheduler<FreeParticle> =
+            Scheduler::new(default_config(), IntegratorConfig::Rk4 { dt: 1.0 })
+                .with_event_checker(|_t, state: &OrbitalState| {
+                    if state.position().x > 200.0 {
+                        ControlFlow::Break("out of range".to_string())
+                    } else {
+                        ControlFlow::Continue(())
+                    }
+                })
+                .add_satellite("stays", still, FreeParticle)
+                .add_satellite("leaves", leaving, FreeParticle)
+                .add_interaction_fixed("stays", "leaves", PairRegime::Coupled, none);
+
+        // "leaves" crosses x = 200 at t = 100, inside the interval [60, 120).
+        let outcome = sched.propagate_to(SPAN).unwrap();
+        assert!(
+            outcome
+                .terminations
+                .iter()
+                .any(|t| t.satellite_id == SatId::from("leaves")),
+            "the event stops the satellite that leaves"
+        );
+
+        let y = sched
+            .satellite_state(&SatId::from("stays"))
+            .unwrap()
+            .position()
+            .y;
+        assert!(
+            (y - SPEED * SPAN).abs() < 1e-9,
+            "the survivor flies the whole span: {y} where {} is 0.5 * {SPAN}",
+            SPEED * SPAN
+        );
+    }
+
+    /// Two members stopping in the same interval, the second one during the
+    /// first one's catch-up.
+    ///
+    /// The loop that walks the survivors on has to keep going rather than pass
+    /// once: the first event ends the walk at 101 s, the second at 111 s, and
+    /// the interval runs to 120 s. The last survivor is a free particle the
+    /// whole time, so its position is analytic.
+    #[test]
+    fn a_second_event_during_the_catch_up_is_handled_too() {
+        const SPEED: f64 = 0.5;
+        const SPAN: f64 = 300.0;
+
+        let leaving =
+            |x: f64| OrbitalState::new(Vector3::new(x, 0.0, 0.0), Vector3::new(1.0, 0.0, 0.0));
+        let still = OrbitalState::new(Vector3::zeros(), Vector3::new(0.0, SPEED, 0.0));
+        let none = || {
+            Arc::new(Spring {
+                stiffness: 0.0,
+                rest_length: 0.0,
+            })
+        };
+
+        let mut sched: Scheduler<FreeParticle> =
+            Scheduler::new(default_config(), IntegratorConfig::Rk4 { dt: 1.0 })
+                .with_event_checker(|_t, state: &OrbitalState| {
+                    if state.position().x > 200.0 {
+                        ControlFlow::Break("out of range".to_string())
+                    } else {
+                        ControlFlow::Continue(())
+                    }
+                })
+                // Crosses x = 200 at t = 100, inside the interval [60, 120).
+                .add_satellite("first", leaving(100.0), FreeParticle)
+                // And this one at t = 110, inside the first one's catch-up.
+                .add_satellite("second", leaving(90.0), FreeParticle)
+                .add_satellite("stays", still, FreeParticle)
+                .add_interaction_fixed("stays", "first", PairRegime::Coupled, none())
+                .add_interaction_fixed("stays", "second", PairRegime::Coupled, none());
+
+        let outcome = sched.propagate_to(SPAN).unwrap();
+        let reported: Vec<SatId> = outcome
+            .terminations
+            .iter()
+            .map(|t| t.satellite_id.clone())
+            .collect();
+        for id in ["first", "second"] {
+            assert!(
+                reported.contains(&SatId::from(id)),
+                "{id} leaves the range and is reported: {reported:?}"
+            );
+        }
+
+        let y = sched
+            .satellite_state(&SatId::from("stays"))
+            .unwrap()
+            .position()
+            .y;
+        assert!(
+            (y - SPEED * SPAN).abs() < 1e-9,
+            "the last survivor flies the whole span: {y} where {} is {SPEED} * {SPAN}",
+            SPEED * SPAN
+        );
     }
 
     #[test]
