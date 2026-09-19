@@ -615,38 +615,47 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
         self.core.num_wheels()
     }
 
-    /// # What the step has to be small enough for
+    /// # Why the momentum's turning point is one of them
     ///
     /// A crossing is found from the sign of a margin at a step's ends, so a
-    /// step that holds two sign changes of the same margin holds none the
-    /// search can report — an obligation on the caller's step size that
-    /// `DESIGN.md` states and no search can check.
+    /// step holding two sign changes of the same margin holds none those two
+    /// ends can report.
     ///
     /// A wheel with motor lag can hold such a pair: braking a wheel that is
     /// still accelerating outward, from just inside its limit, sends the
     /// momentum past the limit and brings it back as the realized torque
-    /// decays through zero. Measured with `h = 0.999`, a limit of 1, a
-    /// realized torque of +0.1 N·m against a command of -0.1, and a time
-    /// constant of 50 ms: the momentum peaks at 1.0005 N·m·s after 35 ms and
-    /// is back under the limit by 100 ms, so a 100 ms step reports nothing
-    /// while a 10 ms step holds the wheel. Resolving the lag — a step well
-    /// inside the time constant, which its own exponential needs anyway — is
-    /// what keeps each step to one sign change.
+    /// decays through zero. With `h = 0.999`, a limit of 1, a realized torque
+    /// of +0.1 N·m against a command of -0.1, and a time constant of 50 ms,
+    /// the margin falls through zero at 13.2 ms and rises back through it at
+    /// 59.7 ms — both inside a 100 ms step, whose ends are 0.0010 and 0.0043.
     ///
-    /// [#516](https://github.com/sksat/orts/issues/516) would take the
-    /// obligation off the caller, by declaring the momentum's turning point as
-    /// a boundary that splits the step.
+    /// The momentum turns around where the realized torque passes zero, at
+    /// 34.7 ms, and a wheel with motor lag declares that as
+    /// [`BoundaryKind::TurningPoint`]. Locating it takes the search through
+    /// widths that end inside the excursion, and the margin at one of those
+    /// does differ in sign from the step's start, which is what puts the bound
+    /// among the candidates ([`RootSet`](utsuroi::RootSet)). A 100 ms step
+    /// then holds the wheel at 13.7 ms and releases it at 34.8 ms.
+    ///
+    /// A wheel without motor lag declares no turning point: its `dh/dt` is the
+    /// command, which holds a value across a segment rather than passing
+    /// smoothly through zero, and a step cut where a command happens to be
+    /// zero is cut at no turn of the momentum.
     fn boundaries(&self) -> Vec<EffectorBoundary> {
-        // Three per wheel: either bound, and one release whose value the mode
-        // signs.
+        // Either bound and one release per wheel, whose value the mode signs,
+        // plus the momentum's turning point where the motor lags.
         (0..self.core.num_wheels())
             .flat_map(|index| {
                 [
-                    BoundaryKind::ReachedUpper { index },
-                    BoundaryKind::ReachedLower { index },
-                    BoundaryKind::Released { index },
+                    Some(BoundaryKind::ReachedUpper { index }),
+                    Some(BoundaryKind::ReachedLower { index }),
+                    Some(BoundaryKind::Released { index }),
+                    self.core.wheels[index]
+                        .motor_time_constant
+                        .map(|_| BoundaryKind::TurningPoint { index }),
                 ]
             })
+            .flatten()
             .map(|kind| EffectorBoundary {
                 kind,
                 // A held wheel sits on its bound for many steps, and the
@@ -655,6 +664,12 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
                 // newton-metres of torque for a release.
                 boundary_tolerance: match kind {
                     BoundaryKind::Released { .. } => RELEASE_TOLERANCE,
+                    // A turning point slides along nothing: the torque passes
+                    // through zero once and leaves. What keeps it from being
+                    // reported twice is the guard at the root's own time, and
+                    // a width here would instead suppress the next genuine
+                    // reversal of a wheel whose torque stays inside it.
+                    BoundaryKind::TurningPoint { .. } => 0.0,
                     _ => MOMENTUM_TOLERANCE,
                 },
             })
@@ -755,8 +770,8 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
             BoundaryKind::ReachedUpper { .. } => limit,
             BoundaryKind::ReachedLower { .. } => -limit,
             // A release moves nothing: the wheel is where it was, and only the
-            // mode changes.
-            BoundaryKind::Released { .. } => return None,
+            // mode changes. A turning point moves neither.
+            BoundaryKind::Released { .. } | BoundaryKind::TurningPoint { .. } => return None,
         };
         // What the wheel took past its bound goes back to the body, along the
         // spin axis: the exchange that carried it there was momentum leaving
@@ -789,6 +804,10 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
                     ConstraintMode::Free => 1.0,
                 }
             }
+            // Where the momentum turns around: `dh/dt` through zero, which for
+            // a wheel with motor lag is the realized torque. Read unsigned by
+            // the mode, since either direction of turn splits the step.
+            BoundaryKind::TurningPoint { .. } => self.unconstrained_rates(input.aux)[index],
         }
     }
 
@@ -901,6 +920,79 @@ mod tests {
             },
             rates,
         )
+    }
+
+    /// The momentum's turning point is declared by the wheels whose motor
+    /// lags, and by no others.
+    ///
+    /// Where the motor lags, `dh/dt` is the realized torque: a state variable
+    /// that passes smoothly through zero, which is where the momentum turns
+    /// around. Where it does not lag, `dh/dt` is the command, and a command
+    /// sitting at zero is not a turn of anything.
+    #[test]
+    fn only_a_wheel_whose_motor_lags_declares_its_turning_point() {
+        const LAGGING: usize = 0;
+        const DIRECT: usize = 1;
+        let rw = RwAssembly::new(vec![
+            Rw::new(Vector3::z(), 0.01, 1.0, 0.1).with_motor_lag(0.05),
+            Rw::new(Vector3::x(), 0.01, 1.0, 0.1),
+        ]);
+        let declared = StateEffector::<AttitudeState>::boundaries(&rw);
+        let kinds: Vec<BoundaryKind> = declared.iter().map(|b| b.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                BoundaryKind::ReachedUpper { index: LAGGING },
+                BoundaryKind::ReachedLower { index: LAGGING },
+                BoundaryKind::Released { index: LAGGING },
+                BoundaryKind::TurningPoint { index: LAGGING },
+                BoundaryKind::ReachedUpper { index: DIRECT },
+                BoundaryKind::ReachedLower { index: DIRECT },
+                BoundaryKind::Released { index: DIRECT },
+            ]
+        );
+
+        // No width: a held wheel's release needs one because the rate jitters
+        // around zero while the wheel sits on its bound, and a turn sits on
+        // nothing. A width here would suppress the next reversal of a wheel
+        // whose torque stays inside it.
+        let turning = declared
+            .iter()
+            .find(|b| b.kind == BoundaryKind::TurningPoint { index: LAGGING })
+            .expect("the lagging wheel declared it");
+        assert_eq!(turning.boundary_tolerance, 0.0);
+
+        // Searched for while the wheel is free; a held wheel's zero of the same
+        // rate is its release.
+        let free = [ConstraintMode::Free; 2];
+        let held = [ConstraintMode::Upper, ConstraintMode::Free];
+        assert!(turning.kind.is_active(&free));
+        assert!(!turning.kind.is_active(&held));
+
+        // And it moves neither the mode nor the wheel.
+        assert_eq!(turning.kind.mode_after(), None);
+        let mut aux = vec![0.5, -0.5, 0.02, 0.07];
+        let before = aux.clone();
+        assert!(
+            StateEffector::<AttitudeState>::settle_boundary(&rw, turning.kind, &mut aux).is_none()
+        );
+        assert_eq!(aux, before, "settling a turning point moves no momentum");
+
+        // Its value is the rate the momentum follows: the realized torque.
+        let state = test_state_at_rest();
+        let value = StateEffector::<AttitudeState>::boundary_value(
+            &rw,
+            turning.kind,
+            EffectorInput {
+                t: 0.0,
+                state: &state,
+                aux: &aux,
+                modes: &free,
+                epoch: None,
+                segment: None,
+            },
+        );
+        assert_eq!(value, aux[2], "the lagging wheel's realized torque");
     }
 
     /// Three boundaries per wheel, and which of them the mode makes worth

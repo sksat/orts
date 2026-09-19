@@ -284,9 +284,10 @@ impl<Sys: HasBoundaries> RootEvent<Sys::State> for BoundaryEvent<'_, Sys> {
     }
 
     fn crossing(&self) -> Crossing {
-        // A boundary value is a margin, so reaching one is the margin running
-        // out. See [`EffectorBoundary`](crate::effector::EffectorBoundary).
-        Crossing::Falling
+        // A bound and a release are margins, so reaching one is the margin
+        // running out; a turn of the rate counts either way. See
+        // [`BoundaryKind::crossing`](crate::effector::BoundaryKind::crossing).
+        self.declared.boundary.kind.crossing()
     }
 
     fn terminal(&self) -> bool {
@@ -524,6 +525,14 @@ fn settle_what_is_already_past<Sys: HasBoundaries>(
             if !system.boundary_is_active(declared, state) {
                 continue;
             }
+            // A boundary that only splits the step has no side to be past: its
+            // value is a rate, and a rate below zero is an ordinary state to
+            // start from. Settling it moves nothing either, so reading it here
+            // would spend every pass of this loop on a state that never
+            // changes and end in `RootStillCrossed`.
+            if declared.boundary.kind.mode_after().is_none() {
+                continue;
+            }
             // The value is a margin, so past the boundary is below zero — the
             // one side there is to be past — and a state *on* the boundary,
             // at exactly zero, is not past it. A wheel resting on its bound
@@ -556,6 +565,7 @@ fn settle_what_is_already_past<Sys: HasBoundaries>(
         .iter()
         .position(|declared| {
             system.boundary_is_active(declared, state)
+                && declared.boundary.kind.mode_after().is_some()
                 && system.boundary_value(declared, segment, t, state) < 0.0
         })
         .unwrap_or(0);

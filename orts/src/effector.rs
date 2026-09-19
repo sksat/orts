@@ -8,7 +8,7 @@
 
 use arika::epoch::Epoch;
 use arika::frame::{Body, Vec3};
-use utsuroi::{OdeState, Projection, Tolerances};
+use utsuroi::{Crossing, OdeState, Projection, Tolerances};
 
 use crate::model::{ExternalLoads, HasFrame};
 
@@ -60,8 +60,9 @@ pub trait StateEffector<S: HasFrame>: Send + Sync + std::any::Any {
     /// The boundaries this effector's state can reach.
     ///
     /// One per side of each one-sided constraint, plus one for its release: a
-    /// reaction wheel assembly declares three per wheel. Empty, unless
-    /// overridden.
+    /// reaction wheel assembly declares three per wheel, and a fourth — the
+    /// turning point of the momentum — for each wheel whose motor lags. Empty,
+    /// unless overridden.
     ///
     /// The propagation turns these into root events, so the modes change only
     /// where a walk stopped — which is what keeps the right-hand side fixed
@@ -244,6 +245,20 @@ pub enum BoundaryKind {
         /// Which of this effector's constrained quantities.
         index: usize,
     },
+    /// The rate carrying the free quantity `index` passes through zero, so the
+    /// quantity turns around there.
+    ///
+    /// Nothing is held and nothing is settled: this boundary exists to split
+    /// the step at the turn. A quantity that runs past its bound and comes back
+    /// within one step shows the same sign of margin at the step's two ends,
+    /// and the search reads only those two — [`RootSet`](utsuroi::RootSet)
+    /// searches the shortened step once a root has split it, which is what
+    /// makes the bound reachable again. The turn is where to split, because the
+    /// quantity is monotone on either side of it.
+    TurningPoint {
+        /// Which of this effector's constrained quantities.
+        index: usize,
+    },
 }
 
 impl BoundaryKind {
@@ -253,7 +268,8 @@ impl BoundaryKind {
         match self {
             Self::ReachedUpper { index }
             | Self::ReachedLower { index }
-            | Self::Released { index } => index,
+            | Self::Released { index }
+            | Self::TurningPoint { index } => index,
         }
     }
 
@@ -261,21 +277,47 @@ impl BoundaryKind {
     /// state is in.
     ///
     /// A bound cannot be reached while the constraint is already held against
-    /// one, and there is nothing to release while it is free.
+    /// one, and there is nothing to release while it is free. A turn of the
+    /// rate matters in the same mode a bound does: while the quantity is held,
+    /// the rate turning around is what [`Released`](Self::Released) reads.
     pub fn is_active(self, modes: &[ConstraintMode]) -> bool {
         let mode = modes.get(self.index()).copied().unwrap_or_default();
         match self {
-            Self::ReachedUpper { .. } | Self::ReachedLower { .. } => mode == ConstraintMode::Free,
+            Self::ReachedUpper { .. } | Self::ReachedLower { .. } | Self::TurningPoint { .. } => {
+                mode == ConstraintMode::Free
+            }
             Self::Released { .. } => mode != ConstraintMode::Free,
         }
     }
 
-    /// The mode the constraint is in once this boundary has been handled.
-    pub fn mode_after(self) -> ConstraintMode {
+    /// The mode the constraint is in once this boundary has been handled, or
+    /// `None` for one that leaves both the state and the mode where they are.
+    ///
+    /// `None` is what makes a boundary a split and nothing else: the walk stops
+    /// at it, so the search starts again from there, and the state it resumes
+    /// with is the one it stopped on.
+    pub fn mode_after(self) -> Option<ConstraintMode> {
         match self {
-            Self::ReachedUpper { .. } => ConstraintMode::Upper,
-            Self::ReachedLower { .. } => ConstraintMode::Lower,
-            Self::Released { .. } => ConstraintMode::Free,
+            Self::ReachedUpper { .. } => Some(ConstraintMode::Upper),
+            Self::ReachedLower { .. } => Some(ConstraintMode::Lower),
+            Self::Released { .. } => Some(ConstraintMode::Free),
+            Self::TurningPoint { .. } => None,
+        }
+    }
+
+    /// Which way across zero counts as reaching this boundary.
+    ///
+    /// A bound and a release are read as margins running out, so a fall
+    /// through zero is the crossing. A turn of the rate counts in either
+    /// direction, and only from a rate that was not already zero: a motor
+    /// whose realized torque starts at zero with a command to follow is
+    /// starting to move, not turning around.
+    pub fn crossing(self) -> Crossing {
+        match self {
+            Self::ReachedUpper { .. } | Self::ReachedLower { .. } | Self::Released { .. } => {
+                Crossing::Falling
+            }
+            Self::TurningPoint { .. } => Crossing::Reversal,
         }
     }
 }

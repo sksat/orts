@@ -90,6 +90,16 @@ pub enum Crossing {
     Falling,
     /// Either direction.
     Either,
+    /// Either direction, counted only where the value was not already zero.
+    ///
+    /// For an event that stands for a quantity turning around rather than a
+    /// margin running out: a value sitting at zero and leaving it has not
+    /// turned around, it has started moving. A walk's first state can hold
+    /// exactly that — a motor whose realized torque is zero with a command to
+    /// follow — and reporting a root there splits a step where nothing
+    /// happened. Arriving at zero still counts, so the turn itself is not lost
+    /// where a step happens to end on it.
+    Reversal,
 }
 
 impl Crossing {
@@ -103,10 +113,12 @@ impl Crossing {
     fn matches(self, before: f64, after: f64) -> bool {
         let rising = before <= 0.0 && after >= 0.0 && (before < 0.0 || after > 0.0);
         let falling = before >= 0.0 && after <= 0.0 && (before > 0.0 || after < 0.0);
+        let reversal = (before > 0.0 && after <= 0.0) || (before < 0.0 && after >= 0.0);
         match self {
             Crossing::Rising => rising,
             Crossing::Falling => falling,
             Crossing::Either => rising || falling,
+            Crossing::Reversal => reversal,
         }
     }
 }
@@ -888,6 +900,20 @@ mod tests {
         assert!(!Crossing::Falling.matches(-1.0, 1.0));
         assert!(Crossing::Either.matches(-1.0, 1.0));
         assert!(Crossing::Either.matches(1.0, -1.0));
+        // A reversal counts in either direction, and only from a value that
+        // was not already zero.
+        assert!(Crossing::Reversal.matches(1.0, -1.0));
+        assert!(Crossing::Reversal.matches(-1.0, 1.0));
+        assert!(
+            Crossing::Reversal.matches(1.0, 0.0),
+            "arriving at zero turns"
+        );
+        assert!(
+            !Crossing::Reversal.matches(0.0, 1.0),
+            "leaving zero is starting to move, not turning"
+        );
+        assert!(!Crossing::Reversal.matches(0.0, -1.0));
+        assert!(!Crossing::Reversal.matches(1.0, 2.0));
     }
 
     /// Zero counts toward whichever side the value is on at the other end.

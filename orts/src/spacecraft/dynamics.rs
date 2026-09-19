@@ -720,6 +720,11 @@ impl<G: GravityField, F: Eci + 'static> HasBoundaries for SpacecraftDynamics<G, 
     }
 
     fn settle_boundary(&self, declared: &DeclaredBoundary, state: &mut Self::State) {
+        let Some(mode) = declared.boundary.kind.mode_after() else {
+            // A boundary that only splits the step: the walk stops on the state
+            // it reached, and nothing about that state is this walk's to move.
+            return;
+        };
         let effector = &self.effectors[declared.effector];
         let aux = &mut state.aux[declared.aux_offset..declared.aux_offset + declared.aux_dim];
         if let Some(exchange) = effector.settle_boundary(declared.boundary.kind, aux) {
@@ -734,7 +739,7 @@ impl<G: GravityField, F: Eci + 'static> HasBoundaries for SpacecraftDynamics<G, 
                 state.plant.mass = mass;
             }
         }
-        state.modes[declared.mode_index()] = declared.boundary.kind.mode_after();
+        state.modes[declared.mode_index()] = mode;
     }
 
     fn boundary_is_active(&self, declared: &DeclaredBoundary, state: &Self::State) -> bool {
