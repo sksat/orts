@@ -954,7 +954,7 @@ mod tests {
     /// A value that runs out and comes back within one step is still located,
     /// when another event's crossing splits that step.
     ///
-    /// `dip(t) = (t - 0.2) (t - 0.6)` is `+0.12` at `t = 0` and `+0.16` at
+    /// `dip(t) = (t - 0.2) (t - 0.6)` is `+0.12` at `t = 0` and `+0.32` at
     /// `t = 1`: the two ends alone say it never ran out. `split(t) = 0.4 - t`
     /// crosses at `t = 0.4`, between the dip's two zeros, and the ends of the
     /// step up to there do show the dip. The earliest crossing in the step is
