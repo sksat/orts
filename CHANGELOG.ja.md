@@ -109,6 +109,16 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   variant で表される。([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
+- **Breaking:** reaction wheel が、トルクが指令にどう追従するかを `TorqueResponse` で表すように
+  なった (`Rw::motor_time_constant: Option<f64>` を置き換える)。variant がモデルを、field が量を
+  名指しする: `with_motor_lag(0.05)` では 50 ms が時定数か無駄時間かを言っておらず、
+  `motor time constant` ではモータの電気的時定数・機械的時定数と紛れるので、
+  `TorqueResponse::first_order_lag(0.05)` とする。`None` にも名前が付いた
+  (`TorqueResponse::Instant`、既定値)。`with_motor_lag` は deprecated な別名として残す。
+  `RwAssemblyCore::has_motor_lag` は `carries_torques` になった。これが決めているのは
+  「状態が角運動量の隣にトルクを持つか」で、wheel の性質ではない: 即応の wheel も、トルクを持つ
+  assembly では枠を 1 つ持ち、その値は telemetry 用に指令へ追従する。variant は直接書けるので、
+  `RwAssembly::new` が渡された wheel の応答を検査する。
 - **Breaking:** `BoundaryKind` に 4 つめの variant `TurningPoint { index }` が増え、
   `BoundaryKind::mode_after` の戻り値が `ConstraintMode` から `Option<ConstraintMode>` になった。
   `None` は「状態もモードも動かさない境界」を表す。variant を `match` している側と、境界が移る先の

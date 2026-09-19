@@ -138,6 +138,20 @@ section is subdivided by package.
   ([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
+- **Breaking:** a reaction wheel says how its torque follows its command with
+  `TorqueResponse`, in place of `Rw::motor_time_constant: Option<f64>`. The
+  variant names the model and its field names the quantity —
+  `TorqueResponse::first_order_lag(0.05)` rather than `with_motor_lag(0.05)`,
+  where 50 ms said nothing about whether it was a time constant or a delay, and
+  where `motor time constant` would have named the electrical or mechanical
+  time constant of a motor rather than the response of its torque. `None` gets
+  a name too: `TorqueResponse::Instant`, the default. `with_motor_lag` stays as
+  a deprecated alias. `RwAssemblyCore::has_motor_lag` becomes
+  `carries_torques`, which answers what it decides — whether the state carries a
+  torque alongside each momentum — rather than what a wheel is: a wheel whose
+  torque is instant still has a slot in an assembly that carries them, holding a
+  value that tracks its command for telemetry. `RwAssembly::new` checks every
+  wheel's response, since the variants can be written directly.
 - **Breaking:** `BoundaryKind` has a fourth variant, `TurningPoint { index }`,
   and `BoundaryKind::mode_after` returns `Option<ConstraintMode>` rather than
   `ConstraintMode` — `None` for a boundary that leaves the state and the mode

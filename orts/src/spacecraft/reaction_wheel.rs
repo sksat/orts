@@ -35,6 +35,77 @@ const MOMENTUM_TOLERANCE: f64 = 1e-12;
 const RELEASE_TOLERANCE: f64 = 1e-12;
 use crate::model::{HasAttitude, HasFrame};
 
+/// How the torque a wheel produces follows the torque it is commanded.
+///
+/// The input is the command after the driver's own range
+/// ([`RwAssemblyCore::commanded_torques`]), and the output is the torque before
+/// a momentum bound is applied to it: what a wheel held against its bound does
+/// with that torque is [`RwAssemblyCore::constrained_rate`]'s answer, and
+/// [`Instant`](Self::Instant) does not mean a wheel accelerates past its bound.
+///
+/// The variant names the model and its field names the quantity, so the number
+/// cannot be read as something else — a lag of 50 ms says nothing about whether
+/// 50 ms is a delay or a time constant.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TorqueResponse {
+    /// The torque is the command, at every instant.
+    Instant,
+    /// The torque approaches the command with a first-order lag:
+    /// `dτ/dt = (τ_cmd - τ) / T`.
+    FirstOrderLag {
+        /// `T`, in SI seconds. Positive and finite.
+        time_constant: f64,
+    },
+}
+
+impl TorqueResponse {
+    /// A first-order lag of `time_constant` SI seconds.
+    ///
+    /// # Panics
+    /// Panics if `time_constant` is not positive and finite. The variant can
+    /// also be written directly, which is why
+    /// [`RwAssembly::new`](crate::spacecraft::RwAssembly::new) checks every
+    /// wheel it is given rather than trusting this.
+    pub fn first_order_lag(time_constant: f64) -> Self {
+        let response = Self::FirstOrderLag { time_constant };
+        response
+            .validate()
+            .unwrap_or_else(|reason| panic!("{reason}"));
+        response
+    }
+
+    /// `T` where the torque lags, and `None` where it does not.
+    pub fn time_constant(self) -> Option<f64> {
+        match self {
+            Self::Instant => None,
+            Self::FirstOrderLag { time_constant } => Some(time_constant),
+        }
+    }
+
+    /// Whether this response has to be integrated, which is what decides
+    /// whether the assembly carries a torque alongside each momentum.
+    pub fn is_integrated(self) -> bool {
+        matches!(self, Self::FirstOrderLag { .. })
+    }
+
+    /// The reason this response cannot be propagated, if there is one.
+    fn validate(self) -> Result<(), String> {
+        match self {
+            Self::Instant => Ok(()),
+            Self::FirstOrderLag { time_constant } => {
+                if time_constant > 0.0 && time_constant.is_finite() {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "a first-order lag needs a positive, finite time constant in seconds, \
+                         got {time_constant}"
+                    ))
+                }
+            }
+        }
+    }
+}
+
 /// A single reaction wheel with physical limits.
 #[derive(Debug, Clone)]
 pub struct Rw {
@@ -48,11 +119,13 @@ pub struct Rw {
     pub max_torque: f64,
     /// Maximum spin speed [rad/s]. Independent of max_momentum (bearing/motor limit).
     pub max_speed: f64,
-    /// Motor time constant [s]. `None` = instantaneous (legacy behavior).
+    /// How the torque this wheel produces follows its command.
     ///
-    /// When set, the realized torque follows the commanded torque via
-    /// a first-order lag: `dτ_realized/dt = (τ_target - τ_realized) / T_m`.
-    pub motor_time_constant: Option<f64>,
+    /// [`TorqueResponse::Instant`] by default. A first-order lag adds the
+    /// torque to the state the assembly integrates, and is what lets the
+    /// momentum's turning point be located
+    /// ([`BoundaryKind::TurningPoint`](crate::effector::BoundaryKind::TurningPoint)).
+    pub torque_response: TorqueResponse,
 }
 
 impl Rw {
@@ -101,7 +174,7 @@ impl Rw {
             max_momentum,
             max_torque,
             max_speed,
-            motor_time_constant: None,
+            torque_response: TorqueResponse::Instant,
         }
     }
 
@@ -146,17 +219,30 @@ impl Rw {
         rw
     }
 
-    /// Set the motor time constant [s] (builder pattern).
+    /// Set how the torque follows the command (builder pattern).
+    ///
+    /// # Panics
+    /// Panics if the response cannot be propagated — a first-order lag whose
+    /// time constant is not positive and finite.
+    pub fn with_torque_response(mut self, response: TorqueResponse) -> Self {
+        response
+            .validate()
+            .unwrap_or_else(|reason| panic!("{reason}"));
+        self.torque_response = response;
+        self
+    }
+
+    /// Set the motor time constant in SI seconds (builder pattern).
     ///
     /// # Panics
     /// Panics if `t_m` is not positive and finite.
-    pub fn with_motor_lag(mut self, t_m: f64) -> Self {
-        assert!(
-            t_m > 0.0 && t_m.is_finite(),
-            "motor_time_constant must be positive and finite, got {t_m}"
-        );
-        self.motor_time_constant = Some(t_m);
-        self
+    #[deprecated(
+        since = "0.3.0",
+        note = "the name does not say whether the number is a time constant or a delay: \
+                use with_torque_response(TorqueResponse::first_order_lag(t_m))"
+    )]
+    pub fn with_motor_lag(self, t_m: f64) -> Self {
+        self.with_torque_response(TorqueResponse::first_order_lag(t_m))
     }
 
     /// Get the spin axis unit vector.
@@ -219,8 +305,9 @@ pub struct RwAssemblyCore {
     wheels: Vec<Rw>,
     /// Allocation matrix (pseudo-inverse of axis matrix), `n×3`.
     alloc_pinv: nalgebra::DMatrix<f64>,
-    /// True if any wheel has a motor time constant.
-    has_motor_lag: bool,
+    /// True where any wheel's response is integrated, which is what puts the
+    /// torques in the state alongside the momenta.
+    carries_torques: bool,
 }
 
 impl RwAssemblyCore {
@@ -246,13 +333,21 @@ impl RwAssemblyCore {
                 wheel.max_speed
             );
         }
+        for (index, wheel) in wheels.iter().enumerate() {
+            // `Rw::with_torque_response` checks what it is given, and
+            // `TorqueResponse`'s variants can be written directly, so this is
+            // the other place the response has to mean something.
+            if let Err(reason) = wheel.torque_response.validate() {
+                panic!("wheel {index}: {reason}");
+            }
+        }
         let axes: Vec<_> = wheels.iter().map(|w| *w.axis()).collect();
         let alloc_pinv = build_allocation_pinv(&axes);
-        let has_motor_lag = wheels.iter().any(|w| w.motor_time_constant.is_some());
+        let carries_torques = wheels.iter().any(|w| w.torque_response.is_integrated());
         Self {
             wheels,
             alloc_pinv,
-            has_motor_lag,
+            carries_torques,
         }
     }
 
@@ -275,18 +370,24 @@ impl RwAssemblyCore {
         self.wheels.len()
     }
 
-    /// Whether any wheel has a motor time constant (first-order lag).
-    pub fn has_motor_lag(&self) -> bool {
-        self.has_motor_lag
+    /// Whether the state carries a torque alongside each momentum.
+    ///
+    /// True where any wheel's [`TorqueResponse`] is integrated, since the
+    /// layout is one shape for the whole assembly. This answers about the
+    /// state's shape, not about a wheel's response: a wheel whose torque is
+    /// instant still has a slot in an assembly that carries them, holding a
+    /// value that tracks its command for telemetry.
+    pub fn carries_torques(&self) -> bool {
+        self.carries_torques
     }
 
-    /// Auxiliary state dimension: `n` (instantaneous) or `2n` (motor lag).
+    /// Auxiliary state dimension: `n`, or `2n` where the torques are carried.
     ///
-    /// Layout when motor lag is active:
+    /// Layout with the torques:
     /// `[h_0, ..., h_{n-1}, τ_realized_0, ..., τ_realized_{n-1}]`
     pub fn state_dim(&self) -> usize {
         let n = self.wheels.len();
-        if self.has_motor_lag { 2 * n } else { n }
+        if self.carries_torques { 2 * n } else { n }
     }
 
     /// Extract the momentum slice from the aux state vector.
@@ -296,9 +397,9 @@ impl RwAssemblyCore {
 
     /// Extract the realized torque slice from the aux state vector.
     ///
-    /// Returns `None` if there is no motor lag (instantaneous mode).
+    /// `None` where the state carries no torques ([`carries_torques`](Self::carries_torques)).
     pub fn realized_torque_slice<'a>(&self, aux: &'a [f64]) -> Option<&'a [f64]> {
-        if self.has_motor_lag {
+        if self.carries_torques {
             let n = self.wheels.len();
             Some(&aux[n..2 * n])
         } else {
@@ -558,7 +659,7 @@ impl RwAssembly {
     /// What `dh/dt` would be for each wheel with nothing in the way.
     ///
     /// The torque the motor asks for: the realized one where the wheel has a
-    /// motor lag, and the command itself where it does not. The boundary that
+    /// a first-order lag, and the command itself where it does not. The boundary that
     /// releases a held wheel is a crossing of this, and the derivatives apply
     /// the mode to it, so both read the same quantity.
     pub fn unconstrained_rates(&self, aux: &[f64]) -> Vec<f64> {
@@ -572,7 +673,7 @@ impl RwAssembly {
                 .iter()
                 .enumerate()
                 .map(|(i, w)| {
-                    if w.motor_time_constant.is_some() {
+                    if w.torque_response.is_integrated() {
                         realized[i]
                     } else {
                         commanded[i]
@@ -602,7 +703,7 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
         // boundary the propagation locates, and `settle_boundary` is what puts
         // the momentum on it.
         let mut bounds: Vec<_> = vec![(f64::NEG_INFINITY, f64::INFINITY); self.core.num_wheels()];
-        if self.core.has_motor_lag() {
+        if self.core.carries_torques() {
             // τ_realized bounds: [-max_torque, max_torque] per wheel
             for w in &self.core.wheels {
                 bounds.push((-w.max_torque, w.max_torque));
@@ -621,7 +722,7 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
     /// step holding two sign changes of the same margin holds none that those
     /// two ends can report.
     ///
-    /// A wheel with motor lag can hold such a pair: braking a wheel that is
+    /// A wheel whose torque lags can hold such a pair: braking a wheel that is
     /// still accelerating outward, from just inside its limit, sends the
     /// momentum past the limit and brings it back as the realized torque
     /// decays through zero. With `h = 0.999`, a limit of 1, a realized torque
@@ -630,14 +731,14 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
     /// 59.7 ms — both inside a 100 ms step, whose ends are 0.0010 and 0.0043.
     ///
     /// The momentum turns around where the realized torque passes zero, at
-    /// 34.7 ms, and a wheel with motor lag declares that as
+    /// 34.7 ms, and a wheel whose torque lags declares that as
     /// [`BoundaryKind::TurningPoint`]. Locating it takes the search through
     /// widths that end inside the excursion, and the margin at one of those
     /// does differ in sign from the step's start, which is what puts the bound
     /// among the candidates ([`RootSet`](utsuroi::RootSet)). A 100 ms step
     /// then holds the wheel at 13.7 ms and releases it at 34.8 ms.
     ///
-    /// A wheel without motor lag declares no turning point, for a reason that
+    /// A wheel whose torque is instant declares no turning point, for a reason that
     /// differs by command. Under
     /// [`RwCommand::Torques`](crate::spacecraft::RwCommand::Torques) its
     /// `dh/dt` is the commanded torque, which holds a value across a segment:
@@ -667,7 +768,7 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
     /// can hold two turns; a constant torque command has one.
     fn boundaries(&self) -> Vec<EffectorBoundary> {
         // Either bound and one release per wheel, whose value the mode signs,
-        // plus the momentum's turning point where the motor lags.
+        // plus the momentum's turning point where the torque lags.
         (0..self.core.num_wheels())
             .flat_map(|index| {
                 [
@@ -675,7 +776,8 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
                     Some(BoundaryKind::ReachedLower { index }),
                     Some(BoundaryKind::Released { index }),
                     self.core.wheels[index]
-                        .motor_time_constant
+                        .torque_response
+                        .time_constant()
                         .map(|_| BoundaryKind::TurningPoint { index }),
                 ]
             })
@@ -829,12 +931,12 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
                 }
             }
             // Where the momentum turns around: `dh/dt` through zero, which for
-            // a wheel with motor lag is the realized torque. Read unsigned by
+            // a wheel whose torque lags is the realized torque. Read unsigned by
             // the mode, since either direction of turn splits the step. Read
             // from the state rather than through `unconstrained_rates`, which
             // would recompute every wheel's command and allocate for each
             // wheel's event, on every step and every trial of a search. Only a
-            // wheel with motor lag declares this, and such an assembly carries
+            // wheel whose torque lags declares this, and such an assembly carries
             // the realized torques.
             BoundaryKind::TurningPoint { .. } => self
                 .core
@@ -869,7 +971,7 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
             // holding it there would make the realized torque lag the release
             // as well.
             for (i, wheel) in self.core.wheels.iter().enumerate() {
-                if let Some(t_m) = wheel.motor_time_constant {
+                if let Some(t_m) = wheel.torque_response.time_constant() {
                     aux_rates[n + i] = (accepted[i] - tau_realized[i]) / t_m;
                 } else {
                     // Instantaneous wheel in 2n layout: snap realized to the
@@ -958,7 +1060,7 @@ mod tests {
     /// The momentum's turning point is declared by the wheels whose motor
     /// lags, and by no others.
     ///
-    /// Where the motor lags, `dh/dt` is the realized torque: a state variable
+    /// Where the torque lags, `dh/dt` is the realized torque: a state variable
     /// that passes smoothly through zero, which is where the momentum turns
     /// around. Where it does not lag, `dh/dt` is the command, and a command
     /// sitting at zero is not a turn of anything.
@@ -967,7 +1069,8 @@ mod tests {
         const LAGGING: usize = 0;
         const DIRECT: usize = 1;
         let rw = RwAssembly::new(vec![
-            Rw::new(Vector3::z(), 0.01, 1.0, 0.1).with_motor_lag(0.05),
+            Rw::new(Vector3::z(), 0.01, 1.0, 0.1)
+                .with_torque_response(TorqueResponse::first_order_lag(0.05)),
             Rw::new(Vector3::x(), 0.01, 1.0, 0.1),
         ]);
         let declared = StateEffector::<AttitudeState>::boundaries(&rw);
@@ -1669,42 +1772,90 @@ mod tests {
         assert!((tb[2] - desired[2]).abs() < 1e-15);
     }
 
-    // Motor lag tests
+    // Torque response tests
 
+    /// The response a wheel is built with, and what the setter accepts.
     #[test]
-    fn rw_with_motor_lag() {
-        let rw = Rw::new(Vector3::x(), 0.01, 1.0, 0.1).with_motor_lag(0.05);
-        assert_eq!(rw.motor_time_constant, Some(0.05));
+    fn a_wheel_follows_its_command_at_once_unless_told_otherwise() {
+        let direct = Rw::new(Vector3::x(), 0.01, 1.0, 0.1);
+        assert_eq!(direct.torque_response, TorqueResponse::Instant);
+        assert_eq!(direct.torque_response.time_constant(), None);
+        assert!(!direct.torque_response.is_integrated());
+
+        let lagging = direct
+            .clone()
+            .with_torque_response(TorqueResponse::first_order_lag(0.05));
+        assert_eq!(
+            lagging.torque_response,
+            TorqueResponse::FirstOrderLag {
+                time_constant: 0.05
+            }
+        );
+        assert_eq!(lagging.torque_response.time_constant(), Some(0.05));
+        assert!(lagging.torque_response.is_integrated());
     }
 
+    /// A time constant that is not a positive, finite number of seconds is
+    /// refused where the response is built.
     #[test]
-    #[should_panic(expected = "motor_time_constant must be positive")]
-    fn rw_motor_lag_zero_panics() {
-        Rw::new(Vector3::x(), 0.01, 1.0, 0.1).with_motor_lag(0.0);
+    fn a_lag_needs_a_positive_finite_time_constant() {
+        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            let built = std::panic::catch_unwind(|| TorqueResponse::first_order_lag(bad));
+            assert!(built.is_err(), "first_order_lag({bad}) was accepted");
+            let set = std::panic::catch_unwind(move || {
+                Rw::new(Vector3::x(), 0.01, 1.0, 0.1)
+                    .with_torque_response(TorqueResponse::FirstOrderLag { time_constant: bad })
+            });
+            assert!(set.is_err(), "with_torque_response({bad}) was accepted");
+        }
     }
 
+    /// The variants can be written directly, so the assembly checks the wheels
+    /// it is given rather than trusting the setter.
     #[test]
-    #[should_panic(expected = "motor_time_constant must be positive")]
-    fn rw_motor_lag_negative_panics() {
-        Rw::new(Vector3::x(), 0.01, 1.0, 0.1).with_motor_lag(-1.0);
+    #[should_panic(expected = "wheel 1: a first-order lag needs a positive")]
+    fn an_assembly_refuses_a_wheel_whose_lag_was_written_directly() {
+        let mut wheel = Rw::new(Vector3::y(), 0.01, 1.0, 0.1);
+        wheel.torque_response = TorqueResponse::FirstOrderLag {
+            time_constant: -1.0,
+        };
+        RwAssemblyCore::new(vec![Rw::new(Vector3::x(), 0.01, 1.0, 0.1), wheel]);
     }
 
+    /// The state's shape follows from the assembly, not from one wheel: the
+    /// torques are carried where any wheel's response is integrated.
     #[test]
-    fn core_has_motor_lag_false() {
-        let core = RwAssemblyCore::three_axis(0.01, 1.0, 0.1);
-        assert!(!core.has_motor_lag());
-        assert_eq!(core.state_dim(), 3);
-    }
+    fn the_torques_are_carried_where_any_wheel_integrates_its_response() {
+        let instant = RwAssemblyCore::three_axis(0.01, 1.0, 0.1);
+        assert!(!instant.carries_torques());
+        assert_eq!(instant.state_dim(), 3);
+        assert_eq!(instant.realized_torque_slice(&[0.0; 3]), None);
 
-    #[test]
-    fn core_has_motor_lag_true() {
-        let core = RwAssemblyCore::new(vec![
-            Rw::new(Vector3::x(), 0.01, 1.0, 0.1).with_motor_lag(0.05),
-            Rw::new(Vector3::y(), 0.01, 1.0, 0.1),
-            Rw::new(Vector3::z(), 0.01, 1.0, 0.1).with_motor_lag(0.1),
+        let lag = |t_m: f64| TorqueResponse::first_order_lag(t_m);
+        let all_lagging = RwAssemblyCore::new(vec![
+            Rw::new(Vector3::x(), 0.01, 1.0, 0.1).with_torque_response(lag(0.05)),
+            Rw::new(Vector3::y(), 0.01, 1.0, 0.1).with_torque_response(lag(0.05)),
+            Rw::new(Vector3::z(), 0.01, 1.0, 0.1).with_torque_response(lag(0.05)),
         ]);
-        assert!(core.has_motor_lag());
-        assert_eq!(core.state_dim(), 6); // 2n
+        assert!(all_lagging.carries_torques());
+        assert_eq!(all_lagging.state_dim(), 6);
+
+        let mixed = RwAssemblyCore::new(vec![
+            Rw::new(Vector3::x(), 0.01, 1.0, 0.1).with_torque_response(lag(0.05)),
+            Rw::new(Vector3::y(), 0.01, 1.0, 0.1),
+            Rw::new(Vector3::z(), 0.01, 1.0, 0.1).with_torque_response(lag(0.1)),
+        ]);
+        assert!(
+            mixed.carries_torques(),
+            "one lagging wheel decides the shape"
+        );
+        assert_eq!(mixed.state_dim(), 6);
+        let aux = [0.1, 0.2, 0.3, 0.01, 0.02, 0.03];
+        assert_eq!(
+            mixed.realized_torque_slice(&aux),
+            Some(&aux[3..6]),
+            "the instant wheel keeps a slot, which tracks its command"
+        );
     }
 
     /// A wheel that can hold no momentum is refused where it is built.
@@ -1778,8 +1929,10 @@ mod tests {
     #[test]
     fn momentum_and_torque_slices_with_lag() {
         let core = RwAssemblyCore::new(vec![
-            Rw::new(Vector3::x(), 0.01, 1.0, 0.1).with_motor_lag(0.05),
-            Rw::new(Vector3::y(), 0.01, 1.0, 0.1).with_motor_lag(0.05),
+            Rw::new(Vector3::x(), 0.01, 1.0, 0.1)
+                .with_torque_response(TorqueResponse::first_order_lag(0.05)),
+            Rw::new(Vector3::y(), 0.01, 1.0, 0.1)
+                .with_torque_response(TorqueResponse::first_order_lag(0.05)),
         ]);
         let aux = [0.5, -0.3, 0.01, -0.02];
         assert_eq!(core.momentum_slice(&aux), &[0.5, -0.3]);
@@ -1789,9 +1942,12 @@ mod tests {
     #[test]
     fn assembly_motor_lag_state_dim() {
         let rw = RwAssembly::new(vec![
-            Rw::new(Vector3::x(), 0.01, 1.0, 0.1).with_motor_lag(0.05),
-            Rw::new(Vector3::y(), 0.01, 1.0, 0.1).with_motor_lag(0.05),
-            Rw::new(Vector3::z(), 0.01, 1.0, 0.1).with_motor_lag(0.05),
+            Rw::new(Vector3::x(), 0.01, 1.0, 0.1)
+                .with_torque_response(TorqueResponse::first_order_lag(0.05)),
+            Rw::new(Vector3::y(), 0.01, 1.0, 0.1)
+                .with_torque_response(TorqueResponse::first_order_lag(0.05)),
+            Rw::new(Vector3::z(), 0.01, 1.0, 0.1)
+                .with_torque_response(TorqueResponse::first_order_lag(0.05)),
         ]);
         assert_eq!(StateEffector::<AttitudeState>::state_dim(&rw), 6);
     }
@@ -1799,8 +1955,10 @@ mod tests {
     #[test]
     fn assembly_motor_lag_aux_bounds() {
         let rw = RwAssembly::new(vec![
-            Rw::new(Vector3::x(), 0.01, 1.0, 0.1).with_motor_lag(0.05),
-            Rw::new(Vector3::y(), 0.01, 1.0, 0.1).with_motor_lag(0.05),
+            Rw::new(Vector3::x(), 0.01, 1.0, 0.1)
+                .with_torque_response(TorqueResponse::first_order_lag(0.05)),
+            Rw::new(Vector3::y(), 0.01, 1.0, 0.1)
+                .with_torque_response(TorqueResponse::first_order_lag(0.05)),
         ]);
         let bounds = StateEffector::<AttitudeState>::aux_bounds(&rw);
         assert_eq!(bounds.len(), 4); // 2n = 4
@@ -1818,7 +1976,8 @@ mod tests {
     #[test]
     fn assembly_motor_lag_derivatives_has_torque_lag() {
         let mut rw = RwAssembly::new(vec![
-            Rw::new(Vector3::x(), 0.01, 1.0, 0.1).with_motor_lag(0.05),
+            Rw::new(Vector3::x(), 0.01, 1.0, 0.1)
+                .with_torque_response(TorqueResponse::first_order_lag(0.05)),
         ]);
         rw.command = RwCommand::Torques(vec![0.1]); // full torque
 
@@ -1838,7 +1997,8 @@ mod tests {
     #[test]
     fn assembly_motor_lag_partially_realized() {
         let mut rw = RwAssembly::new(vec![
-            Rw::new(Vector3::x(), 0.01, 1.0, 0.1).with_motor_lag(0.05),
+            Rw::new(Vector3::x(), 0.01, 1.0, 0.1)
+                .with_torque_response(TorqueResponse::first_order_lag(0.05)),
         ]);
         rw.command = RwCommand::Torques(vec![0.1]);
 

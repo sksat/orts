@@ -23,7 +23,7 @@ use orts::group::IntegratorConfig;
 use orts::group::independent::IndependentGroup;
 use orts::orbital::OrbitalState;
 use orts::orbital::gravity::PointMass;
-use orts::spacecraft::reaction_wheel::Rw;
+use orts::spacecraft::reaction_wheel::{Rw, TorqueResponse};
 use orts::spacecraft::{
     G0, PropellantPool, ReactionWheelAssembly, SpacecraftDynamics, SpacecraftState, Thruster,
 };
@@ -309,7 +309,8 @@ fn a_state_that_dropped_declared_bounds_is_refused() {
     const LIMIT: f64 = 1.0;
     const TORQUE: f64 = 0.1;
 
-    let wheel = Rw::new(Vector3::x(), 0.01, LIMIT, TORQUE).with_motor_lag(0.05);
+    let wheel = Rw::new(Vector3::x(), 0.01, LIMIT, TORQUE)
+        .with_torque_response(TorqueResponse::first_order_lag(0.05));
     let with_lag = || {
         SpacecraftDynamics::new(1e-30, PointMass, Matrix3::identity())
             .with_effector(ReactionWheelAssembly::new(vec![wheel.clone()]))
