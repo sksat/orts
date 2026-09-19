@@ -97,6 +97,13 @@ pub trait HasBoundaries: DynamicalSystem {
     /// Put the state exactly on a boundary it reached, move the mode, and give
     /// back whatever the overshoot took from a conserved total.
     ///
+    /// Return without touching the state where
+    /// [`BoundaryKind::mode_after`](crate::effector::BoundaryKind::mode_after)
+    /// is `None`. Such a boundary is there to cut the step at a time the walk
+    /// has to stop at, and the state it stops on is the state it resumes with:
+    /// moving anything — the mode, an effector's own quantity, a conserved
+    /// total — would make the cut a transition the caller never asked for.
+    ///
     /// Only asked about boundaries this system declared.
     fn settle_boundary(&self, _declared: &DeclaredBoundary, _state: &mut Self::State) {}
 
@@ -284,9 +291,10 @@ impl<Sys: HasBoundaries> RootEvent<Sys::State> for BoundaryEvent<'_, Sys> {
     }
 
     fn crossing(&self) -> Crossing {
-        // A boundary value is a margin, so reaching one is the margin running
-        // out. See [`EffectorBoundary`](crate::effector::EffectorBoundary).
-        Crossing::Falling
+        // A bound and a release are margins, so reaching one is the margin
+        // running out; a turn of the rate counts either way. See
+        // [`BoundaryKind::crossing`](crate::effector::BoundaryKind::crossing).
+        self.declared.boundary.kind.crossing()
     }
 
     fn terminal(&self) -> bool {
@@ -524,6 +532,14 @@ fn settle_what_is_already_past<Sys: HasBoundaries>(
             if !system.boundary_is_active(declared, state) {
                 continue;
             }
+            // A boundary that only splits the step has no side to be past: its
+            // value is a rate, and a rate below zero is an ordinary state to
+            // start from. Settling it moves nothing either, so reading it here
+            // would spend every pass of this loop on a state that never
+            // changes and end in `RootStillCrossed`.
+            if declared.boundary.kind.mode_after().is_none() {
+                continue;
+            }
             // The value is a margin, so past the boundary is below zero — the
             // one side there is to be past — and a state *on* the boundary,
             // at exactly zero, is not past it. A wheel resting on its bound
@@ -556,6 +572,7 @@ fn settle_what_is_already_past<Sys: HasBoundaries>(
         .iter()
         .position(|declared| {
             system.boundary_is_active(declared, state)
+                && declared.boundary.kind.mode_after().is_some()
                 && system.boundary_value(declared, segment, t, state) < 0.0
         })
         .unwrap_or(0);

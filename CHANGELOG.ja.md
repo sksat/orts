@@ -109,6 +109,12 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   variant で表される。([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
+- **Breaking:** `BoundaryKind` に 4 つめの variant `TurningPoint { index }` が増え、
+  `BoundaryKind::mode_after` の戻り値が `ConstraintMode` から `Option<ConstraintMode>` になった。
+  `None` は「状態もモードも動かさない境界」を表す。variant を `match` している側と、境界が移る先の
+  モードを使っている側は、どちらも対応が必要になる。`HasBoundaries::settle_boundary` を自分で
+  実装している system は、`None` を見た時点で戻る必要がある (step を割るだけの境界は何も settle
+  しない)。
 - **BREAKING**: reaction wheel は角運動量を保持できなければならない。`Rw::new` と
   `Rw::with_max_speed` は、ホイールが最終的に持つ上限 `max_momentum.min(inertia * max_speed)` が
   正でなければ panic する。`RwAssemblyCore::new` も、作られた後に容量を失ったホイールで panic する:
@@ -291,6 +297,21 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   1 つ足すのは `with_occulter`。古いフィールドを名前で書いた struct literal は
   コンパイルできなくなる。([#469](https://github.com/sksat/orts/pull/469))
 #### Fixed
+- 1 次遅れのある reaction wheel が、角運動量の増減が切り替わる時刻を新しい
+  `BoundaryKind::TurningPoint` として申告するようになった。step 幅が 1 次遅れより広い場合でも、
+  上限を短時間超える動きが拘束される。上限の直前で、まだ外向きに加速している wheel に逆向きの
+  トルクを指令すると、角運動量は上限を超え、実際のトルクが 0 を通ったあとに戻る: 上限 1 に対して
+  角運動量 0.999 N·m·s、トルク ±0.1 N·m、時定数 50 ms では、margin は 13.2 ms で 0 を下回り
+  59.7 ms で 0 を上回る。どちらも 100 ms の step の内側で、その両端は 0.0010 と 0.0043 で同符号
+  だったため、従来この step では拘束が一度も働かず、角運動量は wheel が保持できない
+  1.000534 N·m·s (上限の 0.053% 超) まで達していた。超過の大きさは 1 次遅れの時定数で決まり、
+  500 ms では同じ反転で 1.014 N·m·s (1.4% 超) になる。現在は 100 ms の step でも 13.7 ms で拘束され、
+  トルクが転じる 34.8 ms で解除される。転じる時刻の前後では角運動量が単調なので、分割した区間では
+  探索が符号差を読める。そのために `BoundaryKind::mode_after` の戻り値を
+  `Option<ConstraintMode>` に変えた: 転換点は状態もモードも動かさず、walk の開始時に行う
+  「すでに越えている境界の補正」の対象からも外す (トルクが負であること自体は正常な状態である)。
+  1 次遅れのない wheel は申告しない。その `dh/dt` は指令値で、0 のまま置かれた指令は角運動量の
+  転換ではない。
 - `Synchronized` の速度更新を受ける衛星が、同じ同期区間でどれか 1 機の計算が終了判定で終わると、
   `propagate_to` の残りを積分されなかった。KDK 経路は閉じの速度更新を当てたあとループを抜けていたので、
   時計はその同期区間の終わりで止まり、呼び出しは飛ばした区間について何も言わずに `Ok` を返していた。
@@ -1124,6 +1145,14 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `utsuroi` (Rust, crates.io)
 
 #### Added
+- **Breaking:** `Crossing::Reversal`。margin が尽きる event ではなく、量が向きを変えることを表す
+  event 用である。`Crossing` は公開されていて `#[non_exhaustive]` でもないので、variant を網羅的に
+  `match` している側は新しい variant に対応する必要がある。両方向を数える一方、0 に置かれていた値が
+  0 から離れる動きは数えない。walk の開始状態がまさに
+  それになりうる (指令に追従する前の、実現トルクが 0 の reaction wheel)。`Crossing::Either` では
+  そこで root を報告し、量が単調な step を分割していた: 100 ms 刻みの run で 0.78 ms の停止を実測し、
+  以降の sample が step の格子から外れて 100.78 ms と 200 ms になっていた。0 に到達する動きは
+  数えるので、step の終端がちょうど零点に載る場合も取りこぼさない。
 - `IntegrationError::RootStillCrossed` を追加した。呼び出し側が state を動かす機会を
   与えられた後もなお越えた側に残っている `RootEvent` を報告する。探索は符号の変化から交差を
   見つけるので、最初から越えた側にある値には残っていない。そこから walk は続けられない。

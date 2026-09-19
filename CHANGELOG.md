@@ -138,6 +138,13 @@ section is subdivided by package.
   ([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
+- **Breaking:** `BoundaryKind` has a fourth variant, `TurningPoint { index }`,
+  and `BoundaryKind::mode_after` returns `Option<ConstraintMode>` rather than
+  `ConstraintMode` — `None` for a boundary that leaves the state and the mode
+  where they are. A `match` over the variants, or a caller using the mode a
+  boundary moves to, has to handle both. A system implementing
+  `HasBoundaries::settle_boundary` itself has to return early on `None`, since
+  a boundary that only splits a step settles nothing.
 - **BREAKING**: a reaction wheel has to be able to hold momentum. `Rw::new` and
   `Rw::with_max_speed` panic unless the limit the wheel ends up with —
   `max_momentum.min(inertia * max_speed)` — is positive, and
@@ -383,6 +390,26 @@ section is subdivided by package.
   ([#469](https://github.com/sksat/orts/pull/469))
 
 #### Fixed
+- A reaction wheel whose motor lags declares where its momentum turns around,
+  as the new `BoundaryKind::TurningPoint`, so a brief excursion past its limit
+  is held even where the step is coarser than the lag. Braking a wheel that is
+  still accelerating outward, from just inside its limit, sends the momentum
+  past the limit and brings it back as the realized torque decays through zero:
+  with a momentum of 0.999 N·m·s against a limit of 1, ±0.1 N·m and a 50 ms
+  time constant, the margin falls through zero at 13.2 ms and rises back
+  through it at 59.7 ms. Both are inside a 100 ms step, whose two ends are
+  0.0010 and 0.0043 — the same sign — so the wheel was never held there, and
+  the momentum reached 1.000534 N·m·s, 0.053% past a limit the wheel cannot
+  hold. How far past depends on the lag: with a 500 ms time constant the same
+  reversal reaches 1.014 N·m·s, 1.4% over. A 100 ms step now holds the wheel at
+  13.7 ms and releases it at 34.8 ms, which is where the torque turns. The momentum is monotone on either side of the turn,
+  and that is what the split gives the search to work with.
+  `BoundaryKind::mode_after` returns `Option<ConstraintMode>` for this:
+  a turning point moves neither the state nor the mode, and it is left out of
+  the reconciliation a walk does at its start, where a negative rate is an
+  ordinary state rather than a boundary already crossed. A wheel without motor
+  lag declares no turning point, since its `dh/dt` is the command and a command
+  resting at zero is no turn of the momentum.
 - A satellite that receives `Synchronized` velocity kicks lost the rest of a
   `propagate_to` call whenever a termination check ended any satellite's
   computation in the same sync interval. The KDK path applied its closing kick
@@ -1373,6 +1400,18 @@ section is subdivided by package.
 ### `utsuroi` (Rust, crates.io)
 
 #### Added
+- **Breaking:** `Crossing::Reversal`, for an event that stands for a quantity
+  turning around
+  rather than a margin running out. `Crossing` is public and exhaustive, so a
+  downstream `match` over its variants has to handle the new one. Either
+  direction counts, and a value that
+  was already zero and left it does not. A walk's first state can be exactly
+  that — a reaction wheel whose realized torque is zero with a command to
+  follow — and `Crossing::Either` reported a root there, splitting a step where
+  the quantity was monotone: measured at 0.78 ms into a run with a 100 ms step,
+  which then reported its samples at 100.78 ms and 200 ms rather than on the
+  step grid. Arriving at zero still counts, so a step whose end lands on the
+  turn is not passed over.
 - `IntegrationError::RootStillCrossed` reports a `RootEvent` whose value is
   still on its crossed side after the caller was given every chance to move the
   state off it. The search reads a crossing from a change of sign, and a value

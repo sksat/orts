@@ -70,6 +70,13 @@
 //! on the boundary — is settled by [`RootGuard`]: the step that starts at the
 //! root's own time does not report that event again.
 //!
+//! An event whose crossing is [`Crossing::Reversal`] takes the opposite reading
+//! of a first state at zero: leaving zero is not a turn, so no root is
+//! reported. **That event owes one more condition: a step does not start at
+//! exactly zero and turn around within it.** Such a step has the same two ends
+//! as one whose value falls straight from zero, and the two ends are all the
+//! detection reads.
+//!
 //! # Storage
 //!
 //! utsuroi does not allocate, so a [`RootSet`] borrows its storage: one
@@ -90,6 +97,25 @@ pub enum Crossing {
     Falling,
     /// Either direction.
     Either,
+    /// Either direction, counted only where the value was not already zero.
+    ///
+    /// For an event that stands for a quantity turning around rather than a
+    /// margin running out: a value sitting at zero and leaving it has not
+    /// turned around, it has started moving. A walk's first state can hold
+    /// exactly that — a motor whose realized torque is zero with a command to
+    /// follow — and reporting a root there splits a step where nothing
+    /// happened. Arriving at zero still counts, so the turn itself is not lost
+    /// where a step happens to end on it.
+    ///
+    /// **A step that starts at zero and reverses inside it is not reported.**
+    /// `g(t) = t (0.5 - t)` over `[0, 1]` rises from zero and falls back
+    /// through it at `0.5`, and its two ends are `(0, -0.5)` — the same pair a
+    /// value falling straight from zero gives. The two cannot be told apart
+    /// from the ends, so an event using this variant owes one more condition
+    /// than the others: a step it is searched over does not start at exactly
+    /// zero and turn around within that step. `Crossing::Either` is the other
+    /// side of the same trade, reporting the departure as a root.
+    Reversal,
 }
 
 impl Crossing {
@@ -103,10 +129,12 @@ impl Crossing {
     fn matches(self, before: f64, after: f64) -> bool {
         let rising = before <= 0.0 && after >= 0.0 && (before < 0.0 || after > 0.0);
         let falling = before >= 0.0 && after <= 0.0 && (before > 0.0 || after < 0.0);
+        let reversal = (before > 0.0 && after <= 0.0) || (before < 0.0 && after >= 0.0);
         match self {
             Crossing::Rising => rising,
             Crossing::Falling => falling,
             Crossing::Either => rising || falling,
+            Crossing::Reversal => reversal,
         }
     }
 }
@@ -888,6 +916,92 @@ mod tests {
         assert!(!Crossing::Falling.matches(-1.0, 1.0));
         assert!(Crossing::Either.matches(-1.0, 1.0));
         assert!(Crossing::Either.matches(1.0, -1.0));
+        // A reversal counts in either direction, and only from a value that
+        // was not already zero.
+        assert!(Crossing::Reversal.matches(1.0, -1.0));
+        assert!(Crossing::Reversal.matches(-1.0, 1.0));
+        assert!(
+            Crossing::Reversal.matches(1.0, 0.0),
+            "arriving at zero turns"
+        );
+        assert!(
+            !Crossing::Reversal.matches(0.0, 1.0),
+            "leaving zero is starting to move, not turning"
+        );
+        assert!(!Crossing::Reversal.matches(0.0, -1.0));
+        assert!(!Crossing::Reversal.matches(1.0, 2.0));
+    }
+
+    /// The step a `Reversal` event cannot read: it starts at zero and turns
+    /// around inside the step.
+    ///
+    /// `g(t) = t (0.5 - t)` over `[0, 1]` rises from zero and falls back
+    /// through it at `0.5`. Its ends are `(0, -0.5)`, which is also what
+    /// `g(t) = -0.5 t` gives — a value falling straight from zero, where
+    /// nothing turned. The detection reads the ends, so one reading has to
+    /// cover both, and `Reversal` takes the one that keeps a walk from
+    /// stopping where its own first state sits at zero.
+    #[test]
+    fn a_reversal_event_reads_a_step_that_starts_at_zero_as_no_turn() {
+        struct Arch;
+        impl RootEvent<f64> for Arch {
+            fn value(&self, t: f64, _y: &f64) -> f64 {
+                t * (0.5 - t)
+            }
+            fn crossing(&self) -> Crossing {
+                Crossing::Reversal
+            }
+            fn terminal(&self) -> bool {
+                false
+            }
+        }
+        let event = Arch;
+        root_set!(
+            set,
+            RootSearch {
+                t_tolerance: 1e-9,
+                max_iterations: 60,
+            },
+            &event as &dyn RootEvent<f64>
+        );
+        set.begin(0.0, &0.0).expect("finite value");
+        assert!(
+            matches!(
+                set.scan_step(0.0, 1.0, &1.0, ramp).expect("no error"),
+                StepRoots::None
+            ),
+            "the ends are (0, -0.5), the same pair a fall straight from zero gives"
+        );
+        // The same arch read as a margin running out does report the fall.
+        struct Margin;
+        impl RootEvent<f64> for Margin {
+            fn value(&self, t: f64, _y: &f64) -> f64 {
+                t * (0.5 - t)
+            }
+            fn crossing(&self) -> Crossing {
+                Crossing::Falling
+            }
+            fn terminal(&self) -> bool {
+                false
+            }
+        }
+        let margin = Margin;
+        root_set!(
+            other,
+            RootSearch {
+                t_tolerance: 1e-9,
+                max_iterations: 60,
+            },
+            &margin as &dyn RootEvent<f64>
+        );
+        other.begin(0.0, &0.0).expect("finite value");
+        assert!(
+            matches!(
+                other.scan_step(0.0, 1.0, &1.0, ramp).expect("located"),
+                StepRoots::Found { .. }
+            ),
+            "a margin counts the departure from zero, so it finds the fall at 0.5"
+        );
     }
 
     /// Zero counts toward whichever side the value is on at the other end.

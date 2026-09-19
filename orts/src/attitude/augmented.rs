@@ -325,6 +325,11 @@ impl crate::boundary::HasBoundaries for AugmentedAttitudeSystem {
     }
 
     fn settle_boundary(&self, declared: &DeclaredBoundary, state: &mut Self::State) {
+        let Some(mode) = declared.boundary.kind.mode_after() else {
+            // See [`SpacecraftDynamics::settle_boundary`]: a boundary that only
+            // splits the step leaves the state and the mode as they are.
+            return;
+        };
         let aux = &mut state.aux[declared.aux_offset..declared.aux_offset + declared.aux_dim];
         if let Some(exchange) =
             self.effectors[declared.effector].settle_boundary(declared.boundary.kind, aux)
@@ -332,7 +337,7 @@ impl crate::boundary::HasBoundaries for AugmentedAttitudeSystem {
             state.plant.angular_velocity +=
                 self.inertia_inv * exchange.angular_momentum_body.into_inner();
         }
-        state.modes[declared.mode_index()] = declared.boundary.kind.mode_after();
+        state.modes[declared.mode_index()] = mode;
     }
 
     fn boundary_is_active(&self, declared: &DeclaredBoundary, state: &Self::State) -> bool {

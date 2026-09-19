@@ -8,7 +8,7 @@
 
 use arika::epoch::Epoch;
 use arika::frame::{Body, Vec3};
-use utsuroi::{OdeState, Projection, Tolerances};
+use utsuroi::{Crossing, OdeState, Projection, Tolerances};
 
 use crate::model::{ExternalLoads, HasFrame};
 
@@ -60,8 +60,9 @@ pub trait StateEffector<S: HasFrame>: Send + Sync + std::any::Any {
     /// The boundaries this effector's state can reach.
     ///
     /// One per side of each one-sided constraint, plus one for its release: a
-    /// reaction wheel assembly declares three per wheel. Empty, unless
-    /// overridden.
+    /// reaction wheel assembly declares three per wheel, and a fourth — the
+    /// turning point of the momentum — for each wheel whose motor lags. Empty,
+    /// unless overridden.
     ///
     /// The propagation turns these into root events, so the modes change only
     /// where a walk stopped — which is what keeps the right-hand side fixed
@@ -244,6 +245,25 @@ pub enum BoundaryKind {
         /// Which of this effector's constrained quantities.
         index: usize,
     },
+    /// The rate carrying the free quantity `index` passes through zero, so the
+    /// quantity turns around there.
+    ///
+    /// Nothing is held and nothing is settled: this boundary is there to give
+    /// the search a root inside the step. A quantity that runs past its bound
+    /// and comes back within one step shows the same sign of margin at the
+    /// step's two ends, and those two ends are all the detection reads.
+    ///
+    /// What recovers the bound is the narrowing, not the turn itself:
+    /// localizing this root takes [`RootSet`](utsuroi::RootSet) through trial
+    /// widths that end inside the excursion, where the margin does differ in
+    /// sign from the step's start, and the bound is added to the candidates and
+    /// localized from the step's start. The bound is therefore reported at the
+    /// time it was reached, ahead of the turn — committing the turn first would
+    /// put the state past the bound before anything noticed.
+    TurningPoint {
+        /// Which of this effector's constrained quantities.
+        index: usize,
+    },
 }
 
 impl BoundaryKind {
@@ -253,7 +273,8 @@ impl BoundaryKind {
         match self {
             Self::ReachedUpper { index }
             | Self::ReachedLower { index }
-            | Self::Released { index } => index,
+            | Self::Released { index }
+            | Self::TurningPoint { index } => index,
         }
     }
 
@@ -261,21 +282,47 @@ impl BoundaryKind {
     /// state is in.
     ///
     /// A bound cannot be reached while the constraint is already held against
-    /// one, and there is nothing to release while it is free.
+    /// one, and there is nothing to release while it is free. A turn of the
+    /// rate matters in the same mode a bound does: while the quantity is held,
+    /// the rate turning around is what [`Released`](Self::Released) reads.
     pub fn is_active(self, modes: &[ConstraintMode]) -> bool {
         let mode = modes.get(self.index()).copied().unwrap_or_default();
         match self {
-            Self::ReachedUpper { .. } | Self::ReachedLower { .. } => mode == ConstraintMode::Free,
+            Self::ReachedUpper { .. } | Self::ReachedLower { .. } | Self::TurningPoint { .. } => {
+                mode == ConstraintMode::Free
+            }
             Self::Released { .. } => mode != ConstraintMode::Free,
         }
     }
 
-    /// The mode the constraint is in once this boundary has been handled.
-    pub fn mode_after(self) -> ConstraintMode {
+    /// The mode the constraint is in once this boundary has been handled, or
+    /// `None` for one that leaves both the state and the mode where they are.
+    ///
+    /// `None` is what makes a boundary a split and nothing else: the walk stops
+    /// at it, so the search starts again from there, and the state it resumes
+    /// with is the one it stopped on.
+    pub fn mode_after(self) -> Option<ConstraintMode> {
         match self {
-            Self::ReachedUpper { .. } => ConstraintMode::Upper,
-            Self::ReachedLower { .. } => ConstraintMode::Lower,
-            Self::Released { .. } => ConstraintMode::Free,
+            Self::ReachedUpper { .. } => Some(ConstraintMode::Upper),
+            Self::ReachedLower { .. } => Some(ConstraintMode::Lower),
+            Self::Released { .. } => Some(ConstraintMode::Free),
+            Self::TurningPoint { .. } => None,
+        }
+    }
+
+    /// Which way across zero counts as reaching this boundary.
+    ///
+    /// A bound and a release are read as margins running out, so a fall
+    /// through zero is the crossing. A turn of the rate counts in either
+    /// direction, and only from a rate that was not already zero: a motor
+    /// whose realized torque starts at zero with a command to follow is
+    /// starting to move, not turning around.
+    pub fn crossing(self) -> Crossing {
+        match self {
+            Self::ReachedUpper { .. } | Self::ReachedLower { .. } | Self::Released { .. } => {
+                Crossing::Falling
+            }
+            Self::TurningPoint { .. } => Crossing::Reversal,
         }
     }
 }
@@ -343,12 +390,21 @@ pub(crate) fn check_declared_modes(name: &str, boundaries: &[EffectorBoundary], 
 /// A boundary an effector's state can reach, for the propagation to stop at.
 ///
 /// The value it is found in is the effector's to compute
-/// ([`StateEffector::boundary_value`]), and it is a *margin*: positive while
-/// the boundary is still ahead, zero on it, negative past it. Reaching a
-/// boundary is therefore one direction — the margin running out — and a bound
-/// whose value would rise into it is written with its sign flipped. That is
-/// what lets the propagation recognise a state that is *already* past a
-/// boundary, which no search can find: there is one side to be past.
+/// ([`StateEffector::boundary_value`]), and for a boundary that moves a mode it
+/// is a *margin*: positive while the boundary is still ahead, zero on it,
+/// negative past it. Reaching such a boundary is therefore one direction — the
+/// margin running out — and a bound whose value would rise into it is written
+/// with its sign flipped. That is what lets the propagation recognise a state
+/// that is *already* past a boundary, which no search can find: there is one
+/// side to be past.
+///
+/// A boundary whose [`BoundaryKind::mode_after`] is `None` is read differently.
+/// It cuts the step at a time the walk has to stop at, and its value is the
+/// rate whose zero is that time: both signs are ordinary states to be at, in
+/// either order, and neither is "past" anything. The propagation leaves these
+/// out of the reconciliation it does at a walk's start for that reason, and
+/// their crossing counts in either direction
+/// ([`BoundaryKind::crossing`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EffectorBoundary {
     /// Which boundary of which constrained quantity.

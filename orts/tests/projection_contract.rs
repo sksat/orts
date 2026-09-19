@@ -343,28 +343,235 @@ fn a_tumbling_spacecraft_keeps_its_inertial_momentum_across_the_bound() {
     );
 }
 
-/// What the search can and cannot see is decided by the step: a root is found
-/// from the sign of the value at the step's ends, so a step holding two sign
-/// changes of the same margin holds none the search can report.
+/// A wheel whose realized torque starts at zero is starting to move, so the
+/// walk does not stop there.
 ///
-/// A wheel with motor lag can produce exactly that. Braking a wheel that is
-/// still accelerating outward, from just inside its limit, sends it past the
-/// limit and brings it back as the realized torque decays through zero: with
-/// `h = 0.999`, a limit of 1, a realized torque of +0.1 N·m against a command
-/// of -0.1, and a time constant of 50 ms, the momentum peaks at 1.0005 N·m·s
-/// after 35 ms and is back under the limit by 100 ms. A 100 ms step sees
-/// 0.9957 at its end and reports nothing; a 10 ms step catches the crossing
-/// and holds the wheel.
-///
-/// The obligation is the caller's, and `DESIGN.md` says so: the search cannot
-/// check what a step contains. It is the same step the lag itself needs — two
-/// steps per time constant is not a resolution the exponential is integrated
-/// at either.
+/// `initial_augmented_state` zeroes the auxiliary state, which is the state
+/// every run starts from: a realized torque of zero, with a command for it to
+/// follow. The torque leaves zero at once, and counting that as a turn of the
+/// momentum would stop the walk a root tolerance in — a step split where the
+/// momentum is monotone, and a sample the caller never asked for. Measured
+/// before `Crossing::Reversal`: a stop at 0.78 ms, with the samples after it at
+/// 100.78 ms and 200 ms instead of the 100 ms grid.
 #[test]
-fn a_step_coarser_than_the_motor_lag_misses_a_brief_excursion() {
+fn a_realized_torque_starting_at_zero_is_no_turning_point() {
+    const LIMIT: f64 = 1.0;
+    const TORQUE: f64 = 0.1;
+    const DT: f64 = 0.1;
+
+    let inertia = Matrix3::from_diagonal(&Vector3::repeat(BODY_INERTIA));
+    let build = || {
+        let wheel =
+            orts::spacecraft::reaction_wheel::Rw::new(Vector3::z(), WHEEL_INERTIA, LIMIT, TORQUE)
+                .with_motor_lag(0.05);
+        let mut rw = ReactionWheelAssembly::new(vec![wheel]);
+        rw.command = RwCommand::Torques(vec![-TORQUE]);
+        SpacecraftDynamics::new(arika::earth::MU, PointMass, inertia).with_effector(rw)
+    };
+    let system = build();
+    let initial = system.initial_augmented_state(initial_plant());
+    assert_eq!(
+        initial.aux,
+        vec![0.0, 0.0],
+        "the state every run starts from: no momentum, no realized torque"
+    );
+
+    let mut group: IndependentGroup<Dynamics> =
+        IndependentGroup::new(IntegratorConfig::Rk4 { dt: DT }).add_satellite(
+            "sat",
+            initial,
+            build(),
+        );
+    let mut samples = Vec::new();
+    group
+        .propagate_to_with(0.2, |_id, t, _state| samples.push(t))
+        .expect("the walk succeeds");
+
+    assert_eq!(
+        samples.len(),
+        2,
+        "only the two step boundaries are reported: {samples:?}"
+    );
+    for (i, t) in samples.iter().enumerate() {
+        let expected = DT * (i + 1) as f64;
+        assert!(
+            (t - expected).abs() < 1e-12,
+            "sample {i} is on the step grid at {expected} s, not {t} s"
+        );
+    }
+}
+
+/// Two wheels whose motors turn around at different times are each handled at
+/// their own time, and one wheel's turn leaves the other's constraint alone.
+///
+/// The z wheel starts just inside its limit, so its excursion is held; the x
+/// wheel starts at half its limit and only turns around. Their time constants
+/// are 50 ms and 45 ms, so the turns are at 34.7 ms and 31.2 ms — two zeros of
+/// two different rates in the one 100 ms step, and the x turn falls while z is
+/// held (13.7 ms to 34.8 ms). A split that cleared another wheel's mode would
+/// release z at the x turn, which the release time below would show.
+#[test]
+fn two_lagging_wheels_are_handled_at_their_own_times() {
+    const LIMIT: f64 = 1.0;
+    const TORQUE: f64 = 0.1;
+    const T_Z: f64 = 0.05;
+    const T_X: f64 = 0.045;
+
+    let inertia = Matrix3::from_diagonal(&Vector3::repeat(BODY_INERTIA));
+    let build = || {
+        let z =
+            orts::spacecraft::reaction_wheel::Rw::new(Vector3::z(), WHEEL_INERTIA, LIMIT, TORQUE)
+                .with_motor_lag(T_Z);
+        let x =
+            orts::spacecraft::reaction_wheel::Rw::new(Vector3::x(), WHEEL_INERTIA, LIMIT, TORQUE)
+                .with_motor_lag(T_X);
+        let mut rw = ReactionWheelAssembly::new(vec![z, x]);
+        rw.command = RwCommand::Torques(vec![-TORQUE, -TORQUE]);
+        SpacecraftDynamics::new(arika::earth::MU, PointMass, inertia).with_effector(rw)
+    };
+    let system = build();
+    let mut initial = system.initial_augmented_state(initial_plant());
+    // Momenta, then the realized torques: z is nearly saturated, x is not.
+    initial.aux[0] = 0.999;
+    initial.aux[1] = 0.5;
+    initial.aux[2] = TORQUE;
+    initial.aux[3] = TORQUE;
+
+    let mut group: IndependentGroup<Dynamics> =
+        IndependentGroup::new(IntegratorConfig::Rk4 { dt: 0.1 }).add_satellite(
+            "sat",
+            initial,
+            build(),
+        );
+    let mut z_held_from = None;
+    let mut z_released_at = None;
+    let mut x_ever_held = false;
+    let mut x_peak = f64::NEG_INFINITY;
+    let mut stops = Vec::new();
+    group
+        .propagate_to_with(0.2, |_id, t, state| {
+            stops.push(t);
+            x_peak = x_peak.max(state.aux[1]);
+            x_ever_held |= state.modes[1] != ConstraintMode::Free;
+            let z_held = state.modes[0] != ConstraintMode::Free;
+            match (z_held, z_held_from, z_released_at) {
+                (true, None, _) => z_held_from = Some(t),
+                (false, Some(_), None) => z_released_at = Some(t),
+                _ => {}
+            }
+        })
+        .expect("the walk succeeds");
+
+    let held_from = z_held_from.expect("the z wheel is held");
+    let released_at = z_released_at.expect("the z wheel is released again");
+    assert!(
+        (0.0132..=0.0142).contains(&held_from),
+        "the z wheel is held at its crossing (13.2 ms), not at {held_from} s"
+    );
+    assert!(
+        (0.0347..=0.0357).contains(&released_at),
+        "and released where its own torque turns (34.7 ms), not at {released_at} s"
+    );
+    assert!(!x_ever_held, "the x wheel reaches no bound");
+    assert!(
+        x_peak < 0.51,
+        "and stays near where it started, peaking at {x_peak}"
+    );
+    let x_turn = T_X * 2.0_f64.ln();
+    assert!(
+        stops.iter().any(|t| (t - x_turn).abs() < 2e-3),
+        "the walk also stops where the x wheel's torque turns ({x_turn:.6} s), among {stops:?}"
+    );
+}
+
+/// A wheel that turns around short of its limit stops the walk at the turn,
+/// and nothing there moves.
+///
+/// The turning point is declared so that a step can be cut at it; it is not a
+/// constraint. With the limit at 1.0 and the momentum at 0.9, the same reversal
+/// as below passes the realized torque through zero at `T_M ln 2` = 34.7 ms
+/// without reaching a bound. The walk stops there once, the mode stays `Free`,
+/// and the momentum keeps what the integration gave it.
+#[test]
+fn a_turning_point_short_of_the_limit_moves_nothing() {
     const LIMIT: f64 = 1.0;
     const T_M: f64 = 0.05;
     const TORQUE: f64 = 0.1;
+    const START: f64 = 0.9;
+
+    let inertia = Matrix3::from_diagonal(&Vector3::repeat(BODY_INERTIA));
+    let build = || {
+        let wheel =
+            orts::spacecraft::reaction_wheel::Rw::new(Vector3::z(), WHEEL_INERTIA, LIMIT, TORQUE)
+                .with_motor_lag(T_M);
+        let mut rw = ReactionWheelAssembly::new(vec![wheel]);
+        rw.command = RwCommand::Torques(vec![-TORQUE]);
+        SpacecraftDynamics::new(arika::earth::MU, PointMass, inertia).with_effector(rw)
+    };
+    let system = build();
+    let mut initial = system.initial_augmented_state(initial_plant());
+    initial.aux[0] = START;
+    initial.aux[1] = TORQUE;
+
+    let mut group: IndependentGroup<Dynamics> =
+        IndependentGroup::new(IntegratorConfig::Rk4 { dt: 0.1 }).add_satellite(
+            "sat",
+            initial,
+            build(),
+        );
+    let mut stops = Vec::new();
+    let mut peak = f64::NEG_INFINITY;
+    let mut ever_held = false;
+    group
+        .propagate_to_with(0.2, |_id, t, state| {
+            stops.push(t);
+            peak = peak.max(state.aux[0]);
+            ever_held |= state.modes[0] != ConstraintMode::Free;
+        })
+        .expect("the walk succeeds");
+
+    assert!(!ever_held, "no bound is reached, so the wheel stays free");
+    assert!(
+        peak < LIMIT,
+        "the momentum stays under the limit, peaking at {peak}"
+    );
+    let turn = T_M * 2.0_f64.ln();
+    assert!(
+        stops.iter().any(|t| (t - turn).abs() < 2e-3),
+        "the walk stops where the torque turns ({turn:.6} s), among {stops:?}"
+    );
+    assert_eq!(
+        stops.len(),
+        3,
+        "the turn is reported once, then the two step boundaries: {stops:?}"
+    );
+}
+
+/// A brief excursion past the limit is held even when the step is coarser than
+/// the motor lag, because the wheel declares where its momentum turns around.
+///
+/// Braking a wheel that is still accelerating outward, from just inside its
+/// limit, sends the momentum past the limit and brings it back as the realized
+/// torque decays through zero. With `h = 0.999`, a limit of 1, a realized
+/// torque of +0.1 N·m against a command of -0.1, and a time constant of 50 ms,
+/// the margin `limit - h` falls through zero at 13.2 ms and rises back through
+/// it at 59.7 ms (analytic). Both zeros sit inside a 100 ms step, so the step's
+/// two ends — 0.0010 and 0.0043 — are the same sign, and reading only those two
+/// reported nothing at all.
+///
+/// The momentum turns around where the realized torque passes zero, at 34.7 ms,
+/// and `BoundaryKind::TurningPoint` declares that. Locating it takes the search
+/// through widths that end inside the excursion, which is what puts the upper
+/// bound among the candidates: a 100 ms step now holds the wheel at 13.7 ms and
+/// releases it at 34.8 ms, within the millisecond the default search asks for.
+#[test]
+fn a_step_coarser_than_the_motor_lag_still_holds_a_brief_excursion() {
+    const LIMIT: f64 = 1.0;
+    const T_M: f64 = 0.05;
+    const TORQUE: f64 = 0.1;
+    /// The default `RootSearch::t_tolerance`, which is how far a located time
+    /// can sit past the crossing.
+    const LOCATED_WITHIN: f64 = 1e-3;
 
     let inertia = Matrix3::from_diagonal(&Vector3::repeat(BODY_INERTIA));
     let build = || {
@@ -378,6 +585,13 @@ fn a_step_coarser_than_the_motor_lag_misses_a_brief_excursion() {
         SpacecraftDynamics::new(arika::earth::MU, PointMass, inertia).with_effector(rw)
     };
 
+    /// Peak momentum, and when the wheel went onto its bound and came off it.
+    struct Walk {
+        peak: f64,
+        held_from: Option<f64>,
+        released_at: Option<f64>,
+    }
+
     let walk_with =
         |dt: f64| {
             let system = build();
@@ -390,33 +604,48 @@ fn a_step_coarser_than_the_motor_lag_misses_a_brief_excursion() {
                 IntegratorConfig::Rk4 { dt },
             )
             .add_satellite("sat", initial, build());
-            let mut peak = f64::NEG_INFINITY;
-            let mut held = false;
+            let mut walk = Walk {
+                peak: f64::NEG_INFINITY,
+                held_from: None,
+                released_at: None,
+            };
             group
-                .propagate_to_with(0.2, |_id, _t, state| {
-                    peak = peak.max(state.aux[0]);
-                    held |= state.modes[0] != ConstraintMode::Free;
+                .propagate_to_with(0.2, |_id, t, state| {
+                    walk.peak = walk.peak.max(state.aux[0]);
+                    let held = state.modes[0] != ConstraintMode::Free;
+                    match (held, walk.held_from, walk.released_at) {
+                        (true, None, _) => walk.held_from = Some(t),
+                        (false, Some(_), None) => walk.released_at = Some(t),
+                        _ => {}
+                    }
                 })
                 .expect("the walk succeeds");
-            (peak, held)
+            walk
         };
 
-    let (coarse_peak, coarse_held) = walk_with(0.1);
-    assert!(
-        !coarse_held,
-        "a 100 ms step reports no crossing, so the wheel is never held"
-    );
-    assert!(
-        (coarse_peak - 0.995_667).abs() < 1e-6,
-        "and the states it does report stay under the limit, at {coarse_peak}"
-    );
-
-    let (fine_peak, fine_held) = walk_with(0.01);
-    assert!(fine_held, "a 10 ms step catches the crossing");
-    assert!(
-        (fine_peak - LIMIT).abs() < 1e-9,
-        "and holds the wheel on its bound, not at {fine_peak}"
-    );
+    for (dt, label) in [(0.1, "100 ms"), (0.01, "10 ms")] {
+        let walk = walk_with(dt);
+        let held_from = walk
+            .held_from
+            .unwrap_or_else(|| panic!("a {label} step holds the wheel"));
+        let released_at = walk
+            .released_at
+            .unwrap_or_else(|| panic!("a {label} step releases the wheel again"));
+        assert!(
+            (walk.peak - LIMIT).abs() < 1e-9,
+            "a {label} step keeps the momentum on its bound, not at {}",
+            walk.peak
+        );
+        assert!(
+            (0.0132..=0.0132 + LOCATED_WITHIN).contains(&held_from),
+            "a {label} step holds it at the crossing (13.2 ms), not at {held_from} s"
+        );
+        assert!(
+            (0.0347..=0.0347 + LOCATED_WITHIN).contains(&released_at),
+            "a {label} step releases it where the torque turns (34.7 ms), not at \
+             {released_at} s"
+        );
+    }
 }
 
 /// A held wheel comes off its bound when the motor turns around, and the walk
