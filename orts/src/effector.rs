@@ -248,13 +248,18 @@ pub enum BoundaryKind {
     /// The rate carrying the free quantity `index` passes through zero, so the
     /// quantity turns around there.
     ///
-    /// Nothing is held and nothing is settled: this boundary exists to split
-    /// the step at the turn. A quantity that runs past its bound and comes back
-    /// within one step shows the same sign of margin at the step's two ends,
-    /// and the search reads only those two — [`RootSet`](utsuroi::RootSet)
-    /// searches the shortened step once a root has split it, which is what
-    /// makes the bound reachable again. The turn is where to split, because the
-    /// quantity is monotone on either side of it.
+    /// Nothing is held and nothing is settled: this boundary is there to give
+    /// the search a root inside the step. A quantity that runs past its bound
+    /// and comes back within one step shows the same sign of margin at the
+    /// step's two ends, and those two ends are all the detection reads.
+    ///
+    /// What recovers the bound is the narrowing, not the turn itself:
+    /// localizing this root takes [`RootSet`](utsuroi::RootSet) through trial
+    /// widths that end inside the excursion, where the margin does differ in
+    /// sign from the step's start, and the bound is added to the candidates and
+    /// localized from the step's start. The bound is therefore reported at the
+    /// time it was reached, ahead of the turn — committing the turn first would
+    /// put the state past the bound before anything noticed.
     TurningPoint {
         /// Which of this effector's constrained quantities.
         index: usize,
