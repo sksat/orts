@@ -39,6 +39,6 @@
     "typescript": "^6.0.0",
     "unified": "^11.0.5",
     "vfile": "^6.0.3",
-    "vitest": "^4.1.4"
+    "vitest": "^5.0.0"
   }
 }
