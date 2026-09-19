@@ -1512,6 +1512,20 @@ section is subdivided by package.
   zero from `1e14` or further away in a single step. ([#458](https://github.com/sksat/orts/pull/458))
 
 #### Fixed
+- `RootSet::scan_step` reads the values at the time it located a crossing, and
+  searches again from the step's start when they bracket an event the step's own
+  two ends did not. A value that runs out and comes back inside one step has the
+  same sign at both ends, so the search passed over it; where another event's
+  crossing falls between its two zeros, the shortened step shows it, and the
+  earliest crossing in the step is what gets reported. Candidates accumulate
+  over the passes of one search rather than being replaced: over `[0, 1]` with
+  `a = 0.8 - t`, `b = (t - 0.2)(t - 0.9)` and `c = (t - 0.1)(t - 0.3)`, locating
+  `b` at 0.2 leaves `a` no longer crossing, so a pass that stopped once the
+  number of candidates stopped growing would commit 0.2 and lose `c`'s crossing
+  at 0.1. Each pass gets the whole `max_iterations` budget, and a located end
+  that brackets nothing new costs no further re-stepping. What the caller owes
+  is unchanged where nothing falls between the two zeros: one change of sign per
+  event per step.
 - Every integrate loop asks its event predicate about the state it was given,
   before taking a step — the five in `utsuroi` and the fixed-step ones
   `IndependentGroup` and `CoupledGroup` run themselves. A level-triggered event — "below the surface", "past
