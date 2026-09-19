@@ -138,6 +138,13 @@ section is subdivided by package.
   ([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
+- **Breaking:** `BoundaryKind` has a fourth variant, `TurningPoint { index }`,
+  and `BoundaryKind::mode_after` returns `Option<ConstraintMode>` rather than
+  `ConstraintMode` — `None` for a boundary that leaves the state and the mode
+  where they are. A `match` over the variants, or a caller using the mode a
+  boundary moves to, has to handle both. A system implementing
+  `HasBoundaries::settle_boundary` itself has to return early on `None`, since
+  a boundary that only splits a step settles nothing.
 - **BREAKING**: a reaction wheel has to be able to hold momentum. `Rw::new` and
   `Rw::with_max_speed` panic unless the limit the wheel ends up with —
   `max_momentum.min(inertia * max_speed)` — is positive, and

@@ -109,6 +109,12 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   variant で表される。([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
+- **破壊的変更:** `BoundaryKind` に 4 つめの variant `TurningPoint { index }` が増え、
+  `BoundaryKind::mode_after` の戻り値が `ConstraintMode` から `Option<ConstraintMode>` になった。
+  `None` は「状態もモードも動かさない境界」を表す。variant を `match` している側と、境界が移る先の
+  モードを使っている側は、どちらも対応が必要になる。`HasBoundaries::settle_boundary` を自分で
+  実装している system は、`None` を見た時点で戻る必要がある (step を割るだけの境界は何も settle
+  しない)。
 - **BREAKING**: reaction wheel は角運動量を保持できなければならない。`Rw::new` と
   `Rw::with_max_speed` は、ホイールが最終的に持つ上限 `max_momentum.min(inertia * max_speed)` が
   正でなければ panic する。`RwAssemblyCore::new` も、作られた後に容量を失ったホイールで panic する:
