@@ -30,7 +30,9 @@ use orts::group::{
 };
 use orts::orbital::OrbitalState;
 use orts::orbital::gravity::PointMass;
-use orts::spacecraft::{ReactionWheelAssembly, RwCommand, SpacecraftDynamics, SpacecraftState};
+use orts::spacecraft::{
+    ReactionWheelAssembly, RwCommand, SpacecraftDynamics, SpacecraftState, TorqueResponse,
+};
 
 const MAX_MOMENTUM: f64 = 0.53;
 const MAX_TORQUE: f64 = 0.1;
@@ -363,7 +365,7 @@ fn a_realized_torque_starting_at_zero_is_no_turning_point() {
     let build = || {
         let wheel =
             orts::spacecraft::reaction_wheel::Rw::new(Vector3::z(), WHEEL_INERTIA, LIMIT, TORQUE)
-                .with_motor_lag(0.05);
+                .with_torque_response(TorqueResponse::first_order_lag(0.05));
         let mut rw = ReactionWheelAssembly::new(vec![wheel]);
         rw.command = RwCommand::Torques(vec![-TORQUE]);
         SpacecraftDynamics::new(arika::earth::MU, PointMass, inertia).with_effector(rw)
@@ -421,10 +423,10 @@ fn two_lagging_wheels_are_handled_at_their_own_times() {
     let build = || {
         let z =
             orts::spacecraft::reaction_wheel::Rw::new(Vector3::z(), WHEEL_INERTIA, LIMIT, TORQUE)
-                .with_motor_lag(T_Z);
+                .with_torque_response(TorqueResponse::first_order_lag(T_Z));
         let x =
             orts::spacecraft::reaction_wheel::Rw::new(Vector3::x(), WHEEL_INERTIA, LIMIT, TORQUE)
-                .with_motor_lag(T_X);
+                .with_torque_response(TorqueResponse::first_order_lag(T_X));
         let mut rw = ReactionWheelAssembly::new(vec![z, x]);
         rw.command = RwCommand::Torques(vec![-TORQUE, -TORQUE]);
         SpacecraftDynamics::new(arika::earth::MU, PointMass, inertia).with_effector(rw)
@@ -503,7 +505,7 @@ fn a_turning_point_short_of_the_limit_moves_nothing() {
     let build = || {
         let wheel =
             orts::spacecraft::reaction_wheel::Rw::new(Vector3::z(), WHEEL_INERTIA, LIMIT, TORQUE)
-                .with_motor_lag(T_M);
+                .with_torque_response(TorqueResponse::first_order_lag(T_M));
         let mut rw = ReactionWheelAssembly::new(vec![wheel]);
         rw.command = RwCommand::Torques(vec![-TORQUE]);
         SpacecraftDynamics::new(arika::earth::MU, PointMass, inertia).with_effector(rw)
@@ -577,7 +579,7 @@ fn a_step_coarser_than_the_motor_lag_still_holds_a_brief_excursion() {
     let build = || {
         let wheel =
             orts::spacecraft::reaction_wheel::Rw::new(Vector3::z(), WHEEL_INERTIA, LIMIT, TORQUE)
-                .with_motor_lag(T_M);
+                .with_torque_response(TorqueResponse::first_order_lag(T_M));
         let mut rw = ReactionWheelAssembly::new(vec![wheel]);
         // The motor is asked to brake, from a state where it is still pushing
         // the wheel out.
@@ -734,7 +736,7 @@ fn a_held_wheel_is_released_when_the_motor_turns_around() {
             LIMIT,
             MAX_TORQUE,
         )
-        .with_motor_lag(T_M);
+        .with_torque_response(TorqueResponse::first_order_lag(T_M));
         let mut rw = ReactionWheelAssembly::new(vec![wheel]);
         rw.command = RwCommand::Torques(vec![MAX_TORQUE]);
         SpacecraftDynamics::new(arika::earth::MU, PointMass, inertia).with_effector(rw)

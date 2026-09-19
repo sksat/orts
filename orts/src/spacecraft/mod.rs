@@ -12,7 +12,7 @@ pub use dynamics::{LoadBreakdown, SpacecraftDynamics};
 pub use mtq::{Mtq, MtqAssembly, MtqAssemblyCore, MtqCommand};
 pub use panel_srp::PanelSrp;
 pub use propellant::PropellantPool;
-pub use reaction_wheel::{ReactionWheelAssembly, RwCommand};
+pub use reaction_wheel::{ReactionWheelAssembly, RwCommand, TorqueResponse};
 pub use state::SpacecraftState;
 pub use surface::{PanelDrag, PanelOptics, PanelOutline, SpacecraftShape, SurfacePanel};
 pub use thruster::{
