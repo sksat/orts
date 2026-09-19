@@ -385,12 +385,21 @@ pub(crate) fn check_declared_modes(name: &str, boundaries: &[EffectorBoundary], 
 /// A boundary an effector's state can reach, for the propagation to stop at.
 ///
 /// The value it is found in is the effector's to compute
-/// ([`StateEffector::boundary_value`]), and it is a *margin*: positive while
-/// the boundary is still ahead, zero on it, negative past it. Reaching a
-/// boundary is therefore one direction — the margin running out — and a bound
-/// whose value would rise into it is written with its sign flipped. That is
-/// what lets the propagation recognise a state that is *already* past a
-/// boundary, which no search can find: there is one side to be past.
+/// ([`StateEffector::boundary_value`]), and for a boundary that moves a mode it
+/// is a *margin*: positive while the boundary is still ahead, zero on it,
+/// negative past it. Reaching such a boundary is therefore one direction — the
+/// margin running out — and a bound whose value would rise into it is written
+/// with its sign flipped. That is what lets the propagation recognise a state
+/// that is *already* past a boundary, which no search can find: there is one
+/// side to be past.
+///
+/// A boundary whose [`BoundaryKind::mode_after`] is `None` is read differently.
+/// It cuts the step at a time the walk has to stop at, and its value is the
+/// rate whose zero is that time: both signs are ordinary states to be at, in
+/// either order, and neither is "past" anything. The propagation leaves these
+/// out of the reconciliation it does at a walk's start for that reason, and
+/// their crossing counts in either direction
+/// ([`BoundaryKind::crossing`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EffectorBoundary {
     /// Which boundary of which constrained quantity.

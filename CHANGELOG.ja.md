@@ -109,7 +109,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   variant で表される。([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
-- **破壊的変更:** `BoundaryKind` に 4 つめの variant `TurningPoint { index }` が増え、
+- **Breaking:** `BoundaryKind` に 4 つめの variant `TurningPoint { index }` が増え、
   `BoundaryKind::mode_after` の戻り値が `ConstraintMode` から `Option<ConstraintMode>` になった。
   `None` は「状態もモードも動かさない境界」を表す。variant を `match` している側と、境界が移る先の
   モードを使っている側は、どちらも対応が必要になる。`HasBoundaries::settle_boundary` を自分で
@@ -1145,8 +1145,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `utsuroi` (Rust, crates.io)
 
 #### Added
-- `Crossing::Reversal`。margin が尽きる event ではなく、量が向きを変えることを表す event 用で、
-  両方向を数える一方、0 に置かれていた値が 0 から離れる動きは数えない。walk の開始状態がまさに
+- **Breaking:** `Crossing::Reversal`。margin が尽きる event ではなく、量が向きを変えることを表す
+  event 用である。`Crossing` は公開されていて `#[non_exhaustive]` でもないので、variant を網羅的に
+  `match` している側は新しい variant に対応する必要がある。両方向を数える一方、0 に置かれていた値が
+  0 から離れる動きは数えない。walk の開始状態がまさに
   それになりうる (指令に追従する前の、実現トルクが 0 の reaction wheel)。`Crossing::Either` では
   そこで root を報告し、量が単調な step を分割していた: 100 ms 刻みの run で 0.78 ms の停止を実測し、
   以降の sample が step の格子から外れて 100.78 ms と 200 ms になっていた。0 に到達する動きは

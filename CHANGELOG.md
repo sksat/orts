@@ -1400,8 +1400,11 @@ section is subdivided by package.
 ### `utsuroi` (Rust, crates.io)
 
 #### Added
-- `Crossing::Reversal`, for an event that stands for a quantity turning around
-  rather than a margin running out: either direction counts, and a value that
+- **Breaking:** `Crossing::Reversal`, for an event that stands for a quantity
+  turning around
+  rather than a margin running out. `Crossing` is public and exhaustive, so a
+  downstream `match` over its variants has to handle the new one. Either
+  direction counts, and a value that
   was already zero and left it does not. A walk's first state can be exactly
   that — a reaction wheel whose realized torque is zero with a command to
   follow — and `Crossing::Either` reported a root there, splitting a step where

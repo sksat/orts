@@ -97,6 +97,13 @@ pub trait HasBoundaries: DynamicalSystem {
     /// Put the state exactly on a boundary it reached, move the mode, and give
     /// back whatever the overshoot took from a conserved total.
     ///
+    /// Return without touching the state where
+    /// [`BoundaryKind::mode_after`](crate::effector::BoundaryKind::mode_after)
+    /// is `None`. Such a boundary is there to cut the step at a time the walk
+    /// has to stop at, and the state it stops on is the state it resumes with:
+    /// moving anything — the mode, an effector's own quantity, a conserved
+    /// total — would make the cut a transition the caller never asked for.
+    ///
     /// Only asked about boundaries this system declared.
     fn settle_boundary(&self, _declared: &DeclaredBoundary, _state: &mut Self::State) {}
 

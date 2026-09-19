@@ -618,8 +618,8 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
     /// # Why the momentum's turning point is one of them
     ///
     /// A crossing is found from the sign of a margin at a step's ends, so a
-    /// step holding two sign changes of the same margin holds none those two
-    /// ends can report.
+    /// step holding two sign changes of the same margin holds none that those
+    /// two ends can report.
     ///
     /// A wheel with motor lag can hold such a pair: braking a wheel that is
     /// still accelerating outward, from just inside its limit, sends the
