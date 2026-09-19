@@ -646,11 +646,17 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
     /// so a realized torque of exactly zero at a step's start is a motor about
     /// to move rather than a wheel turning around — the state every run begins
     /// from. A step that starts at such a zero *and* turns around within it is
-    /// therefore not cut, which is the one case this declaration does not
-    /// cover. Reaching it takes a torque that leaves zero and comes back inside
-    /// one step, as a speed command's target can
+    /// therefore not cut. Reaching it takes a torque that leaves zero and comes
+    /// back inside one step, as a speed command's target can
     /// ([`RwCommand::Speeds`](crate::spacecraft::RwCommand::Speeds), whose
     /// target torque follows the momentum itself).
+    ///
+    /// One turn per step is what this declaration covers. The step a walk
+    /// resumes with after a turn starts on the side that turn left, and the
+    /// search holds an event still for the step that starts at its own root —
+    /// so a *second* turn inside that resumed step is not cut either. A speed
+    /// command's loop is underdamped at the default gain, which is where a step
+    /// can hold two turns; a constant torque command has one.
     fn boundaries(&self) -> Vec<EffectorBoundary> {
         // Either bound and one release per wheel, whose value the mode signs,
         // plus the momentum's turning point where the motor lags.
