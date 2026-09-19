@@ -406,14 +406,16 @@ fn a_realized_torque_starting_at_zero_is_no_turning_point() {
 ///
 /// The z wheel starts just inside its limit, so its excursion is held; the x
 /// wheel starts at half its limit and only turns around. Their time constants
-/// are 50 ms and 80 ms, so the turns are at 34.7 ms and 55.5 ms — two zeros of
-/// two different rates, in the one 100 ms step.
+/// are 50 ms and 45 ms, so the turns are at 34.7 ms and 31.2 ms — two zeros of
+/// two different rates in the one 100 ms step, and the x turn falls while z is
+/// held (13.7 ms to 34.8 ms). A split that cleared another wheel's mode would
+/// release z at the x turn, which the release time below would show.
 #[test]
 fn two_lagging_wheels_are_handled_at_their_own_times() {
     const LIMIT: f64 = 1.0;
     const TORQUE: f64 = 0.1;
     const T_Z: f64 = 0.05;
-    const T_X: f64 = 0.08;
+    const T_X: f64 = 0.045;
 
     let inertia = Matrix3::from_diagonal(&Vector3::repeat(BODY_INERTIA));
     let build = || {
