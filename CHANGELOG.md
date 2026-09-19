@@ -392,9 +392,10 @@ section is subdivided by package.
   time constant, the margin falls through zero at 13.2 ms and rises back
   through it at 59.7 ms. Both are inside a 100 ms step, whose two ends are
   0.0010 and 0.0043 — the same sign — so the wheel was never held there, and
-  the momentum reached 1.014 N·m·s, 1.4% past a limit the wheel cannot hold. A
-  100 ms step now holds it at 13.7 ms and releases it at 34.8 ms, which is
-  where the torque turns. The momentum is monotone on either side of the turn,
+  the momentum reached 1.000534 N·m·s, 0.053% past a limit the wheel cannot
+  hold. How far past depends on the lag: with a 500 ms time constant the same
+  reversal reaches 1.014 N·m·s, 1.4% over. A 100 ms step now holds the wheel at
+  13.7 ms and releases it at 34.8 ms, which is where the torque turns. The momentum is monotone on either side of the turn,
   and that is what the split gives the search to work with.
   `BoundaryKind::mode_after` returns `Option<ConstraintMode>` for this:
   a turning point moves neither the state nor the mode, and it is left out of

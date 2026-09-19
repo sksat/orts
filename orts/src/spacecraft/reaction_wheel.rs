@@ -806,8 +806,17 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
             }
             // Where the momentum turns around: `dh/dt` through zero, which for
             // a wheel with motor lag is the realized torque. Read unsigned by
-            // the mode, since either direction of turn splits the step.
-            BoundaryKind::TurningPoint { .. } => self.unconstrained_rates(input.aux)[index],
+            // the mode, since either direction of turn splits the step. Read
+            // from the state rather than through `unconstrained_rates`, which
+            // would recompute every wheel's command and allocate for each
+            // wheel's event, on every step and every trial of a search. Only a
+            // wheel with motor lag declares this, and such an assembly carries
+            // the realized torques.
+            BoundaryKind::TurningPoint { .. } => self
+                .core
+                .realized_torque_slice(input.aux)
+                .map(|realized| realized[index])
+                .unwrap_or(0.0),
         }
     }
 
