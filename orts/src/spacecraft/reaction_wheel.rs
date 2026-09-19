@@ -641,6 +641,16 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
     /// command, which holds a value across a segment rather than passing
     /// smoothly through zero, and a step cut where a command happens to be
     /// zero is cut at no turn of the momentum.
+    ///
+    /// The turn is read as [`Crossing::Reversal`](utsuroi::Crossing::Reversal),
+    /// so a realized torque of exactly zero at a step's start is a motor about
+    /// to move rather than a wheel turning around — the state every run begins
+    /// from. A step that starts at such a zero *and* turns around within it is
+    /// therefore not cut, which is the one case this declaration does not
+    /// cover. Reaching it takes a torque that leaves zero and comes back inside
+    /// one step, as a speed command's target can
+    /// ([`RwCommand::Speeds`](crate::spacecraft::RwCommand::Speeds), whose
+    /// target torque follows the momentum itself).
     fn boundaries(&self) -> Vec<EffectorBoundary> {
         // Either bound and one release per wheel, whose value the mode signs,
         // plus the momentum's turning point where the motor lags.
