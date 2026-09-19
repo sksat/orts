@@ -1512,12 +1512,16 @@ section is subdivided by package.
   zero from `1e14` or further away in a single step. ([#458](https://github.com/sksat/orts/pull/458))
 
 #### Fixed
-- `RootSet::scan_step` reads the values at the time it located a crossing, and
-  searches again from the step's start when they bracket an event the step's own
+- `RootSet::scan_step` reads every width its bisection tries, and searches
+  again from the step's start where one of them brackets an event the step's own
   two ends did not. A value that runs out and comes back inside one step has the
-  same sign at both ends, so the search passed over it; where another event's
-  crossing falls between its two zeros, the shortened step shows it, and the
-  earliest crossing in the step is what gets reported. Candidates accumulate
+  same sign at both ends, so the search passed over it; where a width tried ends
+  between its two zeros, that one shows it, and the earliest crossing in the
+  step is what gets reported. Reading only the width the search settles on would
+  miss it: the search stops on the far side of a crossing, so a second zero
+  inside that bracket puts the value back on the side it started from — with
+  `t_tolerance = 1e-3`, the zero of `0.4 - t` is located at `0.400390625`, where
+  `(t - 0.2)(t - 0.4001)` is positive again. Candidates accumulate
   over the passes of one search rather than being replaced: over `[0, 1]` with
   `a = 0.8 - t`, `b = (t - 0.2)(t - 0.9)` and `c = (t - 0.1)(t - 0.3)`, locating
   `b` at 0.2 leaves `a` no longer crossing, so a pass that stopped once the

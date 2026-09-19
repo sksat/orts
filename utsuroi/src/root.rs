@@ -56,13 +56,13 @@
 //! caller.
 //!
 //! One case is covered without that bound: a value that runs out and comes back
-//! is still located, when another event's crossing is located **between its two
-//! zeros**. The values at a located time are read again there, an event whose
+//! is still located, when the search for another event **tries a width that
+//! ends inside it**. Every width the bisection tries is read, an event whose
 //! sign differs from the step's start is added to the candidates, and the
-//! shortened step is searched from its start. [`RootSet::hits`] lists what
-//! crosses within the width that search settles on, so the crossings past it
-//! are not reported. A crossing located before the value runs out, or after it
-//! has come back, adds nothing — which is why the obligation above stands.
+//! search starts again from the step's start. [`RootSet::hits`] lists what
+//! crosses within the width the search settles on, so the crossings past it are
+//! not reported. Where no width tried ends between the two zeros, nothing is
+//! added — which is why the obligation above stands.
 //!
 //! A walk whose first state sits exactly on a boundary reports a root as soon as
 //! the value leaves zero, in whichever direction the event counts. What a
@@ -595,15 +595,22 @@ impl<'a, Y> RootSet<'a, Y> {
         any
     }
 
-    /// Mark as candidates the events the located end of a search now brackets,
-    /// and answer whether any of them is new.
+    /// Mark as candidates the events the width just evaluated brackets, and
+    /// answer whether any of them is new.
     ///
     /// Within one search the candidates only grow: an event that crosses over
-    /// the width the search has settled on is one the bisection has to keep
-    /// narrowing for, and one that crossed over a wider width still does.
+    /// one width the bisection tried is one it has to keep narrowing for.
     /// Counting them would not do — a shorter width can bracket one event while
     /// no longer bracketing another, which leaves the count where it was and
     /// the set changed.
+    ///
+    /// Every trial is read, not only the width the search settles on. The
+    /// search stops on the far side of a crossing, by up to the bracket it was
+    /// asked for, and a second zero inside that bracket puts the value back on
+    /// the side it started from: with `t_tolerance = 1e-3`, a search for the
+    /// zero of `0.4 - t` settles at `0.400390625`, where `(t - 0.2)(t -
+    /// 0.4001)` is positive again. The trial at `0.25` is where that one is
+    /// bracketed.
     fn add_candidates(&mut self, t_start: f64) -> bool {
         let mut added = false;
         for index in 0..self.slots.len() {
@@ -611,7 +618,7 @@ impl<'a, Y> RootSet<'a, Y> {
             if !slot.active || slot.candidate {
                 continue;
             }
-            if self.crossed(index, t_start, slot.start, slot.hi) {
+            if self.crossed(index, t_start, slot.start, slot.trial) {
                 self.slots[index].candidate = true;
                 added = true;
             }
@@ -779,16 +786,19 @@ impl<Y: Clone> RootSet<'_, Y> {
         let mut lo = 0.0_f64;
         let mut hi = h;
         let mut y_hi = y_end.clone();
-        // One pass per search. A pass ends on a located time, and the values
-        // there can bracket an event the whole step did not: the width the
-        // search settles on is a step the caller never asked about. Each
-        // further pass therefore starts from `lo = 0` with a candidate more
-        // than the last, which is what bounds their number: pass `k` runs with
-        // at least `k` candidates, so the last pass runs with every event a
-        // candidate and adds none. The loop never ends on an addition it has
-        // not searched for.
+        // One pass per search. Every width the bisection tries is a step the
+        // caller never asked about, and the values there can bracket an event
+        // the whole step did not — so each trial is read for that, and a pass
+        // that finds one ends: the `lo` it reached was accepted with the event
+        // still unknown, and a crossing before `lo` would be lost. The next
+        // pass starts from `lo = 0` with a candidate more than the last, which
+        // is what bounds their number: pass `k` runs with at least `k`
+        // candidates, so the last pass runs with every event a candidate and
+        // finds none to add. The loop never ends on an addition it has not
+        // searched for.
         for _ in 0..self.slots.len() {
             let mut iterations = 0_u32;
+            let mut added = false;
             while hi - lo > self.search.t_tolerance {
                 if iterations >= self.search.max_iterations {
                     return Err(IntegrationError::RootNotLocalized {
@@ -812,6 +822,10 @@ impl<Y: Clone> RootSet<'_, Y> {
                 }
                 let y_mid = raw_step(mid)?;
                 self.eval(t0 + mid, &y_mid)?;
+                // Read before the test below, so an event this trial is the
+                // first to bracket takes part in it: the width then ends up on
+                // the `hi` side, which is where a crossing within it belongs.
+                added |= self.add_candidates(t0);
                 if self.any_candidate_crosses(t0) {
                     hi = mid;
                     y_hi = y_mid;
@@ -819,10 +833,11 @@ impl<Y: Clone> RootSet<'_, Y> {
                 } else {
                     lo = mid;
                 }
+                if added {
+                    break;
+                }
             }
-            // `keep_trial` stored every active event's value at `t0 + hi`, so
-            // this reads the located end without stepping again.
-            if !self.add_candidates(t0) {
+            if !added {
                 break;
             }
             lo = 0.0;
@@ -1044,6 +1059,57 @@ mod tests {
                 assert_eq!(hits, vec![2], "a and b cross past the located time");
             }
             StepRoots::None => panic!("c runs out at 0.1, inside the step"),
+        }
+    }
+
+    /// A second zero inside the bracket the search settles on does not hide the
+    /// first, because every width tried is read.
+    ///
+    /// With `t_tolerance = 1e-3`, the search for the zero of `split = 0.4 - t`
+    /// settles at `0.400390625` — past `dip = (t - 0.2) (t - 0.4001)`'s second
+    /// zero, where `dip` is positive again, as it is at the step's start. The
+    /// trial at `0.25` is the one that brackets `dip`, and the earliest
+    /// crossing in the step is its first zero at `0.2`.
+    #[test]
+    fn a_dip_that_closes_inside_the_bracket_is_still_located() {
+        struct Poly(fn(f64) -> f64);
+        impl RootEvent<f64> for Poly {
+            fn value(&self, t: f64, _y: &f64) -> f64 {
+                (self.0)(t)
+            }
+            fn crossing(&self) -> Crossing {
+                Crossing::Falling
+            }
+            fn terminal(&self) -> bool {
+                false
+            }
+        }
+        let dip = Poly(|t| (t - 0.2) * (t - 0.4001));
+        let split = Poly(|t| 0.4 - t);
+        root_set!(
+            set,
+            RootSearch {
+                t_tolerance: 1e-3,
+                max_iterations: 60,
+            },
+            &dip as &dyn RootEvent<f64>,
+            &split as &dyn RootEvent<f64>
+        );
+        set.begin(0.0, &0.0).expect("finite values");
+        match set.scan_step(0.0, 1.0, &1.0, ramp).expect("located") {
+            StepRoots::Found { t, .. } => {
+                assert!(
+                    (t - 0.2).abs() <= 1e-3,
+                    "located {t}, the dip runs out at 0.2"
+                );
+                let hits: Vec<usize> = set.hits().map(|hit| hit.event).collect();
+                assert_eq!(
+                    hits,
+                    vec![0],
+                    "the split's crossing is past the located time"
+                );
+            }
+            StepRoots::None => panic!("the dip runs out at 0.2, inside the step"),
         }
     }
 
