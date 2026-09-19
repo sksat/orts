@@ -49,10 +49,20 @@
 //! one holding three converges on the last: for
 //! `g = (t - 0.2)(t - 0.4)(t - 0.8)` over `[0, 1]` the first trial at `0.5` has
 //! the sign the step started with, which discards `0.2` and `0.4` and lands on
-//! `0.8`. A step where the value dips across zero and comes back also reports
-//! nothing, even though only one of those two changes is in the counted
-//! direction. Bound the step size so a step holds one; the search can only read
-//! the value at times it picks, so it cannot check this for the caller.
+//! `0.8`. A step where the value runs out and comes back also reports nothing
+//! from its two ends, even though only one of those two changes is in the
+//! counted direction. Bound the step size so a step holds one; the search can
+//! only read the value at times it picks, so it cannot check this for the
+//! caller.
+//!
+//! One case is covered without that bound: a value that runs out and comes back
+//! is still located, when the search for another event **tries a width that
+//! ends inside it**. Every width the bisection tries is read, an event whose
+//! sign differs from the step's start is added to the candidates, and the
+//! search starts again from the step's start. [`RootSet::hits`] lists what
+//! crosses within the width the search settles on, so the crossings past it are
+//! not reported. Where no width tried ends between the two zeros, nothing is
+//! added — which is why the obligation above stands.
 //!
 //! A walk whose first state sits exactly on a boundary reports a root as soon as
 //! the value leaves zero, in whichever direction the event counts. What a
@@ -266,9 +276,14 @@ pub struct RootSearch {
     /// holding the crossing is this narrow, or once halving it no longer
     /// changes the bracket in f64.
     pub t_tolerance: f64,
-    /// Cap on bisection iterations. A value that behaves unlike a continuous
-    /// function cannot make the search spin: the walk fails with
-    /// [`IntegrationError::RootNotLocalized`] instead.
+    /// Cap on bisection iterations, counted per pass. A value that behaves
+    /// unlike a continuous function cannot make the search spin: the walk fails
+    /// with [`IntegrationError::RootNotLocalized`] instead.
+    ///
+    /// A step whose located end brackets a further event is searched again from
+    /// the step's start, and each of those passes gets this many iterations:
+    /// one narrowing does not spend the budget of the next, and a cap chosen
+    /// for a step's width keeps holding for the shorter widths that follow.
     pub max_iterations: u32,
 }
 
@@ -580,6 +595,37 @@ impl<'a, Y> RootSet<'a, Y> {
         any
     }
 
+    /// Mark as candidates the events the width just evaluated brackets, and
+    /// answer whether any of them is new.
+    ///
+    /// Within one search the candidates only grow: an event that crosses over
+    /// one width the bisection tried is one it has to keep narrowing for.
+    /// Counting them would not do — a shorter width can bracket one event while
+    /// no longer bracketing another, which leaves the count where it was and
+    /// the set changed.
+    ///
+    /// Every trial is read, not only the width the search settles on. The
+    /// search stops on the far side of a crossing, by up to the bracket it was
+    /// asked for, and a second zero inside that bracket puts the value back on
+    /// the side it started from: with `t_tolerance = 1e-3`, a search for the
+    /// zero of `0.4 - t` settles at `0.400390625`, where `(t - 0.2)(t -
+    /// 0.4001)` is positive again. The trial at `0.25` is where that one is
+    /// bracketed.
+    fn add_candidates(&mut self, t_start: f64) -> bool {
+        let mut added = false;
+        for index in 0..self.slots.len() {
+            let slot = self.slots[index];
+            if !slot.active || slot.candidate {
+                continue;
+            }
+            if self.crossed(index, t_start, slot.start, slot.trial) {
+                self.slots[index].candidate = true;
+                added = true;
+            }
+        }
+        added
+    }
+
     /// Whether any of the events already marked as candidates crosses over the
     /// shorter step just evaluated.
     fn any_candidate_crosses(&self, t_start: f64) -> bool {
@@ -740,37 +786,61 @@ impl<Y: Clone> RootSet<'_, Y> {
         let mut lo = 0.0_f64;
         let mut hi = h;
         let mut y_hi = y_end.clone();
-        let mut iterations = 0_u32;
-        while hi - lo > self.search.t_tolerance {
-            if iterations >= self.search.max_iterations {
-                return Err(IntegrationError::RootNotLocalized {
-                    t: t0,
-                    bracket: hi - lo,
-                });
+        // One pass per search. Every width the bisection tries is a step the
+        // caller never asked about, and the values there can bracket an event
+        // the whole step did not — so each trial is read for that, and a pass
+        // that finds one ends: the `lo` it reached was accepted with the event
+        // still unknown, and a crossing before `lo` would be lost. The next
+        // pass starts from `lo = 0` with a candidate more than the last, which
+        // is what bounds their number: pass `k` runs with at least `k`
+        // candidates, so the last pass runs with every event a candidate and
+        // finds none to add. The loop never ends on an addition it has not
+        // searched for.
+        for _ in 0..self.slots.len() {
+            let mut iterations = 0_u32;
+            let mut added = false;
+            while hi - lo > self.search.t_tolerance {
+                if iterations >= self.search.max_iterations {
+                    return Err(IntegrationError::RootNotLocalized {
+                        t: t0,
+                        bracket: hi - lo,
+                    });
+                }
+                iterations += 1;
+                let mid = lo + (hi - lo) / 2.0;
+                if mid <= lo || mid >= hi {
+                    // f64 has no width left between the two ends: the bracket is as
+                    // tight as the clock can express, which is tighter than asked.
+                    break;
+                }
+                // The widths can still be distinct where the times they name are
+                // not: at `t0 = 1e15` the spacing is `0.125`, so `t0 + 0.03125` is
+                // `t0`. Narrowing past that point would commit a state at a time
+                // the clock never left.
+                if t0 + mid == t0 + lo || t0 + mid == t0 + hi {
+                    break;
+                }
+                let y_mid = raw_step(mid)?;
+                self.eval(t0 + mid, &y_mid)?;
+                // Read before the test below, so an event this trial is the
+                // first to bracket takes part in it: the width then ends up on
+                // the `hi` side, which is where a crossing within it belongs.
+                added |= self.add_candidates(t0);
+                if self.any_candidate_crosses(t0) {
+                    hi = mid;
+                    y_hi = y_mid;
+                    self.keep_trial();
+                } else {
+                    lo = mid;
+                }
+                if added {
+                    break;
+                }
             }
-            iterations += 1;
-            let mid = lo + (hi - lo) / 2.0;
-            if mid <= lo || mid >= hi {
-                // f64 has no width left between the two ends: the bracket is as
-                // tight as the clock can express, which is tighter than asked.
+            if !added {
                 break;
             }
-            // The widths can still be distinct where the times they name are
-            // not: at `t0 = 1e15` the spacing is `0.125`, so `t0 + 0.03125` is
-            // `t0`. Narrowing past that point would commit a state at a time
-            // the clock never left.
-            if t0 + mid == t0 + lo || t0 + mid == t0 + hi {
-                break;
-            }
-            let y_mid = raw_step(mid)?;
-            self.eval(t0 + mid, &y_mid)?;
-            if self.any_candidate_crosses(t0) {
-                hi = mid;
-                y_hi = y_mid;
-                self.keep_trial();
-            } else {
-                lo = mid;
-            }
+            lo = 0.0;
         }
 
         // The located time has to be one the clock actually reached. Where the
@@ -879,6 +949,206 @@ mod tests {
             }
             StepRoots::None => panic!("the value falls back through zero at 0.5"),
         }
+    }
+
+    /// A value that runs out and comes back within one step is still located,
+    /// when another event's crossing splits that step.
+    ///
+    /// `dip(t) = (t - 0.2) (t - 0.6)` is `+0.12` at `t = 0` and `+0.32` at
+    /// `t = 1`: the two ends alone say it never ran out. `split(t) = 0.4 - t`
+    /// crosses at `t = 0.4`, between the dip's two zeros, and the ends of the
+    /// step up to there do show the dip. The earliest crossing in the step is
+    /// the dip's, at `t = 0.2`.
+    #[test]
+    fn a_value_that_runs_out_and_comes_back_is_located_once_a_root_splits_the_step() {
+        struct Dip;
+        impl RootEvent<f64> for Dip {
+            fn value(&self, t: f64, _y: &f64) -> f64 {
+                (t - 0.2) * (t - 0.6)
+            }
+            fn crossing(&self) -> Crossing {
+                Crossing::Falling
+            }
+            fn terminal(&self) -> bool {
+                false
+            }
+        }
+        struct Split;
+        impl RootEvent<f64> for Split {
+            fn value(&self, t: f64, _y: &f64) -> f64 {
+                0.4 - t
+            }
+            fn crossing(&self) -> Crossing {
+                Crossing::Falling
+            }
+            fn terminal(&self) -> bool {
+                false
+            }
+        }
+        let dip = Dip;
+        let split = Split;
+        root_set!(
+            set,
+            RootSearch {
+                t_tolerance: 1e-9,
+                max_iterations: 60,
+            },
+            &dip as &dyn RootEvent<f64>,
+            &split as &dyn RootEvent<f64>
+        );
+        set.begin(0.0, &0.0).expect("finite values");
+        match set.scan_step(0.0, 1.0, &1.0, ramp).expect("located") {
+            StepRoots::Found { t, .. } => {
+                assert!(
+                    (t - 0.2).abs() <= 1e-8,
+                    "located {t}, the dip runs out at 0.2"
+                );
+                let hits: Vec<usize> = set.hits().map(|hit| hit.event).collect();
+                assert_eq!(
+                    hits,
+                    vec![0],
+                    "the split's crossing is past the located time"
+                );
+            }
+            StepRoots::None => panic!("the dip runs out at 0.2, inside the step"),
+        }
+    }
+
+    /// Each pass can bracket a further event, so the search keeps the
+    /// candidates it has and looks for what the located end adds.
+    ///
+    /// Over `[0, 1]`, all three falling: `a(t) = 0.8 - t`,
+    /// `b(t) = (t - 0.2) (t - 0.9)`, `c(t) = (t - 0.1) (t - 0.3)`. Only `a`
+    /// crosses over the whole step. Locating it at `0.8` brackets `b`, and
+    /// locating `b` at `0.2` brackets `c` while `a` no longer crosses — the
+    /// number of events bracketed stays at two, so a search that stopped when
+    /// that number stopped growing would commit `0.2` and lose `c`'s crossing
+    /// at `0.1`.
+    #[test]
+    fn a_search_that_brackets_a_further_event_each_pass_reaches_the_earliest_root() {
+        struct Poly(fn(f64) -> f64);
+        impl RootEvent<f64> for Poly {
+            fn value(&self, t: f64, _y: &f64) -> f64 {
+                (self.0)(t)
+            }
+            fn crossing(&self) -> Crossing {
+                Crossing::Falling
+            }
+            fn terminal(&self) -> bool {
+                false
+            }
+        }
+        let a = Poly(|t| 0.8 - t);
+        let b = Poly(|t| (t - 0.2) * (t - 0.9));
+        let c = Poly(|t| (t - 0.1) * (t - 0.3));
+        root_set!(
+            set,
+            RootSearch {
+                t_tolerance: 1e-9,
+                max_iterations: 60,
+            },
+            &a as &dyn RootEvent<f64>,
+            &b as &dyn RootEvent<f64>,
+            &c as &dyn RootEvent<f64>
+        );
+        set.begin(0.0, &0.0).expect("finite values");
+        match set.scan_step(0.0, 1.0, &1.0, ramp).expect("located") {
+            StepRoots::Found { t, .. } => {
+                assert!((t - 0.1).abs() <= 1e-8, "located {t}, c runs out at 0.1");
+                let hits: Vec<usize> = set.hits().map(|hit| hit.event).collect();
+                assert_eq!(hits, vec![2], "a and b cross past the located time");
+            }
+            StepRoots::None => panic!("c runs out at 0.1, inside the step"),
+        }
+    }
+
+    /// A second zero inside the bracket the search settles on does not hide the
+    /// first, because every width tried is read.
+    ///
+    /// With `t_tolerance = 1e-3`, the search for the zero of `split = 0.4 - t`
+    /// settles at `0.400390625` — past `dip = (t - 0.2) (t - 0.4001)`'s second
+    /// zero, where `dip` is positive again, as it is at the step's start. The
+    /// trial at `0.25` is the one that brackets `dip`, and the earliest
+    /// crossing in the step is its first zero at `0.2`.
+    #[test]
+    fn a_dip_that_closes_inside_the_bracket_is_still_located() {
+        struct Poly(fn(f64) -> f64);
+        impl RootEvent<f64> for Poly {
+            fn value(&self, t: f64, _y: &f64) -> f64 {
+                (self.0)(t)
+            }
+            fn crossing(&self) -> Crossing {
+                Crossing::Falling
+            }
+            fn terminal(&self) -> bool {
+                false
+            }
+        }
+        let dip = Poly(|t| (t - 0.2) * (t - 0.4001));
+        let split = Poly(|t| 0.4 - t);
+        root_set!(
+            set,
+            RootSearch {
+                t_tolerance: 1e-3,
+                max_iterations: 60,
+            },
+            &dip as &dyn RootEvent<f64>,
+            &split as &dyn RootEvent<f64>
+        );
+        set.begin(0.0, &0.0).expect("finite values");
+        match set.scan_step(0.0, 1.0, &1.0, ramp).expect("located") {
+            StepRoots::Found { t, .. } => {
+                assert!(
+                    (t - 0.2).abs() <= 1e-3,
+                    "located {t}, the dip runs out at 0.2"
+                );
+                let hits: Vec<usize> = set.hits().map(|hit| hit.event).collect();
+                assert_eq!(
+                    hits,
+                    vec![0],
+                    "the split's crossing is past the located time"
+                );
+            }
+            StepRoots::None => panic!("the dip runs out at 0.2, inside the step"),
+        }
+    }
+
+    /// A located end that brackets nothing new costs no second narrowing.
+    ///
+    /// `0.4 - t` over `[0, 1]` crosses once, so the step is narrowed once:
+    /// `log2(1 / 1e-9)` is 30 halvings, and each of them re-steps. A second
+    /// pass would re-step about 29 times more.
+    #[test]
+    fn a_step_with_nothing_new_at_its_located_end_is_narrowed_once() {
+        struct Fall;
+        impl RootEvent<f64> for Fall {
+            fn value(&self, t: f64, _y: &f64) -> f64 {
+                0.4 - t
+            }
+            fn crossing(&self) -> Crossing {
+                Crossing::Falling
+            }
+            fn terminal(&self) -> bool {
+                false
+            }
+        }
+        let fall = Fall;
+        root_set!(
+            set,
+            RootSearch {
+                t_tolerance: 1e-9,
+                max_iterations: 60,
+            },
+            &fall as &dyn RootEvent<f64>
+        );
+        set.begin(0.0, &0.0).expect("finite value");
+        let mut steps = 0_u32;
+        let counted = |width: f64| {
+            steps += 1;
+            ramp(width)
+        };
+        set.scan_step(0.0, 1.0, &1.0, counted).expect("located");
+        assert!(steps <= 32, "re-stepped {steps} times for one narrowing");
     }
 
     struct Level {
