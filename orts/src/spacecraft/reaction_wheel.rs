@@ -637,10 +637,18 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
     /// among the candidates ([`RootSet`](utsuroi::RootSet)). A 100 ms step
     /// then holds the wheel at 13.7 ms and releases it at 34.8 ms.
     ///
-    /// A wheel without motor lag declares no turning point: its `dh/dt` is the
-    /// command, which holds a value across a segment rather than passing
-    /// smoothly through zero, and a step cut where a command happens to be
-    /// zero is cut at no turn of the momentum.
+    /// A wheel without motor lag declares no turning point, for a reason that
+    /// differs by command. Under
+    /// [`RwCommand::Torques`](crate::spacecraft::RwCommand::Torques) its
+    /// `dh/dt` is the commanded torque, which holds a value across a segment:
+    /// it changes where a segment does, and a step cut at a held value's own
+    /// zero is cut at no turn. Under
+    /// [`RwCommand::Speeds`](crate::spacecraft::RwCommand::Speeds) the command
+    /// is recomputed from the momentum — `gain * (target - h/I)`, see
+    /// [`commanded_torques`](RwAssemblyCore::commanded_torques) — so `dh/dt` is
+    /// a smooth function of the state, but the loop is first order and
+    /// approaches the target without overshooting it: the rate falls towards
+    /// zero rather than through it, so there is no turn to declare.
     ///
     /// The turn is read as [`Crossing::Reversal`](utsuroi::Crossing::Reversal),
     /// so a realized torque of exactly zero at a step's start is a motor about
