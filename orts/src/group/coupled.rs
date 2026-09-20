@@ -311,6 +311,21 @@ where
         )
     }
 
+    fn boundary_departure(
+        &self,
+        declared: &DeclaredBoundary,
+        segment: Option<&SegmentContext>,
+        t: f64,
+        state: &Self::State,
+    ) -> Option<f64> {
+        self.dynamics[declared.satellite].boundary_departure(
+            declared,
+            segment,
+            t,
+            &state.states[declared.satellite],
+        )
+    }
+
     fn settle_boundary(&self, declared: &DeclaredBoundary, state: &mut Self::State) {
         self.dynamics[declared.satellite]
             .settle_boundary(declared, &mut state.states[declared.satellite]);
