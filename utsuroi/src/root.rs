@@ -172,6 +172,25 @@ pub trait RootEvent<Y> {
         0
     }
 
+    /// Which way this value leaves zero at `(t, y)`, where it is exactly zero
+    /// there.
+    ///
+    /// Only [`Crossing::Reversal`] reads this, and only where the step's own
+    /// start value is zero. Such a step's two ends are the same pair a value
+    /// falling straight from zero gives, so they cannot say whether anything
+    /// turned around. The sign returned here stands in for the start's, which
+    /// makes a later crossing a reversal. The rate of the value is what
+    /// answers: a motor at zero torque with a command to follow has
+    /// `dτ/dt = τ_cmd / T`, a number the event holds.
+    ///
+    /// `None` where the direction is unknown — the rate is zero as well, or the
+    /// event does not track it — and a step starting at that zero then reports
+    /// nothing, as it did before. Return the rate itself or anything with its
+    /// sign; zero and non-finite answers count as unknown.
+    fn leaves_zero_towards(&self, _t: f64, _y: &Y) -> Option<f64> {
+        None
+    }
+
     /// Width of `|value|` within which the state still counts as being on this
     /// boundary, in the value's own units.
     ///
@@ -356,6 +375,10 @@ pub struct RootSlot {
     /// next step. Read afresh at the start of every walk, because the caller is
     /// free to change the state between them.
     start: f64,
+    /// The sign the value leaves zero towards, where `start` is zero and the
+    /// event answers [`RootEvent::leaves_zero_towards`]. Zero elsewhere, which
+    /// is what "no direction to use" reads as.
+    departure: f64,
     /// The value at the far end of the bracket the search is narrowing.
     hi: f64,
     /// The value at whichever state was evaluated last: a trial of the search,
@@ -386,6 +409,7 @@ impl RootSlot {
             guard: RootGuard::new(),
             boundary: 0.0,
             start: 0.0,
+            departure: 0.0,
             hi: 0.0,
             trial: 0.0,
             candidate: false,
@@ -587,6 +611,22 @@ impl<'a, Y> RootSet<'a, Y> {
                 slot.guard.on_boundary = false;
             }
         }
+        // Read afresh for the step that starts here: a value of exactly zero is
+        // where the two ends say nothing, and the event's own rate is what
+        // says which way it is about to go. Events whose value is not zero, and
+        // those that do not answer, leave this at zero.
+        for index in 0..self.events.len() {
+            self.slots[index].departure = 0.0;
+            if !self.slots[index].active || self.slots[index].start != 0.0 {
+                continue;
+            }
+            if let Some(rate) = self.events[index].leaves_zero_towards(t, y)
+                && rate.is_finite()
+                && rate != 0.0
+            {
+                self.slots[index].departure = rate.signum();
+            }
+        }
         Ok(())
     }
 
@@ -607,7 +647,15 @@ impl<'a, Y> RootSet<'a, Y> {
             // event, within the width the event calls "still on it".
             return false;
         }
-        self.events[index].crossing().matches(before, after)
+        let crossing = self.events[index].crossing();
+        if crossing == Crossing::Reversal && before == 0.0 && slot.departure != 0.0 {
+            // The step starts on this event's zero, where the two ends read the
+            // same as a value falling straight from it. The direction the value
+            // leaves that zero stands in for the start's sign, which makes a
+            // later crossing a reversal rather than a departure.
+            return crossing.matches(slot.departure, after);
+        }
+        crossing.matches(before, after)
     }
 
     /// Whether any event crosses over the step whose far end is in the slots,
@@ -1224,6 +1272,53 @@ mod tests {
                 );
             }
             StepRoots::None => panic!("the dip runs out at 0.2, inside the step"),
+        }
+    }
+
+    /// An event that says which way its value leaves zero has its turn found,
+    /// even where the step starts at that zero.
+    ///
+    /// `g(t) = t (0.5 - t)` over `[0, 1]` starts at zero, rises, and falls back
+    /// through zero at `0.5`. The two ends are `(0, -0.5)`, which a step whose
+    /// value falls straight from zero also gives, so the ends cannot tell the
+    /// two apart. What can is the event: at `t = 0` this value is heading up,
+    /// and an event that reports that is asking for the fall to be found.
+    #[test]
+    fn an_event_that_reports_how_it_leaves_zero_has_its_turn_located() {
+        struct Arch;
+        impl RootEvent<f64> for Arch {
+            fn value(&self, t: f64, _y: &f64) -> f64 {
+                t * (0.5 - t)
+            }
+            fn crossing(&self) -> Crossing {
+                Crossing::Reversal
+            }
+            fn terminal(&self) -> bool {
+                false
+            }
+            fn leaves_zero_towards(&self, _t: f64, _y: &f64) -> Option<f64> {
+                // d/dt [t (0.5 - t)] at t = 0 is +0.5.
+                Some(0.5)
+            }
+        }
+        let event = Arch;
+        root_set!(
+            set,
+            RootSearch {
+                t_tolerance: 1e-9,
+                max_iterations: 60,
+            },
+            &event as &dyn RootEvent<f64>
+        );
+        set.begin(0.0, &0.0).expect("finite value");
+        match set.scan_step(0.0, 1.0, &1.0, ramp).expect("located") {
+            StepRoots::Found { t, .. } => {
+                assert!(
+                    (t - 0.5).abs() <= 1e-8,
+                    "located {t}, the value turns at 0.5"
+                );
+            }
+            StepRoots::None => panic!("the value turns at 0.5, inside the step"),
         }
     }
 

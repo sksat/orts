@@ -486,6 +486,84 @@ fn two_lagging_wheels_are_handled_at_their_own_times() {
     );
 }
 
+/// A walk reports a state its own system refuses, where it produced it.
+///
+/// A step that holds two changes of sign of one boundary's value reports
+/// neither, which is the caller's step size to keep out. Where that happens to
+/// the release of a held wheel, the rate turns twice inside the step: the
+/// release goes unreported, the wheel integrates away from its bound, and the
+/// step ends with the mode saying `Upper` while the momentum is inside the
+/// limit — a state `validate_state` calls invalid.
+///
+/// Measured with a speed command at the default gain, a 50 ms lag, a momentum
+/// of 0.98 against a limit of 1.0, and a 200 ms step: the wheel is held at
+/// 169.5 ms, and by 369.5 ms its momentum has left the bound for 0.9635. The
+/// walk now reports that where it made it. Before, the run finished and the
+/// *next* call refused a state it had not produced.
+#[test]
+fn a_walk_reports_a_state_its_system_refuses() {
+    const LIMIT: f64 = 1.0;
+    const TORQUE: f64 = 0.5;
+    const T_M: f64 = 0.05;
+    const INERTIA: f64 = 0.01;
+
+    let inertia = Matrix3::from_diagonal(&Vector3::repeat(BODY_INERTIA));
+    let build = || {
+        let wheel = orts::spacecraft::reaction_wheel::Rw::new(Vector3::z(), INERTIA, LIMIT, TORQUE)
+            .with_torque_response(TorqueResponse::first_order_lag(T_M));
+        let mut rw = ReactionWheelAssembly::new(vec![wheel]);
+        // Fast enough to reach the limit, and the loop is underdamped at the
+        // default gain, so the torque turns more than once in a coarse step.
+        rw.command = RwCommand::Speeds(vec![(LIMIT * 1.5) / INERTIA]);
+        SpacecraftDynamics::new(arika::earth::MU, PointMass, inertia).with_effector(rw)
+    };
+    let start = |dt: f64| {
+        let system = build();
+        let mut initial = system.initial_augmented_state(initial_plant());
+        initial.aux[0] = 0.98;
+        initial.aux[1] = 0.0;
+        let group: IndependentGroup<Dynamics> = IndependentGroup::new(IntegratorConfig::Rk4 { dt })
+            .add_satellite("sat", initial, build());
+        group
+    };
+
+    let mut coarse = start(0.2);
+    let outcome = coarse.propagate_to(1.0).expect("the call returns");
+    let refusal = outcome
+        .terminations
+        .first()
+        .expect("the coarse walk reports the state it produced");
+    assert!(
+        refusal.reason.contains("produced a state"),
+        "the report names where the state came from: {}",
+        refusal.reason
+    );
+    assert!(
+        refusal.reason.contains("is held at 1 N·m·s by its mode"),
+        "and what the system refused: {}",
+        refusal.reason
+    );
+
+    let mut fine = start(0.001);
+    let outcome = fine.propagate_to(1.0).expect("the call returns");
+    assert!(
+        outcome.terminations.is_empty(),
+        "a step well inside the lag holds the wheel on its bound: {:?}",
+        outcome.terminations
+    );
+    let ended = fine
+        .satellites()
+        .next()
+        .expect("one satellite")
+        .state
+        .clone();
+    assert!(
+        (ended.aux[0] - LIMIT).abs() < 1e-9,
+        "and ends on the bound, not at {}",
+        ended.aux[0]
+    );
+}
+
 /// A wheel that turns around short of its limit stops the walk at the turn,
 /// and nothing there moves.
 ///

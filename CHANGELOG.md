@@ -404,6 +404,20 @@ section is subdivided by package.
   ([#469](https://github.com/sksat/orts/pull/469))
 
 #### Fixed
+- A walk reports a state its own system refuses where it produced it, as the new
+  `BoundaryWalkError::ProducedRejected`, rather than handing it back for the
+  next call to refuse. Two things reach that state. A span can hold a crossing
+  the search cannot report: with a speed command at the default gain, a 50 ms
+  torque lag and a 200 ms step, a wheel held at its limit has its release
+  margin turn twice inside one step, so nothing releases it and the momentum
+  integrates away from the bound — measured ending at 0.9459 N·m·s against a
+  limit of 1.0, with the mode still saying `Upper`, which `validate_state`
+  calls invalid. The run used to finish and the *next* call refused a state it
+  had not made. Or a contribution can be ungated: a thruster registered with
+  `with_model` burns propellant the pool's floor does not stop, and that run
+  now stops with the floor named instead of returning a mass below it. A state
+  the system accepts is unaffected, and a step well inside the lag holds the
+  wheel on its bound as before.
 - A reaction wheel whose motor lags declares where its momentum turns around,
   as the new `BoundaryKind::TurningPoint`, so a brief excursion past its limit
   is held even where the step is coarser than the lag. Braking a wheel that is
@@ -1414,6 +1428,16 @@ section is subdivided by package.
 ### `utsuroi` (Rust, crates.io)
 
 #### Added
+- `RootEvent::leaves_zero_towards` asks an event which way its value is about
+  to leave zero, where the step's own start value is zero. Such a step's two
+  ends are the same pair a value falling straight from zero gives, so they
+  cannot say whether anything turned around: `g(t) = t (0.5 - t)` over `[0, 1]`
+  turns at `0.5` and ends at `-0.5`, as `g(t) = -0.5 t` does. Only
+  `Crossing::Reversal` reads the answer, and the sign it gives stands in for
+  the start's, which makes the later crossing a reversal. A reaction wheel
+  whose realized torque is zero answers with its command, since the torque's
+  own rate there is `τ_cmd / T`. `None`, the default, keeps the previous
+  reading: a step starting at that zero reports nothing.
 - **Breaking:** `Crossing::Reversal`, for an event that stands for a quantity
   turning around
   rather than a margin running out. `Crossing` is public and exhaustive, so a

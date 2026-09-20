@@ -307,6 +307,15 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   1 つ足すのは `with_occulter`。古いフィールドを名前で書いた struct literal は
   コンパイルできなくなる。([#469](https://github.com/sksat/orts/pull/469))
 #### Fixed
+- walk が、自分の system が拒否する状態を作った時点で報告するようになった (新しい
+  `BoundaryWalkError::ProducedRejected`)。従来はその状態を返し、次の呼び出しが拒否していた。
+  この状態に至る道は 2 つある。1 つは、探索が報告できない交差を含む区間である: 既定 gain の速度指令、
+  時定数 50 ms、step 幅 200 ms では、上限で拘束された wheel の解除 margin が 1 step のうちに 2 回
+  向きを変えるため解除されず、角運動量が上限から離れていく (上限 1.0 に対して 0.9459 N·m·s で終わり、
+  モードは `Upper` のまま。`validate_state` はこれを無効と呼ぶ)。もう 1 つは、gate されていない
+  contribution である: `with_model` で登録した thruster は pool の floor で止まらないので、その run は
+  floor を下回った質量を返す代わりに floor を名指しして停止する。system が受け付ける状態には影響せず、
+  1 次遅れより十分細かい step では従来どおり wheel は上限に保持される。
 - 1 次遅れのある reaction wheel が、角運動量の増減が切り替わる時刻を新しい
   `BoundaryKind::TurningPoint` として申告するようになった。step 幅が 1 次遅れより広い場合でも、
   上限を短時間超える動きが拘束される。上限の直前で、まだ外向きに加速している wheel に逆向きの
@@ -1155,6 +1164,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `utsuroi` (Rust, crates.io)
 
 #### Added
+- `RootEvent::leaves_zero_towards` が、step の開始値が 0 のときに「値がどちら向きに 0 を離れるか」を
+  event に尋ねるようになった。そういう step の両端は、0 からまっすぐ落ちる場合と同じ組になるので、
+  何かが向きを変えたかを言えない: $g(t) = t(0.5-t)$ を $[0,1]$ で見ると $0.5$ で転じて $-0.5$ で
+  終わるが、$g(t) = -0.5t$ も同じ両端である。答えを読むのは `Crossing::Reversal` だけで、その符号を
+  開始側の代わりに使うと、あとの交差が向きの変化として数えられる。実現トルクが 0 の reaction wheel は
+  指令で答える (そこでのトルクの変化率は $\tau_{cmd}/T$ である)。既定の `None` は従来の読み方
+  (その 0 から始まる step は何も報告しない) を保つ。
 - **Breaking:** `Crossing::Reversal`。margin が尽きる event ではなく、量が向きを変えることを表す
   event 用である。`Crossing` は公開されていて `#[non_exhaustive]` でもないので、variant を網羅的に
   `match` している側は新しい variant に対応する必要がある。両方向を数える一方、0 に置かれていた値が

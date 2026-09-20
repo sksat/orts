@@ -946,6 +946,21 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
         }
     }
 
+    /// Where the momentum's turning point sits on its own zero, the realized
+    /// torque's rate says which way it is about to go: `dτ/dt = (τ_cmd - τ) / T`
+    /// is `τ_cmd / T` at `τ = 0`, so the command's sign is the answer. A
+    /// command of zero leaves the wheel in equilibrium, which is no direction.
+    fn boundary_departure(&self, kind: BoundaryKind, input: EffectorInput<'_, S>) -> Option<f64> {
+        let BoundaryKind::TurningPoint { index } = kind else {
+            return None;
+        };
+        let commanded =
+            self.core
+                .commanded_torques(&self.command, input.aux, self.speed_control_gain);
+        let rate = commanded[index];
+        (rate != 0.0 && rate.is_finite()).then_some(rate)
+    }
+
     fn derivatives(
         &self,
         input: EffectorInput<'_, S>,

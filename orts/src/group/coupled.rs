@@ -267,7 +267,8 @@ pub enum ComponentStop {
 /// tell a refusal from a solver failure; [`ComponentStop`] is what says which.
 fn refusing_satellite(e: &BoundaryWalkError) -> Option<usize> {
     match e {
-        BoundaryWalkError::StartRejected { error, .. } => error.satellite,
+        BoundaryWalkError::StartRejected { error, .. }
+        | BoundaryWalkError::ProducedRejected { error, .. } => error.satellite,
         BoundaryWalkError::Integration(_) => None,
     }
 }
@@ -723,6 +724,9 @@ where
                     // still a refusal.
                     self.stop = Some(match &e {
                         BoundaryWalkError::StartRejected { .. } => ComponentStop::StartRefused,
+                        // The walk produced a state the system refuses, which
+                        // is a refusal of a state the group would carry on with.
+                        BoundaryWalkError::ProducedRejected { .. } => ComponentStop::StartRefused,
                         BoundaryWalkError::Integration(_) => ComponentStop::IntegrationError,
                     });
                     // Pre-flight rejections (bad dt/tolerances) carry no time

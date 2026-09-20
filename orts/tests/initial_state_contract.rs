@@ -119,8 +119,10 @@ fn an_empty_mode_with_propellant_above_the_floor_is_refused() {
 /// `with_propulsion` is the registration the pool gates; `with_model` is not,
 /// so the thrust keeps being integrated after the tank is empty. The walk
 /// settles the floor once — the mode moves to `Lower`, which makes that
-/// boundary inactive — and from there nothing stops the burn. The run ends
-/// below the floor, and it is that state the next call would start from.
+/// boundary inactive — and from there nothing stops the burn. The walk reports
+/// that where it happens: the state it would hand back is one the system
+/// refuses, so the run stops with the floor named and the state stays where the
+/// last good segment left it.
 #[test]
 fn a_thruster_registered_as_a_model_runs_the_mass_below_the_floor() {
     const PROPELLANT: f64 = 0.04;
@@ -137,46 +139,53 @@ fn a_thruster_registered_as_a_model_runs_the_mass_below_the_floor() {
             .with_model(Thruster::new(THRUST_N, ISP_S, Vector3::x()))
     };
 
-    let mass_after = |build: &dyn Fn() -> SpacecraftDynamics<PointMass>| {
+    let run = |build: &dyn Fn() -> SpacecraftDynamics<PointMass>| {
         let start = build().initial_augmented_state(plant_at(DRY_MASS + PROPELLANT));
         let mut group: IndependentGroup<SpacecraftDynamics<PointMass>> = IndependentGroup::new(
             IntegratorConfig::Rk4 { dt: DT },
         )
         .add_satellite("sat", start, build());
-        group.propagate_to(SPAN).expect("the group answers");
-        group
+        let outcome = group.propagate_to(SPAN).expect("the group answers");
+        let state = group
             .satellites()
             .next()
             .expect("one satellite")
             .state
-            .clone()
+            .clone();
+        (outcome, state)
     };
 
-    let with_gate = mass_after(&gated);
+    let (gated_outcome, with_gate) = run(&gated);
+    assert!(
+        gated_outcome.terminations.is_empty(),
+        "registered as propulsion, the run finishes: {:?}",
+        gated_outcome.terminations
+    );
     assert!(
         (with_gate.plant.mass - DRY_MASS).abs() < 1e-9,
-        "registered as propulsion, the burn stops on the floor, not at {}",
+        "and the burn stops on the floor, not at {}",
         with_gate.plant.mass
     );
 
-    let without_gate = mass_after(&ungated);
+    let (ungated_outcome, without_gate) = run(&ungated);
+    let report = ungated_outcome
+        .terminations
+        .first()
+        .expect("registered as a model, the run reports the state it produced");
     assert!(
-        without_gate.plant.mass < DRY_MASS - 0.1,
-        "registered as a model, it burns through the floor, not stopping at {}",
+        report.reason.contains("below the dry mass"),
+        "the report names the floor, not {}",
+        report.reason
+    );
+    assert!(
+        report.reason.contains("produced a state"),
+        "and says the walk produced it: {}",
+        report.reason
+    );
+    assert!(
+        without_gate.plant.mass >= DRY_MASS - 1e-9,
+        "the state kept is the last good one, not the {} the refused span reached",
         without_gate.plant.mass
-    );
-
-    // And that state is what the next call starts from: it is refused now
-    // rather than having its mass raised to the floor.
-    let (reason, ended) = walked(without_gate.clone(), ungated);
-    let reason = reason.expect("the next call refuses the state the last one left");
-    assert!(
-        reason.contains("below the dry mass"),
-        "the reason names the floor, not {reason}"
-    );
-    assert_eq!(
-        ended.plant.mass, without_gate.plant.mass,
-        "and the mass is left where the previous run left it"
     );
 }
 
