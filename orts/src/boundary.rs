@@ -161,14 +161,20 @@ pub trait HasBoundaries: DynamicalSystem {
     /// Not asked during a walk: a boundary search steps past a constraint on
     /// purpose, and its trial states are meant to be evaluable there.
     ///
-    /// The question is about a state a caller committed to, so a system has to
-    /// accept every state its own propagation produces — the walk asks again at
-    /// each segment's start, and a system refusing what it just integrated
-    /// would be contradicting itself. A caller that moves a state between
-    /// walks, as [`Scheduler`](crate::group::Scheduler) does with its KDK
-    /// kicks, is asked about the state it moved *to*: before the next walk
-    /// runs, and — since a kick can be the last thing a run does — before it
-    /// hands the state back.
+    /// Asked once more, on the state the walk is about to hand back. A caller
+    /// propagates that state further, so one this system refuses is one no
+    /// later call can use, and reporting it as
+    /// [`BoundaryWalkError::ProducedRejected`] names the span that produced it
+    /// rather than leaving the next call to refuse a state it did not make.
+    /// A system whose answer here disagrees with what its own propagation
+    /// produces will see that span fail — which is the report, not a
+    /// contradiction to live with.
+    ///
+    /// A caller that moves a state between walks, as
+    /// [`Scheduler`](crate::group::Scheduler) does with its KDK kicks, is asked
+    /// about the state it moved *to*: before the next walk runs, and — since a
+    /// kick can be the last thing a run does — before it hands the state
+    /// back.
     fn validate_boundary_walk_start(
         &self,
         _t: f64,
@@ -239,7 +245,8 @@ pub enum BoundaryWalkError {
     /// The solver or the boundary search failed.
     Integration(IntegrationError),
     /// The system refused the state the walk was asked to start from
-    /// ([`HasBoundaries::validate_boundary_walk_start`]).
+    /// ([`HasBoundaries::validate_boundary_walk_start`]). Nothing was
+    /// integrated: what a caller handed over is what was refused.
     StartRejected {
         /// Time the refused state belongs to.
         t: f64,
@@ -253,12 +260,13 @@ pub enum BoundaryWalkError {
     /// system itself calls invalid is reported where it was produced rather
     /// than at the next call.
     ///
-    /// Two things reach it. A span can hold a crossing the search cannot
-    /// report, which for a step holding two changes of sign of one boundary's
-    /// value is the caller's step size to keep out. Or a contribution to the
-    /// right-hand side can be ungated: a thruster registered with
-    /// `with_model` burns propellant that the pool's floor does not stop, and
-    /// the mass ends below it.
+    /// What refused is in `error`, and a system implementing this trait can
+    /// refuse for any invariant of its own. Two spans reach it in this crate.
+    /// One holds a crossing the search cannot report, which for a step with
+    /// two changes of sign of one boundary's value is the caller's step size to
+    /// keep out. The other has a contribution to the right-hand side that no
+    /// boundary gates: a thruster registered with `with_model` burns
+    /// propellant the pool's floor does not stop, and the mass ends below it.
     ProducedRejected {
         /// Time the refused state belongs to.
         t: f64,
@@ -299,10 +307,10 @@ impl core::fmt::Display for BoundaryWalkError {
                 write!(
                     f,
                     "the walk from t = {from} produced a state at t = {t} that the system \
-                     refuses: {error}. Either the span held a crossing the search cannot \
-                     report — a step holding two changes of sign of one boundary's value \
-                     reports neither — or a contribution to the right-hand side is not gated \
-                     by any boundary"
+                     refuses: {error}. Two spans that reach this, as examples: one holding a \
+                     crossing the search cannot report, since a step with two changes of sign \
+                     of one boundary's value reports neither; and one with a contribution to \
+                     the right-hand side that no boundary gates"
                 )
             }
         }

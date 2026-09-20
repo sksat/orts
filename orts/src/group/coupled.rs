@@ -252,7 +252,14 @@ pub enum ComponentStop {
     Event,
     /// One satellite refused the state the walk was to start from
     /// ([`HasBoundaries::validate_boundary_walk_start`](crate::boundary::HasBoundaries::validate_boundary_walk_start)).
+    /// Nothing was integrated: the state a caller handed over is what was
+    /// refused.
     StartRefused,
+    /// One satellite refused a state the walk produced
+    /// ([`BoundaryWalkError::ProducedRejected`](crate::boundary::BoundaryWalkError::ProducedRejected)).
+    /// The span was integrated and its result is unusable, so the parts carry
+    /// the last segment that finished, as an integration error does.
+    ProducedRefused,
     /// The solver or the boundary search failed. The parts carry the state and
     /// the time of the last segment that finished, since a failed segment's own
     /// steps are not committed — so the satellites are all at an instant the
@@ -739,9 +746,9 @@ where
                     // still a refusal.
                     self.stop = Some(match &e {
                         BoundaryWalkError::StartRejected { .. } => ComponentStop::StartRefused,
-                        // The walk produced a state the system refuses, which
-                        // is a refusal of a state the group would carry on with.
-                        BoundaryWalkError::ProducedRejected { .. } => ComponentStop::StartRefused,
+                        BoundaryWalkError::ProducedRejected { .. } => {
+                            ComponentStop::ProducedRefused
+                        }
                         BoundaryWalkError::Integration(_) => ComponentStop::IntegrationError,
                     });
                     // Pre-flight rejections (bad dt/tolerances) carry no time

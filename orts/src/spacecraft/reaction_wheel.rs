@@ -755,10 +755,11 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
     /// so a realized torque of exactly zero at a step's start is a motor about
     /// to move rather than a wheel turning around — the state every run begins
     /// from. A step that starts at such a zero *and* turns around within it is
-    /// therefore not cut. Reaching it takes a torque that leaves zero and comes
-    /// back inside one step, as a speed command's target can
-    /// ([`RwCommand::Speeds`](crate::spacecraft::RwCommand::Speeds), whose
-    /// target torque follows the momentum itself).
+    /// still cut, because the wheel answers
+    /// [`StateEffector::boundary_departure`](crate::effector::StateEffector::boundary_departure)
+    /// with its command: at zero torque the rate is `τ_cmd / T`, so the
+    /// command's sign is the direction. A command of zero leaves the wheel in
+    /// equilibrium, which is no direction, and that step is not cut.
     ///
     /// One turn per step is what this declaration covers. The step a walk
     /// resumes with after a turn starts on the side that turn left, and the

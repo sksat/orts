@@ -417,7 +417,7 @@ impl<'a, I: Integrator + ?Sized, S: DynamicalSystem> FixedStepper<'a, I, S> {
             roots.check(t_committed, &committed)?;
             self.state = committed;
             self.t = t_committed;
-            roots.apply(self.t);
+            roots.apply(self.t, &self.state);
 
             // A state the walk stopped at a boundary is not the final one:
             // the caller updates the mode it just crossed into, and corrects

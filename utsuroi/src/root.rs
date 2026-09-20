@@ -71,11 +71,13 @@
 //! root's own time does not report that event again.
 //!
 //! An event whose crossing is [`Crossing::Reversal`] takes the opposite reading
-//! of a first state at zero: leaving zero is not a turn, so no root is
-//! reported. **That event owes one more condition: a step does not start at
-//! exactly zero and turn around within it.** Such a step has the same two ends
-//! as one whose value falls straight from zero, and the two ends are all the
-//! detection reads.
+//! of a first state at zero: leaving zero is not a turn, so no root is reported
+//! for the departure itself. Such a step has the same two ends as one whose
+//! value falls straight from zero, and the two ends are all the detection
+//! reads — so a turn inside it is found only where the event answers
+//! [`RootEvent::leaves_zero_towards`] with the direction. **An event that
+//! answers `None` owes one more condition: a step does not start at exactly
+//! zero and turn around within it.**
 //!
 //! # Storage
 //!
@@ -107,14 +109,17 @@ pub enum Crossing {
     /// happened. Arriving at zero still counts, so the turn itself is not lost
     /// where a step happens to end on it.
     ///
-    /// **A step that starts at zero and reverses inside it is not reported.**
-    /// `g(t) = t (0.5 - t)` over `[0, 1]` rises from zero and falls back
-    /// through it at `0.5`, and its two ends are `(0, -0.5)` — the same pair a
-    /// value falling straight from zero gives. The two cannot be told apart
-    /// from the ends, so an event using this variant owes one more condition
-    /// than the others: a step it is searched over does not start at exactly
-    /// zero and turn around within that step. `Crossing::Either` is the other
-    /// side of the same trade, reporting the departure as a root.
+    /// **A step that starts at zero and reverses inside it is reported only
+    /// where the event says which way the value leaves that zero**
+    /// ([`RootEvent::leaves_zero_towards`]). `g(t) = t (0.5 - t)` over
+    /// `[0, 1]` rises from zero and falls back through it at `0.5`, and its two
+    /// ends are `(0, -0.5)` — the same pair a value falling straight from zero
+    /// gives, so the ends cannot tell the two apart. An event that answers with
+    /// the direction has that sign used in place of the start's, and the fall is
+    /// found; one that answers `None` owes the condition the others do not: a
+    /// step it is searched over does not start at exactly zero and turn around
+    /// within that step. `Crossing::Either` is the other side of the same
+    /// trade, reporting the departure itself as a root.
     Reversal,
 }
 
@@ -611,13 +616,28 @@ impl<'a, Y> RootSet<'a, Y> {
                 slot.guard.on_boundary = false;
             }
         }
-        // Read afresh for the step that starts here: a value of exactly zero is
-        // where the two ends say nothing, and the event's own rate is what
-        // says which way it is about to go. Events whose value is not zero, and
-        // those that do not answer, leave this at zero.
+        self.read_departures(t, y);
+        Ok(())
+    }
+
+    /// Read which way each value that sits at exactly zero is about to leave
+    /// it, for the step that starts at `(t, y)`.
+    ///
+    /// Only an event counting a reversal has a use for this: the others read a
+    /// departure from zero as a crossing already. A value that is not zero has
+    /// its own sign to compare against, and an event that does not answer
+    /// leaves the direction unknown, which reads as zero here.
+    ///
+    /// Called wherever `start` is set — at a walk's start and after every
+    /// committed step — since a step can end exactly on a zero and the next
+    /// one then begins at it.
+    fn read_departures(&mut self, t: f64, y: &Y) {
         for index in 0..self.events.len() {
             self.slots[index].departure = 0.0;
-            if !self.slots[index].active || self.slots[index].start != 0.0 {
+            if !self.slots[index].active
+                || self.slots[index].start != 0.0
+                || self.events[index].crossing() != Crossing::Reversal
+            {
                 continue;
             }
             if let Some(rate) = self.events[index].leaves_zero_towards(t, y)
@@ -627,7 +647,6 @@ impl<'a, Y> RootSet<'a, Y> {
                 self.slots[index].departure = rate.signum();
             }
         }
-        Ok(())
     }
 
     /// Whether the event at `index` counts a move from `before` to `after` over
@@ -787,8 +806,9 @@ impl<'a, Y> RootSet<'a, Y> {
     /// boundary at `t`, and the rest have moved on.
     ///
     /// The values are the ones [`check`](Self::check) read for the same state,
-    /// so this cannot fail and the stepper can update itself first.
-    pub(crate) fn apply(&mut self, t: f64) {
+    /// so this cannot fail and the stepper can update itself first. `y` is that
+    /// same state, for the directions a value sitting at zero is read with.
+    pub(crate) fn apply(&mut self, t: f64, y: &Y) {
         for slot in self.slots.iter_mut() {
             if !slot.active {
                 continue;
@@ -811,6 +831,9 @@ impl<'a, Y> RootSet<'a, Y> {
             }
             slot.start = slot.trial;
         }
+        // The step just committed can have ended on a zero — a projection can
+        // put it exactly there — and the next step then starts at it.
+        self.read_departures(t, y);
     }
 }
 
@@ -1322,6 +1345,73 @@ mod tests {
         }
     }
 
+    /// A step whose committed state sits on a zero has the direction read
+    /// there, not only at the walk's start.
+    ///
+    /// The raw candidate of a step can miss a zero that the committed state
+    /// lands on: a projection is what moves one onto it, and no root is
+    /// reported because the raw values never changed sign. The next step then
+    /// starts at that zero, where its two ends say nothing, and the direction
+    /// has to be read at the commit for the turn to be found.
+    ///
+    /// `g(y) = (y - 1) (1.5 - y)` is `-1.5` at `y = 0` and `-0.06` at
+    /// `y = 0.9`, so a step between them reports nothing. Committing `y = 1`
+    /// puts the value on zero. From there the value rises, turns at `y = 1.5`,
+    /// and is `-0.5` at `y = 2`.
+    #[test]
+    fn a_step_committed_on_a_zero_reads_the_direction_there() {
+        struct Arch;
+        impl RootEvent<f64> for Arch {
+            fn value(&self, _t: f64, y: &f64) -> f64 {
+                (y - 1.0) * (1.5 - y)
+            }
+            fn crossing(&self) -> Crossing {
+                Crossing::Reversal
+            }
+            fn terminal(&self) -> bool {
+                false
+            }
+            fn leaves_zero_towards(&self, _t: f64, y: &f64) -> Option<f64> {
+                // dg/dy = 2.5 - 2y, which is +0.5 at y = 1.
+                Some(2.5 - 2.0 * y)
+            }
+        }
+        let event = Arch;
+        root_set!(
+            set,
+            RootSearch {
+                t_tolerance: 1e-9,
+                max_iterations: 60,
+            },
+            &event as &dyn RootEvent<f64>
+        );
+        set.begin(0.0, &0.0).expect("finite value");
+        assert!(
+            matches!(
+                set.scan_step(0.0, 1.0, &0.9, |w| Ok(0.9 * w))
+                    .expect("no error"),
+                StepRoots::None
+            ),
+            "the raw values go from -1.5 to -0.06, which is no crossing"
+        );
+        // The projection puts the committed state on the zero.
+        commit(&mut set, 1.0, &1.0);
+
+        match set
+            .scan_step(1.0, 1.0, &2.0, |w| Ok(1.0 + w))
+            .expect("located")
+        {
+            StepRoots::Found { t, state, .. } => {
+                assert!(
+                    (state - 1.5).abs() <= 1e-8,
+                    "located the state {state}, the value turns at y = 1.5"
+                );
+                assert!(t > 1.0, "and the time is inside the step, not {t}");
+            }
+            StepRoots::None => panic!("the value turns at y = 1.5, inside the step"),
+        }
+    }
+
     /// A located end that brackets nothing new costs no second narrowing.
     ///
     /// `0.4 - t` over `[0, 1]` crosses once, so the step is narrowed once:
@@ -1409,7 +1499,7 @@ mod tests {
     /// values, then record where the walk is.
     fn commit(set: &mut RootSet<'_, f64>, t: f64, y: &f64) {
         set.check(t, y).expect("finite value");
-        set.apply(t);
+        set.apply(t, y);
     }
 
     #[test]

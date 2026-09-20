@@ -417,7 +417,11 @@ section is subdivided by package.
   `with_model` burns propellant the pool's floor does not stop, and that run
   now stops with the floor named instead of returning a mass below it. A state
   the system accepts is unaffected, and a step well inside the lag holds the
-  wheel on its bound as before.
+  wheel on its bound as before. `ComponentStop` gained `ProducedRefused` for
+  this, since `StartRefused` promises that nothing was integrated and the state
+  a caller handed over is what was refused; a coupled group stops the whole
+  component on it, as it does on an integration error, because the parts carry
+  the last segment that finished.
 - A reaction wheel whose motor lags declares where its momentum turns around,
   as the new `BoundaryKind::TurningPoint`, so a brief excursion past its limit
   is held even where the step is coarser than the lag. Braking a wheel that is

@@ -315,7 +315,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   モードは `Upper` のまま。`validate_state` はこれを無効と呼ぶ)。もう 1 つは、gate されていない
   contribution である: `with_model` で登録した thruster は pool の floor で止まらないので、その run は
   floor を下回った質量を返す代わりに floor を名指しして停止する。system が受け付ける状態には影響せず、
-  1 次遅れより十分細かい step では従来どおり wheel は上限に保持される。
+  1 次遅れより十分細かい step では従来どおり wheel は上限に保持される。この報告のために
+  `ComponentStop` に `ProducedRefused` を足した (`StartRefused` は「何も積分しておらず、呼び出し側が
+  渡した状態を拒否した」を約束するため)。coupled group はこれを積分エラーと同じ扱いにして component
+  全体を止める (parts が直前に完了した segment を持つため)。
 - 1 次遅れのある reaction wheel が、角運動量の増減が切り替わる時刻を新しい
   `BoundaryKind::TurningPoint` として申告するようになった。step 幅が 1 次遅れより広い場合でも、
   上限を短時間超える動きが拘束される。上限の直前で、まだ外向きに加速している wheel に逆向きの

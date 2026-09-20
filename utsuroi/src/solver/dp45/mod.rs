@@ -430,7 +430,7 @@ impl<'a, S: DynamicalSystem> AdaptiveStepper<'a, S> {
                 } else {
                     Some(k7)
                 };
-                roots.apply(self.t);
+                roots.apply(self.t, &self.state);
 
                 // A state the walk stopped at a boundary is not the final one:
                 // the caller updates the mode it just crossed into, and corrects
