@@ -220,8 +220,8 @@ $dh/dt$ は 0 で、body に返る反作用トルクも 0 になる。ただし�
   平坦化して `DeclaredBoundary` にまとめる
 - **walk は、自分の system が拒否する状態を返さない。** 開始状態の検査
   (`validate_boundary_walk_start`) を、返す直前の状態にも通す。呼び出し側はその状態を先へ伝播するので、
-  system が拒否する状態は誰も使えない。作った span を名指しして報告する方が、次の呼び出しが自分で
-  作っていない状態を拒否するより追いやすい (`BoundaryWalkError::ProducedRejected`)。到達する例は 2 つ:
+  system が拒否する状態は誰も使えない。報告 (`BoundaryWalkError::ProducedRejected`) はその状態を作った
+  span を名指しする。次の呼び出しに任せると、原因の span から離れた場所で理由が出る。到達する例は 2 つ:
   探索が報告できない交差を含む span (1 step に 1 つの境界の値が 2 回符号を変える場合) と、どの境界も
   gate していない contribution (`with_model` で登録した thruster が推進剤の floor で止まらない)
 - **境界で角運動量を body に返す。** 探索が返す候補は $h = h_{max} + \delta h$ で、body 側は

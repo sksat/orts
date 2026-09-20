@@ -1247,6 +1247,100 @@ mod tests {
         );
     }
 
+    /// A coupled component stops as a whole where one satellite's walk
+    /// produced a state its own system refuses.
+    ///
+    /// The refusal arrives after the span was integrated, so the parts carry
+    /// the last segment that finished — the same position an integration error
+    /// leaves the component in, and the reason a caller reads has to say so
+    /// rather than claiming the state it handed over was refused.
+    #[test]
+    fn a_produced_refusal_stops_the_whole_component() {
+        /// A particle that refuses to start from beyond `LIMIT` on x, and
+        /// declares no boundary that would stop it there.
+        struct Ungated;
+        const LIMIT: f64 = 8000.0;
+
+        impl DynamicalSystem for Ungated {
+            type State = OrbitalState;
+            fn derivatives(&self, _t: f64, state: &OrbitalState) -> OrbitalState {
+                OrbitalState::from_derivative(*state.velocity(), Vector3::zeros())
+            }
+        }
+
+        impl HasBoundaries for Ungated {
+            fn validate_boundary_walk_start(
+                &self,
+                _t: f64,
+                state: &OrbitalState,
+            ) -> Result<(), crate::boundary::StartStateError> {
+                if state.position().x > LIMIT {
+                    return Err(crate::boundary::StartStateError::new(format!(
+                        "x is {} , past the limit of {LIMIT}",
+                        state.position().x
+                    )));
+                }
+                Ok(())
+            }
+        }
+
+        // Both travel outward at 100 km/s. The second crosses the limit inside
+        // the first second; the first is still short of it at the end.
+        let inside = OrbitalState::new(
+            Vector3::new(7000.0, 0.0, 0.0),
+            Vector3::new(100.0, 0.0, 0.0),
+        );
+        let leaving = OrbitalState::new(
+            Vector3::new(7950.0, 0.0, 0.0),
+            Vector3::new(100.0, 0.0, 0.0),
+        );
+
+        let mut group: CoupledGroup<Ungated> = CoupledGroup::rk4(0.25)
+            .add_satellite("inside", inside, Ungated)
+            .add_satellite("leaving", leaving, Ungated);
+        let outcome = group.propagate_to(1.0).expect("the call returns");
+        let report = outcome
+            .terminations
+            .first()
+            .expect("the walk reports the state it produced")
+            .clone();
+        assert!(
+            report.reason.contains("produced a state"),
+            "the reason says the walk produced it: {}",
+            report.reason
+        );
+        assert!(
+            report.reason.contains("past the limit"),
+            "and carries what the system refused: {}",
+            report.reason
+        );
+
+        let parts = group.into_parts();
+        assert_eq!(
+            parts.stop,
+            Some(ComponentStop::ProducedRefused),
+            "the reason says the walk produced the state, not that the caller's was refused"
+        );
+        assert!(
+            parts.terminated,
+            "the component stops as a whole: its states belong to an instant the run has passed"
+        );
+        assert!(
+            parts.t < 1.0,
+            "the parts carry the last segment that finished, not the refused span's end: {}",
+            parts.t
+        );
+        assert!(
+            parts.states.iter().all(|s| s.position().x <= LIMIT + 1e-9),
+            "and the states kept are ones the system accepts: {:?}",
+            parts
+                .states
+                .iter()
+                .map(|s| s.position().x)
+                .collect::<Vec<_>>()
+        );
+    }
+
     #[test]
     fn spring_energy_conservation_rk4() {
         // Two equal-mass bodies connected by spring, no other forces

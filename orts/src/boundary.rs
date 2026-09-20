@@ -525,6 +525,9 @@ where
         if moved || resumed_from_a_boundary {
             observer(t, &state);
             if let ControlFlow::Break(reason) = check(t, &state) {
+                // Through the same check as the other ways out: this hands back
+                // a state the settling above produced.
+                let state = hand_back(system, from, t, state)?;
                 return Ok((BoundaryWalk::Stopped(reason), t, state));
             }
             checked = true;
