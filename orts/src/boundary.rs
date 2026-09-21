@@ -261,12 +261,21 @@ pub enum BoundaryWalkError {
     /// than at the next call.
     ///
     /// What refused is in `error`, and a system implementing this trait can
-    /// refuse for any invariant of its own. Two spans reach it in this crate.
-    /// One holds a crossing the search cannot report, which for a step with
-    /// two changes of sign of one boundary's value is the caller's step size to
-    /// keep out. The other has a contribution to the right-hand side that no
-    /// boundary gates: a thruster registered with `with_model` burns
-    /// propellant the pool's floor does not stop, and the mass ends below it.
+    /// refuse for any invariant of its own. Three spans reach it in this crate,
+    /// all of them the caller's step size to keep out or a model to gate.
+    ///
+    /// One is stepped too coarsely for a lag it carries: a rate evaluated
+    /// inside the step takes a sign neither end shows, and a constraint that
+    /// stops only what would carry a state past its bound lets that sign
+    /// through, so the state leaves the bound its mode still claims. A wheel
+    /// with a 50 ms torque lag under a 200 ms step does this.
+    ///
+    /// Another holds a crossing the search cannot report, since a step with two
+    /// changes of sign of one boundary's value reports neither.
+    ///
+    /// The last has a contribution to the right-hand side that no boundary
+    /// gates: a thruster registered with `with_model` burns propellant the
+    /// pool's floor does not stop, and the mass ends below it.
     ProducedRejected {
         /// Time the refused state belongs to.
         t: f64,
