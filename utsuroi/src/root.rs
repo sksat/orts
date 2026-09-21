@@ -661,18 +661,24 @@ impl<'a, Y> RootSet<'a, Y> {
             // reported.
             return false;
         }
-        if slot.guard.on_boundary && before.abs() <= slot.boundary {
-            // The state has been moving along the boundary since a root of this
-            // event, within the width the event calls "still on it".
-            return false;
-        }
         let crossing = self.events[index].crossing();
         if crossing == Crossing::Reversal && before == 0.0 && slot.departure != 0.0 {
             // The step starts on this event's zero, where the two ends read the
             // same as a value falling straight from it. The direction the value
             // leaves that zero stands in for the start's sign, which makes a
             // later crossing a reversal rather than a departure.
+            //
+            // This is read before the boundary guard below. An event that
+            // answers with a direction is saying the value leaves the zero, so
+            // it is not one moving along the boundary — and the guard would
+            // otherwise suppress the whole step for an event whose boundary is
+            // zero wide, which is the width a turning point declares.
             return crossing.matches(slot.departure, after);
+        }
+        if slot.guard.on_boundary && before.abs() <= slot.boundary {
+            // The state has been moving along the boundary since a root of this
+            // event, within the width the event calls "still on it".
+            return false;
         }
         crossing.matches(before, after)
     }
@@ -1342,6 +1348,79 @@ mod tests {
                 );
             }
             StepRoots::None => panic!("the value turns at 0.5, inside the step"),
+        }
+    }
+
+    /// A step resumed from a root this event reported still finds a later
+    /// reversal, when the committed state sits on the zero.
+    ///
+    /// `apply` records the event that fired as standing on its boundary, which
+    /// keeps a state moving along that boundary from reporting the same root
+    /// again. Where the committed value is exactly zero and the event says
+    /// which way it leaves, the value is leaving rather than moving along it,
+    /// so the guard has to let that step be examined.
+    ///
+    /// `g(y) = (y - 1) (1.5 - y)` crosses zero between `y = 0.9` and
+    /// `y = 1.2`, so the first step reports a root. Committing `y = 1` puts the
+    /// value on zero, where `dg/dy = +0.5`. From there the value rises, turns
+    /// at `y = 1.5`, and is `-0.5` at `y = 2`.
+    #[test]
+    fn a_step_resumed_from_a_reported_root_on_a_zero_still_finds_the_next_turn() {
+        struct Arch;
+        impl RootEvent<f64> for Arch {
+            fn value(&self, _t: f64, y: &f64) -> f64 {
+                (y - 1.0) * (1.5 - y)
+            }
+            fn crossing(&self) -> Crossing {
+                Crossing::Reversal
+            }
+            fn terminal(&self) -> bool {
+                false
+            }
+            fn leaves_zero_towards(&self, _t: f64, y: &f64) -> Option<f64> {
+                // dg/dy = 2.5 - 2y, which is +0.5 at y = 1.
+                Some(2.5 - 2.0 * y)
+            }
+        }
+        let event = Arch;
+        root_set!(
+            set,
+            RootSearch {
+                t_tolerance: 1e-9,
+                max_iterations: 60,
+            },
+            &event as &dyn RootEvent<f64>
+        );
+        set.begin(0.0, &0.9).expect("finite value");
+        assert!(
+            matches!(
+                set.scan_step(0.0, 1.0, &1.2, |w| Ok(0.9 + 0.3 * w))
+                    .expect("no error"),
+                StepRoots::Found { .. }
+            ),
+            "the value crosses zero between y = 0.9 and y = 1.2"
+        );
+        // The projection puts the committed state on that zero, and the event
+        // is then standing on its boundary.
+        commit(&mut set, 1.0, &1.0);
+        assert!(
+            set.guard(0).is_on_boundary(),
+            "the reported root leaves the event on its boundary"
+        );
+
+        match set
+            .scan_step(1.0, 1.0, &2.0, |w| Ok(1.0 + w))
+            .expect("located")
+        {
+            StepRoots::Found { state, .. } => {
+                assert!(
+                    (state - 1.5).abs() <= 1e-8,
+                    "located the state {state}, the value turns at y = 1.5"
+                );
+            }
+            StepRoots::None => {
+                panic!("the value turns at y = 1.5, inside the resumed step")
+            }
         }
     }
 
