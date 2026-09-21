@@ -307,10 +307,12 @@ impl core::fmt::Display for BoundaryWalkError {
                 write!(
                     f,
                     "the walk from t = {from} produced a state at t = {t} that the system \
-                     refuses: {error}. Two spans that reach this, as examples: one holding a \
-                     crossing the search cannot report, since a step with two changes of sign \
-                     of one boundary's value reports neither; and one with a contribution to \
-                     the right-hand side that no boundary gates"
+                     refuses: {error}. Three spans that reach this, as examples: one whose \
+                     step is too coarse for a lag it carries, where a rate evaluated inside \
+                     the step takes a sign neither end shows; one holding a crossing the \
+                     search cannot report, since a step with two changes of sign of one \
+                     boundary's value reports neither; and one with a contribution to the \
+                     right-hand side that no boundary gates"
                 )
             }
         }

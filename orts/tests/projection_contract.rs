@@ -488,18 +488,28 @@ fn two_lagging_wheels_are_handled_at_their_own_times() {
 
 /// A walk reports a state its own system refuses, where it produced it.
 ///
-/// A step that holds two changes of sign of one boundary's value reports
-/// neither, which is the caller's step size to keep out. Where that happens to
-/// the release of a held wheel, the rate turns twice inside the step: the
-/// release goes unreported, the wheel integrates away from its bound, and the
-/// step ends with the mode saying `Upper` while the momentum is inside the
-/// limit — a state `validate_state` calls invalid.
+/// Held against its upper bound, a wheel exchanges `nu.min(0.0)`: the hold
+/// stops only what would carry it past the bound, and a rate pointing back
+/// inside passes through. A step too coarse for the lag the wheel carries
+/// evaluates rates the step's ends never show, and a negative one among them
+/// takes the momentum off the bound while the mode still says `Upper` — a
+/// state `validate_state` calls invalid, since that mode would freeze the
+/// wheel at a value that is not its bound.
 ///
 /// Measured with a speed command at the default gain, a 50 ms lag, a momentum
-/// of 0.98 against a limit of 1.0, and a 200 ms step: the wheel is held at
-/// 169.5 ms, and by 369.5 ms its momentum has left the bound for 0.9635. The
-/// walk now reports that where it made it. Before, the run finished and the
+/// of 0.98 against a limit of 1.0, and a 200 ms step (dt/T = 4): the wheel is
+/// held at 169.5 ms, and by 369.5 ms its momentum has left the bound for
+/// 0.9635, settling at 0.9459 once the torque saturates. The realized torque
+/// is positive at every step end here (0.1218, 0.4467, 0.5), and stepping the
+/// same run at 1 ms holds the momentum at 1.0 — so no release goes unreported:
+/// the step size alone produces the state. A step holding two changes of sign
+/// of one boundary's value reaches the same invalid state by reporting neither
+/// crossing, which is [#545]'s remaining case.
+///
+/// The walk now reports this where it made it. Before, the run finished and the
 /// *next* call refused a state it had not produced.
+///
+/// [#545]: https://github.com/sksat/orts/issues/545
 #[test]
 fn a_walk_reports_a_state_its_system_refuses() {
     const LIMIT: f64 = 1.0;
@@ -512,8 +522,9 @@ fn a_walk_reports_a_state_its_system_refuses() {
         let wheel = orts::spacecraft::reaction_wheel::Rw::new(Vector3::z(), INERTIA, LIMIT, TORQUE)
             .with_torque_response(TorqueResponse::first_order_lag(T_M));
         let mut rw = ReactionWheelAssembly::new(vec![wheel]);
-        // Fast enough to reach the limit, and the loop is underdamped at the
-        // default gain, so the torque turns more than once in a coarse step.
+        // Fast enough to reach the limit. Once the momentum wrongly leaves the
+        // bound the speed error grows, so the command saturates at +0.5 N·m
+        // and the hold pins the momentum below its limit.
         rw.command = RwCommand::Speeds(vec![(LIMIT * 1.5) / INERTIA]);
         SpacecraftDynamics::new(arika::earth::MU, PointMass, inertia).with_effector(rw)
     };
