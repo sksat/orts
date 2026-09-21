@@ -653,14 +653,6 @@ impl<'a, Y> RootSet<'a, Y> {
     /// a step starting at `t_start`, with its guard taken into account.
     fn crossed(&self, index: usize, t_start: f64, before: f64, after: f64) -> bool {
         let slot = &self.slots[index];
-        if slot.guard.at == Some(t_start) && same_side(before, slot.guard.left) {
-            // This step starts on a root of this very event, with the value
-            // still on the side that root left it. The search stops on the far
-            // side of a bracket, so that value is a small non-zero rather than
-            // zero, and the change of sign this step sees is the one already
-            // reported.
-            return false;
-        }
         let crossing = self.events[index].crossing();
         if crossing == Crossing::Reversal && before == 0.0 && slot.departure != 0.0 {
             // The step starts on this event's zero, where the two ends read the
@@ -668,12 +660,24 @@ impl<'a, Y> RootSet<'a, Y> {
             // leaves that zero stands in for the start's sign, which makes a
             // later crossing a reversal rather than a departure.
             //
-            // This is read before the boundary guard below. An event that
-            // answers with a direction is saying the value leaves the zero, so
-            // it is not one moving along the boundary — and the guard would
-            // otherwise suppress the whole step for an event whose boundary is
-            // zero wide, which is the width a turning point declares.
+            // This is read before either guard below. Both keep a value that
+            // has not left a reported root from reporting it again, and an
+            // event answering with a direction is saying this value does leave
+            // it: what `matches` counts from there is a crossing back, a second
+            // turn rather than the one already reported, and it falls strictly
+            // inside the step rather than at its start. Left to the guards, a
+            // zero reads as still standing on the root — the root-time one
+            // because `same_side` calls two zeros the same side, the boundary
+            // one because a turning point declares no width at all.
             return crossing.matches(slot.departure, after);
+        }
+        if slot.guard.at == Some(t_start) && same_side(before, slot.guard.left) {
+            // This step starts on a root of this very event, with the value
+            // still on the side that root left it. The search stops on the far
+            // side of a bracket, so that value is a small non-zero rather than
+            // zero, and the change of sign this step sees is the one already
+            // reported.
+            return false;
         }
         if slot.guard.on_boundary && before.abs() <= slot.boundary {
             // The state has been moving along the boundary since a root of this
@@ -1348,6 +1352,75 @@ mod tests {
                 );
             }
             StepRoots::None => panic!("the value turns at 0.5, inside the step"),
+        }
+    }
+
+    /// A root located exactly on zero still leaves the next step readable.
+    ///
+    /// `apply` keeps the raw value the search stopped on as the side the root
+    /// left the value on. Where that value is exactly zero — a step whose own
+    /// end sits on the zero — the root-time guard compares zero with zero and
+    /// calls them the same side, which would suppress the next step before the
+    /// departure is read. The departure has to take precedence over that guard
+    /// too.
+    ///
+    /// `g(y) = (y - 1) (1.5 - y)` is `-0.06` at `y = 0.9` and exactly zero at
+    /// `y = 1`, so a step between them reports a root whose value is zero.
+    /// From there the value rises, turns at `y = 1.5`, and is `-0.5` at
+    /// `y = 2`.
+    #[test]
+    fn a_root_located_on_a_zero_still_leaves_the_next_step_readable() {
+        struct Arch;
+        impl RootEvent<f64> for Arch {
+            fn value(&self, _t: f64, y: &f64) -> f64 {
+                (y - 1.0) * (1.5 - y)
+            }
+            fn crossing(&self) -> Crossing {
+                Crossing::Reversal
+            }
+            fn terminal(&self) -> bool {
+                false
+            }
+            fn leaves_zero_towards(&self, _t: f64, y: &f64) -> Option<f64> {
+                // dg/dy = 2.5 - 2y, which is +0.5 at y = 1.
+                Some(2.5 - 2.0 * y)
+            }
+        }
+        let event = Arch;
+        root_set!(
+            set,
+            RootSearch {
+                t_tolerance: 1e-9,
+                max_iterations: 60,
+            },
+            &event as &dyn RootEvent<f64>
+        );
+        set.begin(0.0, &0.9).expect("finite value");
+        // The step's own end is the zero, so the value the search stops on is
+        // exactly zero rather than a small non-zero beside it.
+        assert!(
+            matches!(
+                set.scan_step(0.0, 1.0, &1.0, |w| Ok(0.9 + 0.1 * w))
+                    .expect("no error"),
+                StepRoots::Found { .. }
+            ),
+            "the value reaches zero at the end of this step"
+        );
+        commit(&mut set, 1.0, &1.0);
+
+        match set
+            .scan_step(1.0, 1.0, &2.0, |w| Ok(1.0 + w))
+            .expect("located")
+        {
+            StepRoots::Found { state, .. } => {
+                assert!(
+                    (state - 1.5).abs() <= 1e-8,
+                    "located the state {state}, the value turns at y = 1.5"
+                );
+            }
+            StepRoots::None => {
+                panic!("the value turns at y = 1.5, inside the resumed step")
+            }
         }
     }
 
