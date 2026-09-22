@@ -615,10 +615,17 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   「無い」と読まれ、コマンドラインの指定ではなく config の `atol` が走っていた。この検査が走るのは
   これらの値を誰も読まない経路だけである — config は `SimParams::from_config` が組み、idle server は
   クライアントの `start_simulation` から取る — ので、書かれた値は何であれ落ちる。既定値と一致して
-  いたために受け付けられていたコマンドは、フラグ名を挙げて拒否されるようになった。
-  `--plugin-backend-async-mode` は、他の調整フラグが読まれる「コマンドラインに軌道がある」経路でも
-  拒否する: `ServeEngine` は `WasmPluginCache::new()` でキャッシュを作り、モードを解決しないので、
-  このフラグはどこにも届かない ([#522](https://github.com/sksat/orts/issues/522))
+  いたために受け付けられていたコマンドは、フラグ名を挙げて拒否されるようになった
+  ([#522](https://github.com/sksat/orts/issues/522))
+- `serve` が plugin を `--plugin-backend-async-mode` の指定したモードで走らせる。client が
+  あとから始めた fleet にも適用される: このフラグは `PluginBackendOverrides` に載って manager が
+  組むすべての `SimParams` に入り、`ServeEngine` は plugin cache を `WasmPluginCache::new()`
+  (モードは常に `Deterministic`) ではなくそのモードで作る。フラグを指定しない場合、`serve` は
+  フラグ自身の既定値 `throughput` ではなく `Deterministic` のままである — 指定のない server が
+  従来やってきたことなので、このフラグを書かないコマンドラインの挙動は変わらない。
+  `serve` で `throughput` が得るのは multi-worker runtime までで、step は衛星を順に回すため
+  制御ステップは `run` のように重ならない ([#548](https://github.com/sksat/orts/issues/548))
+  ([#536](https://github.com/sksat/orts/issues/536))
 
 #### Added
 - `frame` / `--frame {simple-eci|gcrs}` と `eop` / `--eop {auto|PATH|zero}`:

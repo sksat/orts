@@ -47,6 +47,23 @@ use super::history::HistoryBuffer;
 use super::protocol::WsMessage;
 use super::stream_bridge::{OutboundPush, StreamKey};
 
+/// The plugin cache this server's simulations share, in the async mode
+/// `params` carries.
+///
+/// One cache serves the initial fleet and every satellite a client adds later,
+/// so the mode is fixed when the simulation starts. `params` has it from
+/// `PluginBackendOverrides`, which the serve command fills from its own
+/// command line — a `serve` nobody asked keeps `Deterministic`.
+#[cfg(feature = "plugin-wasm")]
+fn build_plugin_cache(params: &SimParams) -> Result<orts::plugin::wasm::WasmPluginCache, String> {
+    #[cfg(feature = "plugin-wasm-async")]
+    let cache =
+        orts::plugin::wasm::WasmPluginCache::new_with_async_mode(params.resolve_async_mode());
+    #[cfg(not(feature = "plugin-wasm-async"))]
+    let cache = orts::plugin::wasm::WasmPluginCache::new();
+    cache.map_err(|e| format!("WASM plugin cache init failed: {e}"))
+}
+
 /// Sink/source for stream-io bytes, injected into [`ServeEngine::step_chunk`].
 ///
 /// The engine knows only each satellite's declared stream *names* (indexed by
@@ -464,9 +481,10 @@ impl ServeEngine {
         // satellites with a `controller` config.
         #[cfg(feature = "plugin-wasm")]
         let (mut wasm_cache, plugin_backend) = if has_controller {
-            let cache = orts::plugin::wasm::WasmPluginCache::new()
-                .map_err(|e| format!("WASM plugin cache init failed: {e}"))?;
-            (Some(cache), Some(params.resolve_plugin_backend()))
+            (
+                Some(build_plugin_cache(&params)?),
+                Some(params.resolve_plugin_backend()),
+            )
         } else {
             (None, None)
         };
@@ -1486,6 +1504,37 @@ mod tests {
         let body_radius = params.body.properties().radius;
         let history = HistoryBuffer::new(5000, data_dir, params.mu, body_radius);
         ServeEngine::build(params, history)
+    }
+
+    /// The cache a simulation shares is built in the mode its params carry.
+    ///
+    /// This is the step that makes `--plugin-backend-async-mode` mean anything
+    /// on a `serve`: the flag rides `PluginBackendOverrides` into `SimParams`,
+    /// and the cache has to be created with it rather than with
+    /// `WasmPluginCache::new()`, whose mode is always `Deterministic`.
+    #[cfg(feature = "plugin-wasm-async")]
+    #[test]
+    fn the_plugin_cache_is_built_in_the_mode_the_params_carry() {
+        use crate::cli::PluginAsyncModeChoice;
+        use orts::plugin::wasm::AsyncMode;
+
+        let config: crate::config::SimConfig = toml::from_str(ORBIT_ONLY).expect("valid test toml");
+        for (choice, expected) in [
+            (
+                PluginAsyncModeChoice::Deterministic,
+                AsyncMode::Deterministic,
+            ),
+            (PluginAsyncModeChoice::Throughput, AsyncMode::Throughput),
+        ] {
+            let mut params = SimParams::from_config(&config).expect("valid test config");
+            params.plugin_backend_async_mode = choice;
+            let cache = build_plugin_cache(&params).expect("a cache needs no plugin file");
+            assert_eq!(
+                cache.async_mode(),
+                expected,
+                "params asking for {choice:?} build a cache in {expected:?}"
+            );
+        }
     }
 
     /// A single, stable orbit-only satellite — the cheapest engine to build.

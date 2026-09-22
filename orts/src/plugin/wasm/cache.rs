@@ -123,6 +123,17 @@ impl WasmPluginCache {
         })
     }
 
+    /// The mode this cache will build its `AsyncRuntime` in.
+    ///
+    /// The runtime is started on first async use, so this is what the cache
+    /// was created with rather than a running runtime's mode. A caller that
+    /// hands the choice down from a command line reads it back here to check
+    /// the cache it built carries what was asked for.
+    #[cfg(feature = "plugin-wasm-async")]
+    pub fn async_mode(&self) -> AsyncMode {
+        self.async_mode
+    }
+
     /// Borrow the underlying shared sync engine.
     pub fn sync_engine(&self) -> &Arc<WasmEngine> {
         &self.sync_engine
