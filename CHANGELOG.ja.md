@@ -307,6 +307,21 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   1 つ足すのは `with_occulter`。古いフィールドを名前で書いた struct literal は
   コンパイルできなくなる。([#469](https://github.com/sksat/orts/pull/469))
 #### Fixed
+- walk が、自分の system が拒否する状態を作った時点で報告するようになった (新しい
+  `BoundaryWalkError::ProducedRejected`)。従来はその状態を返し、次の呼び出しが拒否していた。
+  この状態に至る道は 3 つある。1 つは、持っている遅れに対して step が粗すぎる区間である: 既定 gain の
+  速度指令、時定数 50 ms、step 幅 200 ms では、step の内側で評価される rate が両端にない符号を取り、
+  上限を越える分だけを止める保持をそのまま通るので、角運動量が上限から離れる (上限 1.0 に対して
+  0.9459 N·m·s で静止し、モードは `Upper` のまま。`validate_state` はこれを無効と呼ぶ)。この設定では
+  実現トルクは step の終わりでどこも正で、step 幅 1 ms なら角運動量は 1.0 に保持される — 取りこぼしは
+  なく、step 幅だけがこの状態を作る。2 つめは、探索が報告できない交差を含む区間である (1 step に 1 つの
+  境界の値が 2 回符号を変えると、どちらも報告されない)。3 つめは、gate されていない contribution である:
+  `with_model` で登録した thruster は pool の floor で止まらないので、その run は floor を下回った質量を
+  返す代わりに floor を名指しして停止する。system が受け付ける状態には影響せず、
+  1 次遅れより十分細かい step では従来どおり wheel は上限に保持される。この報告のために
+  `ComponentStop` に `ProducedRefused` を足した (`StartRefused` は「何も積分しておらず、呼び出し側が
+  渡した状態を拒否した」を約束するため)。coupled group はこれを積分エラーと同じ扱いにして component
+  全体を止める (parts が直前に完了した segment を持つため)。
 - 1 次遅れのある reaction wheel が、角運動量の増減が切り替わる時刻を新しい
   `BoundaryKind::TurningPoint` として申告するようになった。step 幅が 1 次遅れより広い場合でも、
   上限を短時間超える動きが拘束される。上限の直前で、まだ外向きに加速している wheel に逆向きの
@@ -1155,6 +1170,15 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `utsuroi` (Rust, crates.io)
 
 #### Added
+- `RootEvent::leaves_zero_towards` が、step の開始値が 0 のときに「値がどちら向きに 0 を離れるか」を
+  event に尋ねるようになった。そういう step の両端は、0 からまっすぐ落ちる場合と同じ組になるので、
+  何かが向きを変えたかを言えない: $g(t) = t(0.5-t)$ を $[0,1]$ で見ると 0 から正に出て $0.5$ で正から
+  負に変わり $-0.5$ で終わるが、$g(t) = -0.5t$ は 0 から負に出て同じ両端になる。答えを読むのは
+  `Crossing::Reversal` だけで、その符号を開始側の代わりに使うと、あとの交差が向きの変化として
+  数えられる。答えは、境界の上を動いている値が同じ root を再び報告しないための guard より先に読む
+  (向きを答える event は、その値が 0 を離れると言っているためである)。実現トルクが 0 の reaction wheel は
+  指令で答える (そこでのトルクの変化率は $\tau_{cmd}/T$ である)。既定の `None` は従来の読み方
+  (その 0 から始まる step は何も報告しない) を保つ。
 - **Breaking:** `Crossing::Reversal`。margin が尽きる event ではなく、量が向きを変えることを表す
   event 用である。`Crossing` は公開されていて `#[non_exhaustive]` でもないので、variant を網羅的に
   `match` している側は新しい variant に対応する必要がある。両方向を数える一方、0 に置かれていた値が

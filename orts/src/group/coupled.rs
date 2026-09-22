@@ -252,7 +252,14 @@ pub enum ComponentStop {
     Event,
     /// One satellite refused the state the walk was to start from
     /// ([`HasBoundaries::validate_boundary_walk_start`](crate::boundary::HasBoundaries::validate_boundary_walk_start)).
+    /// Nothing was integrated: the state a caller handed over is what was
+    /// refused.
     StartRefused,
+    /// One satellite refused a state the walk produced
+    /// ([`BoundaryWalkError::ProducedRejected`](crate::boundary::BoundaryWalkError::ProducedRejected)).
+    /// The span was integrated and its result is unusable, so the parts carry
+    /// the last segment that finished, as an integration error does.
+    ProducedRefused,
     /// The solver or the boundary search failed. The parts carry the state and
     /// the time of the last segment that finished, since a failed segment's own
     /// steps are not committed — so the satellites are all at an instant the
@@ -267,7 +274,8 @@ pub enum ComponentStop {
 /// tell a refusal from a solver failure; [`ComponentStop`] is what says which.
 fn refusing_satellite(e: &BoundaryWalkError) -> Option<usize> {
     match e {
-        BoundaryWalkError::StartRejected { error, .. } => error.satellite,
+        BoundaryWalkError::StartRejected { error, .. }
+        | BoundaryWalkError::ProducedRejected { error, .. } => error.satellite,
         BoundaryWalkError::Integration(_) => None,
     }
 }
@@ -303,6 +311,21 @@ where
         state: &Self::State,
     ) -> f64 {
         self.dynamics[declared.satellite].boundary_value(
+            declared,
+            segment,
+            t,
+            &state.states[declared.satellite],
+        )
+    }
+
+    fn boundary_departure(
+        &self,
+        declared: &DeclaredBoundary,
+        segment: Option<&SegmentContext>,
+        t: f64,
+        state: &Self::State,
+    ) -> Option<f64> {
+        self.dynamics[declared.satellite].boundary_departure(
             declared,
             segment,
             t,
@@ -723,6 +746,9 @@ where
                     // still a refusal.
                     self.stop = Some(match &e {
                         BoundaryWalkError::StartRejected { .. } => ComponentStop::StartRefused,
+                        BoundaryWalkError::ProducedRejected { .. } => {
+                            ComponentStop::ProducedRefused
+                        }
                         BoundaryWalkError::Integration(_) => ComponentStop::IntegrationError,
                     });
                     // Pre-flight rejections (bad dt/tolerances) carry no time
@@ -1218,6 +1244,100 @@ mod tests {
             (states.states[0].velocity().x + 100.0).abs() < 1e-9,
             "at the speed it started with, not {}",
             states.states[0].velocity().x
+        );
+    }
+
+    /// A coupled component stops as a whole where one satellite's walk
+    /// produced a state its own system refuses.
+    ///
+    /// The refusal arrives after the span was integrated, so the parts carry
+    /// the last segment that finished — the same position an integration error
+    /// leaves the component in, and the reason a caller reads has to say so
+    /// rather than claiming the state it handed over was refused.
+    #[test]
+    fn a_produced_refusal_stops_the_whole_component() {
+        /// A particle that refuses to start from beyond `LIMIT` on x, and
+        /// declares no boundary that would stop it there.
+        struct Ungated;
+        const LIMIT: f64 = 8000.0;
+
+        impl DynamicalSystem for Ungated {
+            type State = OrbitalState;
+            fn derivatives(&self, _t: f64, state: &OrbitalState) -> OrbitalState {
+                OrbitalState::from_derivative(*state.velocity(), Vector3::zeros())
+            }
+        }
+
+        impl HasBoundaries for Ungated {
+            fn validate_boundary_walk_start(
+                &self,
+                _t: f64,
+                state: &OrbitalState,
+            ) -> Result<(), crate::boundary::StartStateError> {
+                if state.position().x > LIMIT {
+                    return Err(crate::boundary::StartStateError::new(format!(
+                        "x is {} , past the limit of {LIMIT}",
+                        state.position().x
+                    )));
+                }
+                Ok(())
+            }
+        }
+
+        // Both travel outward at 100 km/s. The second crosses the limit inside
+        // the first second; the first is still short of it at the end.
+        let inside = OrbitalState::new(
+            Vector3::new(7000.0, 0.0, 0.0),
+            Vector3::new(100.0, 0.0, 0.0),
+        );
+        let leaving = OrbitalState::new(
+            Vector3::new(7950.0, 0.0, 0.0),
+            Vector3::new(100.0, 0.0, 0.0),
+        );
+
+        let mut group: CoupledGroup<Ungated> = CoupledGroup::rk4(0.25)
+            .add_satellite("inside", inside, Ungated)
+            .add_satellite("leaving", leaving, Ungated);
+        let outcome = group.propagate_to(1.0).expect("the call returns");
+        let report = outcome
+            .terminations
+            .first()
+            .expect("the walk reports the state it produced")
+            .clone();
+        assert!(
+            report.reason.contains("produced a state"),
+            "the reason says the walk produced it: {}",
+            report.reason
+        );
+        assert!(
+            report.reason.contains("past the limit"),
+            "and carries what the system refused: {}",
+            report.reason
+        );
+
+        let parts = group.into_parts();
+        assert_eq!(
+            parts.stop,
+            Some(ComponentStop::ProducedRefused),
+            "the reason says the walk produced the state, not that the caller's was refused"
+        );
+        assert!(
+            parts.terminated,
+            "the component stops as a whole: its states belong to an instant the run has passed"
+        );
+        assert!(
+            parts.t < 1.0,
+            "the parts carry the last segment that finished, not the refused span's end: {}",
+            parts.t
+        );
+        assert!(
+            parts.states.iter().all(|s| s.position().x <= LIMIT + 1e-9),
+            "and the states kept are ones the system accepts: {:?}",
+            parts
+                .states
+                .iter()
+                .map(|s| s.position().x)
+                .collect::<Vec<_>>()
         );
     }
 

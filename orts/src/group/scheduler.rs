@@ -911,11 +911,12 @@ where
             // segment's start leaves them part-way through instead, with
             // the clock about to move to the end, and a state from an
             // instant the run has passed is worse than a stopped
-            // satellite. (A system whose check refuses a state its own
-            // propagation produced contradicts itself: the question is
-            // about what a caller handed over.)
+            // satellite. A refusal of a state the walk *produced* is the
+            // same position as an integration error: the span ran, its
+            // result cannot be used, and the parts carry the last segment
+            // that finished.
             let whole_component = match parts.stop {
-                Some(ComponentStop::IntegrationError) => true,
+                Some(ComponentStop::IntegrationError | ComponentStop::ProducedRefused) => true,
                 Some(ComponentStop::StartRefused) => (parts.t - group_started_at).abs() > 1e-12,
                 Some(ComponentStop::Event) | None => false,
             };

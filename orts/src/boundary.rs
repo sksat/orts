@@ -94,6 +94,25 @@ pub trait HasBoundaries: DynamicalSystem {
         0.0
     }
 
+    /// Which way a boundary value that is exactly zero at this state is about
+    /// to leave zero, as [`RootEvent::leaves_zero_towards`] asks.
+    ///
+    /// `None`, unless overridden. Only a boundary whose crossing is
+    /// [`Crossing::Reversal`] is asked, and only where its value is zero at the
+    /// step's start — the one place the step's two ends cannot say whether
+    /// anything turned around.
+    ///
+    /// Only asked about boundaries this system declared.
+    fn boundary_departure(
+        &self,
+        _declared: &DeclaredBoundary,
+        _segment: Option<&SegmentContext>,
+        _t: f64,
+        _state: &Self::State,
+    ) -> Option<f64> {
+        None
+    }
+
     /// Put the state exactly on a boundary it reached, move the mode, and give
     /// back whatever the overshoot took from a conserved total.
     ///
@@ -142,14 +161,20 @@ pub trait HasBoundaries: DynamicalSystem {
     /// Not asked during a walk: a boundary search steps past a constraint on
     /// purpose, and its trial states are meant to be evaluable there.
     ///
-    /// The question is about a state a caller committed to, so a system has to
-    /// accept every state its own propagation produces — the walk asks again at
-    /// each segment's start, and a system refusing what it just integrated
-    /// would be contradicting itself. A caller that moves a state between
-    /// walks, as [`Scheduler`](crate::group::Scheduler) does with its KDK
-    /// kicks, is asked about the state it moved *to*: before the next walk
-    /// runs, and — since a kick can be the last thing a run does — before it
-    /// hands the state back.
+    /// Asked once more, on the state the walk is about to hand back. A caller
+    /// propagates that state further, so one this system refuses is one no
+    /// later call can use, and reporting it as
+    /// [`BoundaryWalkError::ProducedRejected`] names the span that produced it
+    /// rather than leaving the next call to refuse a state it did not make.
+    /// A system whose answer here disagrees with what its own propagation
+    /// produces will see that span fail — which is the report, not a
+    /// contradiction to live with.
+    ///
+    /// A caller that moves a state between walks, as
+    /// [`Scheduler`](crate::group::Scheduler) does with its KDK kicks, is asked
+    /// about the state it moved *to*: before the next walk runs, and — since a
+    /// kick can be the last thing a run does — before it hands the state
+    /// back.
     fn validate_boundary_walk_start(
         &self,
         _t: f64,
@@ -220,10 +245,42 @@ pub enum BoundaryWalkError {
     /// The solver or the boundary search failed.
     Integration(IntegrationError),
     /// The system refused the state the walk was asked to start from
-    /// ([`HasBoundaries::validate_boundary_walk_start`]).
+    /// ([`HasBoundaries::validate_boundary_walk_start`]). Nothing was
+    /// integrated: what a caller handed over is what was refused.
     StartRejected {
         /// Time the refused state belongs to.
         t: f64,
+        /// Which satellite refused, and why.
+        error: StartStateError,
+    },
+    /// The walk produced a state the system refuses
+    /// ([`HasBoundaries::validate_boundary_walk_start`]).
+    ///
+    /// A walk hands back states a caller propagates further, so a state the
+    /// system itself calls invalid is reported where it was produced rather
+    /// than at the next call.
+    ///
+    /// What refused is in `error`, and a system implementing this trait can
+    /// refuse for any invariant of its own. Three spans reach it in this crate,
+    /// all of them the caller's step size to keep out or a model to gate.
+    ///
+    /// One is stepped too coarsely for a lag it carries: a rate evaluated
+    /// inside the step takes a sign neither end shows, and a constraint that
+    /// stops only what would carry a state past its bound lets that sign
+    /// through, so the state leaves the bound its mode still claims. A wheel
+    /// with a 50 ms torque lag under a 200 ms step does this.
+    ///
+    /// Another holds a crossing the search cannot report, since a step with two
+    /// changes of sign of one boundary's value reports neither.
+    ///
+    /// The last has a contribution to the right-hand side that no boundary
+    /// gates: a thruster registered with `with_model` burns propellant the
+    /// pool's floor does not stop, and the mass ends below it.
+    ProducedRejected {
+        /// Time the refused state belongs to.
+        t: f64,
+        /// Where the walk started, for the span that produced it.
+        from: f64,
         /// Which satellite refused, and why.
         error: StartStateError,
     },
@@ -234,7 +291,7 @@ impl BoundaryWalkError {
     pub fn time(&self) -> Option<f64> {
         match self {
             Self::Integration(e) => e.time(),
-            Self::StartRejected { t, .. } => Some(*t),
+            Self::StartRejected { t, .. } | Self::ProducedRejected { t, .. } => Some(*t),
         }
     }
 }
@@ -253,6 +310,18 @@ impl core::fmt::Display for BoundaryWalkError {
                 write!(
                     f,
                     "the state at t = {t} cannot start a boundary walk: {error}"
+                )
+            }
+            Self::ProducedRejected { t, from, error } => {
+                write!(
+                    f,
+                    "the walk from t = {from} produced a state at t = {t} that the system \
+                     refuses: {error}. Three spans that reach this, as examples: one whose \
+                     step is too coarse for a lag it carries, where a rate evaluated inside \
+                     the step takes a sign neither end shows; one holding a crossing the \
+                     search cannot report, since a step with two changes of sign of one \
+                     boundary's value reports neither; and one with a contribution to the \
+                     right-hand side that no boundary gates"
                 )
             }
         }
@@ -306,6 +375,11 @@ impl<Sys: HasBoundaries> RootEvent<Sys::State> for BoundaryEvent<'_, Sys> {
     fn boundary_tolerance(&self) -> f64 {
         self.declared.boundary.boundary_tolerance
     }
+
+    fn leaves_zero_towards(&self, t: f64, y: &Sys::State) -> Option<f64> {
+        self.system
+            .boundary_departure(&self.declared, self.segment, t, y)
+    }
 }
 
 /// A stepper that can be walked to a target, stopping at boundaries.
@@ -357,6 +431,16 @@ pub enum BoundaryWalk<B> {
 /// and only then is the state observed and offered to the check. A caller's
 /// observer therefore never sees the state as it was before the mode it just
 /// crossed into was applied.
+///
+/// The observer reports the steps a walk took, which is not the same set as
+/// the states it hands back. It runs as each step is accepted, before the
+/// state the walk returns is offered to
+/// [`HasBoundaries::validate_boundary_walk_start`], so a walk that ends in
+/// [`BoundaryWalkError::ProducedRejected`] has already observed the state that
+/// was refused. The error names that span, and the state a group keeps is the
+/// last one that passed — so what an observer holds beyond the failure is the
+/// evidence for it, not a state to propagate. Filtering the observer instead
+/// would put that check on every step and hide the state the error is about.
 /// Everything a walk looks for boundaries with.
 ///
 /// One value rather than a row of arguments, as
@@ -462,6 +546,9 @@ where
         if moved || resumed_from_a_boundary {
             observer(t, &state);
             if let ControlFlow::Break(reason) = check(t, &state) {
+                // Through the same check as the other ways out: this hands back
+                // a state the settling above produced.
+                let state = hand_back(system, from, t, state)?;
                 return Ok((BoundaryWalk::Stopped(reason), t, state));
             }
             checked = true;
@@ -480,16 +567,16 @@ where
         let mut stepper = make(state, t, checked);
         let outcome =
             stepper.advance_to_roots(t_target, |t, s| observer(t, s), check, &mut roots)?;
-        match outcome {
+        let walked = match outcome {
             RootOutcome::Reached => {
-                return Ok((BoundaryWalk::Reached, stepper.t(), stepper.into_state()));
+                let (t_end, state) = (stepper.t(), stepper.into_state());
+                hand_back(system, from, t_end, state)
+                    .map(|state| (BoundaryWalk::Reached, t_end, state))?
             }
             RootOutcome::Event { reason } => {
-                return Ok((
-                    BoundaryWalk::Stopped(reason),
-                    stepper.t(),
-                    stepper.into_state(),
-                ));
+                let (t_end, state) = (stepper.t(), stepper.into_state());
+                hand_back(system, from, t_end, state)
+                    .map(|state| (BoundaryWalk::Stopped(reason), t_end, state))?
             }
             RootOutcome::Roots { t: t_root, .. } => {
                 t = t_root;
@@ -501,8 +588,28 @@ where
                 // transitions opened has been settled too.
                 state = settled;
                 resumed_from_a_boundary = true;
+                continue;
             }
-        }
+        };
+        return Ok(walked);
+    }
+}
+
+/// Check the state a walk is about to hand back, which a caller propagates
+/// further.
+///
+/// The system's own start check is what this asks: a state it refuses is one no
+/// later call can use, and reporting it here names the span that produced it
+/// rather than leaving the next call to refuse a state it did not make.
+fn hand_back<Sys: HasBoundaries>(
+    system: &Sys,
+    from: f64,
+    t: f64,
+    state: Sys::State,
+) -> Result<Sys::State, BoundaryWalkError> {
+    match system.validate_boundary_walk_start(t, &state) {
+        Ok(()) => Ok(state),
+        Err(error) => Err(BoundaryWalkError::ProducedRejected { t, from, error }),
     }
 }
 

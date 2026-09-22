@@ -719,6 +719,35 @@ impl<G: GravityField, F: Eci + 'static> HasBoundaries for SpacecraftDynamics<G, 
         )
     }
 
+    fn boundary_departure(
+        &self,
+        declared: &DeclaredBoundary,
+        segment: Option<&SegmentContext>,
+        t: f64,
+        state: &Self::State,
+    ) -> Option<f64> {
+        let effector = &self.effectors[declared.effector];
+        let aux = &state.aux[declared.aux_offset..declared.aux_offset + declared.aux_dim];
+        let modes = state
+            .modes
+            .get(declared.mode_offset..declared.mode_offset + declared.mode_dim)
+            .unwrap_or(&[]);
+        let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
+        let segment_epoch = segment.and_then(|s| self.epoch_0.map(|e| e.add_si_seconds(s.start)));
+        let eval_segment = segment.map(|s| EvalSegment::new(s, segment_epoch.as_ref()));
+        effector.boundary_departure(
+            declared.boundary.kind,
+            EffectorInput {
+                t,
+                state: &state.plant,
+                aux,
+                modes,
+                epoch: epoch.as_ref(),
+                segment: eval_segment.as_ref(),
+            },
+        )
+    }
+
     fn settle_boundary(&self, declared: &DeclaredBoundary, state: &mut Self::State) {
         let Some(mode) = declared.boundary.kind.mode_after() else {
             // A boundary that only splits the step: the walk stops on the state

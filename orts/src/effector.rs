@@ -90,6 +90,19 @@ pub trait StateEffector<S: HasFrame>: Send + Sync + std::any::Any {
         0.0
     }
 
+    /// Which way a boundary value of exactly zero is about to leave zero.
+    ///
+    /// `None`, unless overridden. A reaction wheel whose realized torque is
+    /// zero answers with the command it is following, since the torque's own
+    /// rate is `τ_cmd / T`. See
+    /// [`RootEvent::leaves_zero_towards`](utsuroi::RootEvent::leaves_zero_towards)
+    /// for where this is read.
+    ///
+    /// Only asked about boundaries this effector declared.
+    fn boundary_departure(&self, _kind: BoundaryKind, _input: EffectorInput<'_, S>) -> Option<f64> {
+        None
+    }
+
     /// Put this effector's state exactly on a boundary it just reached, and
     /// report what the overshoot gives back to the plant.
     ///

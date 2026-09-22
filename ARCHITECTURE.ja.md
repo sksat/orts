@@ -98,6 +98,7 @@ classDiagram
     <<trait>>
     +boundaries() Vec~DeclaredBoundary~
     +boundary_value(declared, t, y) f64
+    +boundary_departure(declared, t, y) Option~f64~
     +settle_boundary(declared, y)
     +boundary_is_active(declared, y) bool
     +validate_boundary_walk_start(t, y) Result
@@ -161,8 +162,10 @@ classDiagram
 - `orts::boundary::walk_to_target` が、全ての伝播経路が通る唯一のループである。
   state が既に越えている境界を処理し、state のモードに応じて有効な境界を切り替え、
   utsuroi の root 探索に余裕を見張らせながら刻む。停止先は二分探索で求めた境界の
-  時刻で、そこで System が境界上に載せる。共有する経路は `IndependentGroup` /
-  `CoupledGroup` / CLI の制御付き伝播 / `AugmentedAttitudeSystem`。
+  時刻で、そこで System が境界上に載せる。どの出口でも、返す state を System 自身の
+  開始状態の検査に通すので、walk が返すのは後続の呼び出しが使える state だけである
+  (使えない場合は `BoundaryWalkError::ProducedRejected`)。共有する経路は
+  `IndependentGroup` / `CoupledGroup` / CLI の制御付き伝播 / `AugmentedAttitudeSystem`。
 - 拘束の離散側は state (`AugmentedState::modes`) が持ち、RHS の中の比較では
   決めない。探索は同じ区間を複数の幅で刻み直すので、比較ならその途中で切り替わり、
   誤った時刻に収束する。

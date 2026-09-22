@@ -324,6 +324,41 @@ impl crate::boundary::HasBoundaries for AugmentedAttitudeSystem {
         )
     }
 
+    fn boundary_departure(
+        &self,
+        declared: &DeclaredBoundary,
+        segment: Option<&SegmentContext>,
+        t: f64,
+        state: &Self::State,
+    ) -> Option<f64> {
+        // The same context the derivatives are taken in: the orbit and mass
+        // this system prescribes at `t`, around the attitude being examined.
+        let context = DecoupledContext {
+            attitude: state.plant.clone(),
+            orbit: (self.orbit_fn)(t),
+            mass: (self.mass_fn)(t),
+        };
+        let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
+        let segment_epoch = segment.and_then(|s| self.epoch_0.map(|e| e.add_si_seconds(s.start)));
+        let eval_segment = segment.map(|s| EvalSegment::new(s, segment_epoch.as_ref()));
+        self.effectors[declared.effector].boundary_departure(
+            declared.boundary.kind,
+            EffectorInput {
+                t,
+                state: &context,
+                aux: &state.aux[declared.aux_offset..declared.aux_offset + declared.aux_dim],
+                modes: state
+                    .modes
+                    .get(declared.mode_offset..declared.mode_offset + declared.mode_dim)
+                    .unwrap_or(&[]),
+                epoch: epoch.as_ref(),
+                // The same segment the derivatives were taken in; see
+                // [`HasBoundaries::boundary_value`].
+                segment: eval_segment.as_ref(),
+            },
+        )
+    }
+
     fn settle_boundary(&self, declared: &DeclaredBoundary, state: &mut Self::State) {
         let Some(mode) = declared.boundary.kind.mode_after() else {
             // See [`SpacecraftDynamics::settle_boundary`]: a boundary that only

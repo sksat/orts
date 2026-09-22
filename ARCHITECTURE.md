@@ -99,6 +99,7 @@ classDiagram
     <<trait>>
     +boundaries() Vec~DeclaredBoundary~
     +boundary_value(declared, t, y) f64
+    +boundary_departure(declared, t, y) Option~f64~
     +settle_boundary(declared, y)
     +boundary_is_active(declared, y) bool
     +validate_boundary_walk_start(t, y) Result
@@ -171,8 +172,11 @@ Key points:
   it settles what a state is already past, switches the active boundaries for
   the modes the state is in, and steps with utsuroi's root search watching the
   margins. Where it stops is a boundary time located by bisection, and the
-  system settles it there. The paths that share it are `IndependentGroup`,
-  `CoupledGroup`, the CLI's controlled propagation, and `AugmentedAttitudeSystem`.
+  system settles it there. Every way out passes the state through the system's
+  own start check, so a walk hands back only states a later call can use
+  (`BoundaryWalkError::ProducedRejected` where it cannot). The paths that share
+  it are `IndependentGroup`, `CoupledGroup`, the CLI's controlled propagation,
+  and `AugmentedAttitudeSystem`.
 - The discrete side of a constraint lives in the state
   (`AugmentedState::modes`), not in a comparison inside the right-hand side: a
   search re-steps the same interval at several widths, and a comparison would

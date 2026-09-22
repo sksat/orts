@@ -486,6 +486,191 @@ fn two_lagging_wheels_are_handled_at_their_own_times() {
     );
 }
 
+/// The wheel's own answer for how its torque leaves zero reaches the search.
+///
+/// A run starts with no realized torque (`initial_augmented_state` puts it at
+/// exactly zero), which is where the two ends of a step say the same thing
+/// whether the torque leaves zero and comes back or falls straight from it.
+/// `Rw::boundary_departure` answers with the commanded torque there, and this
+/// covers the whole path that answer travels: the wheel, the forwarding in
+/// `SpacecraftDynamics`, and `RootSet`'s use of it.
+///
+/// The wheel spins above the speed it is commanded to hold, so the command —
+/// and with it the torque leaving zero — is negative. As the wheel slows past
+/// the target the command turns positive and the realized torque comes back
+/// through zero, which is where the momentum turns around.
+///
+/// The step is deliberately coarser than the 50 ms lag. A departure is read
+/// only where a step *starts* on the zero, which for this run is the first
+/// step, and that step has to be long enough to hold the return — measured at
+/// 0.3145 s with a 1 ms step, so no step that resolves the lag can contain it.
+/// What the case pins is therefore the path, not a resolved trajectory.
+///
+/// Measured with `Rw::boundary_departure` stubbed to `None`: the run reports
+/// only its step grid, and the momentum swings to -0.28 N·m·s by t = 0.4 s.
+/// With the answer in place the root lands at t = 0.1914 s, where the realized
+/// torque is 7.5e-4 N·m, and the momentum stays positive throughout.
+#[test]
+fn a_wheels_torque_leaving_zero_reaches_the_search() {
+    const LIMIT: f64 = 1.0;
+    const MAX_TORQUE: f64 = 0.5;
+    const LAG: f64 = 0.05;
+    const DT: f64 = 0.4;
+    /// Above `TARGET`, so the commanded torque starts negative.
+    const START_MOMENTUM: f64 = 0.52;
+    const TARGET: f64 = 50.0;
+
+    let inertia = Matrix3::from_diagonal(&Vector3::repeat(BODY_INERTIA));
+    let build = || {
+        let wheel = orts::spacecraft::reaction_wheel::Rw::new(
+            Vector3::z(),
+            WHEEL_INERTIA,
+            LIMIT,
+            MAX_TORQUE,
+        )
+        .with_torque_response(TorqueResponse::first_order_lag(LAG));
+        let mut rw = ReactionWheelAssembly::new(vec![wheel]);
+        rw.command = RwCommand::Speeds(vec![TARGET]);
+        SpacecraftDynamics::new(arika::earth::MU, PointMass, inertia).with_effector(rw)
+    };
+
+    let system = build();
+    let mut initial = system.initial_augmented_state(initial_plant());
+    assert_eq!(
+        initial.aux[1], 0.0,
+        "the run starts with the realized torque on the zero this case is about"
+    );
+    initial.aux[0] = START_MOMENTUM;
+    assert!(
+        START_MOMENTUM / WHEEL_INERTIA > TARGET,
+        "the wheel spins above its target, so the command starts negative"
+    );
+
+    let mut group: IndependentGroup<Dynamics> =
+        IndependentGroup::new(IntegratorConfig::Rk4 { dt: DT }).add_satellite(
+            "sat",
+            initial,
+            build(),
+        );
+    let mut samples = Vec::new();
+    group
+        .propagate_to_with(1.2, |_id, t, state| {
+            samples.push((t, state.aux[0], state.aux[1]))
+        })
+        .expect("the call returns");
+
+    let inside: Vec<_> = samples
+        .iter()
+        .filter(|(t, _, _)| *t > 0.0 && *t < DT)
+        .collect();
+    assert_eq!(
+        inside.len(),
+        1,
+        "the turn inside the first step is located once, among {:?}",
+        samples.iter().map(|(t, _, _)| *t).collect::<Vec<_>>()
+    );
+    let (t_turn, _, torque) = inside[0];
+    assert!(
+        torque.abs() < 5e-3,
+        "the located time {t_turn} is where the torque turns, and it reads {torque} N·m"
+    );
+    for (t, momentum, _) in &samples {
+        assert!(
+            *momentum > 0.0,
+            "the wheel keeps the momentum the located turn left it: {momentum} N·m·s at {t} s"
+        );
+    }
+}
+
+/// A walk reports a state its own system refuses, where it produced it.
+///
+/// Held against its upper bound, a wheel exchanges `nu.min(0.0)`: the hold
+/// stops only what would carry it past the bound, and a rate pointing back
+/// inside passes through. A step too coarse for the lag the wheel carries
+/// evaluates rates the step's ends never show, and a negative one among them
+/// takes the momentum off the bound while the mode still says `Upper` — a
+/// state `validate_state` calls invalid, since that mode would freeze the
+/// wheel at a value that is not its bound.
+///
+/// Measured with a speed command at the default gain, a 50 ms lag, a momentum
+/// of 0.98 against a limit of 1.0, and a 200 ms step (dt/T = 4): the wheel is
+/// held at 169.5 ms, and by 369.5 ms its momentum has left the bound for
+/// 0.9635, settling at 0.9459 once the torque saturates. The realized torque
+/// is positive at every step end here (0.1218, 0.4467, 0.5), and stepping the
+/// same run at 1 ms holds the momentum at 1.0 — so no release goes unreported:
+/// the step size alone produces the state. A step holding two changes of sign
+/// of one boundary's value reaches the same invalid state by reporting neither
+/// crossing, which is [#545]'s remaining case.
+///
+/// The walk now reports this where it made it. Before, the run finished and the
+/// *next* call refused a state it had not produced.
+///
+/// [#545]: https://github.com/sksat/orts/issues/545
+#[test]
+fn a_walk_reports_a_state_its_system_refuses() {
+    const LIMIT: f64 = 1.0;
+    const TORQUE: f64 = 0.5;
+    const T_M: f64 = 0.05;
+    const INERTIA: f64 = 0.01;
+
+    let inertia = Matrix3::from_diagonal(&Vector3::repeat(BODY_INERTIA));
+    let build = || {
+        let wheel = orts::spacecraft::reaction_wheel::Rw::new(Vector3::z(), INERTIA, LIMIT, TORQUE)
+            .with_torque_response(TorqueResponse::first_order_lag(T_M));
+        let mut rw = ReactionWheelAssembly::new(vec![wheel]);
+        // Fast enough to reach the limit. Once the momentum wrongly leaves the
+        // bound the speed error grows, so the command saturates at +0.5 N·m
+        // and the hold pins the momentum below its limit.
+        rw.command = RwCommand::Speeds(vec![(LIMIT * 1.5) / INERTIA]);
+        SpacecraftDynamics::new(arika::earth::MU, PointMass, inertia).with_effector(rw)
+    };
+    let start = |dt: f64| {
+        let system = build();
+        let mut initial = system.initial_augmented_state(initial_plant());
+        initial.aux[0] = 0.98;
+        initial.aux[1] = 0.0;
+        let group: IndependentGroup<Dynamics> = IndependentGroup::new(IntegratorConfig::Rk4 { dt })
+            .add_satellite("sat", initial, build());
+        group
+    };
+
+    let mut coarse = start(0.2);
+    let outcome = coarse.propagate_to(1.0).expect("the call returns");
+    let refusal = outcome
+        .terminations
+        .first()
+        .expect("the coarse walk reports the state it produced");
+    assert!(
+        refusal.reason.contains("produced a state"),
+        "the report names where the state came from: {}",
+        refusal.reason
+    );
+    assert!(
+        refusal.reason.contains("is held at 1 N·m·s by its mode"),
+        "and what the system refused: {}",
+        refusal.reason
+    );
+
+    let mut fine = start(0.001);
+    let outcome = fine.propagate_to(1.0).expect("the call returns");
+    assert!(
+        outcome.terminations.is_empty(),
+        "a step well inside the lag holds the wheel on its bound: {:?}",
+        outcome.terminations
+    );
+    let ended = fine
+        .satellites()
+        .next()
+        .expect("one satellite")
+        .state
+        .clone();
+    assert!(
+        (ended.aux[0] - LIMIT).abs() < 1e-9,
+        "and ends on the bound, not at {}",
+        ended.aux[0]
+    );
+}
+
 /// A wheel that turns around short of its limit stops the walk at the turn,
 /// and nothing there moves.
 ///

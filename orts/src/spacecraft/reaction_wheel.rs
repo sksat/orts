@@ -755,17 +755,21 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
     /// so a realized torque of exactly zero at a step's start is a motor about
     /// to move rather than a wheel turning around — the state every run begins
     /// from. A step that starts at such a zero *and* turns around within it is
-    /// therefore not cut. Reaching it takes a torque that leaves zero and comes
-    /// back inside one step, as a speed command's target can
-    /// ([`RwCommand::Speeds`](crate::spacecraft::RwCommand::Speeds), whose
-    /// target torque follows the momentum itself).
+    /// still cut, because the wheel answers
+    /// [`StateEffector::boundary_departure`](crate::effector::StateEffector::boundary_departure)
+    /// with its command: at zero torque the rate is `τ_cmd / T`, so the
+    /// command's sign is the direction. A command of zero leaves the wheel in
+    /// equilibrium, which is no direction, and that step is not cut.
     ///
-    /// One turn per step is what this declaration covers. The step a walk
+    /// One turn per step is what this declaration covers, and which second
+    /// turn is cut depends on where the resumed step starts. The step a walk
     /// resumes with after a turn starts on the side that turn left, and the
-    /// search holds an event still for the step that starts at its own root —
-    /// so a *second* turn inside that resumed step is not cut either. A speed
-    /// command's loop is underdamped at the default gain, which is where a step
-    /// can hold two turns; a constant torque command has one.
+    /// search holds an event still for a step that starts at its own root, so a
+    /// *second* turn inside that resumed step is not cut — unless the committed
+    /// torque is exactly zero, where the wheel answers with its command again
+    /// and the search reads that direction ahead of the hold. A speed command's
+    /// loop is underdamped at the default gain, which is where a step can hold
+    /// two turns; a constant torque command has one.
     fn boundaries(&self) -> Vec<EffectorBoundary> {
         // Either bound and one release per wheel, whose value the mode signs,
         // plus the momentum's turning point where the torque lags.
@@ -944,6 +948,21 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
                 .map(|realized| realized[index])
                 .unwrap_or(0.0),
         }
+    }
+
+    /// Where the momentum's turning point sits on its own zero, the realized
+    /// torque's rate says which way it is about to go: `dτ/dt = (τ_cmd - τ) / T`
+    /// is `τ_cmd / T` at `τ = 0`, so the command's sign is the answer. A
+    /// command of zero leaves the wheel in equilibrium, which is no direction.
+    fn boundary_departure(&self, kind: BoundaryKind, input: EffectorInput<'_, S>) -> Option<f64> {
+        let BoundaryKind::TurningPoint { index } = kind else {
+            return None;
+        };
+        let commanded =
+            self.core
+                .commanded_torques(&self.command, input.aux, self.speed_control_gain);
+        let rate = commanded[index];
+        (rate != 0.0 && rate.is_finite()).then_some(rate)
     }
 
     fn derivatives(
