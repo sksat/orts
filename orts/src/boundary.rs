@@ -431,6 +431,16 @@ pub enum BoundaryWalk<B> {
 /// and only then is the state observed and offered to the check. A caller's
 /// observer therefore never sees the state as it was before the mode it just
 /// crossed into was applied.
+///
+/// The observer reports the steps a walk took, which is not the same set as
+/// the states it hands back. It runs as each step is accepted, before the
+/// state the walk returns is offered to
+/// [`HasBoundaries::validate_boundary_walk_start`], so a walk that ends in
+/// [`BoundaryWalkError::ProducedRejected`] has already observed the state that
+/// was refused. The error names that span, and the state a group keeps is the
+/// last one that passed — so what an observer holds beyond the failure is the
+/// evidence for it, not a state to propagate. Filtering the observer instead
+/// would put that check on every step and hide the state the error is about.
 /// Everything a walk looks for boundaries with.
 ///
 /// One value rather than a row of arguments, as

@@ -486,6 +486,102 @@ fn two_lagging_wheels_are_handled_at_their_own_times() {
     );
 }
 
+/// The wheel's own answer for how its torque leaves zero reaches the search.
+///
+/// A run starts with no realized torque (`initial_augmented_state` puts it at
+/// exactly zero), which is where the two ends of a step say the same thing
+/// whether the torque leaves zero and comes back or falls straight from it.
+/// `Rw::boundary_departure` answers with the commanded torque there, and this
+/// covers the whole path that answer travels: the wheel, the forwarding in
+/// `SpacecraftDynamics`, and `RootSet`'s use of it.
+///
+/// The wheel spins above the speed it is commanded to hold, so the command —
+/// and with it the torque leaving zero — is negative. As the wheel slows past
+/// the target the command turns positive and the realized torque comes back
+/// through zero, which is where the momentum turns around.
+///
+/// The step is deliberately coarser than the 50 ms lag. A departure is read
+/// only where a step *starts* on the zero, which for this run is the first
+/// step, and that step has to be long enough to hold the return — measured at
+/// 0.3145 s with a 1 ms step, so no step that resolves the lag can contain it.
+/// What the case pins is therefore the path, not a resolved trajectory.
+///
+/// Measured with `Rw::boundary_departure` stubbed to `None`: the run reports
+/// only its step grid, and the momentum swings to -0.28 N·m·s by t = 0.4 s.
+/// With the answer in place the root lands at t = 0.1914 s, where the realized
+/// torque is 7.5e-4 N·m, and the momentum stays positive throughout.
+#[test]
+fn a_wheels_torque_leaving_zero_reaches_the_search() {
+    const LIMIT: f64 = 1.0;
+    const MAX_TORQUE: f64 = 0.5;
+    const LAG: f64 = 0.05;
+    const DT: f64 = 0.4;
+    /// Above `TARGET`, so the commanded torque starts negative.
+    const START_MOMENTUM: f64 = 0.52;
+    const TARGET: f64 = 50.0;
+
+    let inertia = Matrix3::from_diagonal(&Vector3::repeat(BODY_INERTIA));
+    let build = || {
+        let wheel = orts::spacecraft::reaction_wheel::Rw::new(
+            Vector3::z(),
+            WHEEL_INERTIA,
+            LIMIT,
+            MAX_TORQUE,
+        )
+        .with_torque_response(TorqueResponse::first_order_lag(LAG));
+        let mut rw = ReactionWheelAssembly::new(vec![wheel]);
+        rw.command = RwCommand::Speeds(vec![TARGET]);
+        SpacecraftDynamics::new(arika::earth::MU, PointMass, inertia).with_effector(rw)
+    };
+
+    let system = build();
+    let mut initial = system.initial_augmented_state(initial_plant());
+    assert_eq!(
+        initial.aux[1], 0.0,
+        "the run starts with the realized torque on the zero this case is about"
+    );
+    initial.aux[0] = START_MOMENTUM;
+    assert!(
+        START_MOMENTUM / WHEEL_INERTIA > TARGET,
+        "the wheel spins above its target, so the command starts negative"
+    );
+
+    let mut group: IndependentGroup<Dynamics> =
+        IndependentGroup::new(IntegratorConfig::Rk4 { dt: DT }).add_satellite(
+            "sat",
+            initial,
+            build(),
+        );
+    let mut samples = Vec::new();
+    group
+        .propagate_to_with(1.2, |_id, t, state| {
+            samples.push((t, state.aux[0], state.aux[1]))
+        })
+        .expect("the call returns");
+
+    let inside: Vec<_> = samples
+        .iter()
+        .filter(|(t, _, _)| *t > 0.0 && *t < DT)
+        .collect();
+    assert_eq!(
+        inside.len(),
+        1,
+        "the turn inside the first step is located once, among {:?}",
+        samples.iter().map(|(t, _, _)| *t).collect::<Vec<_>>()
+    );
+    let (t_turn, _, torque) = inside[0];
+    assert!(
+        torque.abs() < 5e-3,
+        "the located time {t_turn} is where the torque turns, and it reads {torque} N·m"
+    );
+    for (t, momentum, _) in &samples {
+        assert!(
+            *momentum > 0.0,
+            "the wheel keeps the momentum the located turn left it: {momentum} N·m·s at {t} s"
+        );
+    }
+}
+
 /// A walk reports a state its own system refuses, where it produced it.
 ///
 /// Held against its upper bound, a wheel exchanges `nu.min(0.0)`: the hold

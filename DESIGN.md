@@ -221,7 +221,9 @@ $dh/dt$ は 0 で、body に返る反作用トルクも 0 になる。ただし�
 - **walk は、自分の system が拒否する状態を返さない。** 開始状態の検査
   (`validate_boundary_walk_start`) を、返す直前の状態にも通す。呼び出し側はその状態を先へ伝播するので、
   system が拒否する状態は誰も使えない。報告 (`BoundaryWalkError::ProducedRejected`) はその状態を作った
-  span を名指しする。次の呼び出しに任せると、原因の span から離れた場所で理由が出る。到達する例は 3 つ:
+  span を名指しする。次の呼び出しに任せると、原因の span から離れた場所で理由が出る。observer は walk が刻んだ step を
+  報告するもので、この検査の前に走る: 拒否された state も observer は見ており、その state は
+  エラーの根拠として残る (群が保つのは直前に通った state である)。到達する例は 3 つ:
   持っている遅れに対して step が粗すぎる span (step の内側で評価される rate が両端にない符号を取り、
   上限を越える分だけを止める保持を通る)、探索が報告できない交差を含む span (1 step に 1 つの境界の値が
   2 回符号を変える場合)、どの境界も gate していない contribution (`with_model` で登録した thruster が
