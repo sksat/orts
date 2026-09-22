@@ -761,12 +761,15 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
     /// command's sign is the direction. A command of zero leaves the wheel in
     /// equilibrium, which is no direction, and that step is not cut.
     ///
-    /// One turn per step is what this declaration covers. The step a walk
+    /// One turn per step is what this declaration covers, and which second
+    /// turn is cut depends on where the resumed step starts. The step a walk
     /// resumes with after a turn starts on the side that turn left, and the
-    /// search holds an event still for the step that starts at its own root —
-    /// so a *second* turn inside that resumed step is not cut either. A speed
-    /// command's loop is underdamped at the default gain, which is where a step
-    /// can hold two turns; a constant torque command has one.
+    /// search holds an event still for a step that starts at its own root, so a
+    /// *second* turn inside that resumed step is not cut — unless the committed
+    /// torque is exactly zero, where the wheel answers with its command again
+    /// and the search reads that direction ahead of the hold. A speed command's
+    /// loop is underdamped at the default gain, which is where a step can hold
+    /// two turns; a constant torque command has one.
     fn boundaries(&self) -> Vec<EffectorBoundary> {
         // Either bound and one release per wheel, whose value the mode signs,
         // plus the momentum's turning point where the torque lags.

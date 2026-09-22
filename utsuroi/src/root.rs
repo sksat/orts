@@ -1355,6 +1355,84 @@ mod tests {
         }
     }
 
+    /// An answer that is not a direction reads as no answer.
+    ///
+    /// `leaves_zero_towards` returning zero says the value sits in equilibrium
+    /// rather than leaving, and a non-finite rate says nothing a sign can be
+    /// taken from. Both keep the reading a `None` would give: the step that
+    /// starts on the zero reports nothing, since its two ends cannot tell a
+    /// value that left and came back from one that fell straight down.
+    #[test]
+    fn an_answer_that_is_not_a_direction_reads_as_no_answer() {
+        /// Answers `self.0` for the direction, whatever it is.
+        struct Answering(Option<f64>);
+        impl RootEvent<f64> for Answering {
+            fn value(&self, _t: f64, y: &f64) -> f64 {
+                (y - 1.0) * (1.5 - y)
+            }
+            fn crossing(&self) -> Crossing {
+                Crossing::Reversal
+            }
+            fn terminal(&self) -> bool {
+                false
+            }
+            fn leaves_zero_towards(&self, _t: f64, _y: &f64) -> Option<f64> {
+                self.0
+            }
+        }
+
+        // `g(y) = (y - 1)(1.5 - y)` is zero at y = 1, rises to 0.0625 at
+        // y = 1.25, and is -0.5 at y = 2: a turn inside the step, which only a
+        // direction at the start makes reportable.
+        for answer in [
+            None,
+            Some(0.0),
+            Some(-0.0),
+            Some(f64::NAN),
+            Some(f64::INFINITY),
+            Some(f64::NEG_INFINITY),
+        ] {
+            let event = Answering(answer);
+            root_set!(
+                set,
+                RootSearch {
+                    t_tolerance: 1e-9,
+                    max_iterations: 60,
+                },
+                &event as &dyn RootEvent<f64>
+            );
+            set.begin(0.0, &1.0).expect("finite value");
+            let found = set
+                .scan_step(0.0, 1.0, &2.0, |w| Ok(1.0 + w))
+                .expect("no error");
+            assert!(
+                matches!(found, StepRoots::None),
+                "an answer of {answer:?} is not a direction, so this step reports nothing"
+            );
+        }
+
+        // The same step with a direction does report the turn, so the cases
+        // above are the answer being rejected rather than the step being blind.
+        let event = Answering(Some(0.5));
+        root_set!(
+            set,
+            RootSearch {
+                t_tolerance: 1e-9,
+                max_iterations: 60,
+            },
+            &event as &dyn RootEvent<f64>
+        );
+        set.begin(0.0, &1.0).expect("finite value");
+        assert!(
+            matches!(
+                set.scan_step(0.0, 1.0, &2.0, |w| Ok(1.0 + w))
+                    .expect("no error"),
+                StepRoots::Found { .. }
+            ),
+            "a direction of +0.5 makes the same turn reportable"
+        );
+    }
+
     /// A root located exactly on zero still leaves the next step readable.
     ///
     /// `apply` keeps the raw value the search stopped on as the side the root
