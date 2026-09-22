@@ -20,7 +20,7 @@ use axum::routing::get;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc};
 
-use crate::cli::SimArgs;
+use crate::cli::{PluginAsyncModeChoice, SimArgs};
 use crate::commands::CmdError;
 use crate::sim::params::SimParams;
 
@@ -53,10 +53,18 @@ pub fn run_server(sim: &SimArgs, port: u16, stream_stdio: Option<&str>) -> Resul
     // Sim args nothing will read are a usage error, in the same spirit as the
     // config `[[command]]` rejection below: the server would otherwise come
     // up having silently dropped every one of them.
-    reject_unhonored_sim_args(sim, &WrittenFlags::from_this_process())?;
+    let written = WrittenFlags::from_this_process();
+    reject_unhonored_sim_args(sim, &written)?;
+    // Built here, where the command line is still in hand: the async mode the
+    // overrides carry depends on whether its flag was written, and nothing
+    // further down can tell a written default from an absent flag.
+    let plugin_overrides = manager::PluginBackendOverrides::from_sim_args(
+        sim,
+        written.was_written("--plugin-backend-async-mode"),
+    );
     let rt = tokio::runtime::Runtime::new()
         .map_err(|e| CmdError::failure(format!("creating the tokio runtime: {e}")))?;
-    rt.block_on(async_server(sim, port, stdio_key))
+    rt.block_on(async_server(sim, port, stdio_key, plugin_overrides))
 }
 
 /// Parse a `--stream-stdio` value of the form `sat/stream` (both halves
@@ -68,6 +76,29 @@ fn parse_stream_stdio(s: &str) -> Result<stream_bridge::StreamKey, String> {
         }
         _ => Err("expected SAT/STREAM with non-empty halves".to_string()),
     }
+}
+
+/// The params a `serve` started from an orbit on the command line runs.
+///
+/// `SimParams::from_sim_args` reads every tuning flag, including the async
+/// mode — and there it reads clap's own default, `throughput`, when the flag
+/// is absent. `serve`'s rule is the other one: a server nobody asked runs its
+/// plugins in `Deterministic`, which is what `SimParams::from_config` carries
+/// and what this command did before the mode reached its plugin cache at all.
+/// So an absent flag is corrected here, and a written one is left to stand.
+///
+/// `from_sim_args` already fills in the backend choice and threshold, so the
+/// overrides are not applied again; they travel on to the manager, which needs
+/// them for a simulation a client starts after a terminate.
+fn cli_orbit_params(
+    sim: &SimArgs,
+    plugin_overrides: &manager::PluginBackendOverrides,
+) -> Result<SimParams, CmdError> {
+    let mut params = SimParams::from_sim_args(sim, true).map_err(CmdError::failure)?;
+    if plugin_overrides.async_mode.is_none() {
+        params.plugin_backend_async_mode = PluginAsyncModeChoice::Deterministic;
+    }
+    Ok(params)
 }
 
 /// Detect whether CLI args specify an explicit simulation configuration.
@@ -89,34 +120,16 @@ fn has_explicit_sim_args(sim: &SimArgs) -> bool {
 /// documented `serve --dt 1 --output-interval 10` served forever without ever
 /// starting a simulation.
 fn reject_unhonored_sim_args(sim: &SimArgs, written: &WrittenFlags) -> Result<(), CmdError> {
-    // Both sets in one error: a caller fixing one flag should not have to run
-    // the command again to hear about the next.
     let mut problems: Vec<String> = Vec::new();
-
-    // The flags no `serve` path reads. An orbit on the command line makes the
-    // rest honorable; these stay dropped.
-    let always: Vec<&str> = ALWAYS_UNHONORED
-        .iter()
-        .map(|(_, flag)| *flag)
-        .filter(|flag| written.was_written(flag))
-        .collect();
-    if !always.is_empty() {
-        problems.push(format!(
-            "serve cannot honor {}: it runs plugins through a deterministic cache \
-             (`WasmPluginCache::new()`) and never resolves a mode. Drop the flag, or run \
-             the simulation with `orts run`, which does.",
-            always.join(", ")
-        ));
-    }
 
     let unhonored = unhonored_sim_args(sim, written);
     if !unhonored.is_empty() {
         let flags = unhonored.join(", ");
         match &sim.config {
             // A config describes the whole simulation, so the command line has
-            // nowhere to put these. (The `--plugin-backend` and
-            // `--plugin-backend-threshold` flags do get applied on top, which
-            // is why they are not on the list.)
+            // nowhere to put these. (The three flags `PluginBackendOverrides`
+            // carries do get applied on top, which is why they are not on the
+            // list.)
             Some(path) => problems.push(format!(
                 "{flags} cannot be honored: `serve --config {path}` builds its simulation from \
                  the config alone. Set the value in the config instead, or drop the flag."
@@ -139,22 +152,6 @@ fn reject_unhonored_sim_args(sim: &SimArgs, written: &WrittenFlags) -> Result<()
     }
 }
 
-/// The sim args that only [`SimParams::from_sim_args`] reads, named as they
-/// were written on the command line.
-///
-/// `--plugin-backend` and `--plugin-backend-threshold` are deliberately absent:
-/// `PluginBackendOverrides` applies those to every `SimParams` the manager
-/// builds, whoever started the simulation. It does not carry
-/// `--plugin-backend-async-mode`, which reaches a simulation only through
-/// `SimParams::from_sim_args`, so that one is named like the rest.
-///
-/// A flag counts because it was written, not because its value differs from the
-/// default. This check only runs where nothing reads these values at all — a
-/// `--config` builds them with `SimParams::from_config`, and an idle server
-/// takes them from the client's `start_simulation` — so whatever was written
-/// is dropped, default-valued or not. Comparing values missed exactly that:
-/// `serve --config cfg.toml --atol 1e-10` writes the default, read as absent,
-/// and the config's `atol` ran without a word.
 /// Which tuning flags the caller wrote, whatever value they wrote.
 ///
 /// A comparison against the default cannot answer that question: `serve --atol
@@ -204,7 +201,7 @@ impl WrittenFlags {
     fn from_matches(matches: &clap::ArgMatches) -> Self {
         let written = VALUE_FLAGS
             .iter()
-            .chain(ALWAYS_UNHONORED.iter())
+            .chain(OVERRIDE_FLAGS.iter())
             .filter(|(id, _)| {
                 matches!(
                     matches.value_source(id),
@@ -237,15 +234,33 @@ const VALUE_FLAGS: [(&str, &str); 9] = [
     ("ap", "--ap"),
 ];
 
-/// Flags no `serve` path reads, whatever else the command line says.
+/// Flags `PluginBackendOverrides` carries whose clap default is not what
+/// `serve` does when they are absent, so whether they were written decides
+/// what the overrides hold.
 ///
-/// `--plugin-backend-async-mode` is the only one so far. `ServeEngine` builds
-/// its plugin cache with `WasmPluginCache::new()`, the deterministic mode, and
-/// never asks `SimParams::resolve_async_mode` — so the mode is dropped even on
-/// the CLI-orbit path, where every other tuning flag is read.
-const ALWAYS_UNHONORED: [(&str, &str); 1] =
+/// `--plugin-backend-async-mode` is the only one: its default is `throughput`,
+/// while a `serve` nobody asked runs its plugins in `Deterministic`. The other
+/// two flags the overrides carry read the same either way, so neither needs to
+/// be here.
+const OVERRIDE_FLAGS: [(&str, &str); 1] =
     [("plugin_backend_async_mode", "--plugin-backend-async-mode")];
 
+/// The sim args that only [`SimParams::from_sim_args`] reads, named as they
+/// were written on the command line.
+///
+/// The three flags `PluginBackendOverrides` carries are deliberately absent:
+/// the manager applies them to every `SimParams` it builds, whoever started
+/// the simulation. `--plugin-backend` and `--plugin-backend-threshold` have
+/// always been carried; `--plugin-backend-async-mode` joined them once
+/// `ServeEngine` began building its plugin cache with the mode.
+///
+/// A flag counts because it was written, not because its value differs from
+/// the default. This check only runs where nothing reads these values at all —
+/// a `--config` builds them with `SimParams::from_config`, and an idle server
+/// takes them from the client's `start_simulation` — so whatever was written
+/// is dropped, default-valued or not. Comparing values missed exactly that:
+/// `serve --config cfg.toml --atol 1e-10` writes the default, read as absent,
+/// and the config's `atol` ran without a word.
 fn unhonored_sim_args(sim: &SimArgs, written: &WrittenFlags) -> Vec<&'static str> {
     let optional = [
         ("--output-interval", sim.output_interval.is_some()),
@@ -330,6 +345,7 @@ async fn async_server(
     sim: &SimArgs,
     port: u16,
     stdio_key: Option<stream_bridge::StreamKey>,
+    plugin_overrides: manager::PluginBackendOverrides,
 ) -> Result<(), CmdError> {
     let addr = format!("0.0.0.0:{port}");
     let listener = TcpListener::bind(&addr)
@@ -398,20 +414,14 @@ async fn async_server(
     // leave the HTTP / WebSocket server up with nobody behind the command
     // channel.
     let mgr_tx = tx.clone();
-    let plugin_overrides = manager::PluginBackendOverrides::from_sim_args(sim);
     let initial_params = if let Some(cfg) = &initial_config {
         let mut params = SimParams::from_config(cfg).map_err(CmdError::failure)?;
         plugin_overrides.apply(&mut params);
         Some(params)
     } else if has_explicit_sim_args(sim) {
-        // Legacy path: build SimParams from CLI args directly.
-        // from_sim_args already populates plugin_backend_choice /
-        // threshold, but we still pass the overrides so that any
-        // later delegate to simulation_manager (after a terminate +
-        // restart) honors them too.
         // Same reason as in `run`: this path skips `SimConfig::validate`.
         crate::commands::run::validate_sim_args(sim)?;
-        Some(SimParams::from_sim_args(sim, true).map_err(CmdError::failure)?)
+        Some(cli_orbit_params(sim, &plugin_overrides)?)
     } else {
         None
     };
@@ -502,8 +512,8 @@ async fn async_server(
 #[cfg(test)]
 mod tests {
     use super::{
-        WrittenFlags, has_explicit_sim_args, parse_stream_stdio, reject_unhonored_sim_args,
-        unhonored_sim_args,
+        WrittenFlags, cli_orbit_params, has_explicit_sim_args, parse_stream_stdio,
+        reject_unhonored_sim_args, unhonored_sim_args,
     };
     use crate::cli::SimArgs;
     use clap::Parser;
@@ -572,10 +582,15 @@ mod tests {
         );
     }
 
-    /// Every dropped flag is named at once, so fixing one does not uncover the
-    /// next on the following run.
+    /// A command line mixing a dropped flag with a carried one names only the
+    /// dropped one.
+    ///
+    /// The same command line used to name both. `--plugin-backend-async-mode`
+    /// rides `PluginBackendOverrides` now, so `--atol` is the only flag a
+    /// `--config` run leaves nowhere to put — and the caller hears about that
+    /// one alone rather than being sent to drop a flag that works.
     #[test]
-    fn both_kinds_of_dropped_flag_are_named_together() {
+    fn a_carried_flag_is_not_named_beside_a_dropped_one() {
         let msg = refusal(&[
             "--config",
             "mission.toml",
@@ -584,26 +599,70 @@ mod tests {
             "--atol",
             "1e-10",
         ])
-        .expect("must be refused");
+        .expect("--atol still has nowhere to go");
+        assert!(msg.contains("--atol"), "the dropped flag is named: {msg}");
         assert!(
-            msg.contains("--plugin-backend-async-mode"),
-            "the mode is named: {msg}"
+            !msg.contains("--plugin-backend-async-mode"),
+            "the carried one is not: {msg}"
         );
-        assert!(msg.contains("--atol"), "and so is the tuning flag: {msg}");
         assert!(
             msg.contains("mission.toml"),
             "with the config that leaves no room for it: {msg}"
         );
     }
 
-    /// The plugin async mode is refused even where every other tuning flag is
-    /// honored.
+    /// A CLI-orbit serve runs deterministic until the flag is written.
     ///
-    /// An orbit on the command line makes `SimParams::from_sim_args` the path,
-    /// and it reads all of them — except this one, which reaches no plugin:
-    /// `ServeEngine` builds its cache with `WasmPluginCache::new()`.
+    /// This is the one way of starting `serve` whose params come from
+    /// `SimParams::from_sim_args`, which reads clap's `throughput` default when
+    /// the flag is absent. The config and idle paths start at `Deterministic`
+    /// and the overrides leave them there, so without the correction this path
+    /// alone would change mode on a command line that never mentioned it.
     #[test]
-    fn the_plugin_async_mode_is_refused_on_every_serve_path() {
+    fn a_cli_orbit_serve_stays_deterministic_until_the_flag_is_written() {
+        let bare = args(&["--sat", "altitude=400"]);
+        assert_eq!(
+            bare.plugin_backend_async_mode,
+            crate::cli::PluginAsyncModeChoice::Throughput,
+            "clap hands over its own default, which is not what serve does"
+        );
+        let params = cli_orbit_params(
+            &bare,
+            &super::manager::PluginBackendOverrides::from_sim_args(&bare, false),
+        )
+        .expect("valid sim args");
+        assert_eq!(
+            params.plugin_backend_async_mode,
+            crate::cli::PluginAsyncModeChoice::Deterministic,
+            "an absent flag leaves this server where it has always run"
+        );
+
+        let asked = args(&[
+            "--sat",
+            "altitude=400",
+            "--plugin-backend-async-mode",
+            "throughput",
+        ]);
+        let params = cli_orbit_params(
+            &asked,
+            &super::manager::PluginBackendOverrides::from_sim_args(&asked, true),
+        )
+        .expect("valid sim args");
+        assert_eq!(
+            params.plugin_backend_async_mode,
+            crate::cli::PluginAsyncModeChoice::Throughput,
+            "and a written one is what the server runs"
+        );
+    }
+
+    /// The plugin async mode is honored however the server was started.
+    ///
+    /// `PluginBackendOverrides` carries it into every `SimParams` the manager
+    /// builds, and `ServeEngine` builds its plugin cache with the mode, so no
+    /// way of starting `serve` drops it. Refusing it was this check's job only
+    /// while the engine ignored it.
+    #[test]
+    fn the_plugin_async_mode_is_honored_on_every_serve_path() {
         for extra in [
             vec!["--plugin-backend-async-mode", "throughput"],
             vec![
@@ -619,10 +678,14 @@ mod tests {
                 "deterministic",
             ],
         ] {
-            let msg = refusal(&extra).unwrap_or_else(|| panic!("{extra:?} must be refused"));
             assert!(
-                msg.contains("--plugin-backend-async-mode"),
-                "{extra:?} names the flag: {msg}"
+                unhonored_sim_args(&args(&extra), &written(&extra)).is_empty(),
+                "{extra:?} names no unhonored flag"
+            );
+            assert!(
+                refusal(&extra).is_none(),
+                "{extra:?} starts: {:?}",
+                refusal(&extra)
             );
         }
     }

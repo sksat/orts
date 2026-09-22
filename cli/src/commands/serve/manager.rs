@@ -16,7 +16,7 @@ use super::engine::{EngineInit, ServeEngine, StreamIo};
 use super::history::HistoryBuffer;
 use super::protocol::WsMessage;
 use super::stream_bridge::{OutboundPush, StreamBridge, StreamEndpoint, StreamKey};
-use crate::cli::{PluginBackendChoice, SimArgs};
+use crate::cli::{PluginAsyncModeChoice, PluginBackendChoice, SimArgs};
 use crate::config::{SatelliteConfig, SimConfig};
 use crate::satellite::{SatelliteInfo, SatelliteSpec};
 use crate::sim::mode::validate_satellite_spec;
@@ -30,17 +30,21 @@ use orts::setup::default_third_bodies;
 pub(super) struct PluginBackendOverrides {
     pub choice: Option<PluginBackendChoice>,
     pub threshold: Option<usize>,
+    pub async_mode: Option<PluginAsyncModeChoice>,
 }
 
 impl PluginBackendOverrides {
-    pub fn from_sim_args(sim: &SimArgs) -> Self {
+    /// `written` decides the async mode alone, because its clap default
+    /// (`throughput`) is not what `serve` does when the flag is absent: a
+    /// server nobody asked runs its plugins in `Deterministic`, the mode
+    /// `SimParams::from_config` also carries. The other two read the same
+    /// whether or not they were written — `choice` applies its `Auto` default
+    /// as it stands, and `threshold` is already absent when unset.
+    pub fn from_sim_args(sim: &SimArgs, async_mode_written: bool) -> Self {
         Self {
-            // Only override if the user explicitly asked for a
-            // non-default backend on the CLI. If they left it at
-            // `Auto` (the clap default) we still apply that, but the
-            // threshold override is only applied when set.
             choice: Some(sim.plugin_backend),
             threshold: sim.plugin_backend_threshold,
+            async_mode: async_mode_written.then_some(sim.plugin_backend_async_mode),
         }
     }
 
@@ -50,6 +54,9 @@ impl PluginBackendOverrides {
         }
         if self.threshold.is_some() {
             params.plugin_backend_threshold = self.threshold;
+        }
+        if let Some(mode) = self.async_mode {
+            params.plugin_backend_async_mode = mode;
         }
     }
 }
@@ -654,6 +661,80 @@ async fn run_simulation_loop(
 mod tests {
     use super::*;
     use arika::body::KnownBody;
+
+    fn sim_args(extra: &[&str]) -> SimArgs {
+        use clap::Parser;
+        let mut argv = vec!["orts"];
+        argv.extend_from_slice(extra);
+        SimArgs::try_parse_from(argv).expect("valid sim args")
+    }
+
+    /// The async mode rides the overrides only when its flag was written.
+    ///
+    /// Its clap default is `throughput`, which is not what a `serve` nobody
+    /// asked does — carrying the value either way would move every existing
+    /// server off `Deterministic`. The other two overrides read the same
+    /// whether or not they were written, and are carried as before.
+    #[test]
+    fn the_async_mode_is_carried_only_when_its_flag_was_written() {
+        let asked = PluginBackendOverrides::from_sim_args(
+            &sim_args(&["--plugin-backend-async-mode", "throughput"]),
+            true,
+        );
+        assert_eq!(
+            asked.async_mode,
+            Some(PluginAsyncModeChoice::Throughput),
+            "a written flag is what the overrides carry"
+        );
+
+        // The same command line with the flag read as absent: clap still hands
+        // over `throughput`, and the overrides must not take it.
+        let unasked = PluginBackendOverrides::from_sim_args(
+            &sim_args(&["--plugin-backend-async-mode", "throughput"]),
+            false,
+        );
+        assert_eq!(
+            unasked.async_mode, None,
+            "an absent flag leaves the mode to whoever built the params"
+        );
+        assert!(
+            unasked.choice.is_some(),
+            "the backend choice is carried whether or not it was written"
+        );
+    }
+
+    /// Params keep the mode they were built with when the overrides carry none.
+    #[test]
+    fn params_keep_their_mode_when_the_overrides_carry_none() {
+        let config: SimConfig = toml::from_str(
+            r#"
+body = "earth"
+
+[[satellite]]
+name = "a"
+altitude = 400.0
+"#,
+        )
+        .expect("valid test toml");
+        let mut params = SimParams::from_config(&config).expect("valid test config");
+        assert_eq!(
+            params.plugin_backend_async_mode,
+            PluginAsyncModeChoice::Deterministic,
+            "a config-built simulation starts deterministic"
+        );
+
+        PluginBackendOverrides::from_sim_args(
+            &sim_args(&["--plugin-backend-async-mode", "throughput"]),
+            false,
+        )
+        .apply(&mut params);
+
+        assert_eq!(
+            params.plugin_backend_async_mode,
+            PluginAsyncModeChoice::Deterministic,
+            "and keeps it when nothing on the command line asked otherwise"
+        );
+    }
 
     /// A WebSocket `start_simulation` goes through the same config gate as
     /// `orts serve --config`: the serve loop never drains a `[[command]]`

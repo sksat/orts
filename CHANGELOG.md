@@ -803,11 +803,19 @@ section is subdivided by package.
   builds them with `SimParams::from_config`, an idle server takes them from its
   client's `start_simulation` — so whatever was written is dropped. A command
   that used to be accepted because its values matched the defaults is now
-  refused by name. `--plugin-backend-async-mode` is refused on every `serve`
-  path, including the one with an orbit on the command line where the other
-  tuning flags are read: `ServeEngine` builds its plugin cache with
-  `WasmPluginCache::new()` and never resolves a mode, so the flag reaches
-  nothing. ([#522](https://github.com/sksat/orts/issues/522))
+  refused by name. ([#522](https://github.com/sksat/orts/issues/522))
+- `serve` runs its plugins in the async mode
+  `--plugin-backend-async-mode` asks for, including for fleets a client starts
+  later: the flag rides `PluginBackendOverrides` into every `SimParams` the
+  manager builds, and `ServeEngine` creates its plugin cache with the mode
+  instead of with `WasmPluginCache::new()`, whose mode is always
+  `Deterministic`. Leaving the flag out keeps `serve` on `Deterministic` rather
+  than on the flag's own default of `throughput`, which is what a server nobody
+  asked has always done — so a command line that does not name the flag runs as
+  before. What `throughput` buys `serve` is the multi-worker runtime: its step
+  drives satellites in turn, so the control steps do not overlap the way
+  `run`'s do ([#548](https://github.com/sksat/orts/issues/548)).
+  ([#536](https://github.com/sksat/orts/issues/536))
 
 #### Added
 - `frame` / `--frame {simple-eci|gcrs}` and `eop` / `--eop {auto|PATH|zero}`:

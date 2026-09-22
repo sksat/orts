@@ -328,7 +328,7 @@ pub struct SimArgs {
     #[arg(long)]
     pub plugin_backend_threshold: Option<usize>,
 
-    /// Async backend execution mode (`orts run` only).
+    /// Async backend execution mode.
     ///
     /// - `throughput` (default): multi-worker tokio runtime,
     ///   `orts run` fans the per-satellite control step out
@@ -342,8 +342,17 @@ pub struct SimArgs {
     ///   guarantee (e.g. for future features that introduce
     ///   cross-satellite side effects or shared mutable host state).
     ///
-    /// Ignored when `--plugin-backend=sync`. `orts serve` currently
-    /// always runs in deterministic mode regardless of this flag.
+    /// Ignored when `--plugin-backend=sync`.
+    ///
+    /// `orts serve` builds its plugin runtime in the mode this flag asks
+    /// for, including for fleets a client starts later — the server
+    /// operator picks how its plugins run. Leaving the flag out puts
+    /// `serve` in `deterministic` rather than this flag's default, which
+    /// is what a server that was never asked has always done.
+    ///
+    /// The speedup above is `run`'s. `serve` steps its satellites in turn
+    /// and waits for each controller, so `throughput` buys it a
+    /// multi-worker runtime rather than control steps that overlap.
     #[arg(long, value_enum, default_value = "throughput")]
     pub plugin_backend_async_mode: PluginAsyncModeChoice,
 }
