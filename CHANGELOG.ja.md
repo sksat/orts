@@ -1151,6 +1151,16 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   落としていた mantissa の半分を回復した。非退化な軌道の値は変わらない。([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- OMM の parser は `MEAN_ELEMENT_THEORY = SGP/SGP4` を SGP4 として読む。CelesTrak の KVN は、
+  XML が `SGP4` と書き JSON がキーを省く element set に、この値を書く (ISS で確かめた)。その KVN は
+  `unsupported OMM MEAN_ELEMENT_THEORY 'SGP/SGP4' (only SGP4 is read)` で拒否され、
+  `orts run --omm` は exit 1 だった。CCSDS 502.0-B-3 は `SGP/SGP4` を TLE から作った OMM の印として
+  使い (理論の表では `SGP` と `SGP4` を別に挙げる)、配布される TLE はすべて SGP4 で作られているので、
+  この値を TLE と同じく SGP4 として読む。出典は parser のコードにリンクした。いまは XML / JSON と同じ
+  record に解析され、
+  `orts run` の CSV のデータ行は ISS の 3LE からのものと一致する。`SGP` 単独、`SGP4-XP`、
+  `SGP/SGP4-XP` は別の理論なので、これまでどおり拒否する
+  ([#561](https://github.com/sksat/orts/issues/561))
 - `Finals2000A::parse` (したがって `EopTable::from_finals2000a` / `fetch`) が配布
   されている `finals2000A.all` を読めるようにした。ファイル末尾には日付だけあって
   EOP 列がすべて空の行が約 50 行 (全幅に空白詰め) 並んでおり、parser はその最初の

@@ -294,6 +294,7 @@ mod tests {
             (r#""REF_FRAME": "GCRF","#, "REF_FRAME"),
             (r#""TIME_SYSTEM": "TAI","#, "TIME_SYSTEM"),
             (r#""MEAN_ELEMENT_THEORY": "DSST","#, "MEAN_ELEMENT_THEORY"),
+            (r#""MEAN_ELEMENT_THEORY": "SGP","#, "MEAN_ELEMENT_THEORY"),
         ] {
             let json = ISS_OMM_JSON.replacen('{', &format!("{{{field}"), 1);
             match parse(&json) {
@@ -311,6 +312,10 @@ mod tests {
             parse(&conforming).unwrap().elements.fields().norad_cat_id,
             25544
         );
+        // CelesTrak's KVN spelling of the same theory (#561) reads as SGP4
+        // here too, since all three decoders share the check.
+        let celestrak = ISS_OMM_JSON.replacen('{', r#"{"MEAN_ELEMENT_THEORY": "SGP/SGP4","#, 1);
+        assert_eq!(parse(&celestrak).unwrap(), parse(ISS_OMM_JSON).unwrap());
     }
 
     #[test]
