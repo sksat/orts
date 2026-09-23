@@ -261,20 +261,36 @@ fn test_cli_no_config_no_orbit_args_errors() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// Environment that makes every HTTP(S) request an `orts` process sends fail.
+///
+/// Each proxy variable ureq reads points at port 9 (discard), where no proxy
+/// listens. ureq takes the first of `ALL_PROXY`, `all_proxy`, `HTTPS_PROXY`,
+/// `https_proxy`, `HTTP_PROXY`, `http_proxy` that parses, so an inherited
+/// `ALL_PROXY` would win over the other five if it were left in place. The
+/// `NO_PROXY` bypass lists are emptied for the same reason. A test that fails
+/// a fetch this way needs no network and does not depend on having none.
+const UNREACHABLE_PROXY_ENV: &[(&str, &str)] = &[
+    ("ALL_PROXY", "http://127.0.0.1:9"),
+    ("all_proxy", "http://127.0.0.1:9"),
+    ("HTTPS_PROXY", "http://127.0.0.1:9"),
+    ("https_proxy", "http://127.0.0.1:9"),
+    ("HTTP_PROXY", "http://127.0.0.1:9"),
+    ("http_proxy", "http://127.0.0.1:9"),
+    ("NO_PROXY", ""),
+    ("no_proxy", ""),
+];
+
 /// An orbit that cannot be read or fetched stops `run` with an error and exit
 /// 1, as a config that cannot be read does (#554). These used to panic,
 /// exiting 101 with a backtrace hint.
 ///
-/// The NORAD fetch fails through a proxy nothing listens on, so the test
-/// needs no network and does not depend on having none.
+/// The NORAD fetch fails through `UNREACHABLE_PROXY_ENV`.
 #[test]
 fn test_cli_orbit_input_errors_exit_one() {
     let binary = env!("CARGO_BIN_EXE_orts");
     let dir = std::env::temp_dir().join(format!("orts-e2e-orbit-errors-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("bad.tle"), "garbage\nnot a tle\n").unwrap();
-    // Port 9 (discard) has no HTTP proxy behind it.
-    let unreachable_proxy = "http://127.0.0.1:9";
 
     for (args, says) in [
         (vec!["--tle", "bad.tle"], "Failed to parse TLE"),
@@ -290,12 +306,7 @@ fn test_cli_orbit_input_errors_exit_one() {
     ] {
         let output = Command::new(binary)
             .current_dir(&dir)
-            .env("HTTPS_PROXY", unreachable_proxy)
-            .env("https_proxy", unreachable_proxy)
-            .env("HTTP_PROXY", unreachable_proxy)
-            .env("http_proxy", unreachable_proxy)
-            .env("NO_PROXY", "")
-            .env("no_proxy", "")
+            .envs(UNREACHABLE_PROXY_ENV.iter().copied())
             .args(["run", "--format", "csv", "--duration", "60"])
             .args(&args)
             .output()

@@ -1137,6 +1137,25 @@ async fn test_websocket_unreadable_message_is_answered() {
     result.expect("test timed out after 30 seconds");
 }
 
+/// Environment that makes every HTTP(S) request an `orts` process sends fail.
+///
+/// Each proxy variable ureq reads points at port 9 (discard), where no proxy
+/// listens. ureq takes the first of `ALL_PROXY`, `all_proxy`, `HTTPS_PROXY`,
+/// `https_proxy`, `HTTP_PROXY`, `http_proxy` that parses, so an inherited
+/// `ALL_PROXY` would win over the other five if it were left in place. The
+/// `NO_PROXY` bypass lists are emptied for the same reason. A test that fails
+/// a fetch this way needs no network and does not depend on having none.
+const UNREACHABLE_PROXY_ENV: &[(&str, &str)] = &[
+    ("ALL_PROXY", "http://127.0.0.1:9"),
+    ("all_proxy", "http://127.0.0.1:9"),
+    ("HTTPS_PROXY", "http://127.0.0.1:9"),
+    ("https_proxy", "http://127.0.0.1:9"),
+    ("HTTP_PROXY", "http://127.0.0.1:9"),
+    ("http_proxy", "http://127.0.0.1:9"),
+    ("NO_PROXY", ""),
+    ("no_proxy", ""),
+];
+
 /// Send one JSON message on a split WebSocket writer.
 async fn send_json(
     write: &mut futures_util::stream::SplitSink<
@@ -1175,32 +1194,19 @@ fn circular_start() -> serde_json::Value {
 /// the request is acknowledged and the manager meets the failure while it
 /// builds the simulation. It used to panic there, after which the server
 /// closed every connection, new ones included, until it was restarted. The
-/// fetch goes through a proxy nothing listens on, so the test needs no
-/// network and does not depend on having none.
+/// fetch fails through `UNREACHABLE_PROXY_ENV`.
 ///
 /// `fetch_default` answers from `$HOME/.cache/orts/SW-Last5Years.txt` when
 /// that file is under a day old, without the request, so the server gets an
-/// empty `HOME` of its own; an inherited `NO_PROXY` could also let the
-/// request past the proxy, so it is cleared.
+/// empty `HOME` of its own.
 #[tokio::test]
 async fn test_websocket_unbuildable_start_leaves_the_server_usable() {
     let port = test_port() + 23;
     let home_dir = tempfile::tempdir().expect("a temporary HOME");
     let home = home_dir.path().to_str().expect("a UTF-8 temp path");
-    // Port 9 (discard) has no HTTP proxy behind it.
-    let unreachable_proxy = "http://127.0.0.1:9";
-    let mut server = Server::spawn_idle_with_env(
-        port,
-        &[
-            ("HOME", home),
-            ("HTTPS_PROXY", unreachable_proxy),
-            ("https_proxy", unreachable_proxy),
-            ("HTTP_PROXY", unreachable_proxy),
-            ("http_proxy", unreachable_proxy),
-            ("NO_PROXY", ""),
-            ("no_proxy", ""),
-        ],
-    );
+    let mut env = UNREACHABLE_PROXY_ENV.to_vec();
+    env.push(("HOME", home));
+    let mut server = Server::spawn_idle_with_env(port, &env);
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
         let url = format!("ws://localhost:{port}/ws");
@@ -1278,25 +1284,12 @@ async fn test_websocket_add_with_a_malformed_tle_is_refused() {
 /// (#554).
 ///
 /// `validate_sim_config` builds each satellite's spec, which fetches a NORAD
-/// orbit's TLE; a failed fetch used to panic there. The fetch goes through a
-/// proxy nothing listens on, so the test needs no network and does not depend
-/// on having none.
+/// orbit's TLE; a failed fetch used to panic there. The fetch fails through
+/// `UNREACHABLE_PROXY_ENV`.
 #[tokio::test]
 async fn test_websocket_norad_start_the_server_cannot_fetch_is_refused() {
     let port = test_port() + 25;
-    // Port 9 (discard) has no HTTP proxy behind it.
-    let unreachable_proxy = "http://127.0.0.1:9";
-    let mut server = Server::spawn_idle_with_env(
-        port,
-        &[
-            ("HTTPS_PROXY", unreachable_proxy),
-            ("https_proxy", unreachable_proxy),
-            ("HTTP_PROXY", unreachable_proxy),
-            ("http_proxy", unreachable_proxy),
-            ("NO_PROXY", ""),
-            ("no_proxy", ""),
-        ],
-    );
+    let mut server = Server::spawn_idle_with_env(port, UNREACHABLE_PROXY_ENV);
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
         let url = format!("ws://localhost:{port}/ws");
