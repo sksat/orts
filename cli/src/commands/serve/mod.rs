@@ -701,4 +701,18 @@ mod tests {
         assert_eq!(kind, ErrorKind::ArgumentConflict, "{msg:?}");
         assert!(msg.error.contains("--sat"), "{msg:?}");
     }
+
+    /// Two orbits are refused as a usage error (#551). `serve` builds a
+    /// command-line orbit with `SimParams::from_sim_args`, which used to panic
+    /// on the pair.
+    #[test]
+    fn two_orbits_are_refused() {
+        let (kind, msg) = refusal(&["--sat", "altitude=400", "--norad-id", "25544"])
+            .expect("two orbits cannot both be run");
+        assert_eq!(kind, ErrorKind::ArgumentConflict, "{msg:?}");
+        assert!(
+            msg.error.contains("--sat") && msg.error.contains("--norad-id"),
+            "{msg:?}"
+        );
+    }
 }

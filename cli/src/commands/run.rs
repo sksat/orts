@@ -2682,6 +2682,45 @@ mod tests {
         }
     }
 
+    /// Two orbits on one command line are refused, and the error names both
+    /// flags (#551).
+    ///
+    /// `SimParams::from_sim_args` used to panic on the pair (exit 101). The
+    /// two TLE lines count as one orbit here, since they name one together.
+    #[test]
+    fn two_orbits_are_refused() {
+        let orbits = [
+            ("--sat", vec!["--sat", "altitude=400"]),
+            ("--tle", vec!["--tle", "x.tle"]),
+            ("--omm", vec!["--omm", "x.json"]),
+            (
+                "--tle-line1",
+                vec!["--tle-line1", "1 25544U", "--tle-line2", "2 25544"],
+            ),
+            ("--norad-id", vec!["--norad-id", "25544"]),
+        ];
+        for (_, argv) in &orbits {
+            assert_eq!(run_refusal(argv), None, "{argv:?} alone is one orbit");
+        }
+        for (i, (first, a)) in orbits.iter().enumerate() {
+            for (second, b) in &orbits[i + 1..] {
+                let argv = [a.as_slice(), b.as_slice()].concat();
+                let (kind, msg) = run_refusal(&argv).unwrap_or_else(|| panic!("{argv:?}"));
+                assert_eq!(kind, clap::error::ErrorKind::ArgumentConflict, "{msg}");
+                // The usage line echoes every flag written, so only the error
+                // above it shows which flags clap names.
+                let error = msg.split_once("Usage:").map_or(msg.as_str(), |(e, _)| e);
+                for flag in [first, second] {
+                    // `<` ends the flag, so `--tle` does not match `--tle-line1`.
+                    assert!(
+                        error.contains(&format!("{flag} <")),
+                        "{flag} is named: {error}"
+                    );
+                }
+            }
+        }
+    }
+
     /// Truncating a gravity field needs the field.
     #[test]
     fn a_gravity_truncation_without_a_field_is_refused() {

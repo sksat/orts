@@ -1029,6 +1029,12 @@ section is subdivided by package.
   under RK4 when `output_interval` equals `dt`. ([#466](https://github.com/sksat/orts/pull/466))
 
 #### Fixed
+- `run` and `serve` refuse two orbits on one command line with a usage error
+  (exit 2) that names both flags: `the argument '--sat <SATS>' cannot be used
+  with '--norad-id <NORAD_ID>'`. They used to panic in
+  `SimParams::from_sim_args` (exit 101). Any two of `--sat`, `--tle`, `--omm`,
+  `--norad-id` and the `--tle-line1` / `--tle-line2` pair are refused.
+  ([#551](https://github.com/sksat/orts/issues/551))
 - The angular momentum a saturating reaction wheel used to lose (see `orts`
   above) was lost on the `mode = "controlled"` path too — `orts run
   --controller` and `orts serve` — which stepped with `advance_to` and so had no
