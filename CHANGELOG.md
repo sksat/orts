@@ -1419,6 +1419,14 @@ section is subdivided by package.
   Non-degenerate orbits are unchanged. ([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- The OMM parsers read `MEAN_ELEMENT_THEORY = SGP/SGP4` as SGP4. CelesTrak's
+  KVN writes that value (measured on the ISS) for the element set its XML
+  labels `SGP4` and its JSON leaves unlabelled, and the KVN was refused with
+  `unsupported OMM MEAN_ELEMENT_THEORY 'SGP/SGP4' (only SGP4 is read)` —
+  `orts run --omm` on it exited 1. It now parses to the same record as the XML and JSON, and
+  `orts run` gives the same CSV rows as from the ISS 3LE. `SGP` alone,
+  `SGP4-XP` and `SGP/SGP4-XP` are other theories and stay refused.
+  ([#561](https://github.com/sksat/orts/issues/561))
 - `Finals2000A::parse` (and so `EopTable::from_finals2000a` / `fetch`) reads
   the published `finals2000A.all`. The file ends with about fifty dated rows,
   padded to full width, whose EOP columns are all blank; the parser read the

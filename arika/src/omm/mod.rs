@@ -17,7 +17,8 @@
 //! All three decoders also *check* the metadata keywords that fix how the
 //! elements must be interpreted — `CENTER_NAME`, `REF_FRAME`, `TIME_SYSTEM`,
 //! `MEAN_ELEMENT_THEORY` — and reject a document declaring anything but
-//! `EARTH` / `TEME` / `UTC` / `SGP4` ([`UnsupportedMetadata`]). The record they
+//! `EARTH` / `TEME` / `UTC` / `SGP4` ([`UnsupportedMetadata`]; `SGP4` may also be
+//! spelled `SGP/SGP4`, as CelesTrak's KVN writes it). The record they
 //! decode into hard-codes exactly those four assumptions, so honouring the
 //! keywords is not optional. CCSDS lists all four as mandatory, but CelesTrak's
 //! GP JSON and CSV flavours omit them; an absent keyword is therefore read as
@@ -47,6 +48,15 @@ const METADATA: [(&str, &str); 4] = [
     ("MEAN_ELEMENT_THEORY", "SGP4"),
 ];
 
+/// Other spellings of a [`METADATA`] value, read as that value.
+///
+/// CelesTrak's KVN writes `MEAN_ELEMENT_THEORY = SGP/SGP4` for the element sets
+/// its XML labels `SGP4` and its JSON leaves unlabelled; the three are the same
+/// GP data, and the KVN one parses to the same record once read as SGP4 (#561).
+/// An alias matches the whole value, like [`METADATA`]: `SGP` alone, `SGP4-XP`
+/// and `SGP/SGP4-XP` are other theories and stay rejected.
+const ALIASES: [(&str, &str); 1] = [("MEAN_ELEMENT_THEORY", "SGP/SGP4")];
+
 /// An OMM metadata keyword whose declared value this crate cannot honor.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnsupportedMetadata {
@@ -54,7 +64,8 @@ pub struct UnsupportedMetadata {
     pub key: &'static str,
     /// The value the document declared.
     pub value: String,
-    /// The only value this crate can read for that keyword.
+    /// The value this crate reads for that keyword, in its canonical
+    /// spelling (`SGP4` also accepts `SGP/SGP4`).
     pub supported: &'static str,
 }
 
@@ -75,7 +86,8 @@ impl core::fmt::Display for UnsupportedMetadata {
 #[cfg(feature = "std")]
 impl std::error::Error for UnsupportedMetadata {}
 
-/// Check one `KEYWORD = VALUE` pair against [`METADATA`], case-insensitively.
+/// Check one `KEYWORD = VALUE` pair against [`METADATA`] and its [`ALIASES`],
+/// case-insensitively.
 ///
 /// Keywords outside the table are not constrained and pass. An absent keyword
 /// is never checked at all: CCSDS lists these four as mandatory, but the
@@ -86,7 +98,10 @@ pub(crate) fn check_metadata(key: &str, value: &str) -> Result<(), UnsupportedMe
         return Ok(());
     };
     let value = value.trim();
-    if value.eq_ignore_ascii_case(supported) {
+    let is_alias = ALIASES
+        .iter()
+        .any(|&(k, alias)| k == key && value.eq_ignore_ascii_case(alias));
+    if value.eq_ignore_ascii_case(supported) || is_alias {
         Ok(())
     } else {
         Err(UnsupportedMetadata {

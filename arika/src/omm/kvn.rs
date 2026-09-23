@@ -290,6 +290,17 @@ NORAD_CAT_ID = 1";
                 "MEAN_ELEMENT_THEORY = SGP4-XP",
                 "MEAN_ELEMENT_THEORY",
             ),
+            // `SGP/SGP4` is read as SGP4 (see below); these are not it.
+            (
+                "MEAN_ELEMENT_THEORY = SGP4",
+                "MEAN_ELEMENT_THEORY = SGP",
+                "MEAN_ELEMENT_THEORY",
+            ),
+            (
+                "MEAN_ELEMENT_THEORY = SGP4",
+                "MEAN_ELEMENT_THEORY = SGP/SGP4-XP",
+                "MEAN_ELEMENT_THEORY",
+            ),
         ] {
             let kvn = ISS_OMM_KVN.replace(from, to);
             assert_ne!(kvn, ISS_OMM_KVN, "fixture no longer contains '{from}'");
@@ -306,6 +317,21 @@ NORAD_CAT_ID = 1";
             .replace("CENTER_NAME = EARTH", "CENTER_NAME = Earth")
             .replace("TIME_SYSTEM = UTC", "TIME_SYSTEM = utc");
         assert_eq!(parse(&kvn).unwrap().elements.fields().norad_cat_id, 25544);
+    }
+
+    /// CelesTrak's KVN spells the theory `SGP/SGP4`, for the element sets its
+    /// XML labels `SGP4` (#561). The spelling parses to the same record.
+    #[test]
+    fn the_celestrak_sgp_sgp4_theory_reads_as_sgp4() {
+        let sgp4 = parse(ISS_OMM_KVN).unwrap();
+        for spelling in ["SGP/SGP4", "sgp/sgp4", "  SGP/SGP4  "] {
+            let kvn = ISS_OMM_KVN.replace(
+                "MEAN_ELEMENT_THEORY = SGP4",
+                &format!("MEAN_ELEMENT_THEORY = {spelling}"),
+            );
+            assert_ne!(kvn, ISS_OMM_KVN, "fixture no longer contains the theory");
+            assert_eq!(parse(&kvn).unwrap(), sgp4, "{spelling:?}");
+        }
     }
 
     #[test]

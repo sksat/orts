@@ -397,6 +397,28 @@ mod tests {
         }
     }
 
+    /// CelesTrak's KVN spelling of the theory, `SGP/SGP4` (#561), reads as
+    /// SGP4 in XML too; `SGP` alone is a different theory and stays refused.
+    #[test]
+    fn the_sgp_sgp4_theory_reads_as_sgp4() {
+        let theory = "<MEAN_ELEMENT_THEORY>SGP4</MEAN_ELEMENT_THEORY>";
+        let celestrak = ISS_OMM_XML.replace(
+            theory,
+            "<MEAN_ELEMENT_THEORY>SGP/SGP4</MEAN_ELEMENT_THEORY>",
+        );
+        assert_ne!(
+            celestrak, ISS_OMM_XML,
+            "fixture no longer contains the theory"
+        );
+        assert_eq!(parse(&celestrak).unwrap(), parse(ISS_OMM_XML).unwrap());
+
+        let sgp = ISS_OMM_XML.replace(theory, "<MEAN_ELEMENT_THEORY>SGP</MEAN_ELEMENT_THEORY>");
+        match parse(&sgp) {
+            Err(XmlParseError::Unsupported(e)) => assert_eq!(e.key, "MEAN_ELEMENT_THEORY"),
+            other => panic!("SGP must be rejected, got {other:?}"),
+        }
+    }
+
     #[test]
     fn exact_name_match_only() {
         // A document with only MEAN_MOTION_DOT must not satisfy MEAN_MOTION.
