@@ -1037,6 +1037,15 @@ section is subdivided by package.
   under RK4 when `output_interval` equals `dt`. ([#466](https://github.com/sksat/orts/pull/466))
 
 #### Fixed
+- `run` writes each output time once. With a decimal output interval the last
+  CSV row appeared twice: `--dt 0.2 --duration 3600` gave 18002 rows, the last
+  two both `3600.000`. The output times were a running sum of the interval,
+  and after 18000 additions of 0.2 the sum is 1.08e-9 short of the 3600 s end,
+  outside the 1e-9 in which the run counts itself finished, so the run
+  recorded that time and then the end. The times are now `n × interval`, as
+  the controlled run already counted them, and a time within 1e-9 of the end
+  is the end itself (`6 × 0.3` is `1.7999999999999998`). Orbit-only and
+  attitude runs were affected. ([#562](https://github.com/sksat/orts/issues/562))
 - `run` and `serve` refuse two orbits on one command line with a usage error
   (exit 2) that names both flags: `the argument '--sat <SATS>' cannot be used
   with '--norad-id <NORAD_ID>'`. They used to panic in

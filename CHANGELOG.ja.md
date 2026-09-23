@@ -813,6 +813,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `dt` と同じなら、モデル評価の作業が 4 分の 1 ほど増える。([#466](https://github.com/sksat/orts/pull/466))
 
 #### Fixed
+- `run` は出力時刻ごとに 1 行だけ書く。出力間隔が小数だと、CSV の最後の行が 2 回出ていた:
+  `--dt 0.2 --duration 3600` で 18002 行になり、最後の 2 行がどちらも `3600.000` だった。出力
+  時刻は間隔の足し算で作っていて、0.2 を 18000 回足すと終端の 3600 s より 1.08e-9 小さい。run が
+  終わったとみなす 1e-9 の範囲の外なので、その時刻と終端の 2 つを記録していた。いまは出力時刻を
+  controlled な run と同じく `n × 間隔` で数え、終端から 1e-9 以内の時刻は終端そのものにする
+  (`6 × 0.3` は `1.7999999999999998`)。orbit-only と姿勢付きの run が該当する
+  ([#562](https://github.com/sksat/orts/issues/562))
 - `run` と `serve` は、1 つのコマンドラインに書かれた 2 つの軌道を usage エラー (exit 2) で
   止め、両方のフラグを名指しする: `the argument '--sat <SATS>' cannot be used with
   '--norad-id <NORAD_ID>'`。以前は `SimParams::from_sim_args` が panic していた (exit 101)。
