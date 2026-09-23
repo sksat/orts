@@ -243,6 +243,20 @@ fn validate_sim_config(config: &SimConfig) -> Result<(), String> {
                 .to_string(),
         );
     }
+    // `space_weather` is a file on the server unless it is `"auto"`, the
+    // CelesTrak fetch, so a client may ask for that alone. A FIFO path held
+    // the manager in `read_to_string`, and the server stopped completing new
+    // WebSocket handshakes (#556).
+    if let Some(path) = config.space_weather.as_deref()
+        && path != "auto"
+    {
+        return Err(format!(
+            "space_weather = \"{path}\" is not accepted over WebSocket: a client may ask for \
+             \"auto\" (fetched from CelesTrak); a file comes with the simulation `orts serve` \
+             starts from its own command line — a `--config` file carrying `space_weather`, or \
+             an orbit with `--space-weather <PATH>`"
+        ));
+    }
 
     let body = crate::satellite::parse_body(&config.body);
     let mu = body.properties().mu;
@@ -859,6 +873,31 @@ orbit = { type = "circular", altitude = 500 }
         .expect("valid test toml");
         let err = validate_sim_config(&config).unwrap_err();
         assert!(err.contains("not accepted over WebSocket"), "got: {err}");
+    }
+
+    /// A `space_weather` path names a server-side file too, so a WebSocket
+    /// client may ask only for the fetch (#556).
+    ///
+    /// Measured before this check: a FIFO path held the manager in
+    /// `read_to_string`, and the server stopped completing new WebSocket
+    /// handshakes.
+    #[test]
+    fn ws_start_accepts_only_the_space_weather_fetch() {
+        let config_with = |space_weather: &str| -> SimConfig {
+            toml::from_str(&format!(
+                "{space_weather}\n[[satellites]]\nid = \"a\"\n\
+                 orbit = {{ type = \"circular\", altitude = 500 }}\n"
+            ))
+            .expect("valid test toml")
+        };
+        let err =
+            validate_sim_config(&config_with("space_weather = \"/tmp/sw.fifo\"")).unwrap_err();
+        assert!(err.contains("not accepted over WebSocket"), "got: {err}");
+        assert!(err.contains("/tmp/sw.fifo"), "the path is named: {err}");
+
+        validate_sim_config(&config_with("space_weather = \"auto\""))
+            .expect("the CelesTrak fetch opens no server file");
+        validate_sim_config(&config_with("")).expect("no space weather at all");
     }
 
     /// A WebSocket `start_simulation` asking for `gcrs` is told, not served

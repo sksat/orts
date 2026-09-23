@@ -795,6 +795,14 @@ section is subdivided by package.
 ### `orts-cli` (Rust, crates.io, binary)
 
 #### Changed
+- **BREAKING**: `serve` refuses a `space_weather` file path in a WebSocket
+  `start_simulation`, as it refuses `[gravity_field]`: a client may leave it
+  out or ask for `"auto"`, the CelesTrak fetch. A path named a file on the
+  server, which the manager then read — measured with a FIFO, the read never
+  returned and the server stopped completing new WebSocket handshakes. A
+  `--config` file and `--space-weather <PATH>` still take a path, since the
+  person starting the server names it.
+  ([#556](https://github.com/sksat/orts/issues/556))
 - **BREAKING**: `run` and `serve` refuse a command-line flag their simulation
   would not read. A command takes its simulation either from a config
   (`--config`, or the `orts.toml` a bare `run` finds) or from an orbit on the

@@ -610,6 +610,12 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `orts-cli` (Rust, crates.io, binary)
 
 #### Changed
+- **BREAKING**: `serve` は、WebSocket の `start_simulation` に書かれた `space_weather` の
+  ファイルパスを、`[gravity_field]` と同じく拒否する。client は指定しないか、CelesTrak から
+  取得する `"auto"` を指定する。パスは server のファイルを指し、manager がそれを読んでいた —
+  FIFO で測ると読み込みが戻らず、server は新しい WebSocket の handshake を完了しなくなった。
+  `--config` のファイルと `--space-weather <PATH>` は、server を起動する人が指定するので、
+  これまでどおりパスを受け付ける ([#556](https://github.com/sksat/orts/issues/556))
 - **BREAKING**: `run` と `serve` は、simulation が読まないコマンドラインのフラグを拒否する。コマンドは
   simulation を config (`--config`、または引数なしの `run` が見つける `orts.toml`) か、コマンドラインの
   軌道指定から取り、調整フラグ (`--dt` / `--atol` / `--integrator` / `--duration` / `--frame` /
