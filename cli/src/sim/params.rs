@@ -388,7 +388,8 @@ impl SimParams {
         let epoch = args.epoch.as_ref().map(|s| parse_epoch(s)).transpose()?;
 
         let satellites = if !args.sats.is_empty() {
-            // --sat flags provided: parse each spec
+            // --sat flags provided: parse each spec. clap refuses another orbit
+            // beside them (`SimArgs`); this guards a `SimArgs` built without it.
             if args.tle.is_some()
                 || args.omm.is_some()
                 || args.tle_line1.is_some()
@@ -805,6 +806,8 @@ impl SimParams {
     /// Parse the orbit-source CLI args (`--norad-id` / `--tle` / `--omm` /
     /// `--tle-line1/2`) into a [`ParsedElementSet`], if any was given.
     pub fn parse_orbit_from_args(args: &SimArgs) -> Option<ParsedElementSet> {
+        // clap refuses two orbit sources, and one TLE line alone (`SimArgs`);
+        // the panics below guard a `SimArgs` built without it.
         // --norad-id: fetch from CelesTrak / SatNOGS.
         if let Some(norad_id) = args.norad_id {
             if args.tle.is_some()

@@ -191,6 +191,9 @@ pub enum OutputFormat {
 /// value does. The plugin-backend flags belong to neither group: both commands
 /// apply them whichever input they have.
 ///
+/// The orbit flags each name a whole orbit, so they conflict with one another,
+/// except `--tle-line1` and `--tle-line2`, which name one orbit together.
+///
 /// A subcommand that flattens this inherits the rule. One that lets the
 /// command line adjust a config would need the inputs split first.
 #[derive(Parser, Debug, Clone)]
@@ -229,11 +232,21 @@ pub struct SimArgs {
     pub epoch: Option<String>,
 
     /// TLE file path (2-line or 3-line format), use "-" for stdin
-    #[arg(long, group = "orbit", conflicts_with = "config")]
+    #[arg(
+        long,
+        group = "orbit",
+        conflicts_with = "config",
+        conflicts_with_all = ["omm", "tle_line1", "tle_line2", "norad_id", "sats"]
+    )]
     pub tle: Option<String>,
 
     /// OMM file path (CCSDS JSON / KVN / XML), use "-" for stdin
-    #[arg(long, group = "orbit", conflicts_with = "config")]
+    #[arg(
+        long,
+        group = "orbit",
+        conflicts_with = "config",
+        conflicts_with_all = ["tle", "tle_line1", "tle_line2", "norad_id", "sats"]
+    )]
     pub omm: Option<String>,
 
     /// TLE line 1 (direct input, use with --tle-line2)
@@ -241,7 +254,8 @@ pub struct SimArgs {
         long,
         group = "orbit",
         conflicts_with = "config",
-        requires = "tle_line2"
+        requires = "tle_line2",
+        conflicts_with_all = ["tle", "omm", "norad_id", "sats"]
     )]
     pub tle_line1: Option<String>,
 
@@ -250,19 +264,31 @@ pub struct SimArgs {
         long,
         group = "orbit",
         conflicts_with = "config",
-        requires = "tle_line1"
+        requires = "tle_line1",
+        conflicts_with_all = ["tle", "omm", "norad_id", "sats"]
     )]
     pub tle_line2: Option<String>,
 
     /// NORAD catalog number to fetch TLE from CelesTrak
-    #[arg(long, group = "orbit", conflicts_with = "config")]
+    #[arg(
+        long,
+        group = "orbit",
+        conflicts_with = "config",
+        conflicts_with_all = ["tle", "omm", "tle_line1", "tle_line2", "sats"]
+    )]
     pub norad_id: Option<u32>,
 
     /// Satellite specifications (repeatable).
     /// Format: key=value,key=value (keys: altitude, norad-id, tle-line1, tle-line2, id, name).
     /// Quick shorthand for simple cases; for generated or multi-satellite setups
     /// prefer a config file via --config (see `orts config example`).
-    #[arg(long = "sat", num_args = 1, group = "orbit", conflicts_with = "config")]
+    #[arg(
+        long = "sat",
+        num_args = 1,
+        group = "orbit",
+        conflicts_with = "config",
+        conflicts_with_all = ["tle", "omm", "tle_line1", "tle_line2", "norad_id"]
+    )]
     pub sats: Vec<String>,
 
     /// Integration method
@@ -642,6 +668,43 @@ mod tests {
                 conflicts.iter().any(|other| other == "config"),
                 "`{id}` conflicts with --config: {conflicts:?}"
             );
+        }
+    }
+
+    /// The orbit flags conflict with one another, except the two TLE lines,
+    /// which name one orbit together.
+    ///
+    /// An orbit flag added without these conflicts would let two orbits
+    /// through to `SimParams::from_sim_args`, which panics on the pair (#551).
+    /// clap refuses a pair when either flag declares the conflict, so either
+    /// side counts here.
+    #[test]
+    fn every_two_orbit_flags_conflict_except_the_tle_lines() {
+        let command = built();
+        let conflicts_of = |id: &str| -> Vec<String> {
+            let arg = command
+                .get_arguments()
+                .find(|arg| arg.get_id().as_str() == id)
+                .expect("a group member is an argument");
+            command
+                .get_arg_conflicts_with(arg)
+                .into_iter()
+                .map(|other| other.get_id().to_string())
+                .collect()
+        };
+        let orbit = group_members("orbit");
+        for (i, a) in orbit.iter().enumerate() {
+            for b in &orbit[i + 1..] {
+                let tle_lines = matches!(
+                    (a.as_str(), b.as_str()),
+                    ("tle_line1", "tle_line2") | ("tle_line2", "tle_line1")
+                );
+                let conflict = conflicts_of(a).contains(b) || conflicts_of(b).contains(a);
+                assert_eq!(
+                    conflict, !tle_lines,
+                    "`{a}` and `{b}` conflict unless they are the TLE lines"
+                );
+            }
         }
     }
 

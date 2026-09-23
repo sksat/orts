@@ -807,6 +807,11 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `dt` と同じなら、モデル評価の作業が 4 分の 1 ほど増える。([#466](https://github.com/sksat/orts/pull/466))
 
 #### Fixed
+- `run` と `serve` は、1 つのコマンドラインに書かれた 2 つの軌道を usage エラー (exit 2) で
+  止め、両方のフラグを名指しする: `the argument '--sat <SATS>' cannot be used with
+  '--norad-id <NORAD_ID>'`。以前は `SimParams::from_sim_args` が panic していた (exit 101)。
+  `--sat` / `--tle` / `--omm` / `--norad-id` と、`--tle-line1` / `--tle-line2` の組のうち、
+  どの 2 つを組み合わせても止まる ([#551](https://github.com/sksat/orts/issues/551))
 - 飽和した reaction wheel が角運動量を失う問題 (上の `orts` を参照) は
   `mode = "controlled"` の経路 — `orts run --controller` と `orts serve` — でも
   起きていた。この経路は `advance_to` で刻んでおり、止まる境界を持っていなかった。
