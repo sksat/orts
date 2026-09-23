@@ -1214,21 +1214,39 @@ async fn test_websocket_unbuildable_start_leaves_the_server_usable() {
         let (mut write, mut read) = ws.split();
         assert_eq!(next_json(&mut read).await["state"], "idle");
 
-        let mut start = circular_start();
-        start["config"]["space_weather"] = "auto".into();
-        send_json(&mut write, start).await;
+        // The failing start, then a valid one on the same connection. The
+        // connection sends the second only after the server has answered the
+        // first, and the manager takes its commands in order, so the second
+        // reaches the manager after the first has failed.
+        let mut failing = circular_start();
+        failing["config"]["space_weather"] = "auto".into();
+        send_json(&mut write, failing).await;
+        let mut next = circular_start();
+        next["config"]["satellites"][0]["id"] = "next".into();
+        send_json(&mut write, next).await;
 
-        // A new connection is still answered, and the server is idle again.
+        // The simulation that starts is the second one. Had the first started,
+        // this would be its `info`, or an "already running" error for the
+        // second.
+        let reply = loop {
+            let msg = next_json(&mut read).await;
+            if msg["type"] == "info" || msg["type"] == "error" {
+                break msg;
+            }
+        };
+        assert_eq!(reply["type"], "info", "{reply}");
+        let ids: Vec<&str> = reply["satellites"]
+            .as_array()
+            .expect("satellites")
+            .iter()
+            .map(|sat| sat["id"].as_str().expect("an id"))
+            .collect();
+        assert_eq!(ids, ["/world/sat/next"]);
+
+        // A new connection is still answered.
         let (ws, _) = connect_async(&url).await.expect("failed to reconnect");
-        let (mut write, mut read) = ws.split();
-        let status = next_json(&mut read).await;
-        assert_eq!(status["type"], "status");
-        assert_eq!(status["state"], "idle");
-
-        // And it starts the next simulation.
-        send_json(&mut write, circular_start()).await;
-        let (info, _) = read_until_type(&mut read, "info", 10).await;
-        assert_eq!(info["satellites"].as_array().expect("satellites").len(), 1);
+        let (_write, mut read) = ws.split();
+        read_until_type(&mut read, "info", 10).await;
     })
     .await;
 
