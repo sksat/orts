@@ -279,7 +279,10 @@ pub struct SimArgs {
     pub norad_id: Option<u32>,
 
     /// Satellite specifications (repeatable).
-    /// Format: key=value,key=value (keys: altitude, norad-id, tle-line1, tle-line2, id, name).
+    /// Format: key=value,key=value. One orbit per satellite: altitude /
+    /// inclination / raan (circular; altitude defaults to 400 km, angles to 0),
+    /// tle-line1 + tle-line2, or norad-id. Also: id, name, ballistic-coeff,
+    /// srp-area-to-mass, srp-cr.
     /// Quick shorthand for simple cases; for generated or multi-satellite setups
     /// prefer a config file via --config (see `orts config example`).
     #[arg(
