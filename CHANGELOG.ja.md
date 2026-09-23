@@ -1154,7 +1154,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - OMM の parser は `MEAN_ELEMENT_THEORY = SGP/SGP4` を SGP4 として読む。CelesTrak の KVN は、
   XML が `SGP4` と書き JSON がキーを省く element set に、この値を書く (ISS で確かめた)。その KVN は
   `unsupported OMM MEAN_ELEMENT_THEORY 'SGP/SGP4' (only SGP4 is read)` で拒否され、
-  `orts run --omm` は exit 1 だった。いまは XML / JSON と同じ record に解析され、
+  `orts run --omm` は exit 1 だった。CCSDS 502.0-B-3 は `SGP/SGP4` を TLE から作った OMM の印として
+  使い (理論の表では `SGP` と `SGP4` を別に挙げる)、配布される TLE はすべて SGP4 で作られているので、
+  この値を TLE と同じく SGP4 として読む。出典は parser のコードにリンクした。いまは XML / JSON と同じ
+  record に解析され、
   `orts run` の CSV のデータ行は ISS の 3LE からのものと一致する。`SGP` 単独、`SGP4-XP`、
   `SGP/SGP4-XP` は別の理論なので、これまでどおり拒否する
   ([#561](https://github.com/sksat/orts/issues/561))

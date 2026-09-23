@@ -319,8 +319,10 @@ NORAD_CAT_ID = 1";
         assert_eq!(parse(&kvn).unwrap().elements.fields().norad_cat_id, 25544);
     }
 
-    /// CelesTrak's KVN spells the theory `SGP/SGP4`, for the element sets its
-    /// XML labels `SGP4` (#561). The spelling parses to the same record.
+    /// `SGP/SGP4` marks an OMM made from a TLE (CCSDS 502.0-B-3; see
+    /// `crate::omm::ALIASES` for the definition), and CelesTrak's KVN declares
+    /// it for the element set its XML labels `SGP4` (#561). It parses to the
+    /// same record as `SGP4`.
     #[test]
     fn the_celestrak_sgp_sgp4_theory_reads_as_sgp4() {
         let sgp4 = parse(ISS_OMM_KVN).unwrap();
