@@ -729,15 +729,7 @@ where
     let mut output = OutputSchedule::new(params.output_interval, last_end_time);
 
     while !group.all_finished() {
-        // A time within 1e-9 of the end — the tolerance `all_finished` counts
-        // as finished — is the end itself: `6 * 0.3` is `1.7999999999999998`,
-        // and a run that sampled there would stop short of its 1.8 s.
-        let at = output.at();
-        let t = if at >= last_end_time - 1e-9 {
-            last_end_time
-        } else {
-            at
-        };
+        let t = output.at().min(last_end_time);
         output.taken();
 
         // Propagation errors are reported, not unwrapped: an invalid step size
@@ -1181,9 +1173,21 @@ impl OutputSchedule {
         }
     }
 
-    /// The next boundary to sample at.
+    /// The next boundary to sample at: `n * interval`, or `duration` itself
+    /// when that lands a rounding below it.
+    ///
+    /// `3 * 0.3` is `0.8999999999999999` and `6 * 0.3` is `1.7999999999999998`.
+    /// Sampling a rounding below the end left the run short of it
+    /// (`propagate_and_record` stops within 1e-9 of the end) or wrote two rows
+    /// the CSV prints alike, one there and one at the end (the controlled
+    /// run's tail), #562.
     fn at(&self) -> f64 {
-        (self.done + 1) as f64 * self.interval
+        let at = (self.done + 1) as f64 * self.interval;
+        if at < self.duration && self.duration - at <= end_snap(self.duration) {
+            self.duration
+        } else {
+            at
+        }
     }
 
     /// End of a span that starts at the current time: the earliest of the next
@@ -1205,6 +1209,17 @@ impl OutputSchedule {
     fn taken(&mut self) {
         self.done += 1;
     }
+}
+
+/// How far below the end a boundary still counts as the end.
+///
+/// 1e-9 is the tolerance within which `IndependentGroup::all_finished` counts a
+/// satellite finished, so a boundary closer than that would end an orbit-only
+/// run short of its end. A few ulps of `duration` cover the one rounding of
+/// `n * interval` at any magnitude: at 8390463.3 s, `27968211 * 0.3` is
+/// 1.9e-9 below it.
+fn end_snap(duration: f64) -> f64 {
+    1e-9_f64.max(4.0 * f64::EPSILON * duration.abs())
 }
 
 /// Whether the ground-station monitors have to see the span that ended at
@@ -1404,9 +1419,10 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Result<Record
     let mut output = OutputSchedule::new(params.output_interval, duration);
     let mut last_output_t = 0.0;
 
-    // Strict: `n * output_interval` can land just below `duration` (3 × 0.3 is
-    // 0.8999999999999999), and a tolerance here would end the run there and
-    // leave `duration` itself unrecorded.
+    // Strict: the run ends at `duration` itself. `OutputSchedule::at` puts a
+    // boundary that lands a rounding below it (3 × 0.3 is 0.8999999999999999)
+    // on `duration`, so the last sample is there; a tolerance here would end
+    // the run before it instead.
     while t < duration {
         // The span ends at whichever comes first: a controller tick, the next
         // output boundary, or the end of the run. `advance_controlled` still
@@ -2338,18 +2354,48 @@ mod tests {
     }
 
     #[test]
-    fn a_boundary_just_below_the_duration_does_not_end_the_run() {
-        // 3 × 0.3 is 0.8999999999999999: sampling there must not be mistaken
-        // for reaching 0.9, or the run's last state is 1e-16 short of it.
+    fn a_boundary_just_below_the_duration_is_the_duration() {
+        // 3 × 0.3 is 0.8999999999999999. The third boundary is 0.9 itself, so
+        // the run reaches its duration and samples it once. Sampling at
+        // 0.8999999999999999 and then recording 0.9 in the tail wrote two rows
+        // the CSV prints as `0.900` (#562).
         let walk = walk_schedule(0.3, 0.9, 1.0);
-        assert_eq!(walk.taken.len(), 3, "got {:?}", walk.taken);
-        assert!(
-            walk.taken[2] < 0.9,
-            "the third boundary is {} , which is not 0.9",
-            walk.taken[2]
-        );
+        assert_eq!(walk.taken, vec![0.3, 0.6, 0.9]);
         assert_eq!(walk.end_t, 0.9, "the run has to reach its duration");
-        assert!(walk.tail_fires, "0.9 itself would never be recorded");
+        assert!(
+            !walk.tail_fires,
+            "0.9 is sampled already; the tail would write it a second time"
+        );
+    }
+
+    /// A boundary a rounding below a large duration is the duration too
+    /// (#562).
+    ///
+    /// At 8390463.3 s, `27968211 * 0.3` is 1.9e-9 below the duration: outside
+    /// a fixed 1e-9, inside the few ulps `end_snap` allows at that magnitude.
+    #[test]
+    fn a_boundary_a_rounding_below_a_large_duration_is_the_duration() {
+        let duration = 8_390_463.3;
+        let last = OutputSchedule {
+            interval: 0.3,
+            duration,
+            done: 27_968_210,
+        };
+        // The gap, not `duration - 1e-9`: an ulp here is 1.9e-9, so that
+        // subtraction cannot be represented.
+        assert!(
+            duration - 27_968_211.0 * 0.3 > 1e-9,
+            "the example has to fall outside a fixed 1e-9"
+        );
+        assert_eq!(last.at(), duration);
+
+        // The boundary an interval earlier is left where it is.
+        let earlier = OutputSchedule {
+            interval: 0.3,
+            duration,
+            done: 27_968_209,
+        };
+        assert_eq!(earlier.at(), 27_968_210.0 * 0.3);
     }
 
     #[test]
