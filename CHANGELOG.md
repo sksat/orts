@@ -1043,13 +1043,13 @@ section is subdivided by package.
   (`--norad-id`, `--sat norad-id=`, or a config orbit of `type = "norad"`), a
   missing `space_weather` file, and an `auto` fetch that fails. In `serve` a
   WebSocket client could reach the same panics, after which the server closed
-  every connection until it was restarted: a `start_simulation` naming a
-  `space_weather` file the server cannot read or a NORAD satellite it cannot
-  fetch, and an `add_satellite` with a malformed TLE, which also lost the
+  every connection until it was restarted: a `start_simulation` whose NORAD
+  satellite the server cannot fetch or whose `space_weather = "auto"` fetch
+  fails, and an `add_satellite` with a malformed TLE, which also lost the
   running simulation. The server now keeps serving, and the client gets an
-  error for the NORAD and TLE requests. A `space_weather` failure is still
-  reported only on the server's stderr, because it happens after the request
-  was acknowledged ([#555](https://github.com/sksat/orts/issues/555)).
+  error for the NORAD and TLE requests. A failed `"auto"` fetch is still
+  reported only on the server's stderr, because the server fetches it after
+  acknowledging the request ([#555](https://github.com/sksat/orts/issues/555)).
   ([#554](https://github.com/sksat/orts/issues/554))
 - The angular momentum a saturating reaction wheel used to lose (see `orts`
   above) was lost on the `mode = "controlled"` path too — `orts run

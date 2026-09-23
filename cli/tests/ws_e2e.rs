@@ -1170,15 +1170,27 @@ fn circular_start() -> serde_json::Value {
 /// A `start_simulation` the manager cannot build leaves the server able to
 /// start the next one (#554).
 ///
-/// The server cannot read the `space_weather` file. `validate_sim_config`
-/// does not open it, so the request is acknowledged and the manager meets the
-/// failure while it builds the simulation. It used to panic there, after
-/// which the server closed every connection, new ones included, until it was
-/// restarted.
+/// The server cannot fetch `space_weather = "auto"`. `validate_sim_config`
+/// accepts `"auto"` without fetching it (a path is refused there, #556), so
+/// the request is acknowledged and the manager meets the failure while it
+/// builds the simulation. It used to panic there, after which the server
+/// closed every connection, new ones included, until it was restarted. The
+/// fetch goes through a proxy nothing listens on, so the test needs no
+/// network and does not depend on having none.
 #[tokio::test]
 async fn test_websocket_unbuildable_start_leaves_the_server_usable() {
     let port = test_port() + 23;
-    let mut server = Server::spawn_idle(port);
+    // Port 9 (discard) has no HTTP proxy behind it.
+    let unreachable_proxy = "http://127.0.0.1:9";
+    let mut server = Server::spawn_idle_with_env(
+        port,
+        &[
+            ("HTTPS_PROXY", unreachable_proxy),
+            ("https_proxy", unreachable_proxy),
+            ("HTTP_PROXY", unreachable_proxy),
+            ("http_proxy", unreachable_proxy),
+        ],
+    );
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
         let url = format!("ws://localhost:{port}/ws");
@@ -1187,7 +1199,7 @@ async fn test_websocket_unbuildable_start_leaves_the_server_usable() {
         assert_eq!(next_json(&mut read).await["state"], "idle");
 
         let mut start = circular_start();
-        start["config"]["space_weather"] = "/nonexistent/sw.txt".into();
+        start["config"]["space_weather"] = "auto".into();
         send_json(&mut write, start).await;
 
         // A new connection is still answered, and the server is idle again.

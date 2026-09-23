@@ -328,10 +328,10 @@ pub(super) async fn simulation_manager(
     while let Some(config) = next_config {
         // `validate_sim_config` has already refused most of what `from_config`
         // cannot build (a non-Earth element set, a `[gravity_field]` over
-        // WebSocket, a TLE that does not parse). It does not open files or
-        // fetch space weather, so a `space_weather` source that fails lands
-        // here; the manager task must survive it, so report it and wait for
-        // the next `start_simulation`.
+        // WebSocket, a TLE that does not parse, a `space_weather` path). It
+        // does not fetch space weather, so a `space_weather = "auto"` fetch
+        // that fails lands here; the manager task must survive it, so report
+        // it and wait for the next `start_simulation`.
         // TODO(#555): the request was acknowledged already, so this `Err`
         // reaches the server's stderr and not the client.
         let mut params_inner = match SimParams::from_config(&config) {

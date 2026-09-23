@@ -819,10 +819,11 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   TLE をどの取得元も返さない (`--norad-id`、`--sat norad-id=`、config の `type = "norad"` の
   軌道)、`space_weather` のファイルが無い、`auto` の取得に失敗した、の各場合。`serve` では
   WebSocket client も同じ panic を起こせ、その後 server は再起動するまですべての接続を閉じて
-  いた: server が読めない `space_weather` のファイルや取得できない NORAD の衛星を指定した
-  `start_simulation` と、壊れた TLE の `add_satellite` で、後者は走っていた simulation も
-  失っていた。いまは server が動き続け、NORAD と TLE の要求には client にエラーが返る。
-  `space_weather` の失敗は要求に応答した後に起きるので、まだ server の stderr にしか出ない
+  いた: server が取得できない NORAD の衛星や、取得に失敗する `space_weather = "auto"` を
+  指定した `start_simulation` と、壊れた TLE の `add_satellite` で、後者は走っていた
+  simulation も失っていた。いまは server が動き続け、NORAD と TLE の要求には client に
+  エラーが返る。`"auto"` の取得は要求に応答した後に行うので、その失敗はまだ server の
+  stderr にしか出ない
   ([#555](https://github.com/sksat/orts/issues/555))
   ([#554](https://github.com/sksat/orts/issues/554))
 - 飽和した reaction wheel が角運動量を失う問題 (上の `orts` を参照) は
