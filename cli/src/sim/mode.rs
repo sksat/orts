@@ -241,7 +241,8 @@ mod tests {
             .iter()
             .enumerate()
             .map(|(i, s)| s.to_satellite_spec(i, body, mu))
-            .collect()
+            .collect::<Result<_, _>>()
+            .expect("the fixture builds its specs")
     }
 
     const ORBIT: &str = r#"

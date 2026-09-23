@@ -170,11 +170,13 @@ async fn async_server(
     // silent forever-retry; validate the declaration up front. (Without a
     // config the sim starts later via WS, so the stdio task just waits.)
     if let (Some(cfg), Some((sat, stream))) = (&initial_config, &stdio_key) {
-        let body = crate::satellite::parse_body(&cfg.body);
-        let declared = cfg.satellites.iter().enumerate().any(|(i, s)| {
-            let spec = s.to_satellite_spec(i, body, body.properties().mu);
-            spec.id == *sat && spec.streams.iter().any(|n| n == stream)
-        });
+        // The id and streams are the config's own, so no spec is built: that
+        // would fetch a NORAD satellite's TLE only to read these two.
+        let declared = cfg
+            .satellites
+            .iter()
+            .enumerate()
+            .any(|(i, s)| s.resolved_id(i) == *sat && s.streams.iter().any(|n| n == stream));
         if !declared {
             return Err(CmdError::usage(format!(
                 "--stream-stdio {sat}/{stream} is not declared in the config (streams = [...])"

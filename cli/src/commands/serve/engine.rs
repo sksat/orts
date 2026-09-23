@@ -1115,7 +1115,7 @@ impl ServeEngine {
         satellite.validate()?;
 
         let sat_index = self.metas.len();
-        let spec = satellite.to_satellite_spec(sat_index, self.params.body, self.params.mu);
+        let spec = satellite.to_satellite_spec(sat_index, self.params.body, self.params.mu)?;
         // Sensors / actuators only act through a control loop; say so instead
         // of accepting them into an orbit-only fleet unnoticed.
         for w in unhonored_config_warnings(std::slice::from_ref(&spec), SimMode::OrbitOnly) {
@@ -1254,7 +1254,7 @@ impl ServeEngine {
         })?;
 
         let sat_index = self.metas.len();
-        let spec = satellite.to_satellite_spec(sat_index, self.params.body, self.params.mu);
+        let spec = satellite.to_satellite_spec(sat_index, self.params.body, self.params.mu)?;
         // SGP4/TEME is Earth-centered; reject a TLE/OMM orbit on a non-Earth sim.
         crate::sim::params::validate_element_set_body(
             self.params.body,
@@ -2466,6 +2466,33 @@ streams = ["comlink"]
             .expect("an id already in the fleet must be refused");
         assert!(err.contains("sat-a"), "the message names the id: {err}");
         assert!(err.contains("unique"), "got: {err}");
+    }
+
+    /// `add_satellite` refuses a TLE it cannot parse and keeps the fleet it
+    /// had (#554).
+    ///
+    /// `SatelliteConfig::validate` does not parse the lines, so a malformed
+    /// TLE used to reach `to_satellite_spec` and panic there — measured, in
+    /// the manager task, which lost the running simulation and left the server
+    /// closing every connection.
+    #[test]
+    fn add_satellite_refuses_a_tle_it_cannot_parse() {
+        let mut init = engine_from_toml(ORBIT_ONLY).expect("engine builds");
+        let before = init.engine.metas.len();
+        let cfg: SatelliteConfig = serde_json::from_str(
+            r#"{
+                "id": "bad",
+                "orbit": { "type": "tle", "line1": "1 x", "line2": "2 y" }
+            }"#,
+        )
+        .expect("valid satellite config");
+        let err = init
+            .engine
+            .add_satellite(cfg)
+            .err()
+            .expect("a malformed TLE must be refused");
+        assert!(err.contains("TLE"), "got: {err}");
+        assert_eq!(init.engine.metas.len(), before, "the fleet is unchanged");
     }
 
     /// The same collision, reached through an omitted id.

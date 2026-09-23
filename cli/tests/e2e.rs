@@ -261,6 +261,53 @@ fn test_cli_no_config_no_orbit_args_errors() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// An orbit that cannot be read or fetched stops `run` with an error and exit
+/// 1, as a config that cannot be read does (#554). These used to panic,
+/// exiting 101 with a backtrace hint.
+///
+/// The NORAD fetch fails through a proxy nothing listens on, so the test
+/// needs no network and does not depend on having none.
+#[test]
+fn test_cli_orbit_input_errors_exit_one() {
+    let binary = env!("CARGO_BIN_EXE_orts");
+    let dir = std::env::temp_dir().join(format!("orts-e2e-orbit-errors-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("bad.tle"), "garbage\nnot a tle\n").unwrap();
+    // Port 9 (discard) has no HTTP proxy behind it.
+    let unreachable_proxy = "http://127.0.0.1:9";
+
+    for (args, says) in [
+        (vec!["--tle", "bad.tle"], "Failed to parse TLE"),
+        (vec!["--sat", "altitude=abc"], "Invalid altitude"),
+        (
+            vec!["--norad-id", "25544"],
+            "Failed to fetch TLE for NORAD ID 25544",
+        ),
+        (
+            vec!["--sat", "altitude=400", "--space-weather", "missing-sw.txt"],
+            "missing-sw.txt",
+        ),
+    ] {
+        let output = Command::new(binary)
+            .current_dir(&dir)
+            .env("HTTPS_PROXY", unreachable_proxy)
+            .env("https_proxy", unreachable_proxy)
+            .env("HTTP_PROXY", unreachable_proxy)
+            .env("http_proxy", unreachable_proxy)
+            .args(["run", "--format", "csv", "--duration", "60"])
+            .args(&args)
+            .output()
+            .expect("failed to execute orts");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "{args:?}: {stderr}");
+        assert!(!stderr.contains("panicked"), "{args:?}: {stderr}");
+        assert!(stderr.contains("Error:"), "{args:?}: {stderr}");
+        assert!(stderr.contains(says), "{args:?}: {stderr}");
+    }
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// Parse a CSV data line into (t, x, y, z, vx, vy, vz)
 fn parse_csv_line(line: &str) -> (f64, f64, f64, f64, f64, f64, f64) {
     let fields: Vec<f64> = line.split(',').map(|f| f.trim().parse().unwrap()).collect();
