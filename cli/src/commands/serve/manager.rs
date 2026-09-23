@@ -34,17 +34,16 @@ pub(super) struct PluginBackendOverrides {
 }
 
 impl PluginBackendOverrides {
-    /// `written` decides the async mode alone, because its clap default
-    /// (`throughput`) is not what `serve` does when the flag is absent: a
-    /// server nobody asked runs its plugins in `Deterministic`, the mode
-    /// `SimParams::from_config` also carries. The other two read the same
-    /// whether or not they were written — `choice` applies its `Auto` default
-    /// as it stands, and `threshold` is already absent when unset.
-    pub fn from_sim_args(sim: &SimArgs, async_mode_written: bool) -> Self {
+    /// The async mode stays `None` when the flag was left out, so a
+    /// simulation built from a config keeps the `Deterministic` that
+    /// `SimParams::from_config` gave it. The backend choice is carried either
+    /// way — its `Auto` default reads the same as no flag — and the threshold
+    /// is already absent when unset.
+    pub fn from_sim_args(sim: &SimArgs) -> Self {
         Self {
             choice: Some(sim.plugin_backend),
             threshold: sim.plugin_backend_threshold,
-            async_mode: async_mode_written.then_some(sim.plugin_backend_async_mode),
+            async_mode: sim.plugin_backend_async_mode,
         }
     }
 
@@ -238,8 +237,9 @@ fn validate_sim_config(config: &SimConfig) -> Result<(), String> {
     // panic on a missing one), so the field is CLI / config-file only.
     if config.gravity_field.is_some() {
         return Err(
-            "gravity_field is not accepted over WebSocket: start `orts serve` with \
-                    `--gravity-field <PATH>` or a `--config` file carrying `[gravity_field]`"
+            "gravity_field is not accepted over WebSocket: the field comes with the \
+                    simulation `orts serve` starts from its own command line — a `--config` \
+                    file carrying `[gravity_field]`, or an orbit with `--gravity-field <PATH>`"
                 .to_string(),
         );
     }
@@ -671,28 +671,24 @@ mod tests {
 
     /// The async mode rides the overrides only when its flag was written.
     ///
-    /// Its clap default is `throughput`, which is not what a `serve` nobody
-    /// asked does — carrying the value either way would move every existing
-    /// server off `Deterministic`. The other two overrides read the same
-    /// whether or not they were written, and are carried as before.
+    /// A `serve` nobody asked runs `Deterministic`, while `run` runs
+    /// `throughput`, so the flag carries no clap default and a left-out flag
+    /// arrives as `None`. Carrying a value either way would move every
+    /// existing server off `Deterministic`. The backend choice is carried
+    /// whether or not it was written, as before.
     #[test]
     fn the_async_mode_is_carried_only_when_its_flag_was_written() {
-        let asked = PluginBackendOverrides::from_sim_args(
-            &sim_args(&["--plugin-backend-async-mode", "throughput"]),
-            true,
-        );
+        let asked = PluginBackendOverrides::from_sim_args(&sim_args(&[
+            "--plugin-backend-async-mode",
+            "throughput",
+        ]));
         assert_eq!(
             asked.async_mode,
             Some(PluginAsyncModeChoice::Throughput),
             "a written flag is what the overrides carry"
         );
 
-        // The same command line with the flag read as absent: clap still hands
-        // over `throughput`, and the overrides must not take it.
-        let unasked = PluginBackendOverrides::from_sim_args(
-            &sim_args(&["--plugin-backend-async-mode", "throughput"]),
-            false,
-        );
+        let unasked = PluginBackendOverrides::from_sim_args(&sim_args(&[]));
         assert_eq!(
             unasked.async_mode, None,
             "an absent flag leaves the mode to whoever built the params"
@@ -710,8 +706,11 @@ mod tests {
             r#"
 body = "earth"
 
-[[satellite]]
-name = "a"
+[[satellites]]
+id = "a"
+
+[satellites.orbit]
+type = "circular"
 altitude = 400.0
 "#,
         )
@@ -723,11 +722,7 @@ altitude = 400.0
             "a config-built simulation starts deterministic"
         );
 
-        PluginBackendOverrides::from_sim_args(
-            &sim_args(&["--plugin-backend-async-mode", "throughput"]),
-            false,
-        )
-        .apply(&mut params);
+        PluginBackendOverrides::from_sim_args(&sim_args(&[])).apply(&mut params);
 
         assert_eq!(
             params.plugin_backend_async_mode,

@@ -500,7 +500,9 @@ impl SimParams {
             gravity_field,
             plugin_backend_choice: args.plugin_backend,
             plugin_backend_threshold: args.plugin_backend_threshold,
-            plugin_backend_async_mode: args.plugin_backend_async_mode,
+            plugin_backend_async_mode: args
+                .plugin_backend_async_mode
+                .unwrap_or_else(|| PluginAsyncModeChoice::unspecified(is_serve)),
         })
     }
 
@@ -1101,7 +1103,7 @@ orbit = { type = "circular", altitude = 400 }
             config: None,
             plugin_backend: PluginBackendChoice::Auto,
             plugin_backend_threshold: None,
-            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
+            plugin_backend_async_mode: Some(PluginAsyncModeChoice::Deterministic),
         }
     }
 
@@ -1136,7 +1138,7 @@ orbit = { type = "circular", altitude = 400 }
             config: None,
             plugin_backend: PluginBackendChoice::Auto,
             plugin_backend_threshold: None,
-            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
+            plugin_backend_async_mode: Some(PluginAsyncModeChoice::Deterministic),
         };
         let params = SimParams::from_sim_args(&args, false).expect("valid args");
         assert!((params.output_interval - 10.0).abs() < 1e-9);
@@ -1176,7 +1178,7 @@ orbit = { type = "circular", altitude = 400 }
             config: None,
             plugin_backend: PluginBackendChoice::Auto,
             plugin_backend_threshold: None,
-            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
+            plugin_backend_async_mode: Some(PluginAsyncModeChoice::Deterministic),
         };
         let params = SimParams::from_sim_args(&args, false).expect("valid args");
         assert!((params.dt - 1.0).abs() < 1e-9);
@@ -1216,7 +1218,7 @@ orbit = { type = "circular", altitude = 400 }
             config: None,
             plugin_backend: PluginBackendChoice::Auto,
             plugin_backend_threshold: None,
-            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
+            plugin_backend_async_mode: Some(PluginAsyncModeChoice::Deterministic),
         };
         let params = SimParams::from_sim_args(&args, false).expect("valid args");
         assert!((params.stream_interval - 5.0).abs() < 1e-9);
@@ -1251,7 +1253,7 @@ orbit = { type = "circular", altitude = 400 }
             config: None,
             plugin_backend: PluginBackendChoice::Auto,
             plugin_backend_threshold: None,
-            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
+            plugin_backend_async_mode: Some(PluginAsyncModeChoice::Deterministic),
         };
         let params2 = SimParams::from_sim_args(&args2, false).expect("valid args");
         assert!((params2.stream_interval - 10.0).abs() < 1e-9);
@@ -1288,7 +1290,7 @@ orbit = { type = "circular", altitude = 400 }
             config: None,
             plugin_backend: PluginBackendChoice::Auto,
             plugin_backend_threshold: None,
-            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
+            plugin_backend_async_mode: Some(PluginAsyncModeChoice::Deterministic),
         };
         let params = SimParams::from_sim_args(&args, false).expect("valid args");
         assert!(params.epoch.is_some());
@@ -1333,7 +1335,7 @@ orbit = { type = "circular", altitude = 400 }
             config: None,
             plugin_backend: PluginBackendChoice::Auto,
             plugin_backend_threshold: None,
-            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
+            plugin_backend_async_mode: Some(PluginAsyncModeChoice::Deterministic),
         };
         SimParams::from_sim_args(&args, false).expect("valid args");
     }
@@ -1373,7 +1375,7 @@ orbit = { type = "circular", altitude = 400 }
             config: None,
             plugin_backend: PluginBackendChoice::Auto,
             plugin_backend_threshold: None,
-            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
+            plugin_backend_async_mode: Some(PluginAsyncModeChoice::Deterministic),
         };
         let params = SimParams::from_sim_args(&args, false).expect("valid args");
 
@@ -1435,7 +1437,7 @@ orbit = { type = "circular", altitude = 400 }
             config: None,
             plugin_backend: PluginBackendChoice::Auto,
             plugin_backend_threshold: None,
-            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
+            plugin_backend_async_mode: Some(PluginAsyncModeChoice::Deterministic),
         };
         let params = SimParams::from_sim_args(&args, false).expect("valid args");
 
@@ -1484,7 +1486,7 @@ orbit = { type = "circular", altitude = 400 }
             config: None,
             plugin_backend: PluginBackendChoice::Auto,
             plugin_backend_threshold: None,
-            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
+            plugin_backend_async_mode: Some(PluginAsyncModeChoice::Deterministic),
         };
         let params = SimParams::from_sim_args(&args, false).expect("valid args");
         let state = params.satellites[0]
@@ -1539,7 +1541,7 @@ orbit = { type = "circular", altitude = 400 }
             config: None,
             plugin_backend: PluginBackendChoice::Auto,
             plugin_backend_threshold: None,
-            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
+            plugin_backend_async_mode: Some(PluginAsyncModeChoice::Deterministic),
         };
         let params = SimParams::from_sim_args(&args, false).expect("valid args");
         assert!(matches!(
@@ -1590,7 +1592,7 @@ orbit = { type = "circular", altitude = 400 }
             config: None,
             plugin_backend: PluginBackendChoice::Auto,
             plugin_backend_threshold: None,
-            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
+            plugin_backend_async_mode: Some(PluginAsyncModeChoice::Deterministic),
         };
         let params = SimParams::from_sim_args(&args, false).expect("valid args");
 
@@ -1636,7 +1638,7 @@ orbit = { type = "circular", altitude = 400 }
             config: None,
             plugin_backend: PluginBackendChoice::Auto,
             plugin_backend_threshold: None,
-            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
+            plugin_backend_async_mode: Some(PluginAsyncModeChoice::Deterministic),
         };
         let params = SimParams::from_sim_args(&args, false).expect("valid args");
         assert_eq!(params.satellites.len(), 2);
@@ -1676,7 +1678,7 @@ orbit = { type = "circular", altitude = 400 }
             config: None,
             plugin_backend: PluginBackendChoice::Auto,
             plugin_backend_threshold: None,
-            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
+            plugin_backend_async_mode: Some(PluginAsyncModeChoice::Deterministic),
         };
         let params = SimParams::from_sim_args(&args, true).expect("valid args");
         // Should have at least SSO satellite

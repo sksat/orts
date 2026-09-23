@@ -49,55 +49,11 @@ pub(crate) fn validate_sim_args(sim: &SimArgs) -> Result<(), String> {
     validate_gravity_args(sim)
 }
 
-/// The gravity flags written on a `run` command line that a config will not
-/// read, named as written.
-fn gravity_flags_given(sim: &SimArgs) -> Vec<&'static str> {
-    [
-        ("--gravity-field", sim.gravity_field.is_some()),
-        ("--gravity-degree", sim.gravity_degree.is_some()),
-        ("--gravity-order", sim.gravity_order.is_some()),
-        // Presence, not value: `--frame simple-eci` next to a `frame = "gcrs"`
-        // config is an explicit disagreement, and reading it as "the default,
-        // so inert" would run the config's frame behind the flag.
-        ("--frame", sim.frame_arg.is_some()),
-        ("--eop", sim.eop.is_some()),
-    ]
-    .into_iter()
-    .filter_map(|(flag, given)| given.then_some(flag))
-    .collect()
-}
-
-/// A config-backed `run` builds its parameters from the config alone, so a
-/// gravity flag next to `--config` (or an auto-detected `orts.toml`) would be
-/// dropped in silence and the run would use the zonal model behind an explicit
-/// request. Refuse it, the way `serve` refuses every unhonored sim arg.
-// TODO: the other tuning flags (`--dt`, `--atol`, `--root-t-tolerance`,
-// `--atmosphere`, …) are still dropped silently on this path, and their values
-// are not validated there either — the config's own `validate` checks the
-// config's. Extending `serve`'s `unhonored_sim_args` to `run` is a behaviour
-// change for existing command lines and is left to its own change; singling
-// out one flag would leave the rest inconsistent with it.
-fn reject_frame_and_gravity_flags_with_config(
-    sim: &SimArgs,
-    config_path: &str,
-) -> Result<(), CmdError> {
-    let flags = gravity_flags_given(sim);
-    if flags.is_empty() {
-        return Ok(());
-    }
-    Err(CmdError::usage(format!(
-        "{} cannot be honored: `run --config {config_path}` builds its simulation from the \
-         config alone. Set the value in the config instead (`[gravity_field]`, `frame`, \
-         `eop`), or drop the flag.",
-        flags.join(", ")
-    )))
-}
-
 /// The `[gravity_field]` rules for the flag spelling: the same structural
 /// checks `GravityFieldConfig::validate` runs for a config (Earth only,
-/// degree ≥ 2, order ≤ degree), rendered with the flag names, plus
-/// "truncation without a field" — which the config cannot express and would
-/// otherwise be dropped in silence.
+/// degree ≥ 2, order ≤ degree), rendered with the flag names. A truncation
+/// without a field never reaches here — `SimArgs` declares that
+/// `--gravity-degree` and `--gravity-order` require `--gravity-field`.
 fn validate_gravity_args(sim: &SimArgs) -> Result<(), String> {
     match &sim.gravity_field {
         Some(path) => crate::config::GravityFieldConfig {
@@ -107,11 +63,6 @@ fn validate_gravity_args(sim: &SimArgs) -> Result<(), String> {
         }
         .validate(&sim.body)
         .map_err(|e| e.render(&GravityFieldNames::CLI_FLAGS)),
-        None if sim.gravity_degree.is_some() || sim.gravity_order.is_some() => Err(
-            "--gravity-degree / --gravity-order truncate a spherical-harmonic field: \
-             pass --gravity-field <PATH> as well, or drop them"
-                .to_string(),
-        ),
         None => Ok(()),
     }
 }
@@ -123,7 +74,6 @@ pub fn run_simulation_cmd(
     json: bool,
 ) -> Result<(), CmdError> {
     let mut params = if let Some(config_path) = &sim.config {
-        reject_frame_and_gravity_flags_with_config(sim, config_path)?;
         let config =
             crate::config::load_config_reporting_unread_keys(std::path::Path::new(config_path))?;
         SimParams::from_config(&config).map_err(CmdError::failure)?
@@ -137,7 +87,6 @@ pub fn run_simulation_cmd(
         // Auto-detect orts.toml in the current directory
         let config_path = std::path::Path::new("orts.toml");
         if config_path.exists() {
-            reject_frame_and_gravity_flags_with_config(sim, "orts.toml")?;
             let config = crate::config::load_config_reporting_unread_keys(config_path)?;
             SimParams::from_config(&config).map_err(CmdError::failure)?
         } else {
@@ -165,7 +114,9 @@ pub fn run_simulation_cmd(
     // `orts run --config … --plugin-backend=sync|async` works.
     params.plugin_backend_choice = sim.plugin_backend;
     params.plugin_backend_threshold = sim.plugin_backend_threshold;
-    params.plugin_backend_async_mode = sim.plugin_backend_async_mode;
+    params.plugin_backend_async_mode = sim
+        .plugin_backend_async_mode
+        .unwrap_or_else(|| crate::cli::PluginAsyncModeChoice::unspecified(false));
 
     // どのダイナミクスで回すかは serve と共有の規則で決める。`run` だけが
     // orbit-only に落ちて姿勢・アクチュエータ設定を黙って捨てることがないように。
@@ -2559,8 +2510,18 @@ mod tests {
         ]))
         .unwrap_err();
         assert!(ord.contains("--gravity-order (9) must not exceed"), "{ord}");
-        let alone = validate_sim_args(&args(&["--gravity-degree", "8"])).unwrap_err();
-        assert!(alone.contains("pass --gravity-field"), "{alone}");
+        // A truncation without a field no longer reaches `validate_sim_args`:
+        // `SimArgs` declares that `--gravity-degree` requires `--gravity-field`,
+        // so clap refuses the command line first.
+        let alone =
+            SimArgs::try_parse_from(["orts", "--sat", "altitude=500", "--gravity-degree", "8"])
+                .expect_err("a truncation needs a field");
+        assert_eq!(
+            alone.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument,
+            "{alone}"
+        );
+        assert!(alone.to_string().contains("--gravity-field"), "{alone}");
         let empty = validate_sim_args(&args(&["--gravity-field", ""])).unwrap_err();
         assert!(
             empty.contains("--gravity-field must not be empty"),
@@ -2568,19 +2529,37 @@ mod tests {
         );
     }
 
+    /// How clap answers `orts run <extra>`: `None` when it accepts the command
+    /// line, else the kind of refusal and the message it prints.
+    fn run_refusal(extra: &[&str]) -> Option<(clap::error::ErrorKind, String)> {
+        use clap::Parser;
+        let mut argv = vec!["orts", "run"];
+        argv.extend_from_slice(extra);
+        crate::cli::Cli::try_parse_from(argv)
+            .err()
+            .map(|e| (e.kind(), e.render().to_string()))
+    }
+
     /// A config-backed run names the gravity flags it cannot honor instead of
     /// running the zonal model behind them.
     #[test]
     fn config_backed_run_refuses_gravity_flags() {
-        assert!(reject_frame_and_gravity_flags_with_config(&args(&[]), "m.toml").is_ok());
-        let err = reject_frame_and_gravity_flags_with_config(
-            &args(&["--gravity-field", "x.gfc", "--gravity-order", "8"]),
+        assert_eq!(run_refusal(&["--config", "m.toml"]), None);
+        let (kind, msg) = run_refusal(&[
+            "--config",
             "m.toml",
-        )
-        .expect_err("must refuse");
-        let msg = err.to_string();
-        assert!(msg.contains("--gravity-field, --gravity-order"), "{msg}");
-        assert!(msg.contains("run --config m.toml"), "{msg}");
+            "--gravity-field",
+            "x.gfc",
+            "--gravity-order",
+            "8",
+        ])
+        .expect("must refuse");
+        assert_eq!(kind, clap::error::ErrorKind::ArgumentConflict, "{msg}");
+        assert!(msg.contains("--config"), "{msg}");
+        assert!(
+            msg.contains("--gravity-field") || msg.contains("--gravity-order"),
+            "{msg}"
+        );
     }
 
     /// `--frame simple-eci` next to a config is a disagreement, not a no-op:
@@ -2588,12 +2567,136 @@ mod tests {
     /// config would otherwise win behind an explicit `simple-eci`).
     #[test]
     fn an_explicit_frame_flag_is_refused_next_to_a_config_even_at_its_default() {
-        let err =
-            reject_frame_and_gravity_flags_with_config(&args(&["--frame", "simple-eci"]), "m.toml")
-                .expect_err("an explicitly written --frame must be named");
-        assert!(err.to_string().contains("--frame"), "{err}");
+        let (kind, msg) = run_refusal(&["--config", "m.toml", "--frame", "simple-eci"])
+            .expect("an explicitly written --frame must be named");
+        assert_eq!(kind, clap::error::ErrorKind::ArgumentConflict, "{msg}");
+        assert!(msg.contains("--frame"), "{msg}");
         // No flag at all stays inert.
-        assert!(reject_frame_and_gravity_flags_with_config(&args(&[]), "m.toml").is_ok());
+        assert_eq!(run_refusal(&["--config", "m.toml"]), None);
+    }
+
+    /// A config-backed run refuses the tuning flags it would drop (#550).
+    ///
+    /// `run --config` builds its simulation from the config alone, so
+    /// `--dt 1` beside it used to be integrated at the config's `dt` without a
+    /// word — measured: a fixed-step run gave the same output to the last
+    /// digit with and without the flag. The flags the run does apply on top
+    /// of a config, the three plugin-backend ones, stay accepted.
+    #[test]
+    fn a_config_backed_run_refuses_the_tuning_flags_it_would_drop() {
+        for extra in [
+            vec!["--dt", "1"],
+            vec!["--dt", "10"],
+            vec!["--output-interval", "1"],
+            vec!["--duration", "120"],
+            vec!["--integrator", "rk4"],
+            vec!["--atol", "1e-6"],
+            vec!["--sat", "altitude=400"],
+        ] {
+            let mut argv = vec!["--config", "m.toml"];
+            argv.extend_from_slice(&extra);
+            let (kind, msg) =
+                run_refusal(&argv).unwrap_or_else(|| panic!("{extra:?} beside --config"));
+            assert_eq!(kind, clap::error::ErrorKind::ArgumentConflict, "{msg}");
+            assert!(msg.contains(extra[0]), "{} is named: {msg}", extra[0]);
+        }
+        assert_eq!(
+            run_refusal(&[
+                "--config",
+                "m.toml",
+                "--plugin-backend",
+                "sync",
+                "--plugin-backend-threshold",
+                "64",
+                "--plugin-backend-async-mode",
+                "deterministic",
+            ]),
+            None,
+            "the plugin-backend flags are applied on top of a config"
+        );
+    }
+
+    /// Which of several dropped flags the error names depends on where
+    /// `--config` sits.
+    ///
+    /// clap checks the flags in the order they were written and reports the
+    /// first one with a conflict. With `--config` first, that is `--config`,
+    /// and clap lists every flag it conflicts with; with a tuning flag first,
+    /// that flag alone is named, and the others appear only in the usage line
+    /// that follows. So one error does not always name every dropped flag —
+    /// this pins what clap does, so an upgrade that changes it is noticed.
+    #[test]
+    fn the_flags_an_error_names_depend_on_where_the_config_sits() {
+        let error_of = |extra: &[&str]| {
+            let (_, msg) = run_refusal(extra).expect("refused");
+            msg.split_once("Usage:")
+                .map(|(error, _)| error.to_string())
+                .unwrap_or(msg)
+        };
+
+        let first = error_of(&["--config", "m.toml", "--dt", "1", "--atol", "1e-6"]);
+        assert!(
+            first.contains("--dt") && first.contains("--atol"),
+            "--config first: both are named: {first}"
+        );
+
+        let between = error_of(&["--dt", "1", "--config", "m.toml", "--atol", "1e-6"]);
+        assert!(between.contains("--dt"), "{between}");
+        assert!(
+            !between.contains("--atol"),
+            "a tuning flag first: only it is named: {between}"
+        );
+    }
+
+    /// Without an orbit on the command line a tuning flag has nothing to
+    /// apply to — `run` would take its simulation from an `orts.toml` it
+    /// finds, and drop the flag behind it.
+    #[test]
+    fn a_tuning_flag_without_an_orbit_is_refused() {
+        let (kind, msg) = run_refusal(&["--dt", "1"]).expect("--dt needs an orbit");
+        assert_eq!(
+            kind,
+            clap::error::ErrorKind::MissingRequiredArgument,
+            "{msg}"
+        );
+        assert!(msg.contains("--sat"), "the orbit it needs is named: {msg}");
+        assert_eq!(run_refusal(&["--sat", "altitude=400", "--dt", "1"]), None);
+    }
+
+    /// A TLE given as lines needs both of them.
+    ///
+    /// One alone used to reach `SimParams::from_sim_args`, which panicked on
+    /// the missing half.
+    #[test]
+    fn one_tle_line_alone_is_refused() {
+        for extra in [
+            vec!["--tle-line1", "1 25544U"],
+            vec!["--tle-line2", "2 25544"],
+        ] {
+            let (kind, msg) = run_refusal(&extra).unwrap_or_else(|| panic!("{extra:?}"));
+            assert_eq!(
+                kind,
+                clap::error::ErrorKind::MissingRequiredArgument,
+                "{msg}"
+            );
+        }
+    }
+
+    /// Truncating a gravity field needs the field.
+    #[test]
+    fn a_gravity_truncation_without_a_field_is_refused() {
+        for extra in [
+            vec!["--sat", "altitude=400", "--gravity-degree", "8"],
+            vec!["--sat", "altitude=400", "--gravity-order", "8"],
+        ] {
+            let (kind, msg) = run_refusal(&extra).unwrap_or_else(|| panic!("{extra:?}"));
+            assert_eq!(
+                kind,
+                clap::error::ErrorKind::MissingRequiredArgument,
+                "{msg}"
+            );
+            assert!(msg.contains("--gravity-field"), "{msg}");
+        }
     }
 
     /// The ground-station monitors are built in the propagation frame, so a

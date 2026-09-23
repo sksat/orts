@@ -848,9 +848,11 @@ fn test_run_config_refuses_gravity_flags() {
         .expect("failed to execute orts");
     std::fs::remove_dir_all(&dir).ok();
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "{stderr}");
+    // A usage error from clap, before the config is read: `--gravity-field`
+    // is declared to conflict with `--config`.
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
     assert!(
-        stderr.contains("--gravity-field cannot be honored"),
+        stderr.contains("'--config <CONFIG>' cannot be used with '--gravity-field <PATH>'"),
         "{stderr}"
     );
 }
@@ -1043,6 +1045,9 @@ fn test_run_config_refuses_frame_flags() {
         .expect("failed to execute orts");
     std::fs::remove_dir_all(&dir).ok();
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "{stderr}");
-    assert!(stderr.contains("--frame cannot be honored"), "{stderr}");
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("'--config <CONFIG>' cannot be used with '--frame <FRAME>'"),
+        "{stderr}"
+    );
 }

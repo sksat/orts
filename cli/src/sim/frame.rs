@@ -57,8 +57,9 @@ impl FrameChoice {
             Self::SimpleEci => None,
             Self::Gcrs => Some(
                 "`orts serve` propagates in SimpleEci only (the serve engine and the plugin \
-                 controller ABI are SimpleEci-locked); use `orts run --frame gcrs` for the \
-                 IAU 2006 path, or frame simple-eci",
+                 controller ABI are SimpleEci-locked); use `orts run` for the IAU 2006 path \
+                 (`frame = \"gcrs\"` in its config, or `--frame gcrs` with an orbit), or \
+                 frame simple-eci",
             ),
         }
     }

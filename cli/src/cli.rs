@@ -47,9 +47,33 @@ Environment:
              already unstyled when stderr is not a terminal.
 ";
 
+/// Where a `run` takes its simulation from, shown at the end of `run --help`.
+pub(crate) const RUN_INPUT_HELP: &str = "\
+Simulation input:
+  A run takes its simulation either from a config (--config, or an orts.toml
+  found in the current directory) or from an orbit on the command line (--sat,
+  --tle, --omm, --tle-line1/--tle-line2, --norad-id). The tuning flags (--dt,
+  --atol, --integrator, --duration, ...) apply to the second: with a config, set
+  the same values in it instead. A tuning flag does not override an orts.toml
+  found in the current directory; give an orbit, or write the value there.
+  The --plugin-backend flags apply either way.";
+
+/// Where a `serve` takes its simulation from, shown at the end of
+/// `serve --help`.
+pub(crate) const SERVE_INPUT_HELP: &str = "\
+Simulation input:
+  A server takes its simulation either from a config (--config) or from an
+  orbit on the command line (--sat, --tle, --omm, --tle-line1/--tle-line2,
+  --norad-id). The tuning flags (--dt, --atol, --integrator, --duration, ...)
+  apply to the second: with a config, set the same values in it instead. With
+  neither, the server starts idle, and a client sets the simulation, tuning
+  values included, through start_simulation. The --plugin-backend flags apply
+  to every simulation the server runs, including ones a client starts.";
+
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Run a simulation and save results
+    #[command(after_long_help = RUN_INPUT_HELP)]
     Run {
         #[command(flatten)]
         sim: SimArgs,
@@ -74,6 +98,7 @@ pub enum Commands {
         json: bool,
     },
     /// Start WebSocket server for real-time streaming
+    #[command(after_long_help = SERVE_INPUT_HELP)]
     Serve {
         #[command(flatten)]
         sim: SimArgs,
@@ -153,65 +178,118 @@ pub enum OutputFormat {
     Csv,
 }
 
+/// The simulation a command runs, described on the command line.
+///
+/// A command takes its simulation from one of two inputs: a whole config
+/// (`--config`), or an orbit (the `orbit` group) with the tuning flags that
+/// adjust it (the `tuning` group). Every flag in either group conflicts with
+/// `--config`, and the tuning flags need an orbit, so clap refuses a command
+/// line that would have a flag dropped — a `--config` builds its simulation
+/// from the config alone, and without an orbit there is nothing to tune. clap
+/// checks these relations against the flags written on the command line, so
+/// a flag left at its default never counts and one written with its default
+/// value does. The plugin-backend flags belong to neither group: both commands
+/// apply them whichever input they have.
+///
+/// A subcommand that flattens this inherits the rule. One that lets the
+/// command line adjust a config would need the inputs split first.
 #[derive(Parser, Debug, Clone)]
+#[group(skip)]
+#[command(group = clap::ArgGroup::new("orbit").multiple(true))]
+#[command(group = clap::ArgGroup::new("tuning").multiple(true).requires("orbit"))]
 pub struct SimArgs {
     /// Central body name (e.g. earth, moon, mars)
-    #[arg(long, default_value = "earth")]
+    #[arg(
+        long,
+        default_value = "earth",
+        group = "tuning",
+        conflicts_with = "config"
+    )]
     pub body: String,
 
     /// Integration time step in seconds
-    #[arg(long, default_value_t = 10.0)]
+    #[arg(
+        long,
+        default_value_t = 10.0,
+        group = "tuning",
+        conflicts_with = "config"
+    )]
     pub dt: f64,
 
     /// Output interval in seconds (defaults to dt if not specified)
-    #[arg(long)]
+    #[arg(long, group = "tuning", conflicts_with = "config")]
     pub output_interval: Option<f64>,
 
     /// WebSocket streaming interval in seconds (defaults to output-interval)
-    #[arg(long)]
+    #[arg(long, group = "tuning", conflicts_with = "config")]
     pub stream_interval: Option<f64>,
 
     /// Simulation epoch in ISO 8601 format (e.g. "2024-03-20T12:00:00Z")
-    #[arg(long)]
+    #[arg(long, group = "tuning", conflicts_with = "config")]
     pub epoch: Option<String>,
 
     /// TLE file path (2-line or 3-line format), use "-" for stdin
-    #[arg(long)]
+    #[arg(long, group = "orbit", conflicts_with = "config")]
     pub tle: Option<String>,
 
     /// OMM file path (CCSDS JSON / KVN / XML), use "-" for stdin
-    #[arg(long)]
+    #[arg(long, group = "orbit", conflicts_with = "config")]
     pub omm: Option<String>,
 
     /// TLE line 1 (direct input, use with --tle-line2)
-    #[arg(long)]
+    #[arg(
+        long,
+        group = "orbit",
+        conflicts_with = "config",
+        requires = "tle_line2"
+    )]
     pub tle_line1: Option<String>,
 
     /// TLE line 2 (direct input, use with --tle-line1)
-    #[arg(long)]
+    #[arg(
+        long,
+        group = "orbit",
+        conflicts_with = "config",
+        requires = "tle_line1"
+    )]
     pub tle_line2: Option<String>,
 
     /// NORAD catalog number to fetch TLE from CelesTrak
-    #[arg(long)]
+    #[arg(long, group = "orbit", conflicts_with = "config")]
     pub norad_id: Option<u32>,
 
     /// Satellite specifications (repeatable).
     /// Format: key=value,key=value (keys: altitude, norad-id, tle-line1, tle-line2, id, name).
     /// Quick shorthand for simple cases; for generated or multi-satellite setups
     /// prefer a config file via --config (see `orts config example`).
-    #[arg(long = "sat", num_args = 1)]
+    #[arg(long = "sat", num_args = 1, group = "orbit", conflicts_with = "config")]
     pub sats: Vec<String>,
 
     /// Integration method
-    #[arg(long, default_value = "dp45")]
+    #[arg(
+        long,
+        default_value = "dp45",
+        group = "tuning",
+        conflicts_with = "config"
+    )]
     pub integrator: IntegratorChoice,
 
     /// Absolute tolerance for adaptive integrators (dp45, dop853)
-    #[arg(long, default_value_t = 1e-10)]
+    #[arg(
+        long,
+        default_value_t = 1e-10,
+        group = "tuning",
+        conflicts_with = "config"
+    )]
     pub atol: f64,
 
     /// Relative tolerance for adaptive integrators (dp45, dop853)
-    #[arg(long, default_value_t = 1e-8)]
+    #[arg(
+        long,
+        default_value_t = 1e-8,
+        group = "tuning",
+        conflicts_with = "config"
+    )]
     pub rtol: f64,
 
     /// How closely the time a state reaches a limit is located [s].
@@ -225,46 +303,78 @@ pub struct SimArgs {
     /// integration error is in there too. Every halving costs one more
     /// evaluation of the step being narrowed, and the spacing of f64 at the
     /// time in question is the floor under the whole thing.
-    #[arg(long, default_value_t = 1e-3)]
+    #[arg(
+        long,
+        default_value_t = 1e-3,
+        group = "tuning",
+        conflicts_with = "config"
+    )]
     pub root_t_tolerance: f64,
 
     /// Atmospheric density model for drag computation
-    #[arg(long, default_value = "exponential")]
+    #[arg(
+        long,
+        default_value = "exponential",
+        group = "tuning",
+        conflicts_with = "config"
+    )]
     pub atmosphere: AtmosphereChoice,
 
     /// F10.7 solar radio flux [SFU] for NRLMSISE-00.
     /// Controls solar activity level: ~70 (solar min), ~150 (moderate), ~250 (solar max).
     /// Only used when --atmosphere=nrlmsise00.
-    #[arg(long, default_value_t = 150.0)]
+    #[arg(
+        long,
+        default_value_t = 150.0,
+        group = "tuning",
+        conflicts_with = "config"
+    )]
     pub f107: f64,
 
     /// Ap geomagnetic index for NRLMSISE-00.
     /// Controls geomagnetic activity: ~4 (quiet), ~15 (moderate), ~50 (storm).
     /// Only used when --atmosphere=nrlmsise00 and --space-weather is not set.
-    #[arg(long, default_value_t = 15.0)]
+    #[arg(
+        long,
+        default_value_t = 15.0,
+        group = "tuning",
+        conflicts_with = "config"
+    )]
     pub ap: f64,
 
     /// Space weather data source for NRLMSISE-00.
     /// "auto": download from CelesTrak (cached for 24h).
     /// File path: load a CSSI-format file (SW-Last5Years.txt).
     /// Omit to use constant --f107/--ap values.
-    #[arg(long)]
+    #[arg(long, group = "tuning", conflicts_with = "config")]
     pub space_weather: Option<String>,
 
     /// Spherical-harmonic gravity field: path to an ICGEM .gfc file
     /// (EGM96 / EGM2008 / EIGEN-6C4). Replaces the J2/J3/J4 zonal model and
     /// sets mu to the file's GM. Earth only.
-    #[arg(long, value_name = "PATH")]
+    #[arg(long, value_name = "PATH", group = "tuning", conflicts_with = "config")]
     pub gravity_field: Option<String>,
 
     /// Truncate the gravity field to this degree (default: the file's maximum).
     /// Only used with --gravity-field.
-    #[arg(long, value_name = "N")]
+    #[arg(
+        long,
+        value_name = "N",
+        group = "tuning",
+        conflicts_with = "config",
+        requires = "gravity_field"
+    )]
     pub gravity_degree: Option<usize>,
 
     /// Truncate the gravity field to this order (default: = degree).
     /// Only used with --gravity-field.
-    #[arg(long, value_name = "M")]
+    #[arg(
+        long,
+        value_name = "M",
+        group = "tuning",
+        conflicts_with = "config",
+        requires = "gravity_field"
+    )]
     pub gravity_order: Option<usize>,
 
     /// Inertial frame to propagate in.
@@ -278,7 +388,12 @@ pub struct SimArgs {
     /// disagreement, and a defaulted value could not tell it from no flag at
     /// all. Absent means [`FrameChoice::SimpleEci`], via
     /// [`SimArgs::frame`](Self::frame).
-    #[arg(long = "frame")]
+    #[arg(
+        long = "frame",
+        value_name = "FRAME",
+        group = "tuning",
+        conflicts_with = "config"
+    )]
     pub frame_arg: Option<FrameChoice>,
 
     /// Earth Orientation Parameters for --frame gcrs.
@@ -286,18 +401,25 @@ pub struct SimArgs {
     /// File path: load an IERS finals2000A file.
     /// "zero": no observed EOP, IAU 2006 model CIP only (reproducible, not
     /// accurate — ERA is off by up to ~0.4 arcsecond).
-    #[arg(long, value_name = "SOURCE")]
+    #[arg(
+        long,
+        value_name = "SOURCE",
+        group = "tuning",
+        conflicts_with = "config"
+    )]
     pub eop: Option<String>,
 
     /// Total simulation duration in seconds. Omit to cover one orbit
     /// (`orts run`): each satellite's own, or — with `mode = "controlled"`,
     /// where the fleet shares one clock — the longest in the fleet.
     /// `orts serve` streams without end either way.
-    #[arg(long)]
+    #[arg(long, group = "tuning", conflicts_with = "config")]
     pub duration: Option<f64>,
 
     /// Path to simulation config file (JSON/TOML/YAML).
-    /// When specified, orbit-related args (--sat, --tle, etc.) are ignored.
+    /// The simulation comes from the config alone, so the orbit and tuning
+    /// flags cannot be given with it; only the --plugin-backend flags apply on
+    /// top.
     #[arg(long)]
     pub config: Option<String>,
 
@@ -330,7 +452,10 @@ pub struct SimArgs {
 
     /// Async backend execution mode.
     ///
-    /// - `throughput` (default): multi-worker tokio runtime,
+    /// Left out, `orts run` uses `throughput` and `orts serve` uses
+    /// `deterministic`.
+    ///
+    /// - `throughput`: multi-worker tokio runtime,
     ///   `orts run` fans the per-satellite control step out
     ///   across CPU cores via rayon. Measurably faster on any
     ///   multi-core host. Since each satellite's control step
@@ -346,15 +471,15 @@ pub struct SimArgs {
     ///
     /// `orts serve` builds its plugin runtime in the mode this flag asks
     /// for, including for fleets a client starts later — the server
-    /// operator picks how its plugins run. Leaving the flag out puts
-    /// `serve` in `deterministic` rather than this flag's default, which
-    /// is what a server that was never asked has always done.
+    /// operator picks how its plugins run. Leaving the flag out keeps
+    /// `serve` in `deterministic`, which is what a server that was never
+    /// asked has always done.
     ///
     /// The speedup above is `run`'s. `serve` steps its satellites in turn
     /// and waits for each controller, so `throughput` buys it a
     /// multi-worker runtime rather than control steps that overlap.
-    #[arg(long, value_enum, default_value = "throughput")]
-    pub plugin_backend_async_mode: PluginAsyncModeChoice,
+    #[arg(long, value_enum)]
+    pub plugin_backend_async_mode: Option<PluginAsyncModeChoice>,
 }
 
 impl SimArgs {
@@ -381,6 +506,23 @@ pub enum PluginAsyncModeChoice {
     Deterministic,
     /// Parallel, multi-worker runtime + rayon-driven sim loop.
     Throughput,
+}
+
+impl PluginAsyncModeChoice {
+    /// The mode a command runs in when `--plugin-backend-async-mode` is left
+    /// out.
+    ///
+    /// The two commands differ, which is why the flag carries no clap default
+    /// of its own: `run` fans its control steps out across cores and runs
+    /// `Throughput`, while a `serve` nobody asked runs `Deterministic`, the
+    /// mode it ran in before the flag could reach its plugins at all.
+    pub fn unspecified(is_serve: bool) -> Self {
+        if is_serve {
+            Self::Deterministic
+        } else {
+            Self::Throughput
+        }
+    }
 }
 
 /// Explicit backend choice from CLI.
@@ -413,4 +555,113 @@ pub enum AtmosphereChoice {
     HarrisPriester,
     /// NRLMSISE-00 empirical model (uses F10.7 and Ap)
     Nrlmsise00,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    /// `SimArgs` as clap parses it.
+    ///
+    /// Built, because a flag's `group = ...` reaches the group only when clap
+    /// builds the command: before that, a group lists none of its members.
+    fn built() -> clap::Command {
+        let mut command = SimArgs::command();
+        command.build();
+        command
+    }
+
+    /// The flags `SimArgs` declares, by the id clap gives each.
+    fn sim_arg_ids() -> Vec<String> {
+        built()
+            .get_arguments()
+            .filter(|arg| !matches!(arg.get_id().as_str(), "help" | "version"))
+            .map(|arg| arg.get_id().to_string())
+            .collect()
+    }
+
+    fn group_members(name: &str) -> Vec<String> {
+        built()
+            .get_groups()
+            .find(|group| group.get_id().as_str() == name)
+            .unwrap_or_else(|| panic!("SimArgs declares a `{name}` group"))
+            .get_args()
+            .map(|id| id.to_string())
+            .collect()
+    }
+
+    /// Every flag `SimArgs` declares has a place in the input rule.
+    ///
+    /// A flag added without one would slip past both relations and be dropped
+    /// in silence again, on whichever input does not read it: this is the
+    /// declaration the rule depends on, checked rather than trusted.
+    #[test]
+    fn every_sim_arg_belongs_to_one_input() {
+        let carried = [
+            "config",
+            "plugin_backend",
+            "plugin_backend_threshold",
+            "plugin_backend_async_mode",
+        ];
+        let orbit = group_members("orbit");
+        let tuning = group_members("tuning");
+        for id in sim_arg_ids() {
+            let places = [
+                carried.contains(&id.as_str()),
+                orbit.contains(&id),
+                tuning.contains(&id),
+            ];
+            assert_eq!(
+                places.iter().filter(|&&in_it| in_it).count(),
+                1,
+                "`{id}` is in exactly one of carried / orbit / tuning: {places:?}"
+            );
+        }
+    }
+
+    /// Every orbit and tuning flag conflicts with `--config`, from its own
+    /// side, so clap names the flag written rather than the whole group.
+    #[test]
+    fn every_orbit_and_tuning_flag_conflicts_with_the_config() {
+        let command = built();
+        for id in group_members("orbit")
+            .into_iter()
+            .chain(group_members("tuning"))
+        {
+            let arg = command
+                .get_arguments()
+                .find(|arg| arg.get_id().as_str() == id)
+                .expect("a group member is an argument");
+            let conflicts: Vec<String> = command
+                .get_arg_conflicts_with(arg)
+                .into_iter()
+                .map(|other| other.get_id().to_string())
+                .collect();
+            assert!(
+                conflicts.iter().any(|other| other == "config"),
+                "`{id}` conflicts with --config: {conflicts:?}"
+            );
+        }
+    }
+
+    /// The orbit group is what `has_orbit_args` looks at, so the command a
+    /// flag needs and the input it gets agree.
+    #[test]
+    fn the_orbit_group_is_what_has_orbit_args_reads() {
+        let mut orbit = group_members("orbit");
+        orbit.sort();
+        let mut read = vec!["norad_id", "omm", "sats", "tle", "tle_line1", "tle_line2"];
+        read.sort();
+        assert_eq!(orbit, read);
+        for (flag, value) in [
+            ("--sat", "altitude=400"),
+            ("--tle", "x.tle"),
+            ("--omm", "x.json"),
+            ("--norad-id", "25544"),
+        ] {
+            let sim = SimArgs::try_parse_from(["orts", flag, value]).expect("valid args");
+            assert!(sim.has_orbit_args(), "{flag} is an orbit");
+        }
+    }
 }
