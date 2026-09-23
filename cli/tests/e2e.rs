@@ -294,6 +294,8 @@ fn test_cli_orbit_input_errors_exit_one() {
             .env("https_proxy", unreachable_proxy)
             .env("HTTP_PROXY", unreachable_proxy)
             .env("http_proxy", unreachable_proxy)
+            .env("NO_PROXY", "")
+            .env("no_proxy", "")
             .args(["run", "--format", "csv", "--duration", "60"])
             .args(&args)
             .output()

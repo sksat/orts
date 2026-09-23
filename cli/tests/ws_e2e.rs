@@ -1177,18 +1177,28 @@ fn circular_start() -> serde_json::Value {
 /// closed every connection, new ones included, until it was restarted. The
 /// fetch goes through a proxy nothing listens on, so the test needs no
 /// network and does not depend on having none.
+///
+/// `fetch_default` answers from `$HOME/.cache/orts/SW-Last5Years.txt` when
+/// that file is under a day old, without the request, so the server gets an
+/// empty `HOME` of its own; an inherited `NO_PROXY` could also let the
+/// request past the proxy, so it is cleared.
 #[tokio::test]
 async fn test_websocket_unbuildable_start_leaves_the_server_usable() {
     let port = test_port() + 23;
+    let home_dir = tempfile::tempdir().expect("a temporary HOME");
+    let home = home_dir.path().to_str().expect("a UTF-8 temp path");
     // Port 9 (discard) has no HTTP proxy behind it.
     let unreachable_proxy = "http://127.0.0.1:9";
     let mut server = Server::spawn_idle_with_env(
         port,
         &[
+            ("HOME", home),
             ("HTTPS_PROXY", unreachable_proxy),
             ("https_proxy", unreachable_proxy),
             ("HTTP_PROXY", unreachable_proxy),
             ("http_proxy", unreachable_proxy),
+            ("NO_PROXY", ""),
+            ("no_proxy", ""),
         ],
     );
 
@@ -1283,6 +1293,8 @@ async fn test_websocket_norad_start_the_server_cannot_fetch_is_refused() {
             ("https_proxy", unreachable_proxy),
             ("HTTP_PROXY", unreachable_proxy),
             ("http_proxy", unreachable_proxy),
+            ("NO_PROXY", ""),
+            ("no_proxy", ""),
         ],
     );
 
