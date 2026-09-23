@@ -795,6 +795,37 @@ section is subdivided by package.
 ### `orts-cli` (Rust, crates.io, binary)
 
 #### Changed
+- **BREAKING**: `run` and `serve` refuse a command-line flag their simulation
+  would not read. A command takes its simulation either from a config
+  (`--config`, or the `orts.toml` a bare `run` finds) or from an orbit on the
+  command line, and the tuning flags (`--dt`, `--atol`, `--integrator`,
+  `--duration`, `--frame`, `--gravity-field`, …) apply only to the second.
+  `run --config mission.toml --dt 1` used to integrate at the config's `dt`
+  without a word — a fixed-step run gave the same output to the last digit with
+  and without the flag. Now clap refuses, with a usage error (exit 2), a tuning
+  or orbit flag beside `--config` (`the argument '--config <CONFIG>' cannot be
+  used with '--dt <DT>'`) and a tuning flag with no orbit (`the following
+  required arguments were not provided: <--sat …>`). That covers `serve
+  --config` with `--sat`, which dropped the orbit in silence, and `run --dt 1`
+  over an `orts.toml` it finds. The flags are declared as argument relations on
+  `SimArgs`, so a flag counts because it was written, whatever its value; the
+  hand-built check `serve` had (`WrittenFlags` and its flag table) is gone. When
+  several flags are dropped, the error names all of them only if `--config`
+  comes first: clap reports the first conflict it meets, and the rest appear in
+  the usage line. The `--plugin-backend` flags are unaffected, since both
+  commands apply them either way. To move a flag into a config: `--dt`,
+  `--duration`, `--output-interval` and `--epoch` are top-level keys of the
+  same name; `--integrator`, `--atol`, `--rtol` and `--root-t-tolerance` go in
+  `[integrator]` (`type` for the integrator); the gravity flags go in
+  `[gravity_field]` (`path`, `degree`, `order`); `--sat altitude=400` is a
+  `[[satellites]]` entry with `orbit = { type = "circular", altitude = 400 }`.
+  A config has no key for an OMM file, and a TLE goes in as its two lines, so
+  run those from the command line instead.
+  ([#550](https://github.com/sksat/orts/issues/550))
+- `--tle-line1` or `--tle-line2` alone, and `--gravity-degree` or
+  `--gravity-order` without `--gravity-field`, are usage errors (exit 2). A lone
+  TLE line used to panic in `SimParams::from_sim_args`.
+  ([#550](https://github.com/sksat/orts/issues/550))
 - **BREAKING**: `serve` names a tuning flag because it was written, not because
   its value differs from the default. `serve --config mission.toml --atol 1e-10`
   used to start in silence: the value equals the default, so the flag read as
@@ -809,10 +840,11 @@ section is subdivided by package.
   later: the flag rides `PluginBackendOverrides` into every `SimParams` the
   manager builds, and `ServeEngine` creates its plugin cache with the mode
   instead of with `WasmPluginCache::new()`, whose mode is always
-  `Deterministic`. Leaving the flag out keeps `serve` on `Deterministic` rather
-  than on the flag's own default of `throughput`, which is what a server nobody
-  asked has always done — so a command line that does not name the flag runs as
-  before. What `throughput` buys `serve` is the multi-worker runtime: its step
+  `Deterministic`. Leaving the flag out keeps `serve` on `Deterministic`, which
+  is what a server nobody asked has always done — so a command line that does
+  not name the flag runs as before. The flag carries no clap default, because
+  the two commands differ: left out, `run` uses `throughput` and `serve`
+  `deterministic`. What `throughput` buys `serve` is the multi-worker runtime: its step
   drives satellites in turn, so the control steps do not overlap the way
   `run`'s do ([#548](https://github.com/sksat/orts/issues/548)).
   ([#536](https://github.com/sksat/orts/issues/536))

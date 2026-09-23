@@ -20,7 +20,7 @@ use axum::routing::get;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc};
 
-use crate::cli::{PluginAsyncModeChoice, SimArgs};
+use crate::cli::SimArgs;
 use crate::commands::CmdError;
 use crate::sim::params::SimParams;
 
@@ -50,18 +50,10 @@ pub fn run_server(sim: &SimArgs, port: u16, stream_stdio: Option<&str>) -> Resul
         ),
         None => None,
     };
-    // Sim args nothing will read are a usage error, in the same spirit as the
-    // config `[[command]]` rejection below: the server would otherwise come
-    // up having silently dropped every one of them.
-    let written = WrittenFlags::from_this_process();
-    reject_unhonored_sim_args(sim, &written)?;
-    // Built here, where the command line is still in hand: the async mode the
-    // overrides carry depends on whether its flag was written, and nothing
-    // further down can tell a written default from an absent flag.
-    let plugin_overrides = manager::PluginBackendOverrides::from_sim_args(
-        sim,
-        written.was_written("--plugin-backend-async-mode"),
-    );
+    // A sim arg nothing would read never gets this far: `SimArgs` declares
+    // which flags conflict with `--config` and which need an orbit, and clap
+    // refuses the command line before `run_server` is called.
+    let plugin_overrides = manager::PluginBackendOverrides::from_sim_args(sim);
     let rt = tokio::runtime::Runtime::new()
         .map_err(|e| CmdError::failure(format!("creating the tokio runtime: {e}")))?;
     rt.block_on(async_server(sim, port, stdio_key, plugin_overrides))
@@ -78,29 +70,6 @@ fn parse_stream_stdio(s: &str) -> Result<stream_bridge::StreamKey, String> {
     }
 }
 
-/// The params a `serve` started from an orbit on the command line runs.
-///
-/// `SimParams::from_sim_args` reads every tuning flag, including the async
-/// mode — and there it reads clap's own default, `throughput`, when the flag
-/// is absent. `serve`'s rule is the other one: a server nobody asked runs its
-/// plugins in `Deterministic`, which is what `SimParams::from_config` carries
-/// and what this command did before the mode reached its plugin cache at all.
-/// So an absent flag is corrected here, and a written one is left to stand.
-///
-/// `from_sim_args` already fills in the backend choice and threshold, so the
-/// overrides are not applied again; they travel on to the manager, which needs
-/// them for a simulation a client starts after a terminate.
-fn cli_orbit_params(
-    sim: &SimArgs,
-    plugin_overrides: &manager::PluginBackendOverrides,
-) -> Result<SimParams, CmdError> {
-    let mut params = SimParams::from_sim_args(sim, true).map_err(CmdError::failure)?;
-    if plugin_overrides.async_mode.is_none() {
-        params.plugin_backend_async_mode = PluginAsyncModeChoice::Deterministic;
-    }
-    Ok(params)
-}
-
 /// Detect whether CLI args specify an explicit simulation configuration.
 ///
 /// Only a config file or an orbit describes a simulation to start; the
@@ -108,184 +77,6 @@ fn cli_orbit_params(
 /// something else describes.
 fn has_explicit_sim_args(sim: &SimArgs) -> bool {
     sim.config.is_some() || sim.has_orbit_args()
-}
-
-/// Refuse sim args that nothing on the way to a `SimParams` will read.
-///
-/// The tuning args reach a simulation only through
-/// [`SimParams::from_sim_args`], i.e. the CLI-orbit path. The other two paths
-/// ignore them completely: an idle server takes its parameters from the
-/// client's `start_simulation`, and `--config` builds them with
-/// `SimParams::from_config`. Both used to drop every flag in silence — the
-/// documented `serve --dt 1 --output-interval 10` served forever without ever
-/// starting a simulation.
-fn reject_unhonored_sim_args(sim: &SimArgs, written: &WrittenFlags) -> Result<(), CmdError> {
-    let mut problems: Vec<String> = Vec::new();
-
-    let unhonored = unhonored_sim_args(sim, written);
-    if !unhonored.is_empty() {
-        let flags = unhonored.join(", ");
-        match &sim.config {
-            // A config describes the whole simulation, so the command line has
-            // nowhere to put these. (The three flags `PluginBackendOverrides`
-            // carries do get applied on top, which is why they are not on the
-            // list.)
-            Some(path) => problems.push(format!(
-                "{flags} cannot be honored: `serve --config {path}` builds its simulation from \
-                 the config alone. Set the value in the config instead, or drop the flag."
-            )),
-            None if !sim.has_orbit_args() => problems.push(format!(
-                "{flags} cannot be honored: without an orbit or a config, `serve` comes up idle \
-                 and takes its simulation parameters from the client's start_simulation. Give \
-                 it a simulation to apply them to (--sat altitude=400, --tle, --omm, \
-                 --norad-id, or --config), or drop them."
-            )),
-            // The CLI-orbit path: `SimParams::from_sim_args` reads all of them.
-            None => {}
-        }
-    }
-
-    if problems.is_empty() {
-        Ok(())
-    } else {
-        Err(CmdError::usage(problems.join("\n")))
-    }
-}
-
-/// Which tuning flags the caller wrote, whatever value they wrote.
-///
-/// A comparison against the default cannot answer that question: `serve --atol
-/// 1e-10` writes the default, so the value is the same as a bare command
-/// line's and the flag reads as absent. With a config supplying a different
-/// `atol`, the config's value is what runs — and the guard that exists to say
-/// so stayed quiet.
-///
-/// The flags carrying an `Option` need none of this: their `None` already
-/// means the caller left them out.
-#[derive(Debug, Default)]
-struct WrittenFlags(Vec<&'static str>);
-
-impl WrittenFlags {
-    /// The flags on this process's own command line.
-    fn from_this_process() -> Self {
-        Self::written_in(std::env::args_os())
-    }
-
-    /// The flags written in one whole command line, `serve` and all.
-    ///
-    /// The arguments are parsed a second time, because the first parse happens
-    /// inside `parse_with_license_notice` and does not hand back the matches
-    /// that carry each value's source. A second parse of an argv the same
-    /// command already accepted does not fail. Where it somehow does — or
-    /// where the command line names another subcommand — nothing is reported
-    /// as written, so the guard names nothing and `serve` starts as it would
-    /// have before this check existed.
-    fn written_in<I, T>(argv: I) -> Self
-    where
-        I: IntoIterator<Item = T>,
-        T: Into<std::ffi::OsString> + Clone,
-    {
-        use clap::CommandFactory;
-
-        let Ok(matches) = crate::cli::Cli::command().try_get_matches_from(argv) else {
-            return Self::default();
-        };
-        match matches.subcommand_matches("serve") {
-            Some(serve) => Self::from_matches(serve),
-            None => Self::default(),
-        }
-    }
-
-    /// The flags written in one set of matches, whose ids are the field names
-    /// `SimArgs` derives them from.
-    fn from_matches(matches: &clap::ArgMatches) -> Self {
-        let written = VALUE_FLAGS
-            .iter()
-            .chain(OVERRIDE_FLAGS.iter())
-            .filter(|(id, _)| {
-                matches!(
-                    matches.value_source(id),
-                    Some(clap::parser::ValueSource::CommandLine)
-                )
-            })
-            .map(|(_, flag)| *flag)
-            .collect();
-        Self(written)
-    }
-
-    fn was_written(&self, flag: &str) -> bool {
-        self.0.contains(&flag)
-    }
-}
-
-/// The flags whose value has a default, paired with the id `SimArgs` gives it.
-///
-/// Every one of them used to be read as absent when its value happened to
-/// equal the default.
-const VALUE_FLAGS: [(&str, &str); 9] = [
-    ("body", "--body"),
-    ("dt", "--dt"),
-    ("integrator", "--integrator"),
-    ("atol", "--atol"),
-    ("rtol", "--rtol"),
-    ("root_t_tolerance", "--root-t-tolerance"),
-    ("atmosphere", "--atmosphere"),
-    ("f107", "--f107"),
-    ("ap", "--ap"),
-];
-
-/// Flags `PluginBackendOverrides` carries whose clap default is not what
-/// `serve` does when they are absent, so whether they were written decides
-/// what the overrides hold.
-///
-/// `--plugin-backend-async-mode` is the only one: its default is `throughput`,
-/// while a `serve` nobody asked runs its plugins in `Deterministic`. The other
-/// two flags the overrides carry read the same either way, so neither needs to
-/// be here.
-const OVERRIDE_FLAGS: [(&str, &str); 1] =
-    [("plugin_backend_async_mode", "--plugin-backend-async-mode")];
-
-/// The sim args that only [`SimParams::from_sim_args`] reads, named as they
-/// were written on the command line.
-///
-/// The three flags `PluginBackendOverrides` carries are deliberately absent:
-/// the manager applies them to every `SimParams` it builds, whoever started
-/// the simulation. `--plugin-backend` and `--plugin-backend-threshold` have
-/// always been carried; `--plugin-backend-async-mode` joined them once
-/// `ServeEngine` began building its plugin cache with the mode.
-///
-/// A flag counts because it was written, not because its value differs from
-/// the default. This check only runs where nothing reads these values at all —
-/// a `--config` builds them with `SimParams::from_config`, and an idle server
-/// takes them from the client's `start_simulation` — so whatever was written
-/// is dropped, default-valued or not. Comparing values missed exactly that:
-/// `serve --config cfg.toml --atol 1e-10` writes the default, read as absent,
-/// and the config's `atol` ran without a word.
-fn unhonored_sim_args(sim: &SimArgs, written: &WrittenFlags) -> Vec<&'static str> {
-    let optional = [
-        ("--output-interval", sim.output_interval.is_some()),
-        ("--stream-interval", sim.stream_interval.is_some()),
-        ("--epoch", sim.epoch.is_some()),
-        ("--duration", sim.duration.is_some()),
-        ("--space-weather", sim.space_weather.is_some()),
-        ("--gravity-field", sim.gravity_field.is_some()),
-        ("--gravity-degree", sim.gravity_degree.is_some()),
-        ("--gravity-order", sim.gravity_order.is_some()),
-        ("--eop", sim.eop.is_some()),
-        ("--frame", sim.frame_arg.is_some()),
-    ];
-    // In a fixed order, so the message reads the same way twice.
-    let mut named: Vec<&'static str> = Vec::new();
-    for (flag, given) in VALUE_FLAGS
-        .iter()
-        .map(|(_, flag)| (*flag, written.was_written(flag)))
-        .chain(optional)
-    {
-        if given {
-            named.push(flag);
-        }
-    }
-    named
 }
 
 /// The largest control message `/ws` will read.
@@ -421,7 +212,7 @@ async fn async_server(
     } else if has_explicit_sim_args(sim) {
         // Same reason as in `run`: this path skips `SimConfig::validate`.
         crate::commands::run::validate_sim_args(sim)?;
-        Some(cli_orbit_params(sim, &plugin_overrides)?)
+        Some(SimParams::from_sim_args(sim, true).map_err(CmdError::failure)?)
     } else {
         None
     };
@@ -511,12 +302,11 @@ async fn async_server(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        WrittenFlags, cli_orbit_params, has_explicit_sim_args, parse_stream_stdio,
-        reject_unhonored_sim_args, unhonored_sim_args,
-    };
-    use crate::cli::SimArgs;
+    use super::{has_explicit_sim_args, parse_stream_stdio};
+    use crate::cli::{Cli, PluginAsyncModeChoice, SimArgs};
+    use crate::sim::params::SimParams;
     use clap::Parser;
+    use clap::error::ErrorKind;
 
     fn args(extra: &[&str]) -> SimArgs {
         let mut argv = vec!["orts"];
@@ -524,23 +314,35 @@ mod tests {
         SimArgs::try_parse_from(argv).expect("valid args")
     }
 
-    /// What the same argv wrote, which is what the guard asks about.
-    fn written(extra: &[&str]) -> WrittenFlags {
-        use clap::CommandFactory;
-
-        let mut argv = vec!["orts"];
+    /// How clap answers `orts serve <extra>`: `None` when it accepts the
+    /// command line, else the kind of refusal and the message it prints.
+    ///
+    /// The refusal is clap's own. `SimArgs` declares which flags conflict with
+    /// `--config` and which need an orbit, and clap checks those relations
+    /// against the flags written on the command line, so a flag left at its
+    /// default never counts and a flag written with its default value does.
+    ///
+    /// The message is split where it means different things: the error — up
+    /// to the `Usage:` line — says what is wrong, and the usage line after it
+    /// echoes every flag the command line wrote, refused or not.
+    fn refusal(extra: &[&str]) -> Option<(ErrorKind, Refusal)> {
+        let mut argv = vec!["orts", "serve"];
         argv.extend_from_slice(extra);
-        let matches = SimArgs::command()
-            .try_get_matches_from(argv)
-            .expect("valid args");
-        WrittenFlags::from_matches(&matches)
+        Cli::try_parse_from(argv).err().map(|e| {
+            let full = e.render().to_string();
+            let (error, usage) = match full.split_once("Usage:") {
+                Some((error, usage)) => (error.to_string(), usage.to_string()),
+                None => (full.clone(), String::new()),
+            };
+            (e.kind(), Refusal { error, usage })
+        })
     }
 
-    /// The refusal message, or `None` when the args are accepted.
-    fn refusal(extra: &[&str]) -> Option<String> {
-        reject_unhonored_sim_args(&args(extra), &written(extra))
-            .err()
-            .map(|e| e.to_string())
+    /// A refusal's message, split into what is wrong and the echoed usage.
+    #[derive(Debug, PartialEq)]
+    struct Refusal {
+        error: String,
+        usage: String,
     }
 
     #[test]
@@ -559,39 +361,16 @@ mod tests {
         assert!(parse_stream_stdio("sat0/a/b").is_err());
     }
 
-    /// The path the process itself takes: the whole command line, through
-    /// `Cli`, with `serve`'s own matches pulled out of it.
-    ///
-    /// The other cases build matches from `SimArgs` alone, which would keep
-    /// passing if the ids under `serve` were spelled differently or the
-    /// subcommand were pulled out wrongly.
-    #[test]
-    fn the_whole_command_line_is_read_the_way_the_process_reads_it() {
-        let written = WrittenFlags::written_in(["orts", "serve", "--atol", "1e-10"]);
-        assert!(
-            written.was_written("--atol"),
-            "--atol is written, whatever its value: {written:?}"
-        );
-        assert!(!written.was_written("--dt"), "and --dt is not: {written:?}");
-
-        // Another subcommand's flags are not serve's.
-        let elsewhere = WrittenFlags::written_in(["orts", "run", "--atol", "1e-10"]);
-        assert!(
-            !elsewhere.was_written("--atol"),
-            "run's flags are read by run: {elsewhere:?}"
-        );
-    }
-
     /// A command line mixing a dropped flag with a carried one names only the
     /// dropped one.
     ///
-    /// The same command line used to name both. `--plugin-backend-async-mode`
-    /// rides `PluginBackendOverrides` now, so `--atol` is the only flag a
+    /// `--plugin-backend-async-mode` rides `PluginBackendOverrides` into
+    /// whatever simulation the server runs, so `--atol` is the only flag a
     /// `--config` run leaves nowhere to put — and the caller hears about that
     /// one alone rather than being sent to drop a flag that works.
     #[test]
     fn a_carried_flag_is_not_named_beside_a_dropped_one() {
-        let msg = refusal(&[
+        let (kind, msg) = refusal(&[
             "--config",
             "mission.toml",
             "--plugin-backend-async-mode",
@@ -600,40 +379,39 @@ mod tests {
             "1e-10",
         ])
         .expect("--atol still has nowhere to go");
-        assert!(msg.contains("--atol"), "the dropped flag is named: {msg}");
+        assert_eq!(kind, ErrorKind::ArgumentConflict, "{msg:?}");
         assert!(
-            !msg.contains("--plugin-backend-async-mode"),
-            "the carried one is not: {msg}"
+            msg.error.contains("--atol"),
+            "the dropped flag is named: {msg:?}"
         );
         assert!(
-            msg.contains("mission.toml"),
-            "with the config that leaves no room for it: {msg}"
+            !msg.error.contains("--plugin-backend-async-mode"),
+            "the carried one is not: {msg:?}"
+        );
+        assert!(
+            msg.error.contains("--config"),
+            "beside the flag that leaves no room for it: {msg:?}"
         );
     }
 
     /// A CLI-orbit serve runs deterministic until the flag is written.
     ///
-    /// This is the one way of starting `serve` whose params come from
-    /// `SimParams::from_sim_args`, which reads clap's `throughput` default when
-    /// the flag is absent. The config and idle paths start at `Deterministic`
-    /// and the overrides leave them there, so without the correction this path
-    /// alone would change mode on a command line that never mentioned it.
+    /// The flag has no clap default, because the two commands that read it
+    /// differ: `run` runs `throughput` when it is left out and `serve`
+    /// `deterministic`. `SimParams::from_sim_args` resolves the absent flag
+    /// for the command that called it, so a `serve` whose params come from the
+    /// command line lands where a config-built one does.
     #[test]
     fn a_cli_orbit_serve_stays_deterministic_until_the_flag_is_written() {
         let bare = args(&["--sat", "altitude=400"]);
         assert_eq!(
-            bare.plugin_backend_async_mode,
-            crate::cli::PluginAsyncModeChoice::Throughput,
-            "clap hands over its own default, which is not what serve does"
+            bare.plugin_backend_async_mode, None,
+            "a flag left out reaches the params as nothing asked"
         );
-        let params = cli_orbit_params(
-            &bare,
-            &super::manager::PluginBackendOverrides::from_sim_args(&bare, false),
-        )
-        .expect("valid sim args");
+        let params = SimParams::from_sim_args(&bare, true).expect("valid sim args");
         assert_eq!(
             params.plugin_backend_async_mode,
-            crate::cli::PluginAsyncModeChoice::Deterministic,
+            PluginAsyncModeChoice::Deterministic,
             "an absent flag leaves this server where it has always run"
         );
 
@@ -643,15 +421,19 @@ mod tests {
             "--plugin-backend-async-mode",
             "throughput",
         ]);
-        let params = cli_orbit_params(
-            &asked,
-            &super::manager::PluginBackendOverrides::from_sim_args(&asked, true),
-        )
-        .expect("valid sim args");
+        let params = SimParams::from_sim_args(&asked, true).expect("valid sim args");
         assert_eq!(
             params.plugin_backend_async_mode,
-            crate::cli::PluginAsyncModeChoice::Throughput,
+            PluginAsyncModeChoice::Throughput,
             "and a written one is what the server runs"
+        );
+
+        // `run` resolves the same absent flag the other way.
+        let params = SimParams::from_sim_args(&bare, false).expect("valid sim args");
+        assert_eq!(
+            params.plugin_backend_async_mode,
+            PluginAsyncModeChoice::Throughput,
+            "run fans its control steps out when nothing asked otherwise"
         );
     }
 
@@ -659,8 +441,7 @@ mod tests {
     ///
     /// `PluginBackendOverrides` carries it into every `SimParams` the manager
     /// builds, and `ServeEngine` builds its plugin cache with the mode, so no
-    /// way of starting `serve` drops it. Refusing it was this check's job only
-    /// while the engine ignored it.
+    /// way of starting `serve` drops it.
     #[test]
     fn the_plugin_async_mode_is_honored_on_every_serve_path() {
         for extra in [
@@ -678,15 +459,7 @@ mod tests {
                 "deterministic",
             ],
         ] {
-            assert!(
-                unhonored_sim_args(&args(&extra), &written(&extra)).is_empty(),
-                "{extra:?} names no unhonored flag"
-            );
-            assert!(
-                refusal(&extra).is_none(),
-                "{extra:?} starts: {:?}",
-                refusal(&extra)
-            );
+            assert_eq!(refusal(&extra), None, "{extra:?} starts");
         }
     }
 
@@ -695,11 +468,11 @@ mod tests {
     ///
     /// This is what a comparison against the default cannot see: with a config
     /// supplying a different `atol`, `serve --config cfg.toml --atol 1e-10`
-    /// runs the config's value while the command line asked for something, and
-    /// the guard used to stay quiet about it.
+    /// runs the config's value while the command line asked for something.
+    /// clap counts the flag because it was written, whatever its value.
     #[test]
     fn a_flag_written_with_the_default_value_is_still_named() {
-        let default = SimArgs::try_parse_from(["orts"]).expect("valid args");
+        let default = args(&[]);
         for (flag, value) in [
             ("--dt", format!("{}", default.dt)),
             ("--atol", format!("{}", default.atol)),
@@ -712,12 +485,12 @@ mod tests {
                 format!("{}", default.root_t_tolerance),
             ),
         ] {
-            let extra = [flag, value.as_str()];
-            let named = unhonored_sim_args(&args(&extra), &written(&extra));
-            assert!(
-                named.contains(&flag),
-                "{flag} {value} is named although it matches the default: {named:?}"
-            );
+            let extra = ["--config", "cfg.toml", flag, value.as_str()];
+            let (kind, msg) = refusal(&extra).unwrap_or_else(|| {
+                panic!("{flag} {value} is refused although it matches the default")
+            });
+            assert_eq!(kind, ErrorKind::ArgumentConflict, "{msg:?}");
+            assert!(msg.error.contains(flag), "{flag} is named: {msg:?}");
         }
     }
 
@@ -725,146 +498,76 @@ mod tests {
     fn bare_serve_has_no_sim_args_to_honor() {
         let sim = args(&[]);
         assert!(!has_explicit_sim_args(&sim));
-        assert!(unhonored_sim_args(&sim, &written(&[])).is_empty());
-        assert!(refusal(&[]).is_none());
+        assert_eq!(refusal(&[]), None);
     }
 
+    /// Idle, a tuning flag has no simulation to apply to, and clap names it
+    /// beside the orbit it would need.
     #[test]
     fn tuning_args_are_reported_by_flag_name() {
-        assert_eq!(
-            unhonored_sim_args(&args(&["--dt", "1"]), &written(&["--dt", "1"])),
-            vec!["--dt"]
-        );
-        assert_eq!(
-            unhonored_sim_args(
-                &args(&["--dt", "1", "--output-interval", "10"]),
-                &written(&["--dt", "1", "--output-interval", "10"])
-            ),
-            vec!["--dt", "--output-interval"]
-        );
-        assert_eq!(
-            unhonored_sim_args(&args(&["--body", "mars"]), &written(&["--body", "mars"])),
-            vec!["--body"]
-        );
-        assert_eq!(
-            unhonored_sim_args(
-                &args(&["--epoch", "2024-03-20T12:00:00Z"]),
-                &written(&["--epoch", "2024-03-20T12:00:00Z"])
-            ),
-            vec!["--epoch"]
-        );
-        assert_eq!(
-            unhonored_sim_args(
-                &args(&["--duration", "600"]),
-                &written(&["--duration", "600"])
-            ),
-            vec!["--duration"]
-        );
-        // Every path that walks with boundaries takes the search from
-        // `SimParams`, and `serve` idle or with `--config` never builds one
-        // from these args: a written tolerance would be dropped in silence.
-        assert_eq!(
-            unhonored_sim_args(
-                &args(&["--root-t-tolerance", "1e-6"]),
-                &written(&["--root-t-tolerance", "1e-6"])
-            ),
-            vec!["--root-t-tolerance"]
-        );
-        assert_eq!(
-            unhonored_sim_args(
-                &args(&["--integrator", "rk4", "--rtol", "1e-6"]),
-                &written(&["--integrator", "rk4", "--rtol", "1e-6"])
-            ),
-            vec!["--integrator", "--rtol"]
-        );
-        assert_eq!(
-            unhonored_sim_args(
-                &args(&["--atmosphere", "nrlmsise00", "--f107", "200"]),
-                &written(&["--atmosphere", "nrlmsise00", "--f107", "200"])
-            ),
-            vec!["--atmosphere", "--f107"]
-        );
-        assert_eq!(
-            unhonored_sim_args(
-                &args(&["--space-weather", "auto"]),
-                &written(&["--space-weather", "auto"])
-            ),
-            vec!["--space-weather"]
-        );
+        for extra in [
+            vec!["--dt", "1"],
+            vec!["--dt", "1", "--output-interval", "10"],
+            vec!["--body", "mars"],
+            vec!["--epoch", "2024-03-20T12:00:00Z"],
+            vec!["--duration", "600"],
+            // Every path that walks with boundaries takes the search from
+            // `SimParams`, and an idle `serve` never builds one from these
+            // args: a written tolerance would be dropped in silence.
+            vec!["--root-t-tolerance", "1e-6"],
+            vec!["--integrator", "rk4", "--rtol", "1e-6"],
+            vec!["--atmosphere", "nrlmsise00", "--f107", "200"],
+            vec!["--space-weather", "auto"],
+        ] {
+            let (kind, msg) = refusal(&extra).unwrap_or_else(|| panic!("{extra:?} is refused"));
+            assert_eq!(kind, ErrorKind::MissingRequiredArgument, "{msg:?}");
+            // The error names the orbit the flags need; the usage line after
+            // it shows them in the command line that needed one.
+            assert!(msg.error.contains("--sat"), "the orbit is named: {msg:?}");
+            for flag in extra.iter().filter(|a| a.starts_with("--")) {
+                assert!(msg.usage.contains(flag), "{flag} is in the usage: {msg:?}");
+            }
+        }
     }
 
     /// A value equal to what a bare command line would mean is still named.
     ///
-    /// This expectation is the opposite of the one this test carried before
-    /// ([#522](https://github.com/sksat/orts/issues/522)): the old rule asked
-    /// whether dropping the value changes anything, and answered from the
-    /// value. But the check only runs where nothing reads these values — a
-    /// `--config` builds them itself, an idle server takes them from its
-    /// client — so what was written is dropped either way, and with a config
-    /// setting something else the two are not even the same number.
+    /// The old rule asked whether dropping the value changes anything, and
+    /// answered from the value
+    /// ([#522](https://github.com/sksat/orts/issues/522)). But these values
+    /// are read only where the command line describes the orbit, so what was
+    /// written anywhere else is dropped either way.
     #[test]
     fn a_value_equal_to_the_default_is_still_named() {
-        assert_eq!(
-            unhonored_sim_args(&args(&["--dt", "10"]), &written(&["--dt", "10"])),
-            vec!["--dt"]
-        );
-        assert_eq!(
-            unhonored_sim_args(&args(&["--body", "earth"]), &written(&["--body", "earth"])),
-            vec!["--body"]
-        );
-        assert_eq!(
-            unhonored_sim_args(
-                &args(&["--integrator", "dp45"]),
-                &written(&["--integrator", "dp45"])
-            ),
-            vec!["--integrator"]
-        );
-        // The fallback `output_interval` would have taken is `dt`, and writing
-        // it is still writing it.
-        assert_eq!(
-            unhonored_sim_args(
-                &args(&["--output-interval", "10"]),
-                &written(&["--output-interval", "10"])
-            ),
-            vec!["--output-interval"]
-        );
-        assert_eq!(
-            unhonored_sim_args(
-                &args(&["--output-interval", "30", "--stream-interval", "30"]),
-                &written(&["--output-interval", "30", "--stream-interval", "30"])
-            ),
-            vec!["--output-interval", "--stream-interval"]
-        );
+        for extra in [
+            vec!["--dt", "10"],
+            vec!["--body", "earth"],
+            vec!["--integrator", "dp45"],
+            // The fallback `output_interval` would have taken is `dt`, and
+            // writing it is still writing it.
+            vec!["--output-interval", "10"],
+            vec!["--output-interval", "30", "--stream-interval", "30"],
+        ] {
+            let (kind, msg) = refusal(&extra).unwrap_or_else(|| panic!("{extra:?} is refused"));
+            assert_eq!(kind, ErrorKind::MissingRequiredArgument, "{msg:?}");
+            for flag in extra.iter().filter(|a| a.starts_with("--")) {
+                assert!(msg.usage.contains(flag), "{flag} is in the usage: {msg:?}");
+            }
+        }
     }
+
     /// The plugin backend flags survive into a client-started simulation via
     /// `PluginBackendOverrides`, so they must not be refused.
     #[test]
     fn plugin_backend_args_are_honored_when_idle() {
-        assert!(
-            unhonored_sim_args(
-                &args(&[
-                    "--plugin-backend",
-                    "sync",
-                    "--plugin-backend-threshold",
-                    "64",
-                ]),
-                &written(&[
-                    "--plugin-backend",
-                    "sync",
-                    "--plugin-backend-threshold",
-                    "64",
-                ])
-            )
-            .is_empty()
-        );
-        assert!(
+        assert_eq!(
             refusal(&[
                 "--plugin-backend",
                 "sync",
                 "--plugin-backend-threshold",
                 "64",
-            ])
-            .is_none()
+            ]),
+            None
         );
     }
 
@@ -874,88 +577,79 @@ mod tests {
     fn an_orbit_makes_the_tuning_args_honorable() {
         let sim = args(&["--sat", "altitude=800", "--dt", "1"]);
         assert!(has_explicit_sim_args(&sim));
-        assert!(refusal(&["--sat", "altitude=800", "--dt", "1"]).is_none());
+        assert_eq!(refusal(&["--sat", "altitude=800", "--dt", "1"]), None);
     }
 
-    /// Idle: the message names every dropped flag and how to make it apply.
+    /// Idle: the message names every dropped flag and the orbit that would
+    /// make it apply.
+    ///
+    /// clap's message stops at the orbit. That a client can instead set these
+    /// through `start_simulation` is in `serve --help`, which the message
+    /// points to.
     #[test]
     fn idle_serve_refuses_tuning_args_by_name() {
-        let msg = refusal(&["--dt", "1", "--output-interval", "60"]).expect("must be refused");
-        assert!(msg.contains("--dt"), "{msg}");
-        assert!(msg.contains("--output-interval"), "{msg}");
-        assert!(msg.contains("--sat"), "{msg}");
-        assert!(msg.contains("start_simulation"), "{msg}");
+        let (kind, msg) =
+            refusal(&["--dt", "1", "--output-interval", "60"]).expect("must be refused");
+        assert_eq!(kind, ErrorKind::MissingRequiredArgument, "{msg:?}");
+        assert!(msg.usage.contains("--dt"), "{msg:?}");
+        assert!(msg.usage.contains("--output-interval"), "{msg:?}");
+        assert!(msg.error.contains("--sat"), "{msg:?}");
+        assert!(msg.usage.contains("--help"), "{msg:?}");
+
+        use clap::CommandFactory;
+        let help = Cli::command()
+            .find_subcommand_mut("serve")
+            .expect("serve is a subcommand")
+            .render_long_help()
+            .to_string();
+        assert!(
+            help.contains("start_simulation"),
+            "serve --help says where an idle server takes its settings from"
+        );
     }
 
     /// `--config` builds the whole `SimParams` by itself, so a tuning arg
     /// alongside it is dropped just as silently as in the idle case. The
-    /// message points at the config rather than at `--sat`.
+    /// message names the two flags that cannot go together.
     #[test]
     fn config_serve_refuses_tuning_args_it_cannot_apply() {
-        let msg = refusal(&["--config", "mission.toml", "--dt", "1"]).expect("must be refused");
-        assert!(msg.contains("--dt"), "{msg}");
-        assert!(msg.contains("mission.toml"), "{msg}");
-        assert!(
-            refusal(&["--config", "mission.toml"]).is_none(),
+        let (kind, msg) =
+            refusal(&["--config", "mission.toml", "--dt", "1"]).expect("must be refused");
+        assert_eq!(kind, ErrorKind::ArgumentConflict, "{msg:?}");
+        assert!(msg.error.contains("--dt"), "{msg:?}");
+        assert!(msg.error.contains("--config"), "{msg:?}");
+        assert_eq!(
+            refusal(&["--config", "mission.toml"]),
+            None,
             "a bare --config must still be accepted"
         );
     }
 
-    /// A stream interval is named whatever the clamp would make of it.
+    /// An interval is refused for being written, whatever its value.
     ///
-    /// `SimParams::from_sim_args` clamps the value into
-    /// `[min(dt, output_interval), output_interval]`, so `--stream-interval 20`
-    /// against the bare defaults resolves to the same 10 s a bare command line
-    /// gives — but `from_sim_args` is not what runs here, and the value written
-    /// reaches nothing. This too is the opposite of what the test asserted
-    /// before ([#522](https://github.com/sksat/orts/issues/522)).
+    /// The check never reads the value: clap looks at which flags appear, so a
+    /// value `SimParams::from_sim_args` would clamp into the default (`20`,
+    /// `0.001`, `5` against the bare defaults), one that is not finite, and
+    /// one of zero are all the same written flag. The values themselves are
+    /// refused later, by the shared time-parameter check, where they are read.
     #[test]
-    fn a_stream_interval_is_named_whatever_the_clamp_would_do() {
-        for value in ["20", "0.001", "5"] {
-            let extra = ["--stream-interval", value];
-            assert_eq!(
-                unhonored_sim_args(&args(&extra), &written(&extra)),
-                vec!["--stream-interval"],
-                "--stream-interval {value} is written, so it is named"
-            );
+    fn an_interval_is_refused_for_being_written_whatever_its_value() {
+        for value in ["20", "0.001", "5", "NaN", "inf", "0"] {
+            let extra = ["--config", "cfg.toml", "--stream-interval", value];
+            let (kind, msg) =
+                refusal(&extra).unwrap_or_else(|| panic!("--stream-interval {value} is refused"));
+            assert_eq!(kind, ErrorKind::ArgumentConflict, "{msg:?}");
+            assert!(msg.error.contains("--stream-interval"), "{msg:?}");
         }
-        // And alongside an output interval, both are named.
-        let extra = [
-            "--dt",
-            "1",
-            "--output-interval",
-            "10",
-            "--stream-interval",
-            "5",
-        ];
-        assert_eq!(
-            unhonored_sim_args(&args(&extra), &written(&extra)),
-            vec!["--dt", "--output-interval", "--stream-interval"]
-        );
-    }
-
-    #[test]
-    fn a_non_finite_interval_is_named_rather_than_panicking() {
-        for extra in [
-            vec!["--output-interval", "NaN", "--stream-interval", "1"],
-            vec!["--dt", "NaN", "--stream-interval", "1"],
-            vec!["--output-interval", "inf", "--stream-interval", "1"],
-            vec!["--stream-interval", "NaN"],
-            // The clamp would fold these into the default and read them as
-            // inert; `validate_time_params` refuses them, so they are named.
-            vec!["--stream-interval", "inf"],
-            vec!["--stream-interval", "0"],
-        ] {
-            let named = unhonored_sim_args(&args(&extra), &written(&extra));
-            assert!(
-                named.contains(&"--stream-interval"),
-                "{extra:?} names the stream interval: {named:?}"
-            );
-        }
-        // The value itself is refused a moment later, by the shared check.
         assert!(
-            crate::commands::run::validate_sim_args(&args(&["--dt", "NaN"])).is_err(),
-            "a non-finite dt is refused"
+            crate::commands::run::validate_sim_args(&args(&[
+                "--sat",
+                "altitude=400",
+                "--dt",
+                "NaN"
+            ]))
+            .is_err(),
+            "a non-finite dt is refused where it is read"
         );
     }
 
@@ -964,45 +658,47 @@ mod tests {
     /// zonal model behind an explicit `--gravity-field`.
     #[test]
     fn gravity_field_flags_are_named_when_unhonored() {
-        assert_eq!(
-            unhonored_sim_args(
-                &args(&[
-                    "--gravity-field",
-                    "x.gfc",
-                    "--gravity-degree",
-                    "8",
-                    "--gravity-order",
-                    "8",
-                ]),
-                &written(&[
-                    "--gravity-field",
-                    "x.gfc",
-                    "--gravity-degree",
-                    "8",
-                    "--gravity-order",
-                    "8",
-                ])
-            ),
-            vec!["--gravity-field", "--gravity-degree", "--gravity-order"]
-        );
-        let err = refusal(&["--config", "mission.toml", "--gravity-field", "x.gfc"])
+        let (_, msg) = refusal(&[
+            "--gravity-field",
+            "x.gfc",
+            "--gravity-degree",
+            "8",
+            "--gravity-order",
+            "8",
+        ])
+        .expect("an idle serve must refuse the flags");
+        for flag in ["--gravity-field", "--gravity-degree", "--gravity-order"] {
+            assert!(msg.usage.contains(flag), "{flag} is in the usage: {msg:?}");
+        }
+        let (kind, msg) = refusal(&["--config", "mission.toml", "--gravity-field", "x.gfc"])
             .expect("serve --config must refuse the flag");
-        assert!(err.contains("--gravity-field"), "{err}");
+        assert_eq!(kind, ErrorKind::ArgumentConflict, "{msg:?}");
+        assert!(msg.error.contains("--gravity-field"), "{msg:?}");
     }
 
-    /// `serve` propagates in `SimpleEci` only, so `--frame gcrs` is named as
-    /// unhonored rather than served in the other frame.
+    /// `--frame` and `--eop` reach a simulation only through
+    /// `from_sim_args`, like the other tuning flags.
     #[test]
     fn serve_names_the_frame_flag_when_it_cannot_honor_it() {
-        assert_eq!(
-            unhonored_sim_args(
-                &args(&["--frame", "gcrs", "--eop", "zero"]),
-                &written(&["--frame", "gcrs", "--eop", "zero"])
-            ),
-            vec!["--eop", "--frame"]
-        );
-        let err = refusal(&["--config", "mission.toml", "--frame", "gcrs"])
+        let (_, msg) =
+            refusal(&["--frame", "gcrs", "--eop", "zero"]).expect("an idle serve must refuse them");
+        assert!(msg.usage.contains("--frame"), "{msg:?}");
+        assert!(msg.usage.contains("--eop"), "{msg:?}");
+        let (kind, msg) = refusal(&["--config", "mission.toml", "--frame", "gcrs"])
             .expect("serve --config must refuse the flag");
-        assert!(err.contains("--frame"), "{err}");
+        assert_eq!(kind, ErrorKind::ArgumentConflict, "{msg:?}");
+        assert!(msg.error.contains("--frame"), "{msg:?}");
+    }
+
+    /// An orbit next to `--config` is refused, the way a tuning flag is.
+    ///
+    /// `serve` builds from the config when it has one and never reads the
+    /// orbit, so `--sat` there used to be dropped in silence.
+    #[test]
+    fn an_orbit_next_to_a_config_is_refused() {
+        let (kind, msg) = refusal(&["--config", "mission.toml", "--sat", "altitude=400"])
+            .expect("the orbit has nowhere to go");
+        assert_eq!(kind, ErrorKind::ArgumentConflict, "{msg:?}");
+        assert!(msg.error.contains("--sat"), "{msg:?}");
     }
 }

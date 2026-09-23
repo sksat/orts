@@ -1846,7 +1846,7 @@ impl SatelliteConfig {
 /// Reject time knobs the integrator cannot make progress with.
 ///
 /// Shared by the config-file path ([`SimConfig::validate`]) and the direct-CLI
-/// path (`orts run --sat ...`, `orts serve --dt ...`), which reach
+/// path (`orts run --sat ...`, `orts serve --sat ... --dt ...`), which reach
 /// `SimParams` through different constructors and would otherwise disagree
 /// about what is accepted.
 ///
@@ -2955,7 +2955,14 @@ altitude = 500
             err.starts_with("frame = \"gcrs\" is not supported by `orts serve`"),
             "{err}"
         );
-        assert!(err.contains("orts run --frame gcrs"), "{err}");
+        assert!(
+            err.contains("`orts run` for the IAU 2006 path"),
+            "the message points at run: {err}"
+        );
+        assert!(
+            err.contains("`--frame gcrs` with an orbit"),
+            "and at a command line run accepts, not the bare flag: {err}"
+        );
     }
 
     #[test]

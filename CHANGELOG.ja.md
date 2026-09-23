@@ -610,6 +610,28 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `orts-cli` (Rust, crates.io, binary)
 
 #### Changed
+- **BREAKING**: `run` と `serve` は、simulation が読まないコマンドラインのフラグを拒否する。コマンドは
+  simulation を config (`--config`、または引数なしの `run` が見つける `orts.toml`) か、コマンドラインの
+  軌道指定から取り、調整フラグ (`--dt` / `--atol` / `--integrator` / `--duration` / `--frame` /
+  `--gravity-field` など) は後者にだけ効く。`run --config mission.toml --dt 1` は config の `dt` で
+  黙って積分していた — 固定刻みの run で、フラグの有無で出力が最終桁まで一致した。いまは clap が
+  usage エラー (exit 2) で止める: `--config` と並んだ調整フラグ・軌道指定
+  (`the argument '--config <CONFIG>' cannot be used with '--dt <DT>'`) と、軌道指定のない調整フラグ
+  (`the following required arguments were not provided: <--sat …>`)。軌道を黙って捨てていた
+  `serve --config` + `--sat` と、見つけた `orts.toml` の上に書いた `run --dt 1` もこれで止まる。
+  フラグは `SimArgs` に引数の関係として宣言したので、値によらず「書かれたこと」で数える。`serve` が
+  持っていた手作りの判定 (`WrittenFlags` とフラグ表) は無くなった。捨てられるフラグが複数あるとき、
+  エラーが全部を名指しするのは `--config` が先にある場合だけである: clap は最初に見つけた衝突を
+  報告し、残りは Usage 行に出る。`--plugin-backend` の 3 つはどちらのコマンドでも適用されるので
+  影響しない。config への移し方: `--dt` / `--duration` / `--output-interval` / `--epoch` は同名の
+  トップレベルのキー、`--integrator` / `--atol` / `--rtol` / `--root-t-tolerance` は `[integrator]`
+  (integrator 自体は `type`)、重力のフラグは `[gravity_field]` (`path` / `degree` / `order`)、
+  `--sat altitude=400` は `orbit = { type = "circular", altitude = 400 }` を持つ `[[satellites]]`。
+  config には OMM ファイルを指すキーが無く、TLE は 2 行を書き写す形になるので、それらは
+  コマンドラインで走らせる ([#550](https://github.com/sksat/orts/issues/550))
+- `--tle-line1` / `--tle-line2` の片方だけ、`--gravity-field` のない `--gravity-degree` /
+  `--gravity-order` は usage エラー (exit 2) になる。TLE の行が片方だけだと
+  `SimParams::from_sim_args` が panic していた ([#550](https://github.com/sksat/orts/issues/550))
 - **BREAKING**: `serve` は、値が既定と違うからではなく「書かれたから」調整フラグを報告する。
   `serve --config mission.toml --atol 1e-10` は無言で起動していた: 値が既定と同じなのでフラグが
   「無い」と読まれ、コマンドラインの指定ではなく config の `atol` が走っていた。この検査が走るのは
@@ -621,8 +643,9 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   あとから始めた fleet にも適用される: このフラグは `PluginBackendOverrides` に載って manager が
   組むすべての `SimParams` に入り、`ServeEngine` は plugin cache を `WasmPluginCache::new()`
   (モードは常に `Deterministic`) ではなくそのモードで作る。フラグを指定しない場合、`serve` は
-  フラグ自身の既定値 `throughput` ではなく `Deterministic` のままである — 指定のない server が
-  従来やってきたことなので、このフラグを書かないコマンドラインの挙動は変わらない。
+  `Deterministic` のままである — 指定のない server が従来やってきたことなので、このフラグを書かない
+  コマンドラインの挙動は変わらない。2 つのコマンドで既定が違うので、このフラグは clap の既定値を
+  持たない: 指定しなければ `run` は `throughput`、`serve` は `deterministic` を使う。
   `serve` で `throughput` が得るのは multi-worker runtime までで、step は衛星を順に回すため
   制御ステップは `run` のように重ならない ([#548](https://github.com/sksat/orts/issues/548))
   ([#536](https://github.com/sksat/orts/issues/536))
