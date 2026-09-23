@@ -271,23 +271,61 @@ pub fn parse_sat_spec(s: &str, body: KnownBody, mu: f64) -> Result<SatelliteSpec
     let mut srp_area_to_mass: Option<f64> = None;
     let mut srp_cr: Option<f64> = None;
 
+    // Every part is read or refused: a part skipped here would run a
+    // different orbit than the one written (#558).
+    let mut seen: Vec<&str> = Vec::new();
     for part in s.split(',') {
-        if let Some((key, value)) = part.split_once('=') {
-            match key.trim() {
-                "id" => id = value.trim().to_string(),
-                "name" => name = Some(value.trim().to_string()),
-                "altitude" => altitude = Some(number("altitude", value)?),
-                "inclination" => inclination = Some(number("inclination", value)?),
-                "raan" => raan = Some(number("raan", value)?),
-                "norad-id" => norad_id = Some(number("norad-id", value)?),
-                "tle-line1" => tle_line1 = Some(value.trim().to_string()),
-                "tle-line2" => tle_line2 = Some(value.trim().to_string()),
-                "ballistic-coeff" => ballistic_coeff = Some(number("ballistic-coeff", value)?),
-                "srp-area-to-mass" => srp_area_to_mass = Some(number("srp-area-to-mass", value)?),
-                "srp-cr" => srp_cr = Some(number("srp-cr", value)?),
-                k => return Err(format!("Unknown satellite spec key: {k}")),
-            }
+        if part.trim().is_empty() {
+            continue;
         }
+        let Some((key, value)) = part.split_once('=') else {
+            return Err(format!("expected key=value, got '{part}'"));
+        };
+        let key = key.trim();
+        if seen.contains(&key) {
+            return Err(format!("{key} is given twice"));
+        }
+        seen.push(key);
+        match key {
+            "id" => id = value.trim().to_string(),
+            "name" => name = Some(value.trim().to_string()),
+            "altitude" => altitude = Some(number("altitude", value)?),
+            "inclination" => inclination = Some(number("inclination", value)?),
+            "raan" => raan = Some(number("raan", value)?),
+            "norad-id" => norad_id = Some(number("norad-id", value)?),
+            "tle-line1" => tle_line1 = Some(value.trim().to_string()),
+            "tle-line2" => tle_line2 = Some(value.trim().to_string()),
+            "ballistic-coeff" => ballistic_coeff = Some(number("ballistic-coeff", value)?),
+            "srp-area-to-mass" => srp_area_to_mass = Some(number("srp-area-to-mass", value)?),
+            "srp-cr" => srp_cr = Some(number("srp-cr", value)?),
+            k => return Err(format!("Unknown satellite spec key: {k}")),
+        }
+    }
+
+    // One orbit per satellite, as a config's `orbit = { type = ... }` has:
+    // the choice below would otherwise read one kind and drop the others.
+    let kinds: Vec<&str> = [
+        (
+            altitude.is_some() || inclination.is_some() || raan.is_some(),
+            "a circular orbit (altitude / inclination / raan)",
+        ),
+        (
+            tle_line1.is_some() || tle_line2.is_some(),
+            "a TLE (tle-line1 / tle-line2)",
+        ),
+        (norad_id.is_some(), "a NORAD id (norad-id)"),
+    ]
+    .into_iter()
+    .filter_map(|(given, kind)| given.then_some(kind))
+    .collect();
+    if kinds.len() > 1 {
+        return Err(format!(
+            "one orbit per satellite, got {}",
+            kinds.join(" and ")
+        ));
+    }
+    if tle_line1.is_some() != tle_line2.is_some() {
+        return Err("tle-line1 and tle-line2 must be given together".to_string());
     }
 
     // Determine orbit
@@ -551,5 +589,48 @@ mod tests {
                 .expect("a valid spec"),
         ];
         ensure_unique_ids(&specs).expect("distinct ids must be accepted");
+    }
+
+    /// A spec with a part `parse_sat_spec` would not read is refused, rather
+    /// than run as a different orbit (#558).
+    ///
+    /// Measured before: `altitude800` ran the default 400 km orbit,
+    /// `inclination51.6` left the inclination at 0, and a lone `tle-line1`
+    /// ran a 400 km circle, all with exit 0.
+    #[test]
+    fn a_spec_with_a_part_it_would_not_read_is_refused() {
+        const L1: &str = "1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9996";
+        const L2: &str = "2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480008";
+        for (spec, says) in [
+            ("altitude800".to_string(), "altitude800"),
+            (
+                "altitude=800,inclination51.6".to_string(),
+                "inclination51.6",
+            ),
+            (format!("tle-line1={L1}"), "tle-line2"),
+            (format!("tle-line2={L2}"), "tle-line1"),
+            ("altitude=400,altitude=800".to_string(), "altitude"),
+            (
+                format!("altitude=800,tle-line1={L1},tle-line2={L2}"),
+                "altitude",
+            ),
+            ("inclination=51.6,norad-id=25544".to_string(), "norad-id"),
+        ] {
+            let err = match parse_sat_spec(&spec, KnownBody::Earth, arika::earth::MU) {
+                Err(e) => e,
+                Ok(_) => panic!("{spec} must be refused"),
+            };
+            assert!(err.contains(says), "{spec}: {err}");
+        }
+    }
+
+    /// What the spec may still leave out: a trailing comma, and the circular
+    /// orbit's keys, which have defaults.
+    #[test]
+    fn a_spec_may_leave_out_what_has_a_default() {
+        for spec in ["altitude=800,", "inclination=51.6", "id=a"] {
+            parse_sat_spec(spec, KnownBody::Earth, arika::earth::MU)
+                .unwrap_or_else(|e| panic!("{spec}: {e}"));
+        }
     }
 }

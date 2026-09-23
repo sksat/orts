@@ -1051,6 +1051,14 @@ section is subdivided by package.
   reported only on the server's stderr, because it happens after the request
   was acknowledged ([#555](https://github.com/sksat/orts/issues/555)).
   ([#554](https://github.com/sksat/orts/issues/554))
+- `--sat` refuses a spec with a part it would not read, where it used to run
+  a different orbit with exit 0: `altitude800` (no `=`) ran the default 400
+  km, `altitude=800,inclination51.6` an equatorial orbit, and a lone
+  `tle-line1` a 400 km circle. A key given twice, and keys of two orbits in
+  one spec (`altitude` with TLE lines, which dropped the altitude), are
+  refused too: one satellite takes one orbit, as a config's
+  `orbit = { type = ... }` does. The `--sat` help in `orts run --help` lists every key.
+  ([#558](https://github.com/sksat/orts/issues/558))
 - The angular momentum a saturating reaction wheel used to lose (see `orts`
   above) was lost on the `mode = "controlled"` path too — `orts run
   --controller` and `orts serve` — which stepped with `advance_to` and so had no

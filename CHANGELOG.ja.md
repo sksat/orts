@@ -825,6 +825,12 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `space_weather` の失敗は要求に応答した後に起きるので、まだ server の stderr にしか出ない
   ([#555](https://github.com/sksat/orts/issues/555))
   ([#554](https://github.com/sksat/orts/issues/554))
+- `--sat` は、読まない部分を含む spec を拒否する。以前は別の軌道で exit 0 のまま走っていた:
+  `altitude800` (`=` の書き忘れ) は既定の 400 km、`altitude=800,inclination51.6` は赤道軌道、
+  `tle-line1` だけでは 400 km の円軌道。同じキーの 2 回目と、1 つの spec に 2 種類の軌道の
+  キーがある場合 (TLE の行と `altitude` では `altitude` が捨てられていた) も拒否する。config の
+  `orbit = { type = ... }` と同じく、1 つの衛星は 1 つの軌道を持つ。`orts run --help` の `--sat` の説明に全部の
+  キーを載せた ([#558](https://github.com/sksat/orts/issues/558))
 - 飽和した reaction wheel が角運動量を失う問題 (上の `orts` を参照) は
   `mode = "controlled"` の経路 — `orts run --controller` と `orts serve` — でも
   起きていた。この経路は `advance_to` で刻んでおり、止まる境界を持っていなかった。
