@@ -9,10 +9,10 @@ pub fn try_fetch_tle_by_norad_id(norad_id: u32) -> Option<ParsedElementSet> {
     fetch_tle_satnogs(norad_id)
 }
 
-/// Fetch a TLE by NORAD catalog number, panicking on failure.
-pub fn fetch_tle_by_norad_id(norad_id: u32) -> ParsedElementSet {
+/// Fetch a TLE by NORAD catalog number; `Err` when no source had one.
+pub fn fetch_tle_by_norad_id(norad_id: u32) -> Result<ParsedElementSet, String> {
     try_fetch_tle_by_norad_id(norad_id)
-        .unwrap_or_else(|| panic!("Failed to fetch TLE for NORAD ID {norad_id} from any source"))
+        .ok_or_else(|| format!("Failed to fetch TLE for NORAD ID {norad_id} from any source"))
 }
 
 /// Try fetching TLE from CelesTrak (3LE format).

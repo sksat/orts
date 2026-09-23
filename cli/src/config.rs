@@ -1611,7 +1611,17 @@ impl SatelliteConfig {
     }
 
     /// Convert a SatelliteConfig to a SatelliteSpec.
-    pub fn to_satellite_spec(&self, index: usize, body: KnownBody, mu: f64) -> SatelliteSpec {
+    ///
+    /// `Err` when the orbit cannot be built: a TLE that does not parse, or a
+    /// NORAD id no source returns a TLE for. `SatelliteConfig::validate`
+    /// checks neither, so a satellite that reaches here without
+    /// `SimConfig::load` (a WebSocket `add_satellite`) gets its answer here.
+    pub fn to_satellite_spec(
+        &self,
+        index: usize,
+        body: KnownBody,
+        mu: f64,
+    ) -> Result<SatelliteSpec, String> {
         let id = self.resolved_id(index);
 
         let (orbit, period, derived_name) = match &self.orbit {
@@ -1638,14 +1648,15 @@ impl SatelliteConfig {
             OrbitConfig::Tle { line1, line2 } => {
                 let text = format!("{line1}\n{line2}");
                 let parsed = arika::tle::parse(&text)
-                    .unwrap_or_else(|e| panic!("Failed to parse TLE in config: {e}"));
+                    .map_err(|e| format!("satellite '{id}': invalid TLE: {e}"))?;
                 let tle = parsed.elements;
                 let period = tle.period();
                 let tle_name = parsed.object_name.clone();
                 (OrbitSpec::ElementSet { elements: tle }, period, tle_name)
             }
             OrbitConfig::Norad { norad_id } => {
-                let parsed = fetch_tle_by_norad_id(*norad_id);
+                let parsed = fetch_tle_by_norad_id(*norad_id)
+                    .map_err(|e| format!("satellite '{id}': {e}"))?;
                 let tle = parsed.elements;
                 let period = tle.period();
                 let tle_name = parsed.object_name.clone();
@@ -1653,7 +1664,7 @@ impl SatelliteConfig {
             }
         };
 
-        SatelliteSpec {
+        Ok(SatelliteSpec {
             id,
             name: self.name.clone().or(derived_name),
             orbit,
@@ -1682,7 +1693,7 @@ impl SatelliteConfig {
             mtq_config: self.mtq.clone(),
             thruster_config: self.thruster.clone(),
             streams: self.streams.clone(),
-        }
+        })
     }
 }
 
@@ -2371,7 +2382,9 @@ mod tests {
         };
         let body = KnownBody::Earth;
         let mu = body.properties().mu;
-        let spec = sat_cfg.to_satellite_spec(0, body, mu);
+        let spec = sat_cfg
+            .to_satellite_spec(0, body, mu)
+            .expect("the fixture builds a spec");
 
         assert_eq!(spec.id, "sso");
         assert_eq!(spec.name.as_deref(), Some("SSO 800km"));
@@ -2411,7 +2424,9 @@ mod tests {
         };
         let body = KnownBody::Earth;
         let mu = body.properties().mu;
-        let spec = sat_cfg.to_satellite_spec(3, body, mu);
+        let spec = sat_cfg
+            .to_satellite_spec(3, body, mu)
+            .expect("the fixture builds a spec");
         assert_eq!(spec.id, "sat-3");
     }
 
@@ -2442,7 +2457,9 @@ mod tests {
         };
         let body = KnownBody::Earth;
         let mu = body.properties().mu;
-        let spec = sat_cfg.to_satellite_spec(0, body, mu);
+        let spec = sat_cfg
+            .to_satellite_spec(0, body, mu)
+            .expect("the fixture builds a spec");
 
         assert_eq!(spec.id, "iss");
         assert!(matches!(spec.orbit, OrbitSpec::ElementSet { .. }));
@@ -2619,7 +2636,9 @@ altitude = 400.0
             serde_json::from_str(&format!(r#"{{ {orbit}, "shape": "axes-cube" }}"#)).unwrap();
         assert_eq!(cfg.shape, Some(MarkerShape::AxesCube));
         // Carried into the runtime spec.
-        let spec = cfg.to_satellite_spec(0, KnownBody::Earth, 398_600.4418);
+        let spec = cfg
+            .to_satellite_spec(0, KnownBody::Earth, 398_600.4418)
+            .expect("the fixture builds a spec");
         assert_eq!(spec.shape, Some(MarkerShape::AxesCube));
 
         // Absent → None (the viewer decides).
@@ -2764,7 +2783,9 @@ streams = ["comlink", "uart0"]
 "#;
         let config: SimConfig = toml::from_str(toml).unwrap();
         let body = KnownBody::Earth;
-        let spec = config.satellites[0].to_satellite_spec(0, body, body.properties().mu);
+        let spec = config.satellites[0]
+            .to_satellite_spec(0, body, body.properties().mu)
+            .expect("the fixture builds a spec");
         assert_eq!(
             spec.streams,
             vec!["comlink".to_string(), "uart0".to_string()]
@@ -2779,7 +2800,9 @@ orbit = { type = "circular", altitude = 400 }
 "#;
         let config: SimConfig = toml::from_str(toml).unwrap();
         let body = KnownBody::Earth;
-        let spec = config.satellites[0].to_satellite_spec(0, body, body.properties().mu);
+        let spec = config.satellites[0]
+            .to_satellite_spec(0, body, body.properties().mu)
+            .expect("the fixture builds a spec");
         assert!(spec.streams.is_empty());
     }
 
@@ -3398,7 +3421,9 @@ cp_offset = [0.0, 1.5, 0.0]
     fn panels_reach_the_spec_as_a_shape() {
         let config: SimConfig = toml::from_str(PANEL_SAT).expect("parses");
         config.satellites[0].validate().expect("valid");
-        let spec = config.satellites[0].to_satellite_spec(0, KnownBody::Earth, 398600.4418);
+        let spec = config.satellites[0]
+            .to_satellite_spec(0, KnownBody::Earth, 398600.4418)
+            .expect("the fixture builds a spec");
         let shape = spec.panels.expect("panels reach the spec");
         let orts::spacecraft::SpacecraftShape::Panels(panels) = shape else {
             panic!("expected a panel shape");
@@ -3467,7 +3492,9 @@ cp_offset = [0.0, 1.5, 0.0]
         config.satellites[0]
             .validate()
             .expect("no panels, so neither the attitude nor the conflict rule applies");
-        let spec = config.satellites[0].to_satellite_spec(0, KnownBody::Earth, 398600.4418);
+        let spec = config.satellites[0]
+            .to_satellite_spec(0, KnownBody::Earth, 398600.4418)
+            .expect("the fixture builds a spec");
         assert!(
             spec.panels.is_none(),
             "a null key must not reach the dynamics as a panelled shape"
@@ -3494,7 +3521,9 @@ attitude = {{ inertia_diag = [10, 10, 10], mass = 50 }}
     /// Asserting on the parsed `PanelBackConfig` alone would pass even if the
     /// fallback resolved to zero, so this goes through to the panels.
     fn assert_two_faces_copying_the_front(config: &SimConfig) {
-        let spec = config.satellites[0].to_satellite_spec(0, KnownBody::Earth, 398600.4418);
+        let spec = config.satellites[0]
+            .to_satellite_spec(0, KnownBody::Earth, 398600.4418)
+            .expect("the fixture builds a spec");
         let orts::spacecraft::SpacecraftShape::Panels(panels) =
             spec.panels.expect("panels reach the spec")
         else {
@@ -3511,7 +3540,9 @@ attitude = {{ inertia_diag = [10, 10, 10], mass = 50 }}
 
     fn panels_of(toml_src: &str) -> Vec<orts::spacecraft::SurfacePanel> {
         let config: SimConfig = toml::from_str(toml_src).expect("parses");
-        let spec = config.satellites[0].to_satellite_spec(0, KnownBody::Earth, 398600.4418);
+        let spec = config.satellites[0]
+            .to_satellite_spec(0, KnownBody::Earth, 398600.4418)
+            .expect("the fixture builds a spec");
         let orts::spacecraft::SpacecraftShape::Panels(panels) =
             spec.panels.expect("panels reach the spec")
         else {
@@ -4023,7 +4054,9 @@ orbit = { type = "circular", altitude = 500 }
 attitude = { inertia_diag = [10, 10, 10], mass = 50 }
 "#;
         let config: SimConfig = toml::from_str(toml).expect("parses");
-        let spec = config.satellites[0].to_satellite_spec(0, KnownBody::Earth, 398600.4418);
+        let spec = config.satellites[0]
+            .to_satellite_spec(0, KnownBody::Earth, 398600.4418)
+            .expect("the fixture builds a spec");
         assert_eq!(spec.disturbances, DisturbanceTorques::default());
         assert!(spec.disturbances.gravity_gradient);
     }
@@ -5106,7 +5139,9 @@ orbit = { type = "circular", altitude = 600 }
         let config: SimConfig = toml::from_str(toml).expect("valid toml");
         let body = crate::satellite::try_parse_body(&config.body).expect("earth");
         for (i, sat) in config.satellites.iter().enumerate() {
-            let spec = sat.to_satellite_spec(i, body, 398600.4418);
+            let spec = sat
+                .to_satellite_spec(i, body, 398600.4418)
+                .expect("the fixture builds a spec");
             assert_eq!(
                 sat.attitude.is_some(),
                 spec.attitude_config.is_some(),

@@ -251,7 +251,14 @@ pub struct SatelliteInfo {
 ///
 /// `mu` sizes the circular orbit's period; pass the simulation's μ (the
 /// gravity field's GM when one is configured).
-pub fn parse_sat_spec(s: &str, body: KnownBody, mu: f64) -> SatelliteSpec {
+pub fn parse_sat_spec(s: &str, body: KnownBody, mu: f64) -> Result<SatelliteSpec, String> {
+    fn number<T: std::str::FromStr>(key: &str, value: &str) -> Result<T, String> {
+        value
+            .trim()
+            .parse()
+            .map_err(|_| format!("Invalid {key}: {value}"))
+    }
+
     let mut id = String::new();
     let mut name: Option<String> = None;
     let mut altitude: Option<f64> = None;
@@ -269,80 +276,30 @@ pub fn parse_sat_spec(s: &str, body: KnownBody, mu: f64) -> SatelliteSpec {
             match key.trim() {
                 "id" => id = value.trim().to_string(),
                 "name" => name = Some(value.trim().to_string()),
-                "altitude" => {
-                    altitude = Some(
-                        value
-                            .trim()
-                            .parse()
-                            .unwrap_or_else(|_| panic!("Invalid altitude: {value}")),
-                    )
-                }
-                "inclination" => {
-                    inclination = Some(
-                        value
-                            .trim()
-                            .parse()
-                            .unwrap_or_else(|_| panic!("Invalid inclination: {value}")),
-                    )
-                }
-                "raan" => {
-                    raan = Some(
-                        value
-                            .trim()
-                            .parse()
-                            .unwrap_or_else(|_| panic!("Invalid raan: {value}")),
-                    )
-                }
-                "norad-id" => {
-                    norad_id = Some(
-                        value
-                            .trim()
-                            .parse()
-                            .unwrap_or_else(|_| panic!("Invalid norad-id: {value}")),
-                    )
-                }
+                "altitude" => altitude = Some(number("altitude", value)?),
+                "inclination" => inclination = Some(number("inclination", value)?),
+                "raan" => raan = Some(number("raan", value)?),
+                "norad-id" => norad_id = Some(number("norad-id", value)?),
                 "tle-line1" => tle_line1 = Some(value.trim().to_string()),
                 "tle-line2" => tle_line2 = Some(value.trim().to_string()),
-                "ballistic-coeff" => {
-                    ballistic_coeff = Some(
-                        value
-                            .trim()
-                            .parse()
-                            .unwrap_or_else(|_| panic!("Invalid ballistic-coeff: {value}")),
-                    )
-                }
-                "srp-area-to-mass" => {
-                    srp_area_to_mass = Some(
-                        value
-                            .trim()
-                            .parse()
-                            .unwrap_or_else(|_| panic!("Invalid srp-area-to-mass: {value}")),
-                    )
-                }
-                "srp-cr" => {
-                    srp_cr = Some(
-                        value
-                            .trim()
-                            .parse()
-                            .unwrap_or_else(|_| panic!("Invalid srp-cr: {value}")),
-                    )
-                }
-                k => panic!("Unknown satellite spec key: {k}"),
+                "ballistic-coeff" => ballistic_coeff = Some(number("ballistic-coeff", value)?),
+                "srp-area-to-mass" => srp_area_to_mass = Some(number("srp-area-to-mass", value)?),
+                "srp-cr" => srp_cr = Some(number("srp-cr", value)?),
+                k => return Err(format!("Unknown satellite spec key: {k}")),
             }
         }
     }
 
     // Determine orbit
     let (orbit, period, derived_name) = if let Some(norad) = norad_id {
-        let parsed = fetch_tle_by_norad_id(norad);
+        let parsed = fetch_tle_by_norad_id(norad)?;
         let elements = parsed.elements;
         let period = elements.period();
         let obj_name = parsed.object_name.clone();
         (OrbitSpec::ElementSet { elements }, period, obj_name)
     } else if let (Some(l1), Some(l2)) = (tle_line1, tle_line2) {
         let text = format!("{l1}\n{l2}");
-        let parsed = arika::tle::parse(&text)
-            .unwrap_or_else(|e| panic!("Failed to parse TLE in --sat: {e}"));
+        let parsed = arika::tle::parse(&text).map_err(|e| format!("Failed to parse TLE: {e}"))?;
         let elements = parsed.elements;
         let period = elements.period();
         let obj_name = parsed.object_name.clone();
@@ -369,7 +326,7 @@ pub fn parse_sat_spec(s: &str, body: KnownBody, mu: f64) -> SatelliteSpec {
         id = "auto".to_string();
     }
 
-    SatelliteSpec {
+    Ok(SatelliteSpec {
         id,
         name: name.or(derived_name),
         orbit,
@@ -390,7 +347,7 @@ pub fn parse_sat_spec(s: &str, body: KnownBody, mu: f64) -> SatelliteSpec {
         mtq_config: None,
         thruster_config: None,
         streams: Vec::new(),
-    }
+    })
 }
 
 pub fn parse_body(s: &str) -> KnownBody {
@@ -422,7 +379,8 @@ mod tests {
 
     #[test]
     fn parse_sat_spec_circular_altitude() {
-        let spec = parse_sat_spec("altitude=800,id=sso", KnownBody::Earth, arika::earth::MU);
+        let spec = parse_sat_spec("altitude=800,id=sso", KnownBody::Earth, arika::earth::MU)
+            .expect("a valid spec");
         assert_eq!(spec.id, "sso");
         assert!(
             matches!(spec.orbit, OrbitSpec::Circular { altitude, .. } if (altitude - 800.0).abs() < 1e-9)
@@ -432,7 +390,8 @@ mod tests {
 
     #[test]
     fn parse_sat_spec_default_id() {
-        let spec = parse_sat_spec("altitude=600", KnownBody::Earth, arika::earth::MU);
+        let spec = parse_sat_spec("altitude=600", KnownBody::Earth, arika::earth::MU)
+            .expect("a valid spec");
         assert!(!spec.id.is_empty());
     }
 
@@ -442,7 +401,8 @@ mod tests {
             "altitude=800,id=sso,name=SSO 800km",
             KnownBody::Earth,
             arika::earth::MU,
-        );
+        )
+        .expect("a valid spec");
         assert_eq!(spec.id, "sso");
         assert_eq!(spec.name.as_deref(), Some("SSO 800km"));
     }
@@ -453,14 +413,15 @@ mod tests {
             "tle-line1=1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9996,tle-line2=2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480008,id=iss",
             KnownBody::Earth,
             arika::earth::MU,
-        );
+        ).expect("a valid spec");
         assert_eq!(spec.id, "iss");
         assert!(matches!(spec.orbit, OrbitSpec::ElementSet { .. }));
     }
 
     #[test]
     fn satellite_spec_initial_state_circular() {
-        let spec = parse_sat_spec("altitude=400,id=test", KnownBody::Earth, arika::earth::MU);
+        let spec = parse_sat_spec("altitude=400,id=test", KnownBody::Earth, arika::earth::MU)
+            .expect("a valid spec");
         let mu = KnownBody::Earth.properties().mu;
         let state = spec.initial_state(mu, None).unwrap();
         let r = state.position().magnitude();
@@ -478,7 +439,8 @@ mod tests {
             "altitude=800,inclination=98.6,id=sso-test",
             KnownBody::Earth,
             arika::earth::MU,
-        );
+        )
+        .expect("a valid spec");
         let state = spec.initial_state(mu, None).unwrap();
 
         let r = state.position().magnitude();
@@ -513,7 +475,8 @@ mod tests {
             "altitude=400,inclination=51.6,raan=90,id=iss-like",
             KnownBody::Earth,
             arika::earth::MU,
-        );
+        )
+        .expect("a valid spec");
         let state = spec.initial_state(mu, None).unwrap();
 
         let h = state.position().cross(state.velocity());
@@ -542,7 +505,8 @@ mod tests {
     #[test]
     fn satellite_spec_initial_state_equatorial_default() {
         let mu = KnownBody::Earth.properties().mu;
-        let spec = parse_sat_spec("altitude=400,id=test", KnownBody::Earth, arika::earth::MU);
+        let spec = parse_sat_spec("altitude=400,id=test", KnownBody::Earth, arika::earth::MU)
+            .expect("a valid spec");
         let state = spec.initial_state(mu, None).unwrap();
         assert!(
             state.position()[2].abs() < 1e-10,
@@ -553,7 +517,8 @@ mod tests {
 
     #[test]
     fn satellite_spec_entity_path() {
-        let spec = parse_sat_spec("altitude=400,id=my-sat", KnownBody::Earth, arika::earth::MU);
+        let spec = parse_sat_spec("altitude=400,id=my-sat", KnownBody::Earth, arika::earth::MU)
+            .expect("a valid spec");
         let path = spec.entity_path();
         assert_eq!(path.to_string(), "/world/sat/my-sat");
     }
@@ -563,8 +528,10 @@ mod tests {
     #[test]
     fn ensure_unique_ids_rejects_a_repeated_id() {
         let specs = [
-            parse_sat_spec("altitude=400,id=a", KnownBody::Earth, arika::earth::MU),
-            parse_sat_spec("altitude=800,id=a", KnownBody::Earth, arika::earth::MU),
+            parse_sat_spec("altitude=400,id=a", KnownBody::Earth, arika::earth::MU)
+                .expect("a valid spec"),
+            parse_sat_spec("altitude=800,id=a", KnownBody::Earth, arika::earth::MU)
+                .expect("a valid spec"),
         ];
         assert_eq!(
             specs[0].entity_path().to_string(),
@@ -578,8 +545,10 @@ mod tests {
     #[test]
     fn ensure_unique_ids_accepts_distinct_ids() {
         let specs = [
-            parse_sat_spec("altitude=400,id=a", KnownBody::Earth, arika::earth::MU),
-            parse_sat_spec("altitude=800,id=b", KnownBody::Earth, arika::earth::MU),
+            parse_sat_spec("altitude=400,id=a", KnownBody::Earth, arika::earth::MU)
+                .expect("a valid spec"),
+            parse_sat_spec("altitude=800,id=b", KnownBody::Earth, arika::earth::MU)
+                .expect("a valid spec"),
         ];
         ensure_unique_ids(&specs).expect("distinct ids must be accepted");
     }

@@ -10,7 +10,7 @@ use crate::cli::{
     AtmosphereChoice, IntegratorChoice, PluginAsyncModeChoice, PluginBackendChoice, SimArgs,
 };
 use crate::config::SimConfig;
-use crate::satellite::{OrbitSpec, SatelliteSpec, parse_body, parse_sat_spec};
+use crate::satellite::{OrbitSpec, SatelliteSpec, parse_sat_spec, try_parse_body};
 use crate::tle::{fetch_tle_by_norad_id, try_fetch_tle_by_norad_id};
 
 /// Halvings allowed beyond what the widest bracket needs.
@@ -366,11 +366,9 @@ impl SimParams {
     /// panic — the same constructor serves `orts run`, `orts serve` and the
     /// tests, and a resource added later is a new load inside, not a new
     /// parameter at every call site.
-    // TODO: the orbit-argument conflicts (`--sat` next to `--tle`, …) and
-    // `--space-weather` still panic; folding them into this `Result` is a
-    // behaviour change for `serve`'s legacy path and is left to its own change.
     pub fn from_sim_args(args: &SimArgs, is_serve: bool) -> Result<Self, String> {
-        let body = parse_body(&args.body);
+        let body =
+            try_parse_body(&args.body).ok_or_else(|| format!("Unknown body: {}", args.body))?;
         let gravity_field = Self::load_gravity_field(
             args.gravity_field.as_deref(),
             args.gravity_degree,
@@ -396,24 +394,26 @@ impl SimParams {
                 || args.tle_line2.is_some()
                 || args.norad_id.is_some()
             {
-                panic!(
+                return Err(
                     "Cannot specify both --sat and --tle / --omm / --tle-line1 / --tle-line2 / --norad-id"
+                        .to_string(),
                 );
             }
             args.sats
                 .iter()
                 .enumerate()
                 .map(|(i, s)| {
-                    let mut spec = parse_sat_spec(s, body, mu);
+                    let mut spec =
+                        parse_sat_spec(s, body, mu).map_err(|e| format!("--sat {s}: {e}"))?;
                     if spec.id.is_empty() || spec.id == "auto" {
                         spec.id = format!("sat-{i}");
                     }
-                    spec
+                    Ok(spec)
                 })
-                .collect()
+                .collect::<Result<_, String>>()?
         } else {
             // No --sat flags: use legacy single-satellite args
-            let element_set_opt = Self::parse_orbit_from_args(args);
+            let element_set_opt = Self::parse_orbit_from_args(args)?;
 
             if let Some(parsed) = element_set_opt {
                 let elements = parsed.elements;
@@ -495,7 +495,7 @@ impl SimParams {
             atmosphere: args.atmosphere,
             f107: args.f107,
             ap: args.ap,
-            space_weather_provider: Self::load_space_weather(args.space_weather.as_deref()),
+            space_weather_provider: Self::load_space_weather(args.space_weather.as_deref())?,
             frame: args.frame(),
             eop,
             gravity_field,
@@ -534,7 +534,7 @@ impl SimParams {
             .iter()
             .enumerate()
             .map(|(i, sc)| sc.to_satellite_spec(i, body, mu))
-            .collect();
+            .collect::<Result<_, String>>()?;
 
         let output_interval = config.output_interval.unwrap_or(config.dt);
         // `SimConfig::validate` rejects `output_interval < dt`, but this
@@ -582,7 +582,7 @@ impl SimParams {
             atmosphere: config.atmosphere_choice(),
             f107: config.f107,
             ap: config.ap,
-            space_weather_provider: Self::load_space_weather(config.space_weather.as_deref()),
+            space_weather_provider: Self::load_space_weather(config.space_weather.as_deref())?,
             frame: config.frame_choice(),
             eop,
             gravity_field,
@@ -692,21 +692,19 @@ impl SimParams {
         Ok(())
     }
 
-    /// Load space weather provider from a source string.
-    fn load_space_weather(source: Option<&str>) -> Option<Arc<tobari::CssiSpaceWeather>> {
-        match source {
-            Some("auto") => {
-                let cssi = tobari::CssiSpaceWeather::fetch_default()
-                    .expect("Failed to fetch space weather data from CelesTrak");
-                Some(Arc::new(cssi))
-            }
-            Some(path) => {
-                let cssi = tobari::CssiSpaceWeather::from_file(std::path::Path::new(path))
-                    .unwrap_or_else(|e| panic!("Failed to load space weather file {path}: {e}"));
-                Some(Arc::new(cssi))
-            }
-            None => None,
-        }
+    /// Load space weather provider from a source string: `"auto"` fetches
+    /// the CSSI file from CelesTrak, anything else is a path to one.
+    fn load_space_weather(
+        source: Option<&str>,
+    ) -> Result<Option<Arc<tobari::CssiSpaceWeather>>, String> {
+        let cssi = match source {
+            Some("auto") => tobari::CssiSpaceWeather::fetch_default()
+                .map_err(|e| format!("Failed to fetch space weather data from CelesTrak: {e}"))?,
+            Some(path) => tobari::CssiSpaceWeather::from_file(std::path::Path::new(path))
+                .map_err(|e| format!("Failed to load space weather file {path}: {e}"))?,
+            None => return Ok(None),
+        };
+        Ok(Some(Arc::new(cssi)))
     }
 
     /// Default satellites for `serve` with no orbit args: SSO 800km + ISS.
@@ -805,9 +803,9 @@ impl SimParams {
 
     /// Parse the orbit-source CLI args (`--norad-id` / `--tle` / `--omm` /
     /// `--tle-line1/2`) into a [`ParsedElementSet`], if any was given.
-    pub fn parse_orbit_from_args(args: &SimArgs) -> Option<ParsedElementSet> {
+    pub fn parse_orbit_from_args(args: &SimArgs) -> Result<Option<ParsedElementSet>, String> {
         // clap refuses two orbit sources, and one TLE line alone (`SimArgs`);
-        // the panics below guard a `SimArgs` built without it.
+        // the checks below cover a `SimArgs` built without it.
         // --norad-id: fetch from CelesTrak / SatNOGS.
         if let Some(norad_id) = args.norad_id {
             if args.tle.is_some()
@@ -815,55 +813,60 @@ impl SimParams {
                 || args.tle_line1.is_some()
                 || args.tle_line2.is_some()
             {
-                panic!("Cannot combine --norad-id with --tle / --omm / --tle-line1 / --tle-line2");
+                return Err(
+                    "Cannot combine --norad-id with --tle / --omm / --tle-line1 / --tle-line2"
+                        .to_string(),
+                );
             }
-            return Some(fetch_tle_by_norad_id(norad_id));
+            return fetch_tle_by_norad_id(norad_id).map(Some);
         }
         if args.tle.is_some() && args.omm.is_some() {
-            panic!("Cannot specify both --tle and --omm");
+            return Err("Cannot specify both --tle and --omm".to_string());
         }
         // A file-based source would otherwise win silently over inline lines.
         if (args.tle.is_some() || args.omm.is_some())
             && (args.tle_line1.is_some() || args.tle_line2.is_some())
         {
-            panic!("Cannot combine --tle / --omm with --tle-line1 / --tle-line2");
+            return Err("Cannot combine --tle / --omm with --tle-line1 / --tle-line2".to_string());
         }
 
+        let parse_tle =
+            |text: &str| arika::tle::parse(text).map_err(|e| format!("Failed to parse TLE: {e}"));
         if let Some(path) = &args.tle {
-            let text = Self::read_orbit_source(path, "TLE");
-            Some(arika::tle::parse(&text).unwrap_or_else(|e| panic!("Failed to parse TLE: {e}")))
+            let text = Self::read_orbit_source(path, "TLE")?;
+            parse_tle(&text).map(Some)
         } else if let Some(path) = &args.omm {
-            let text = Self::read_orbit_source(path, "OMM");
+            let text = Self::read_orbit_source(path, "OMM")?;
             // --omm is for OMM serializations (JSON/KVN/XML); route TLE to --tle.
             if arika::elements::detect(&text) == Some(arika::elements::Format::Tle) {
-                panic!("--omm expects an OMM file (JSON/KVN/XML); use --tle for TLE");
+                return Err(
+                    "--omm expects an OMM file (JSON/KVN/XML); use --tle for TLE".to_string(),
+                );
             }
-            Some(
-                arika::elements::parse(&text)
-                    .unwrap_or_else(|e| panic!("Failed to parse OMM: {e}")),
-            )
+            arika::elements::parse(&text)
+                .map(Some)
+                .map_err(|e| format!("Failed to parse OMM: {e}"))
         } else if let (Some(line1), Some(line2)) = (&args.tle_line1, &args.tle_line2) {
-            let text = format!("{line1}\n{line2}");
-            Some(arika::tle::parse(&text).unwrap_or_else(|e| panic!("Failed to parse TLE: {e}")))
+            parse_tle(&format!("{line1}\n{line2}")).map(Some)
         } else if args.tle_line1.is_some() || args.tle_line2.is_some() {
-            panic!("Both --tle-line1 and --tle-line2 must be specified together");
+            Err("Both --tle-line1 and --tle-line2 must be specified together".to_string())
         } else {
-            None
+            Ok(None)
         }
     }
 
     /// Read an orbit-source argument from a file path, or stdin if `path == "-"`.
-    fn read_orbit_source(path: &str, what: &str) -> String {
+    fn read_orbit_source(path: &str, what: &str) -> Result<String, String> {
         if path == "-" {
             use std::io::Read;
             let mut buf = String::new();
             std::io::stdin()
                 .read_to_string(&mut buf)
-                .unwrap_or_else(|e| panic!("Failed to read {what} from stdin: {e}"));
-            buf
+                .map_err(|e| format!("Failed to read {what} from stdin: {e}"))?;
+            Ok(buf)
         } else {
             std::fs::read_to_string(path)
-                .unwrap_or_else(|e| panic!("Failed to read {what} file '{path}': {e}"))
+                .map_err(|e| format!("Failed to read {what} file '{path}': {e}"))
         }
     }
 }
@@ -1302,8 +1305,9 @@ orbit = { type = "circular", altitude = 400 }
         assert!((epoch.jd() - 2460390.0).abs() < 0.01);
     }
 
+    /// A `SimArgs` built without clap can still name two orbits; the pair is
+    /// an error rather than a fetch that ignores the TLE lines.
     #[test]
-    #[should_panic(expected = "Cannot combine --norad-id")]
     fn sim_params_norad_id_conflicts_with_tle() {
         let args = SimArgs {
             body: "earth".to_string(),
@@ -1340,7 +1344,11 @@ orbit = { type = "circular", altitude = 400 }
             plugin_backend_threshold: None,
             plugin_backend_async_mode: Some(PluginAsyncModeChoice::Deterministic),
         };
-        SimParams::from_sim_args(&args, false).expect("valid args");
+        let err = match SimParams::from_sim_args(&args, false) {
+            Err(e) => e,
+            Ok(_) => panic!("--norad-id with TLE lines must be refused"),
+        };
+        assert!(err.contains("Cannot combine --norad-id"), "{err}");
     }
 
     #[test]
@@ -1922,5 +1930,89 @@ orbit = { type = "circular", altitude = 570 }
         assert!(params.eop.is_some());
         let _: arika::earth::GcrsEopStorage = params.eop_storage::<arika::frame::Gcrs>();
         let _: () = params.eop_storage::<arika::frame::SimpleEci>();
+    }
+
+    /// The error `from_sim_args` returns for `orts run <argv>`, which `run`
+    /// prints as `Error: ...` and exits 1 on.
+    fn from_sim_args_error(argv: &[&str]) -> String {
+        use clap::Parser;
+        let args = SimArgs::try_parse_from(std::iter::once("orts").chain(argv.iter().copied()))
+            .expect("clap accepts the command line");
+        match SimParams::from_sim_args(&args, false) {
+            Err(e) => e,
+            Ok(_) => panic!("{argv:?} must be refused"),
+        }
+    }
+
+    /// An orbit file that cannot be read or parsed is an error, as a config
+    /// that cannot be is (#554). These used to panic, exiting 101.
+    #[test]
+    fn an_orbit_file_that_cannot_be_read_or_parsed_is_an_error() {
+        let mut bad_tle = tempfile::NamedTempFile::new().unwrap();
+        std::io::Write::write_all(&mut bad_tle, b"garbage\nnot a tle\n").unwrap();
+        let bad_tle = bad_tle.path().to_str().unwrap().to_string();
+        let mut bad_omm = tempfile::NamedTempFile::new().unwrap();
+        std::io::Write::write_all(&mut bad_omm, b"{not json").unwrap();
+        let bad_omm = bad_omm.path().to_str().unwrap().to_string();
+
+        for (argv, says) in [
+            (vec!["--tle", "/nonexistent/x.tle"], "/nonexistent/x.tle"),
+            (vec!["--tle", bad_tle.as_str()], "Failed to parse TLE"),
+            (vec!["--omm", bad_omm.as_str()], "Failed to parse OMM"),
+            (vec!["--omm", bad_tle.as_str()], "Failed to parse OMM"),
+            (
+                vec!["--tle-line1", "1 x", "--tle-line2", "2 y"],
+                "Failed to parse TLE",
+            ),
+        ] {
+            let err = from_sim_args_error(&argv);
+            assert!(err.contains(says), "{argv:?}: {err}");
+        }
+    }
+
+    /// A `--sat` spec that cannot be read is an error naming the spec (#554).
+    #[test]
+    fn a_sat_spec_that_cannot_be_read_is_an_error() {
+        for (spec, says) in [
+            ("altitude=abc", "altitude"),
+            ("altitude=400,foo=1", "foo"),
+            ("norad-id=abc", "norad-id"),
+            ("tle-line1=1 x,tle-line2=2 y", "TLE"),
+        ] {
+            let err = from_sim_args_error(&["--sat", spec]);
+            assert!(err.contains(spec), "the spec is named: {err}");
+            assert!(err.contains(says), "{spec}: {err}");
+        }
+    }
+
+    /// An unknown `--body` is an error (#554).
+    #[test]
+    fn an_unknown_body_is_an_error() {
+        let err = from_sim_args_error(&["--sat", "altitude=400", "--body", "pluto"]);
+        assert!(err.contains("pluto"), "{err}");
+    }
+
+    /// A space weather file that cannot be read is an error, from the command
+    /// line and from a config (#554).
+    #[test]
+    fn a_space_weather_file_that_cannot_be_read_is_an_error() {
+        let err = from_sim_args_error(&[
+            "--sat",
+            "altitude=400",
+            "--space-weather",
+            "/nonexistent/sw.txt",
+        ]);
+        assert!(err.contains("/nonexistent/sw.txt"), "{err}");
+
+        let cfg: SimConfig = toml::from_str(
+            "space_weather = \"/nonexistent/sw.txt\"\n\
+             [[satellites]]\nid = \"a\"\norbit = { type = \"circular\", altitude = 400 }\n",
+        )
+        .expect("valid toml");
+        let err = match SimParams::from_config(&cfg) {
+            Err(e) => e,
+            Ok(_) => panic!("a missing space weather file must be refused"),
+        };
+        assert!(err.contains("/nonexistent/sw.txt"), "{err}");
     }
 }

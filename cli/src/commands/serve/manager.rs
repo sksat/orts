@@ -265,7 +265,7 @@ fn validate_sim_config(config: &SimConfig) -> Result<(), String> {
         .iter()
         .enumerate()
         .map(|(i, s)| s.to_satellite_spec(i, body, mu))
-        .collect();
+        .collect::<Result<_, String>>()?;
     // SGP4/TEME is Earth-centered: reject a non-Earth TLE/OMM config here so a
     // WebSocket `StartSimulation` returns an error to the client at the
     // `start_simulation` reply, before `SimParams::from_config` runs.
@@ -340,10 +340,14 @@ pub(super) async fn simulation_manager(
 
     // Main manager loop: start simulation, run until terminated, return to idle.
     while let Some(config) = next_config {
-        // `validate_sim_config` has already refused what `from_config` cannot
-        // build (a non-Earth element set, a `[gravity_field]` over WebSocket),
-        // so an `Err` here is unexpected — but the manager task must survive
-        // it, so report it and wait for the next `start_simulation`.
+        // `validate_sim_config` has already refused most of what `from_config`
+        // cannot build (a non-Earth element set, a `[gravity_field]` over
+        // WebSocket, a TLE that does not parse, a `space_weather` path). It
+        // does not fetch space weather, so a `space_weather = "auto"` fetch
+        // that fails lands here; the manager task must survive it, so report
+        // it and wait for the next `start_simulation`.
+        // TODO(#555): the request was acknowledged already, so this `Err`
+        // reaches the server's stderr and not the client.
         let mut params_inner = match SimParams::from_config(&config) {
             Ok(params) => params,
             Err(e) => {

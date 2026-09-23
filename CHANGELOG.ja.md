@@ -818,6 +818,20 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   '--norad-id <NORAD_ID>'`。以前は `SimParams::from_sim_args` が panic していた (exit 101)。
   `--sat` / `--tle` / `--omm` / `--norad-id` と、`--tle-line1` / `--tle-line2` の組のうち、
   どの 2 つを組み合わせても止まる ([#551](https://github.com/sksat/orts/issues/551))
+- `run` と `serve` は、軌道や space weather の入力を読めない・解析できない・取得できない
+  とき、`Error:` を出して exit 1 で止まる。以前は panic していた (exit 101): `--tle` /
+  `--omm` のファイルが無い・壊れている、`--tle-line1` / `--tle-line2` が壊れている、
+  `--sat` の値が解析できない・知らないキーがある、`--body` が知らない天体である、NORAD id の
+  TLE をどの取得元も返さない (`--norad-id`、`--sat norad-id=`、config の `type = "norad"` の
+  軌道)、`space_weather` のファイルが無い、`auto` の取得に失敗した、の各場合。`serve` では
+  WebSocket client も同じ panic を起こせ、その後 server は再起動するまですべての接続を閉じて
+  いた: server が取得できない NORAD の衛星や、取得に失敗する `space_weather = "auto"` を
+  指定した `start_simulation` と、壊れた TLE の `add_satellite` で、後者は走っていた
+  simulation も失っていた。いまは server が動き続け、NORAD と TLE の要求には client に
+  エラーが返る。`"auto"` の取得は要求に応答した後に行うので、その失敗はまだ server の
+  stderr にしか出ない
+  ([#555](https://github.com/sksat/orts/issues/555))
+  ([#554](https://github.com/sksat/orts/issues/554))
 - 飽和した reaction wheel が角運動量を失う問題 (上の `orts` を参照) は
   `mode = "controlled"` の経路 — `orts run --controller` と `orts serve` — でも
   起きていた。この経路は `advance_to` で刻んでおり、止まる境界を持っていなかった。
