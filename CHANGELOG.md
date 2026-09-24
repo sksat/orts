@@ -1432,6 +1432,20 @@ section is subdivided by package.
   Non-degenerate orbits are unchanged. ([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- The OMM KVN and XML parsers refuse a document holding more than one OMM,
+  as the JSON parser already did. CelesTrak's group queries return one: the
+  KVN runs the OMMs one after another and the XML collects them in an `<ndm>`.
+  The KVN parser overwrote each keyword with the later value and the XML
+  parser read each element from its first place, so `orts run --omm` on
+  `GROUP=science` (46 OMMs) ran the last OMM (SMILE, i = 70.00°) from the KVN
+  and the first (HST, i = 28.47°) from the XML, and a keyword the last KVN OMM
+  left out kept an earlier OMM's value. The KVN parser now refuses a second
+  `CCSDS_OMM_VERS` or a second keyword it reads or checks, as the new
+  `KvnParseError::RepeatedKeyword`; the XML parser refuses a second `<omm>`
+  (`XmlParseError::MultipleMessages`) or a second element it reads or checks
+  (`XmlParseError::RepeatedElement`). `COMMENT` and the keywords the parsers
+  do not read may still repeat.
+  ([#564](https://github.com/sksat/orts/issues/564))
 - The OMM parsers read `MEAN_ELEMENT_THEORY = SGP/SGP4` as SGP4. CelesTrak's
   KVN writes that value (measured on the ISS) for the element set its XML
   labels `SGP4` and its JSON leaves unlabelled, and the KVN was refused with

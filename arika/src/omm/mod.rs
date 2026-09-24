@@ -48,6 +48,31 @@ const METADATA: [(&str, &str); 4] = [
     ("MEAN_ELEMENT_THEORY", "SGP4"),
 ];
 
+/// The element-set keywords the parsers read, besides the [`METADATA`] ones
+/// they check.
+const FIELDS: [&str; 11] = [
+    "OBJECT_NAME",
+    "OBJECT_ID",
+    "EPOCH",
+    "MEAN_MOTION",
+    "ECCENTRICITY",
+    "INCLINATION",
+    "RA_OF_ASC_NODE",
+    "ARG_OF_PERICENTER",
+    "MEAN_ANOMALY",
+    "NORAD_CAT_ID",
+    "BSTAR",
+];
+
+/// Every keyword the parsers read or check: [`METADATA`], then [`FIELDS`].
+///
+/// An OMM describes one object (CCSDS 502.0-B-3 §4.1.5), so it gives each of
+/// these at most once; the KVN and XML parsers refuse a second one rather than
+/// pick between them.
+pub(crate) fn keywords_read() -> impl Iterator<Item = &'static str> {
+    METADATA.iter().map(|&(key, _)| key).chain(FIELDS)
+}
+
 /// Values a document may declare in place of a [`METADATA`] value, read as
 /// that value.
 ///

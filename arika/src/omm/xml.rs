@@ -43,6 +43,11 @@ pub enum XmlParseError {
     /// The parsed values are not a valid element set (e.g. non-positive mean
     /// motion or out-of-range eccentricity).
     InvalidElements(ElementsError),
+    /// The document holds more than one `<omm>`, as an NDM that collects
+    /// several OMMs does (CelesTrak's group queries return one).
+    MultipleMessages { found: usize },
+    /// An element this reads or checks appears more than once in the OMM.
+    RepeatedElement(&'static str),
 }
 
 impl fmt::Display for XmlParseError {
@@ -58,6 +63,15 @@ impl fmt::Display for XmlParseError {
                 write!(f, "unsupported XML markup in OMM document: {what}")
             }
             XmlParseError::InvalidElements(e) => write!(f, "invalid OMM element set: {e}"),
+            XmlParseError::MultipleMessages { found } => {
+                write!(
+                    f,
+                    "OMM XML document has {found} <omm> elements; expected exactly one"
+                )
+            }
+            XmlParseError::RepeatedElement(k) => {
+                write!(f, "OMM element {k} appears more than once")
+            }
         }
     }
 }
@@ -70,6 +84,7 @@ pub fn parse(xml: &str) -> Result<ParsedElementSet, XmlParseError> {
     // BOM-tolerant even when called directly (not via the unified entrypoint).
     let xml = crate::elements::strip_bom(xml);
     reject_unsupported_markup(xml)?;
+    reject_repeats(xml)?;
     // The metadata elements declare how the mean elements must be interpreted;
     // reject anything this crate does not actually honor (see
     // `crate::omm::METADATA`).
@@ -142,53 +157,83 @@ fn reject_unsupported_markup(xml: &str) -> Result<(), XmlParseError> {
     Ok(())
 }
 
+/// Refuse a document that holds more than one OMM, or gives an element this
+/// reads or checks more than once.
+///
+/// `element_text` reads the first occurrence, so the other OMMs of an NDM that
+/// collects several (CCSDS 502.0-B-3 §8.12; CelesTrak's group queries return
+/// one) would be dropped. The `<omm>` elements are counted first, so an NDM is
+/// reported as such and not by the first element its OMMs share.
+fn reject_repeats(xml: &str) -> Result<(), XmlParseError> {
+    let found = start_tags(xml, "omm").count();
+    if found > 1 {
+        return Err(XmlParseError::MultipleMessages { found });
+    }
+    match crate::omm::keywords_read().find(|name| start_tags(xml, name).nth(1).is_some()) {
+        Some(name) => Err(XmlParseError::RepeatedElement(name)),
+        None => Ok(()),
+    }
+}
+
 fn required<'a>(xml: &'a str, name: &'static str) -> Result<&'a str, XmlParseError> {
     element_text(xml, name).ok_or(XmlParseError::MissingElement(name))
 }
 
 /// Extract the trimmed text of the first `<NAME ...>text</NAME>` element.
 ///
-/// Matches `name` exactly: the character after the name must be `>` or
-/// whitespace, so a query for `MEAN_MOTION` never matches `MEAN_MOTION_DOT`.
-/// Attributes are skipped; the value is read up to the next `<`. Comments
-/// (`<!-- … -->`) and processing instructions (`<? … ?>`) are stepped over
-/// rather than searched, so markup quoted inside them is not a value.
+/// The value is read up to the next `<`; an empty element (`<NAME/>`) has none.
 fn element_text<'a>(xml: &'a str, name: &str) -> Option<&'a str> {
+    let rest = &xml[start_tags(xml, name).next()?..];
+    let gt = rest.find('>')?;
+    if rest[..gt].ends_with('/') {
+        return None;
+    }
+    let content = &rest[gt + 1..];
+    let close = content.find('<')?;
+    Some(content[..close].trim())
+}
+
+/// The byte offset just past the name of each start tag `<NAME ...>` or empty
+/// element `<NAME/>`, in document order.
+///
+/// Matches `name` exactly: the character after the name must be `>`, `/` or
+/// whitespace, so a query for `MEAN_MOTION` never matches `MEAN_MOTION_DOT`,
+/// and a closing `</NAME>` is not a start tag. Comments (`<!-- … -->`) and
+/// processing instructions (`<? … ?>`) are stepped over rather than searched,
+/// so markup quoted inside them is not an element.
+fn start_tags<'a>(xml: &'a str, name: &'a str) -> impl Iterator<Item = usize> + 'a {
     let mut from = 0;
-    while let Some(lt) = xml[from..].find('<') {
-        let tag = from + lt + 1; // byte index just after '<'
-        let markup = &xml[tag..];
-        // A comment or a processing instruction declares nothing, but its text
-        // can contain what looks like an element. Skipping them wholesale is
-        // what keeps a commented-out `<TIME_SYSTEM>UTC</TIME_SYSTEM>` from being
-        // read as the document's time system while the real one below it says
-        // TAI — the metadata check would then pass on a document it must reject.
-        if let Some(after) = markup.strip_prefix("!--") {
-            from = after
-                .find("-->")
-                .map_or(xml.len(), |end| tag + "!--".len() + end + "-->".len());
-            continue;
-        }
-        if let Some(after) = markup.strip_prefix('?') {
-            from = after
-                .find("?>")
-                .map_or(xml.len(), |end| tag + '?'.len_utf8() + end + "?>".len());
-            continue;
-        }
-        if let Some(rest) = markup.strip_prefix(name) {
-            match rest.chars().next() {
-                Some(c) if c == '>' || c.is_whitespace() => {
-                    let gt = rest.find('>')?;
-                    let content = &xml[tag + name.len() + gt + 1..];
-                    let close = content.find('<')?;
-                    return Some(content[..close].trim());
-                }
-                _ => {}
+    core::iter::from_fn(move || {
+        while let Some(lt) = xml[from..].find('<') {
+            let tag = from + lt + 1; // byte index just after '<'
+            let markup = &xml[tag..];
+            // A comment or a processing instruction declares nothing, but its
+            // text can contain what looks like an element. Skipping them
+            // wholesale is what keeps a commented-out
+            // `<TIME_SYSTEM>UTC</TIME_SYSTEM>` from being read as the
+            // document's time system while the real one below it says TAI —
+            // the metadata check would then pass on a document it must reject.
+            if let Some(after) = markup.strip_prefix("!--") {
+                from = after
+                    .find("-->")
+                    .map_or(xml.len(), |end| tag + "!--".len() + end + "-->".len());
+                continue;
+            }
+            if let Some(after) = markup.strip_prefix('?') {
+                from = after
+                    .find("?>")
+                    .map_or(xml.len(), |end| tag + '?'.len_utf8() + end + "?>".len());
+                continue;
+            }
+            from = tag;
+            if let Some(rest) = markup.strip_prefix(name)
+                && rest.starts_with(|c: char| c == '>' || c == '/' || c.is_whitespace())
+            {
+                return Some(tag + name.len());
             }
         }
-        from = tag;
-    }
-    None
+        None
+    })
 }
 
 fn parse_num<T: FromStr>(key: &'static str, value: &str) -> Result<T, XmlParseError> {
@@ -417,6 +462,88 @@ mod tests {
             Err(XmlParseError::Unsupported(e)) => assert_eq!(e.key, "MEAN_ELEMENT_THEORY"),
             other => panic!("SGP must be rejected, got {other:?}"),
         }
+    }
+
+    /// An NDM may collect several OMMs (CCSDS 502.0-B-3 §8.12), and
+    /// CelesTrak's group queries (`GROUP=stations&FORMAT=XML`) return one. The
+    /// parser read each element from the first place it appears, so it read
+    /// the first OMM and dropped the rest (#564).
+    #[test]
+    fn an_ndm_with_several_omms_is_refused() {
+        let omm = ISS_OMM_XML.trim_start_matches(r#"<?xml version="1.0" encoding="UTF-8"?>"#);
+        assert_ne!(
+            omm, ISS_OMM_XML,
+            "fixture no longer opens with the XML declaration"
+        );
+        let other = omm
+            .replace("ISS (ZARYA)", "OTHER SAT")
+            .replace(">51.6400<", ">97.5000<")
+            .replace(">25544<", ">99999<");
+        let ndm = |omms: &[&str]| -> String {
+            ["<?xml version=\"1.0\"?>\n<ndm>", &omms.concat(), "</ndm>"].concat()
+        };
+        assert_eq!(
+            parse(&ndm(&[omm, &other])),
+            Err(XmlParseError::MultipleMessages { found: 2 })
+        );
+        assert_eq!(
+            parse(&ndm(&[omm, &other, omm])),
+            Err(XmlParseError::MultipleMessages { found: 3 })
+        );
+        // One OMM in an NDM is one OMM.
+        assert_eq!(parse(&ndm(&[omm])), parse(ISS_OMM_XML));
+        // A tag inside a comment, a closing tag and a longer name are no `<omm>`.
+        let lookalikes =
+            ISS_OMM_XML.replace("<header>", "<!-- <omm id=\"x\"> --><ommExtra/><header>");
+        assert_eq!(parse(&lookalikes), parse(ISS_OMM_XML));
+    }
+
+    /// In one OMM, an element this reads or checks appears once; a second one
+    /// (even with the same value, or empty) leaves which to read undecided.
+    #[test]
+    fn an_element_it_reads_given_twice_is_refused() {
+        for (from, to, repeated) in [
+            (
+                "<EPOCH>2024-03-19T12:00:00.000000</EPOCH>",
+                "<EPOCH>2024-03-19T12:00:00.000000</EPOCH><EPOCH>2024-03-19T12:00:00.000000</EPOCH>",
+                "EPOCH",
+            ),
+            (
+                "<REF_FRAME>TEME</REF_FRAME>",
+                "<REF_FRAME>TEME</REF_FRAME><REF_FRAME>GCRF</REF_FRAME>",
+                "REF_FRAME",
+            ),
+            (
+                "<OBJECT_NAME>ISS (ZARYA)</OBJECT_NAME>",
+                "<OBJECT_NAME>ISS (ZARYA)</OBJECT_NAME><OBJECT_NAME>OTHER</OBJECT_NAME>",
+                "OBJECT_NAME",
+            ),
+            (
+                "<BSTAR>0.00003</BSTAR>",
+                "<BSTAR>0.00003</BSTAR><BSTAR/>",
+                "BSTAR",
+            ),
+        ] {
+            let xml = ISS_OMM_XML.replace(from, to);
+            assert_ne!(xml, ISS_OMM_XML, "fixture no longer contains '{from}'");
+            assert_eq!(
+                parse(&xml),
+                Err(XmlParseError::RepeatedElement(repeated)),
+                "{to}"
+            );
+        }
+        // `COMMENT` and `USER_DEFINED` repeat by definition, and this reads neither.
+        let repeatable = ISS_OMM_XML.replace(
+            "<metadata>",
+            "<metadata><COMMENT>a</COMMENT><COMMENT>b</COMMENT>\
+             <USER_DEFINED parameter=\"X\">1</USER_DEFINED>\
+             <USER_DEFINED parameter=\"Y\">2</USER_DEFINED>",
+        );
+        assert_ne!(
+            repeatable, ISS_OMM_XML,
+            "fixture no longer contains <metadata>"
+        );
+        assert_eq!(parse(&repeatable), parse(ISS_OMM_XML));
     }
 
     #[test]

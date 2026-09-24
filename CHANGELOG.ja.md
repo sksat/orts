@@ -1161,6 +1161,16 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   落としていた mantissa の半分を回復した。非退化な軌道の値は変わらない。([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- OMM の KVN と XML の parser は、OMM を 2 つ以上含む文書を拒否する (JSON の parser は以前から拒否して
+  いた)。CelesTrak の group の取得はこの形の文書を返し、KVN は OMM を順に並べ、XML は `<ndm>` の中に
+  集める。KVN の parser は同じキーを後の値で上書きし、XML の parser は要素ごとに最初のものを読んでいた
+  ので、`GROUP=science` (OMM 46 個) を `orts run --omm` に渡すと、KVN では最後の OMM (SMILE、
+  i = 70.00°)、XML では最初の OMM (HST、i = 28.47°) で走っていた。KVN の最後の OMM に無いキーは、前の
+  OMM の値のまま残っていた。いまは、KVN の parser は 2 つ目の `CCSDS_OMM_VERS` と、読むか検査するキーの
+  2 つ目を、新しい `KvnParseError::RepeatedKeyword` で拒否する。XML の parser は 2 つ目の `<omm>`
+  (`XmlParseError::MultipleMessages`) と、読むか検査する要素の 2 つ目 (`XmlParseError::RepeatedElement`)
+  を拒否する。`COMMENT` と、parser が読まないキーは、これまでどおり繰り返してよい
+  ([#564](https://github.com/sksat/orts/issues/564))
 - OMM の parser は `MEAN_ELEMENT_THEORY = SGP/SGP4` を SGP4 として読む。CelesTrak の KVN は、
   XML が `SGP4` と書き JSON がキーを省く element set に、この値を書く (ISS で確かめた)。その KVN は
   `unsupported OMM MEAN_ELEMENT_THEORY 'SGP/SGP4' (only SGP4 is read)` で拒否され、
