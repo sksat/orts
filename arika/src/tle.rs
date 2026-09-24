@@ -10,6 +10,10 @@
 //! Alpha-5 only extends the legacy format to 339 999 — for overflow-proof use
 //! the CCSDS OMM format ([`crate::omm`]) is the recommended successor.
 //!
+//! [`parse`] reads one element set and refuses anything after it;
+//! [`parse_all`] reads every element set of a catalog, as CelesTrak's group
+//! queries return them.
+//!
 //! Both of the format's built-in integrity checks are enforced: each line's
 //! mod-10 checksum digit, and the catalog number that line 2 repeats from
 //! line 1. A TLE whose fields parse but whose lines disagree describes no real
@@ -27,7 +31,9 @@ use core::str::FromStr;
 #[allow(unused_imports)]
 use crate::math::F64Ext;
 
-use crate::elements::{ElementsError, ParsedElementSet, Sgp4Elements, Sgp4ElementsFields};
+use crate::elements::{
+    ElementsError, ParseAllError, ParsedElementSet, Sgp4Elements, Sgp4ElementsFields,
+};
 use crate::epoch::Epoch;
 
 /// Error type for TLE parsing failures.
@@ -123,30 +129,11 @@ impl std::error::Error for TleParseError {}
 pub fn parse(text: &str) -> Result<ParsedElementSet, TleParseError> {
     // BOM-tolerant like the unified `elements::parse` entry point: a BOM is not whitespace,
     // so without this a BOM-prefixed file fails the line-1 prefix check.
-    let text = crate::elements::strip_bom(text);
-    let lines: Vec<&str> = text
-        .lines()
-        .map(|l| l.trim())
-        .filter(|l| !l.is_empty())
-        .collect();
-
+    let lines = content_lines(text);
     let (name, line1, line2, read) = match lines.len() {
         0 | 1 => return Err(TleParseError::InsufficientLines),
         2 => (None, lines[0], lines[1], 2),
-        _ => {
-            // First line is a name only if it isn't itself line 1: that opens
-            // with `1 ` and has a line 2 (`2 `) after it. A name may start with
-            // the digit 1 (`1KUNS-PF`), and CelesTrak's 3LE gives it without
-            // the `0 ` prefix, so the digit alone does not tell them apart.
-            if lines[0].starts_with("1 ") && lines[1].starts_with("2 ") {
-                (None, lines[0], lines[1], 2)
-            } else {
-                // CelesTrak "3LE" prefixes the name line with the "0 " line
-                // number; strip it so names match the OMM OBJECT_NAME form.
-                let name = lines[0].strip_prefix("0 ").unwrap_or(lines[0]).trim();
-                (Some(name.to_string()), lines[1], lines[2], 3)
-            }
-        }
+        _ => split_record(&lines)?,
     };
 
     // Every line past the element set is refused. Reading only the first
@@ -158,7 +145,105 @@ pub fn parse(text: &str) -> Result<ParsedElementSet, TleParseError> {
             found: lines.len(),
         });
     }
+    parse_record(name, line1, line2)
+}
 
+/// Parse every element set of a TLE catalog, in order.
+///
+/// A catalog is element sets one after another, each with or without its name
+/// line, as CelesTrak's group queries return them (`GROUP=stations&FORMAT=3LE`
+/// or `FORMAT=2LE`). Each is read as [`parse`] reads one, and the two forms may
+/// mix. A line laid out as a data line is never read as a name (see
+/// `split_record`), so an element set missing a line is refused at its index
+/// rather than its neighbour's lines being read under it.
+///
+/// Stops at the first element set it cannot read, as
+/// [`ParseAllError::Record`] at that element set's index; one cut short at the
+/// end is [`TleParseError::InsufficientLines`]. An input without any element
+/// set is `InsufficientLines` at index 0.
+pub fn parse_all(text: &str) -> Result<Vec<ParsedElementSet>, ParseAllError<TleParseError>> {
+    let lines = content_lines(text);
+    let mut rest = &lines[..];
+    let mut sets = Vec::new();
+    loop {
+        let index = sets.len();
+        let at = |error| ParseAllError::Record { index, error };
+        let (name, line1, line2, read) = split_record(rest).map_err(at)?;
+        sets.push(parse_record(name, line1, line2).map_err(at)?);
+        rest = &rest[read..];
+        if rest.is_empty() {
+            return Ok(sets);
+        }
+    }
+}
+
+/// The non-blank lines of `text`, trimmed, with a leading BOM dropped.
+fn content_lines(text: &str) -> Vec<&str> {
+    crate::elements::strip_bom(text)
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect()
+}
+
+/// The widest name line CelesTrak writes: "Line 0 is a twenty-four character
+/// name (to be consistent with the name length in the NORAD SATCAT)"
+/// (<https://celestrak.org/NORAD/documentation/tle-fmt.php>). Data lines are
+/// 69 characters.
+const NAME_LINE_WIDTH: usize = 24;
+
+/// Whether `line` is laid out as data line `number` rather than a name: it
+/// opens with the line number and a space, and is wider than a name line or
+/// carries a catalog number in columns 3–7, so a data line cut short is still
+/// one. A name such as `1 SAT` has neither.
+fn is_data_line(line: &str, number: char) -> bool {
+    let mut chars = line.chars();
+    if chars.next() != Some(number) || chars.next() != Some(' ') {
+        return false;
+    }
+    line.chars().count() > NAME_LINE_WIDTH
+        || line
+            .get(2..7)
+            .is_some_and(|field| !field.contains(' ') && decode_catalog_number(field, 0).is_ok())
+}
+
+/// The element set at the head of `lines` (at least one line): its name, its
+/// two data lines, and how many of `lines` it takes.
+///
+/// The first line is line 1 if it is laid out as one, or opens with `1 ` and
+/// has a line 2 (`2 `) after it. Otherwise it is a name, which may start with
+/// the digit 1 (`1KUNS-PF`, `1 SAT`): CelesTrak's 3LE gives it without the
+/// `0 ` prefix, so the digit alone does not tell them apart. A line laid out as
+/// line 2 opens no element set.
+fn split_record<'a>(
+    lines: &[&'a str],
+) -> Result<(Option<&'a str>, &'a str, &'a str, usize), TleParseError> {
+    match lines {
+        [first, second, ..]
+            if is_data_line(first, '1')
+                || (first.starts_with("1 ") && second.starts_with("2 ")) =>
+        {
+            Ok((None, first, second, 2))
+        }
+        [first, ..] if is_data_line(first, '2') => Err(TleParseError::InvalidLine1Prefix),
+        // CelesTrak "3LE" prefixes the name line with the "0 " line number;
+        // strip it so names match the OMM OBJECT_NAME form.
+        [name, line1, line2, ..] => Ok((
+            Some(name.strip_prefix("0 ").unwrap_or(name).trim()),
+            line1,
+            line2,
+            3,
+        )),
+        _ => Err(TleParseError::InsufficientLines),
+    }
+}
+
+/// Read one element set from its name and its two data lines.
+fn parse_record(
+    name: Option<&str>,
+    line1: &str,
+    line2: &str,
+) -> Result<ParsedElementSet, TleParseError> {
     if !line1.starts_with('1') {
         return Err(TleParseError::InvalidLine1Prefix);
     }
@@ -267,7 +352,7 @@ pub fn parse(text: &str) -> Result<ParsedElementSet, TleParseError> {
 
     Ok(ParsedElementSet {
         elements,
-        object_name: name,
+        object_name: name.map(str::to_string),
         object_id,
     })
 }
@@ -908,5 +993,121 @@ ISS (ZARYA)
         assert_eq!(normalize_intl_designator("57001B"), "1957-001B"); // Sputnik-era floor
         assert_eq!(normalize_intl_designator("20001AB"), "2020-001AB"); // multi-letter piece
         assert_eq!(normalize_intl_designator("XYZ"), "XYZ"); // unparseable left as-is
+    }
+
+    fn catalog(parts: &[&str]) -> String {
+        parts.join("\n")
+    }
+
+    /// A catalog is its element sets one after another, as CelesTrak's group
+    /// queries return them (`GROUP=stations&FORMAT=3LE`), with or without
+    /// name lines. Each is read on its own, in order.
+    #[test]
+    fn parse_all_reads_every_element_set_of_a_catalog() {
+        let ids = |text: &str| -> Vec<(u32, Option<String>)> {
+            parse_all(text)
+                .unwrap_or_else(|e| panic!("{e}: {text}"))
+                .into_iter()
+                .map(|set| (set.elements.fields().norad_cat_id, set.object_name))
+                .collect()
+        };
+        let named = |name: &str| Some(name.to_string());
+        // 3LE, 2LE, and the two mixed, with names that start with the digit 1.
+        assert_eq!(
+            ids(&catalog(&[
+                "ISS (ZARYA)",
+                ISS_TLE_2LINE,
+                "1971-067 DEB",
+                GEO_TLE
+            ])),
+            [
+                (25544, named("ISS (ZARYA)")),
+                (28358, named("1971-067 DEB"))
+            ]
+        );
+        assert_eq!(
+            ids(&catalog(&[ISS_TLE_2LINE, GEO_TLE])),
+            [(25544, None), (28358, None)]
+        );
+        assert_eq!(
+            ids(&catalog(&[
+                "0 1 SAT",
+                ISS_TLE_2LINE,
+                GEO_TLE,
+                "1KUNS-PF",
+                ISS_TLE_2LINE
+            ])),
+            [
+                (25544, named("1 SAT")),
+                (28358, None),
+                (25544, named("1KUNS-PF"))
+            ]
+        );
+        // One element set is a list of one, read as `parse` reads it.
+        assert_eq!(parse_all(ISS_TLE), Ok(alloc::vec![parse(ISS_TLE).unwrap()]));
+    }
+
+    /// A line laid out as a data line (opening with `1 ` or `2 `, and longer
+    /// than a 24-character name line) is never read as a name. An element set
+    /// missing a line is refused at its index, rather than its neighbour's
+    /// lines read under a name that is really a data line.
+    #[test]
+    fn parse_all_refuses_an_element_set_missing_a_line() {
+        let iss: Vec<&str> = ISS_TLE_2LINE.lines().collect();
+        let refused = |text: &str| match parse_all(text) {
+            Err(ParseAllError::Record { index, error }) => (index, error),
+            other => panic!("{text}: {other:?}"),
+        };
+        // Line 2 missing: line 1 is followed by the next element set.
+        assert_eq!(
+            refused(&catalog(&[iss[0], GEO_TLE])),
+            (0, TleParseError::InvalidLine2Prefix)
+        );
+        // Line 1 missing: an element set cannot open with line 2.
+        assert_eq!(
+            refused(&catalog(&[iss[1], GEO_TLE])),
+            (0, TleParseError::InvalidLine1Prefix)
+        );
+        // A line 1 cut short is still laid out as one, down to its catalog
+        // number: shorter than a name line, it is still no name.
+        for cut in [60, 8] {
+            assert_eq!(
+                refused(&catalog(&[&iss[0][..cut], GEO_TLE])),
+                (0, TleParseError::InvalidLine2Prefix),
+                "cut to {cut}"
+            );
+        }
+        // An element set cut short at the end, after a name or a line 1.
+        assert_eq!(
+            refused(&catalog(&[ISS_TLE, "GEO"])),
+            (1, TleParseError::InsufficientLines)
+        );
+        assert_eq!(
+            refused(&catalog(&[ISS_TLE, "GEO", GEO_TLE.lines().next().unwrap()])),
+            (1, TleParseError::InsufficientLines)
+        );
+        // A later element set that fails its checksum is reported at its index.
+        let corrupt = GEO_TLE.replacen("0.0300", "0.0400", 1);
+        assert!(matches!(
+            refused(&catalog(&[ISS_TLE, &corrupt])),
+            (1, TleParseError::InvalidChecksum { line: 2, .. })
+        ));
+        assert_eq!(refused(""), (0, TleParseError::InsufficientLines));
+    }
+
+    /// `parse` reads the first element set the way `parse_all` does, so a data
+    /// line at the head of three lines is not taken for a name either: the
+    /// three lines used to read as the next element set under that name.
+    #[test]
+    fn parse_takes_no_data_line_for_a_name() {
+        let iss: Vec<&str> = ISS_TLE_2LINE.lines().collect();
+        assert_eq!(
+            parse(&catalog(&[iss[1], GEO_TLE])),
+            Err(TleParseError::InvalidLine1Prefix)
+        );
+        assert_eq!(
+            parse(&catalog(&[iss[0], GEO_TLE])),
+            Err(TleParseError::TrailingLines { read: 2, found: 3 })
+        );
     }
 }

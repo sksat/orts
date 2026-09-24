@@ -1,5 +1,5 @@
 //! Satellite element sets: the no-alloc [`Sgp4Elements`] mean-element set and
-//! the unified [`parse`] entry point.
+//! the unified [`parse`] / [`parse_all`] entry points.
 //!
 //! [`Sgp4Elements`] holds the numeric SGP4 mean elements an SGP4 propagator
 //! consumes — epoch, the six mean elements, the B* drag term, and the catalog
@@ -233,6 +233,21 @@ impl<E: fmt::Display> fmt::Display for ParseAllError<E> {
 #[cfg(all(feature = "std", feature = "alloc"))]
 impl<E: fmt::Debug + fmt::Display> std::error::Error for ParseAllError<E> {}
 
+#[cfg(feature = "alloc")]
+impl<E> ParseAllError<E> {
+    /// Turn the error inside into another type, keeping whether the document
+    /// or an element set failed and, for an element set, its index.
+    pub fn map<F>(self, f: impl FnOnce(E) -> F) -> ParseAllError<F> {
+        match self {
+            ParseAllError::Document(error) => ParseAllError::Document(f(error)),
+            ParseAllError::Record { index, error } => ParseAllError::Record {
+                index,
+                error: f(error),
+            },
+        }
+    }
+}
+
 /// Parse an OMM `EPOCH` value into a UTC [`Epoch`].
 ///
 /// Delegates to [`Epoch::from_iso8601`], which accepts both the calendar and
@@ -339,6 +354,28 @@ pub fn parse(text: &str) -> Result<ParsedElementSet, ParseError> {
         Format::OmmJson => crate::omm::json::parse(text).map_err(ParseError::Json),
         Format::OmmKvn => crate::omm::kvn::parse(text).map_err(ParseError::Kvn),
         Format::OmmXml => crate::omm::xml::parse(text).map_err(ParseError::Xml),
+    }
+}
+
+/// Parse every element set of a document in any supported serialization,
+/// detecting the format via [`detect`] as [`parse`] does: a TLE catalog, or a
+/// document of several OMMs such as CelesTrak's group queries return. See
+/// [`crate::tle::parse_all`] and the `parse_all` of [`crate::omm::kvn`],
+/// [`crate::omm::xml`] and [`crate::omm::json`] for how each is split.
+///
+/// A document whose format cannot be determined is
+/// [`ParseAllError::Document`] with [`ParseError::UnknownFormat`]; every other
+/// error is the format's own, wrapped in [`ParseError`] at the same place.
+#[cfg(feature = "alloc")]
+pub fn parse_all(
+    text: &str,
+) -> Result<alloc::vec::Vec<ParsedElementSet>, ParseAllError<ParseError>> {
+    let text = strip_bom(text);
+    match detect(text).ok_or(ParseAllError::Document(ParseError::UnknownFormat))? {
+        Format::Tle => crate::tle::parse_all(text).map_err(|e| e.map(ParseError::Tle)),
+        Format::OmmJson => crate::omm::json::parse_all(text).map_err(|e| e.map(ParseError::Json)),
+        Format::OmmKvn => crate::omm::kvn::parse_all(text).map_err(|e| e.map(ParseError::Kvn)),
+        Format::OmmXml => crate::omm::xml::parse_all(text).map_err(|e| e.map(ParseError::Xml)),
     }
 }
 
@@ -551,5 +588,50 @@ NORAD_CAT_ID = 25544";
             parse("definitely not an element set"),
             Err(ParseError::UnknownFormat)
         );
+    }
+
+    /// `map` changes the error inside and keeps where it happened.
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn parse_all_error_map_keeps_the_place() {
+        let record: ParseAllError<u8> = ParseAllError::Record { index: 3, error: 7 };
+        assert_eq!(
+            record.map(u32::from),
+            ParseAllError::Record {
+                index: 3,
+                error: 7u32
+            }
+        );
+        let document: ParseAllError<u8> = ParseAllError::Document(7);
+        assert_eq!(document.map(u32::from), ParseAllError::Document(7u32));
+    }
+
+    /// The unified `parse_all` detects the format as `parse` does and passes
+    /// each format's error on at the same place.
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn parse_all_detects_the_format() {
+        assert_eq!(
+            parse_all(""),
+            Err(ParseAllError::Document(ParseError::UnknownFormat))
+        );
+        assert_eq!(parse_all("[]"), Ok(alloc::vec![]));
+        assert_eq!(parse_all("<ndm/>"), Ok(alloc::vec![]));
+        let two_tles = [
+            "1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9996",
+            "2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480008",
+            "1 28358U 04022A   24079.50000000  .00000012  00000-0  00000+0 0  9993",
+            "2 28358   0.0300 275.4700 0003500 135.2000 224.8000  1.00271000 72001",
+        ];
+        let sets = parse_all(&two_tles.join("\n")).expect("a catalog of two");
+        assert_eq!(sets.len(), 2);
+        let corrupt = two_tles.join("\n").replacen("0.0300", "0.0400", 1);
+        assert!(matches!(
+            parse_all(&corrupt),
+            Err(ParseAllError::Record {
+                index: 1,
+                error: ParseError::Tle(crate::tle::TleParseError::InvalidChecksum { .. })
+            })
+        ));
     }
 }

@@ -1084,6 +1084,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `arika` (Rust, crates.io)
 
 #### Added
+- `tle::parse_all` は、TLE の catalog に入っている element set を全部、順に読む。CelesTrak の group
+  の取得 (`GROUP=stations&FORMAT=3LE` や `FORMAT=2LE`) が返す形に対応し、2 つの形が混ざってもよい。
+  各 element set は `tle::parse` と同じく読み、行が欠けたものや末尾で途切れたものは、その番号の
+  `ParseAllError::Record` になる。`elements::parse_all` は `elements::parse` と同じく形式を判定し、
+  TLE の catalog や OMM の文書の element set を全部読む。`ParseAllError::map` は、エラーの位置を保った
+  まま中のエラーの型を変える。CelesTrak の `GROUP=stations` の 2 つの element set を、5 つの形式で
+  固定した
 - `epoch::DateTime` の `Display` は、秒の小数の桁数を precision で受け取る: `{:.3}` は
   `2026-09-23T21:12:48.699Z` を書く (最大 9 桁)。秒は書く桁で 1 回だけ丸め、整数秒と同じく分・時・日付へ
   繰り上がる。precision が無ければ、これまでどおり整数秒
@@ -1186,6 +1193,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   落としていた mantissa の半分を回復した。非退化な軌道の値は変わらない。([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- `tle::parse` は、データ行を名前の行として読まない。2 行目で始まる 3 行や、2 行目が欠けた 1 行目で
+  始まる 3 行を、先頭のデータ行を名前にして、残りの 2 行の element set として読んでいた。いまは、`1 `
+  か `2 ` で始まり、CelesTrak が定める 24 文字の名前の行より長い行をデータ行として読むので、これらは
+  拒否される (`InvalidLine1Prefix`、`TrailingLines`)
 - `tle::parse` は、名前が数字の 1 で始まる 3 行の element set を読む。先頭の行が `1` で始まれば
   TLE の 1 行目とみなしていたので、`1KUNS-PF` のような名前は `the element set is 2 lines but the
   input has 3` で失敗していた。CelesTrak の 3LE は名前に `0 ` を付けず、`orts run --norad-id` は

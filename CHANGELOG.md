@@ -1349,6 +1349,15 @@ section is subdivided by package.
 ### `arika` (Rust, crates.io)
 
 #### Added
+- `tle::parse_all` reads every element set of a TLE catalog, in order, as
+  CelesTrak's group queries return them (`GROUP=stations&FORMAT=3LE` or
+  `FORMAT=2LE`); the two forms may mix. Each element set is read as
+  `tle::parse` reads one, and one missing a line, or cut short at the end, is
+  `ParseAllError::Record` at its index. `elements::parse_all` detects the
+  format as `elements::parse` does and reads every element set of a TLE
+  catalog or an OMM document, and `ParseAllError::map` turns the error inside
+  into another type while keeping its place. Pinned by two element sets of
+  CelesTrak's `GROUP=stations` in each of the five formats.
 - `epoch::DateTime`'s `Display` takes a precision for the seconds:
   `{:.3}` writes `2026-09-23T21:12:48.699Z` (at most nine decimals). The
   seconds are rounded once, to what is written, and carry into the minute,
@@ -1466,6 +1475,12 @@ section is subdivided by package.
   Non-degenerate orbits are unchanged. ([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- `tle::parse` takes no data line for a name. Three lines opening with a
+  line 2, or with a line 1 whose line 2 is missing, read as the element set on
+  the next two lines, named after the data line. A line opening with `1 ` or
+  `2 ` and wider than the 24-character name line CelesTrak defines is now read
+  as a data line, so these are refused (`InvalidLine1Prefix`,
+  `TrailingLines`).
 - `tle::parse` reads a three-line element set whose name starts with the
   digit `1`. The first line was taken for TLE line 1 whenever it started with
   `1`, so a name such as `1KUNS-PF` failed with `the element set is 2 lines but
