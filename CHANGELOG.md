@@ -1344,7 +1344,7 @@ section is subdivided by package.
   a list of one, and an `<ndm>` or array without any is empty. They stop at
   the first OMM they cannot read, as `elements::ParseAllError::Record` with its
   index; a document that cannot be split is `ParseAllError::Document` (a
-  keyword before the first `CCSDS_OMM_VERS`, NDM tags that do not nest, or a
+  keyword before the first `CCSDS_OMM_VERS`, XML tags that do not nest, or a
   message other than an OMM in the NDM). The single-set `parse` still refuses
   these documents. Pinned by two OMMs of CelesTrak's `GROUP=stations` in each
   format.
