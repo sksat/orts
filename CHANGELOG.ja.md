@@ -1171,6 +1171,12 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   落としていた mantissa の半分を回復した。非退化な軌道の値は変わらない。([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- `tle::parse` は、名前が数字の 1 で始まる 3 行の element set を読む。先頭の行が `1` で始まれば
+  TLE の 1 行目とみなしていたので、`1KUNS-PF` のような名前は `the element set is 2 lines but the
+  input has 3` で失敗していた。CelesTrak の 3LE は名前に `0 ` を付けず、`orts run --norad-id` は
+  この 3LE を取得するので、こうした衛星は `--norad-id` でも run が失敗していた。いまは、先頭の行が
+  `1 ` で始まり、次の行が `2 ` で始まるときだけ 1 行目とみなす
+  ([#563](https://github.com/sksat/orts/issues/563))
 - OMM の KVN と XML の parser は、OMM を 2 つ以上含む文書を拒否する (JSON の parser は以前から拒否して
   いた)。CelesTrak の group の取得はこの形の文書を返し、KVN は OMM を順に並べ、XML は `<ndm>` の中に
   集める。KVN の parser は同じキーを後の値で上書きし、XML の parser は要素ごとに最初のものを読んでいた

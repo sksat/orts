@@ -134,8 +134,11 @@ pub fn parse(text: &str) -> Result<ParsedElementSet, TleParseError> {
         0 | 1 => return Err(TleParseError::InsufficientLines),
         2 => (None, lines[0], lines[1], 2),
         _ => {
-            // First line is a name only if it isn't itself line 1.
-            if lines[0].starts_with('1') {
+            // First line is a name only if it isn't itself line 1: that opens
+            // with `1 ` and has a line 2 (`2 `) after it. A name may start with
+            // the digit 1 (`1KUNS-PF`), and CelesTrak's 3LE gives it without
+            // the `0 ` prefix, so the digit alone does not tell them apart.
+            if lines[0].starts_with("1 ") && lines[1].starts_with("2 ") {
                 (None, lines[0], lines[1], 2)
             } else {
                 // CelesTrak "3LE" prefixes the name line with the "0 " line
@@ -538,6 +541,33 @@ ISS (ZARYA)
 2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480008";
         let omm = parse(tle).unwrap();
         assert_eq!(omm.object_name.as_deref(), Some("ISS (ZARYA)"));
+    }
+
+    /// A name that starts with the digit 1 is still a name (#563).
+    ///
+    /// The first of three lines was taken for TLE line 1 whenever it started
+    /// with `1`, so the name `1KUNS-PF` over an element set failed as "the
+    /// element set is 2 lines but the input has 3". CelesTrak's 3LE gives the
+    /// name without the `0 ` prefix, so nothing else told the two apart.
+    #[test]
+    fn a_name_that_starts_with_1_is_a_name() {
+        for (name, read_as) in [
+            ("1KUNS-PF", "1KUNS-PF"),
+            ("1 SAT", "1 SAT"),
+            ("0 1KUNS-PF", "1KUNS-PF"),
+        ] {
+            let tle = ISS_TLE.replace("ISS (ZARYA)", name);
+            let set = parse(&tle).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+            assert_eq!(set.object_name.as_deref(), Some(read_as), "{name}");
+            assert_eq!(set.elements.fields().norad_cat_id, 25544, "{name}");
+        }
+        // Two element sets back to back are still two, and still refused.
+        let two_sets = [ISS_TLE_2LINE, "\n", ISS_TLE_2LINE].concat();
+        assert!(
+            matches!(parse(&two_sets), Err(TleParseError::TrailingLines { .. })),
+            "{:?}",
+            parse(&two_sets)
+        );
     }
 
     #[test]
