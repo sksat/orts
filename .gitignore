@@ -47,13 +47,13 @@ docs/public/viewer/
 docs/public/uneri/examples/
 docs/public/tobari/
 
-# tobari-example-web WASM build artifacts (.d.ts is force-tracked)
+# tobari-example-web WASM build artifacts. The tobari .d.ts is force-tracked;
+# the arika output is not tracked at all, since the example's build / dev /
+# pretest scripts regenerate it from arika-wasm every time.
 tobari/examples/web/src/wasm/tobari/*.js
 tobari/examples/web/src/wasm/tobari/*.wasm
 tobari/examples/web/src/wasm/tobari/package.json
-tobari/examples/web/src/wasm/arika/*.js
-tobari/examples/web/src/wasm/arika/*.wasm
-tobari/examples/web/src/wasm/arika/package.json
+tobari/examples/web/src/wasm/arika/
 
 # Downloaded space weather data (fetched by embed-viewer.mjs)
 tobari/examples/web/public/space-weather.txt
