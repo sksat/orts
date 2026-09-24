@@ -792,6 +792,31 @@ fn record_long_rrd(label: &str) -> (std::path::PathBuf, std::path::PathBuf) {
     (dir, rrd)
 }
 
+/// `convert` reads a recorded `.rrd` and writes CSV, the one format it
+/// converts to. `--format rrd` was offered, and then refused with "input is
+/// already .rrd" whatever the input was. clap now refuses it, naming the value
+/// it takes, and the help offers only `csv` and says the input is an `.rrd`.
+#[test]
+fn test_convert_offers_only_the_format_it_writes() {
+    let binary = env!("CARGO_BIN_EXE_orts");
+    let output = Command::new(binary)
+        .args(["convert", "recording.csv", "--format", "rrd"])
+        .output()
+        .expect("failed to run orts convert");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("invalid value 'rrd'"), "{stderr}");
+    assert!(stderr.contains("[possible values: csv]"), "{stderr}");
+
+    let help = Command::new(binary)
+        .args(["convert", "--help"])
+        .output()
+        .expect("failed to run orts convert --help");
+    let help = String::from_utf8_lossy(&help.stdout);
+    assert!(help.contains("[possible values: csv]"), "{help}");
+    assert!(help.contains(".rrd"), "{help}");
+}
+
 /// A reader that closes `orts convert`'s CSV early (`| head`) is a write
 /// error. `convert` panicked out of the writer with exit 101 (#572); it now
 /// reports the error and exits 1, as `orts run --format csv | head` does.
