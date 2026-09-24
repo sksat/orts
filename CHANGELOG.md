@@ -1446,6 +1446,14 @@ section is subdivided by package.
   Non-degenerate orbits are unchanged. ([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- `tle::parse` reads a three-line element set whose name starts with the
+  digit `1`. The first line was taken for TLE line 1 whenever it started with
+  `1`, so a name such as `1KUNS-PF` failed with `the element set is 2 lines but
+  the input has 3`. CelesTrak's 3LE gives the name without the `0 ` prefix,
+  and `orts run --norad-id` fetches the 3LE, so a run of such a satellite by
+  `--norad-id` failed too. The first line is now line 1 only if it opens with
+  `1 ` and the next line opens with `2 `.
+  ([#563](https://github.com/sksat/orts/issues/563))
 - The OMM KVN and XML parsers refuse a document holding more than one OMM,
   as the JSON parser already did. CelesTrak's group queries return one: the
   KVN runs the OMMs one after another and the XML collects them in an `<ndm>`.
