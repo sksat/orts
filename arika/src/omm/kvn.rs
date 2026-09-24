@@ -7,6 +7,7 @@
 
 use alloc::collections::BTreeSet;
 use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::f64::consts::PI;
 use core::fmt;
 use core::str::FromStr;
@@ -15,7 +16,9 @@ use core::str::FromStr;
 #[allow(unused_imports)]
 use crate::math::F64Ext;
 
-use crate::elements::{ElementsError, ParsedElementSet, Sgp4Elements, Sgp4ElementsFields};
+use crate::elements::{
+    ElementsError, ParseAllError, ParsedElementSet, Sgp4Elements, Sgp4ElementsFields,
+};
 use crate::omm::{UnsupportedMetadata, check_metadata};
 
 /// Error type for OMM KVN parsing.
@@ -38,6 +41,9 @@ pub enum KvnParseError {
     /// describes one object, so the text holds more than one OMM (CelesTrak's
     /// group queries concatenate them) or repeats a field.
     RepeatedKeyword(&'static str),
+    /// In a document holding several OMMs, a keyword comes before the first
+    /// `CCSDS_OMM_VERS`, so it belongs to none of them.
+    KeywordBeforeHeader(String),
 }
 
 impl fmt::Display for KvnParseError {
@@ -50,6 +56,9 @@ impl fmt::Display for KvnParseError {
             KvnParseError::InvalidEpoch(s) => write!(f, "invalid OMM EPOCH: '{s}'"),
             KvnParseError::Unsupported(e) => write!(f, "{e}"),
             KvnParseError::InvalidElements(e) => write!(f, "invalid OMM element set: {e}"),
+            KvnParseError::KeywordBeforeHeader(k) => {
+                write!(f, "OMM keyword {k} comes before the first CCSDS_OMM_VERS")
+            }
             KvnParseError::RepeatedKeyword(k) => {
                 write!(
                     f,
@@ -86,15 +95,9 @@ pub fn parse(kvn: &str) -> Result<ParsedElementSet, KvnParseError> {
     let mut seen = BTreeSet::new();
 
     for line in kvn.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with("COMMENT") {
-            continue;
-        }
-        // Block markers (META_START / META_STOP / *_START / *_STOP) have no '='.
-        let Some((key, value)) = line.split_once('=') else {
+        let Some((key, value)) = keyword_line(line) else {
             continue;
         };
-        let key = key.trim();
         if let Some(once) = crate::omm::keywords_read()
             .chain(["CCSDS_OMM_VERS"])
             .find(|k| *k == key)
@@ -102,10 +105,6 @@ pub fn parse(kvn: &str) -> Result<ParsedElementSet, KvnParseError> {
         {
             return Err(KvnParseError::RepeatedKeyword(once));
         }
-        // Trim only — do NOT strip unit annotations here, or a string field
-        // like `OBJECT_NAME = SAT [TEST]` would be truncated at '['. Units are
-        // stripped per numeric field inside `parse_num`.
-        let value = value.trim();
         // The metadata keywords declare how the elements must be interpreted;
         // reject anything this crate does not actually honor before reading a
         // single element (see `crate::omm::METADATA`).
@@ -164,6 +163,69 @@ pub fn parse(kvn: &str) -> Result<ParsedElementSet, KvnParseError> {
         object_name,
         object_id,
     })
+}
+
+/// Parse every OMM a KVN document holds.
+///
+/// A KVN OMM opens with its `CCSDS_OMM_VERS` line, and CelesTrak's group
+/// queries (`GROUP=science&FORMAT=KVN`) put OMMs one after another, so each
+/// OMM runs from its `CCSDS_OMM_VERS` line to the next one and is read by
+/// [`parse`]. A document without the line is one OMM. Before the first
+/// `CCSDS_OMM_VERS`, a document may hold blank lines and `COMMENT`s; a keyword
+/// there is [`KvnParseError::KeywordBeforeHeader`], since it belongs to no OMM.
+///
+/// Stops at the first OMM it cannot read, as [`ParseAllError::Record`] at that
+/// OMM's index. The OMMs are split only at `CCSDS_OMM_VERS`: OMMs written
+/// without it run together and [`parse`] refuses the repeated keywords.
+pub fn parse_all(kvn: &str) -> Result<Vec<ParsedElementSet>, ParseAllError<KvnParseError>> {
+    let kvn = crate::elements::strip_bom(kvn);
+    let mut starts = Vec::new();
+    let mut before_header = None;
+    let mut offset = 0;
+    for line in kvn.split_inclusive('\n') {
+        match keyword_line(line) {
+            Some(("CCSDS_OMM_VERS", _)) => starts.push(offset),
+            Some((key, _)) if starts.is_empty() && before_header.is_none() => {
+                before_header = Some(key)
+            }
+            _ => {}
+        }
+        offset += line.len();
+    }
+    if starts.is_empty() {
+        return parse(kvn)
+            .map(|set| alloc::vec![set])
+            .map_err(|error| ParseAllError::Record { index: 0, error });
+    }
+    if let Some(key) = before_header {
+        return Err(ParseAllError::Document(KvnParseError::KeywordBeforeHeader(
+            key.to_string(),
+        )));
+    }
+    starts.push(kvn.len());
+    starts
+        .windows(2)
+        .enumerate()
+        .map(|(index, span)| {
+            parse(&kvn[span[0]..span[1]]).map_err(|error| ParseAllError::Record { index, error })
+        })
+        .collect()
+}
+
+/// The trimmed keyword and value of a `KEYWORD = VALUE` line, or `None` for a
+/// line that holds none: a blank line, a `COMMENT`, or a block marker
+/// (`META_START` / `META_STOP` / `*_START` / `*_STOP`, which have no `=`).
+///
+/// The value is trimmed only — unit annotations are stripped per numeric field
+/// inside `parse_num`, so a string field like `OBJECT_NAME = SAT [TEST]` keeps
+/// its `[`.
+fn keyword_line(line: &str) -> Option<(&str, &str)> {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with("COMMENT") {
+        return None;
+    }
+    let (key, value) = line.split_once('=')?;
+    Some((key.trim(), value.trim()))
 }
 
 /// Drop a trailing CCSDS unit annotation, e.g. `"51.64 [deg]"` → `"51.64 "`.
@@ -435,5 +497,83 @@ NORAD_CAT_ID = 1";
         // Direct calls (not via elements::parse) must also tolerate a leading BOM.
         let bom = ["\u{feff}", ISS_OMM_KVN].concat();
         assert_eq!(parse(&bom).unwrap().elements.fields().norad_cat_id, 25544);
+    }
+
+    /// Each OMM runs from its `CCSDS_OMM_VERS` line to the next, so a keyword
+    /// the second one leaves out is missing from it, not taken from the first.
+    #[test]
+    fn parse_all_reads_each_omm_on_its_own() {
+        let other = ISS_OMM_KVN
+            .replace("OBJECT_NAME = ISS (ZARYA)", "OBJECT_NAME = OTHER SAT")
+            .replace("NORAD_CAT_ID = 25544", "NORAD_CAT_ID = 99999");
+        let two = parse_all(&[ISS_OMM_KVN, &other].concat()).expect("two OMMs");
+        assert_eq!(two.len(), 2);
+        assert_eq!(two[0], parse(ISS_OMM_KVN).unwrap());
+        assert_eq!(two[1].object_name.as_deref(), Some("OTHER SAT"));
+        assert_eq!(two[1].elements.fields().norad_cat_id, 99999);
+
+        let no_bstar = other.replace("BSTAR = 0.00003\n", "");
+        assert_ne!(no_bstar, other, "fixture no longer carries BSTAR");
+        assert_eq!(
+            parse_all(&[ISS_OMM_KVN, &no_bstar].concat()),
+            Err(ParseAllError::Record {
+                index: 1,
+                error: KvnParseError::MissingField("BSTAR")
+            })
+        );
+        let bad_epoch = other.replace("EPOCH = 2024-03-19T12:00:00.000000", "EPOCH = soon");
+        assert!(matches!(
+            parse_all(&[ISS_OMM_KVN, &bad_epoch].concat()),
+            Err(ParseAllError::Record {
+                index: 1,
+                error: KvnParseError::InvalidEpoch(_)
+            })
+        ));
+    }
+
+    /// Only a `CCSDS_OMM_VERS` keyword starts an OMM: the text in a `COMMENT`
+    /// or a value is not one, and OMMs given without the line are one OMM
+    /// repeating its keywords.
+    #[test]
+    fn parse_all_splits_at_the_version_keyword_only() {
+        let quoting = ISS_OMM_KVN
+            .replace("COMMENT generated by test", "COMMENT CCSDS_OMM_VERS = 2.0")
+            .replace("ORIGINATOR = test", "ORIGINATOR = CCSDS_OMM_VERS");
+        assert_ne!(quoting, ISS_OMM_KVN, "fixture changed");
+        assert_eq!(
+            parse_all(&quoting),
+            Ok(alloc::vec![parse(&quoting).unwrap()])
+        );
+
+        let without_header = ISS_OMM_KVN.replace("CCSDS_OMM_VERS = 2.0\n", "");
+        assert_eq!(
+            parse_all(&without_header),
+            Ok(alloc::vec![parse(&without_header).unwrap()])
+        );
+        assert_eq!(
+            parse_all(&[without_header.as_str(), &without_header].concat()),
+            Err(ParseAllError::Record {
+                index: 0,
+                error: KvnParseError::RepeatedKeyword("OBJECT_NAME")
+            })
+        );
+    }
+
+    /// Blank lines and `COMMENT`s may come before the first OMM; a keyword
+    /// there belongs to no OMM and is refused rather than dropped.
+    #[test]
+    fn parse_all_refuses_a_keyword_before_the_first_omm() {
+        let preamble = ["\nCOMMENT catalog of one\n\n", ISS_OMM_KVN].concat();
+        assert_eq!(
+            parse_all(&preamble),
+            Ok(alloc::vec![parse(ISS_OMM_KVN).unwrap()])
+        );
+        let stray = ["OBJECT_NAME = STRAY\n", ISS_OMM_KVN].concat();
+        assert_eq!(
+            parse_all(&stray),
+            Err(ParseAllError::Document(KvnParseError::KeywordBeforeHeader(
+                "OBJECT_NAME".to_string()
+            )))
+        );
     }
 }

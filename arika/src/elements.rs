@@ -201,6 +201,38 @@ pub struct ParsedElementSet {
     pub object_id: Option<String>,
 }
 
+/// Error returned by the `parse_all` parsers, which read every element set a
+/// document holds.
+///
+/// A document can fail before any element set in it is separated out (JSON
+/// that does not parse, an XML element left open), or one of its element sets
+/// can fail on its own. The second carries its place, so a caller can say
+/// which satellite of a catalog it could not read.
+#[cfg(feature = "alloc")]
+#[derive(Debug, Clone, PartialEq)]
+pub enum ParseAllError<E> {
+    /// The document itself could not be split into element sets.
+    Document(E),
+    /// The element set at `index` (0-based, in document order) could not be
+    /// read.
+    Record { index: usize, error: E },
+}
+
+#[cfg(feature = "alloc")]
+impl<E: fmt::Display> fmt::Display for ParseAllError<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ParseAllError::Document(e) => write!(f, "{e}"),
+            ParseAllError::Record { index, error } => {
+                write!(f, "element set at index {index}: {error}")
+            }
+        }
+    }
+}
+
+#[cfg(all(feature = "std", feature = "alloc"))]
+impl<E: fmt::Debug + fmt::Display> std::error::Error for ParseAllError<E> {}
+
 /// Parse an OMM `EPOCH` value into a UTC [`Epoch`].
 ///
 /// Delegates to [`Epoch::from_iso8601`], which accepts both the calendar and

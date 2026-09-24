@@ -11,6 +11,7 @@
 //! like `A &amp; B` is returned verbatim (`A &amp; B`), not unescaped.
 
 use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::f64::consts::PI;
 use core::fmt;
 use core::str::FromStr;
@@ -19,7 +20,9 @@ use core::str::FromStr;
 #[allow(unused_imports)]
 use crate::math::F64Ext;
 
-use crate::elements::{ElementsError, ParsedElementSet, Sgp4Elements, Sgp4ElementsFields};
+use crate::elements::{
+    ElementsError, ParseAllError, ParsedElementSet, Sgp4Elements, Sgp4ElementsFields,
+};
 use crate::omm::{UnsupportedMetadata, check_all_metadata};
 
 /// Error type for OMM XML parsing.
@@ -48,6 +51,12 @@ pub enum XmlParseError {
     MultipleMessages { found: usize },
     /// An element this reads or checks appears more than once in the OMM.
     RepeatedElement(&'static str),
+    /// The tags of an NDM do not nest: a tag is left open, closed out of
+    /// order, or unterminated, or markup follows the closing `</ndm>`.
+    MalformedDocument(String),
+    /// An NDM holds a message other than an OMM (an OPM, OEM, …), which this
+    /// does not read.
+    UnsupportedMessage(String),
 }
 
 impl fmt::Display for XmlParseError {
@@ -71,6 +80,10 @@ impl fmt::Display for XmlParseError {
             }
             XmlParseError::RepeatedElement(k) => {
                 write!(f, "OMM element {k} appears more than once")
+            }
+            XmlParseError::MalformedDocument(what) => write!(f, "malformed NDM XML: {what}"),
+            XmlParseError::UnsupportedMessage(name) => {
+                write!(f, "the NDM holds a <{name}>; only <omm> messages are read")
             }
         }
     }
@@ -122,6 +135,220 @@ pub fn parse(xml: &str) -> Result<ParsedElementSet, XmlParseError> {
         object_name: element_text(xml, "OBJECT_NAME").map(String::from),
         object_id: element_text(xml, "OBJECT_ID").map(String::from),
     })
+}
+
+/// Parse every OMM an OMM XML document holds.
+///
+/// An NDM collects messages in its `<ndm>` root element (CCSDS 502.0-B-3
+/// §8.12), and CelesTrak's group queries (`GROUP=science&FORMAT=XML`) return
+/// one holding an `<omm>` per satellite. Each `<omm>` is read by [`parse`], in
+/// document order; an `<ndm>` without one is an empty list. A document whose
+/// root is not `<ndm>` is one OMM, read by [`parse`].
+///
+/// The NDM itself has to hold together: its tags nest and are terminated,
+/// only messages sit directly inside it, and nothing but whitespace, comments
+/// and processing instructions comes before or after it
+/// ([`XmlParseError::MalformedDocument`]). A message other than an
+/// OMM is [`XmlParseError::UnsupportedMessage`] rather than skipped. Both are
+/// [`ParseAllError::Document`], as is markup [`parse`] refuses anywhere in the
+/// document. An `<omm>` it cannot read stops it, as [`ParseAllError::Record`]
+/// at that OMM's index.
+pub fn parse_all(xml: &str) -> Result<Vec<ParsedElementSet>, ParseAllError<XmlParseError>> {
+    let xml = crate::elements::strip_bom(xml);
+    reject_unsupported_markup(xml).map_err(ParseAllError::Document)?;
+    let mut tags = Tags {
+        xml,
+        from: 0,
+        text: false,
+    };
+    let root = tags.next().transpose().map_err(ParseAllError::Document)?;
+    let Some(root) = root.filter(|tag| tag.name == "ndm" && tag.kind != TagKind::End) else {
+        return parse(xml)
+            .map(|set| alloc::vec![set])
+            .map_err(|error| ParseAllError::Record { index: 0, error });
+    };
+    let malformed = |what: String| ParseAllError::Document(XmlParseError::MalformedDocument(what));
+    let stray_text = || malformed("text outside a message".to_string());
+    if root.text_before {
+        return Err(stray_text());
+    }
+
+    let mut sets = Vec::new();
+    // The elements open inside `<ndm>`, outermost first, and where the
+    // outermost one began.
+    let mut open: Vec<&str> = Vec::new();
+    let mut message_at = 0;
+    let mut closed = root.kind == TagKind::Empty;
+    while let Some(tag) = tags.next().transpose().map_err(ParseAllError::Document)? {
+        if (open.is_empty() || closed) && tag.text_before {
+            return Err(stray_text());
+        }
+        if closed {
+            return Err(malformed(alloc::format!("<{}> after </ndm>", tag.name)));
+        }
+        if open.is_empty() {
+            match tag.kind {
+                TagKind::End if tag.name == "ndm" => {
+                    closed = true;
+                    continue;
+                }
+                TagKind::End => {
+                    return Err(malformed(alloc::format!(
+                        "</{}> without its <{0}>",
+                        tag.name
+                    )));
+                }
+                _ if tag.name != "omm" => {
+                    return Err(ParseAllError::Document(XmlParseError::UnsupportedMessage(
+                        tag.name.to_string(),
+                    )));
+                }
+                _ => message_at = tag.start,
+            }
+        }
+        match tag.kind {
+            TagKind::Start => {
+                open.push(tag.name);
+                continue;
+            }
+            TagKind::End if open.last() == Some(&tag.name) => {
+                open.pop();
+            }
+            TagKind::End => {
+                return Err(malformed(alloc::format!(
+                    "</{}> closes <{}>",
+                    tag.name,
+                    open.last().copied().unwrap_or("ndm")
+                )));
+            }
+            TagKind::Empty => {}
+        }
+        if open.is_empty() {
+            let index = sets.len();
+            let set = parse(&xml[message_at..tag.end])
+                .map_err(|error| ParseAllError::Record { index, error })?;
+            sets.push(set);
+        }
+    }
+    match open.first() {
+        Some(name) => Err(malformed(alloc::format!("<{name}> is not closed"))),
+        None if !closed => Err(malformed("<ndm> is not closed".to_string())),
+        None if tags.text => Err(stray_text()),
+        None => Ok(sets),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TagKind {
+    /// `<NAME ...>`
+    Start,
+    /// `</NAME>`
+    End,
+    /// `<NAME .../>`
+    Empty,
+}
+
+/// One tag of a document: its name and kind, and the byte range from its `<`
+/// to just past its `>`.
+struct Tag<'a> {
+    name: &'a str,
+    kind: TagKind,
+    start: usize,
+    end: usize,
+    /// Whether text other than whitespace lies between the previous tag and
+    /// this one, outside comments and processing instructions.
+    text_before: bool,
+}
+
+/// The tags of a document in order, stepping over comments and processing
+/// instructions as [`start_tags`] does. A `>` inside a quoted attribute value
+/// does not end its tag, and a tag, comment or processing instruction left
+/// unterminated is [`XmlParseError::MalformedDocument`]. Run
+/// [`reject_unsupported_markup`] first: this does not interpret `<!DOCTYPE` or
+/// `<![CDATA[`.
+struct Tags<'a> {
+    xml: &'a str,
+    from: usize,
+    /// Whether text other than whitespace was passed since the last tag; once
+    /// the tags run out, whether any follows the last one.
+    text: bool,
+}
+
+impl<'a> Iterator for Tags<'a> {
+    type Item = Result<Tag<'a>, XmlParseError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let xml = self.xml;
+        loop {
+            let Some(lt) = xml[self.from..].find('<') else {
+                self.text |= !xml[self.from..].trim().is_empty();
+                self.from = xml.len();
+                return None;
+            };
+            let start = self.from + lt;
+            self.text |= !xml[self.from..start].trim().is_empty();
+            let markup = &xml[start + 1..];
+            let skip = if markup.starts_with("!--") {
+                Some(("-->", "!--".len(), "unterminated comment"))
+            } else if markup.starts_with('?') {
+                Some(("?>", '?'.len_utf8(), "unterminated processing instruction"))
+            } else {
+                None
+            };
+            if let Some((close, open_len, unterminated)) = skip {
+                let body = start + 1 + open_len;
+                let Some(at) = xml[body..].find(close) else {
+                    self.from = xml.len();
+                    return Some(Err(XmlParseError::MalformedDocument(
+                        unterminated.to_string(),
+                    )));
+                };
+                self.from = body + at + close.len();
+                continue;
+            }
+            let Some(gt) = tag_end(markup) else {
+                self.from = xml.len();
+                return Some(Err(XmlParseError::MalformedDocument(
+                    "unterminated tag".to_string(),
+                )));
+            };
+            let inner = &markup[..gt];
+            let end = start + 1 + gt + 1;
+            self.from = end;
+            let (kind, inner) = if let Some(rest) = inner.strip_prefix('/') {
+                (TagKind::End, rest)
+            } else if let Some(rest) = inner.strip_suffix('/') {
+                (TagKind::Empty, rest)
+            } else {
+                (TagKind::Start, inner)
+            };
+            let name_len = inner
+                .find(|c: char| c.is_whitespace() || c == '/')
+                .unwrap_or(inner.len());
+            return Some(Ok(Tag {
+                name: &inner[..name_len],
+                kind,
+                start,
+                end,
+                text_before: core::mem::take(&mut self.text),
+            }));
+        }
+    }
+}
+
+/// The index of the `>` that ends a tag whose text (after its `<`) is `markup`,
+/// skipping any inside a quoted attribute value.
+fn tag_end(markup: &str) -> Option<usize> {
+    let mut quote = None;
+    for (at, c) in markup.char_indices() {
+        match (quote, c) {
+            (None, '"' | '\'') => quote = Some(c),
+            (Some(q), _) if c == q => quote = None,
+            (None, '>') => return Some(at),
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Refuse markup declarations whose *contents* this reader cannot skip safely.
@@ -552,5 +779,128 @@ mod tests {
         let xml = "<data><MEAN_MOTION_DOT>1.0</MEAN_MOTION_DOT></data>";
         assert!(element_text(xml, "MEAN_MOTION").is_none());
         assert_eq!(element_text(xml, "MEAN_MOTION_DOT"), Some("1.0"));
+    }
+
+    /// The ISS OMM without the XML declaration, to put inside an `<ndm>`.
+    fn iss_omm() -> &'static str {
+        ISS_OMM_XML.trim_start_matches(r#"<?xml version="1.0" encoding="UTF-8"?>"#)
+    }
+
+    fn ndm(inner: &str) -> String {
+        ["<?xml version=\"1.0\"?>\n<ndm>", inner, "</ndm>\n"].concat()
+    }
+
+    #[test]
+    fn parse_all_reads_each_omm_of_an_ndm() {
+        let iss = parse(ISS_OMM_XML).unwrap();
+        let other = iss_omm().replace(">25544<", ">99999<");
+        let sets = parse_all(&ndm(&[iss_omm(), "\n", &other].concat())).expect("two OMMs");
+        assert_eq!(sets.len(), 2);
+        assert_eq!(sets[0], iss);
+        assert_eq!(sets[1].elements.fields().norad_cat_id, 99999);
+
+        // An element the second leaves out is missing from it.
+        let no_bstar = other.replace("<BSTAR>0.00003</BSTAR>", "");
+        assert_ne!(no_bstar, other, "fixture no longer carries BSTAR");
+        assert_eq!(
+            parse_all(&ndm(&[iss_omm(), &no_bstar].concat())),
+            Err(ParseAllError::Record {
+                index: 1,
+                error: XmlParseError::MissingElement("BSTAR")
+            })
+        );
+        // A lone `<omm>` is a list of one; so is an NDM holding one.
+        assert_eq!(parse_all(ISS_OMM_XML), Ok(alloc::vec![iss.clone()]));
+        assert_eq!(parse_all(&ndm(iss_omm())), Ok(alloc::vec![iss]));
+    }
+
+    #[test]
+    fn parse_all_of_an_ndm_without_omms_is_empty() {
+        for doc in [
+            "<ndm></ndm>",
+            "<ndm/>",
+            "<?xml version=\"1.0\"?>\n<ndm>\n  <!-- none -->\n</ndm>\n",
+        ] {
+            assert_eq!(parse_all(doc), Ok(alloc::vec![]), "{doc}");
+        }
+    }
+
+    /// Comments and quoted attribute values are stepped over when the NDM is
+    /// split: a `</omm>` in a comment closes nothing, and a `/>` in an
+    /// attribute value ends no tag.
+    #[test]
+    fn parse_all_splits_by_tags_only() {
+        let commented = iss_omm().replace("<header>", "<!-- </omm><omm> --><header>");
+        // Read without its quotes, `note="a/> b"` would end `<omm` as an
+        // empty element.
+        let quoted = iss_omm().replace("<omm id=", "<omm note=\"a/> b\" id=");
+        for omm in [commented, quoted] {
+            let sets = parse_all(&ndm(&omm)).unwrap_or_else(|e| panic!("{e}"));
+            assert_eq!(sets.len(), 1);
+            assert_eq!(sets[0].elements.fields().norad_cat_id, 25544);
+        }
+    }
+
+    /// The NDM itself has to hold together; a document that does not is
+    /// refused before any OMM in it is read.
+    #[test]
+    fn parse_all_refuses_an_ndm_that_does_not_nest() {
+        let malformed = |doc: &str| match parse_all(doc) {
+            Err(ParseAllError::Document(XmlParseError::MalformedDocument(what))) => what,
+            other => panic!("{doc}: {other:?}"),
+        };
+        let unclosed_omm = iss_omm().replace("</omm>", "");
+        assert_eq!(malformed(&ndm(&unclosed_omm)), "</ndm> closes <omm>");
+        assert_eq!(
+            malformed(&["<ndm>", &unclosed_omm].concat()),
+            "<omm> is not closed"
+        );
+        assert_eq!(
+            malformed(&["<ndm>", iss_omm()].concat()),
+            "<ndm> is not closed"
+        );
+        assert_eq!(
+            malformed(&ndm(&iss_omm().replace("</body>", ""))),
+            "</omm> closes <body>"
+        );
+        assert_eq!(
+            malformed(&[ndm(iss_omm()).as_str(), "<omm/>"].concat()),
+            "<omm> after </ndm>"
+        );
+        assert_eq!(malformed("<ndm><omm id=\"x"), "unterminated tag");
+        assert_eq!(malformed("<ndm></ndm><!-- no end"), "unterminated comment");
+        assert_eq!(
+            malformed("<ndm><?pi no end"),
+            "unterminated processing instruction"
+        );
+        // Text belongs inside a message's elements, not around the messages.
+        for doc in [
+            ndm("junk"),
+            ndm(&[iss_omm(), "junk"].concat()),
+            [ndm(iss_omm()).as_str(), "junk"].concat(),
+            ["junk", &ndm(iss_omm())].concat(),
+        ] {
+            assert_eq!(malformed(&doc), "text outside a message", "{doc}");
+        }
+        // Markup the single-set parser refuses is refused anywhere in the NDM.
+        assert_eq!(
+            parse_all(&["<!DOCTYPE ndm>", &ndm(iss_omm())].concat()),
+            Err(ParseAllError::Document(XmlParseError::UnsupportedMarkup(
+                "DOCTYPE declaration"
+            )))
+        );
+    }
+
+    /// An NDM may also collect OPMs, OEMs and OCMs (CCSDS 502.0-B-3 §8.12);
+    /// this reads OMMs only, and refuses the others instead of dropping them.
+    #[test]
+    fn parse_all_refuses_a_message_other_than_an_omm() {
+        let opm = "<opm id=\"CCSDS_OPM_VERS\" version=\"3.0\"><header/></opm>";
+        assert_eq!(
+            parse_all(&ndm(&[iss_omm(), opm].concat())),
+            Err(ParseAllError::Document(XmlParseError::UnsupportedMessage(
+                "opm".to_string()
+            )))
+        );
     }
 }

@@ -18,6 +18,8 @@ serde = { version = "1", default-features = false, features = ["derive"] }
 # the `alloc` feature is on (the element-set parsers live behind `alloc`).
 serde_json = { version = "1", default-features = false, features = [
     "alloc",
+    # `omm::json::parse_all` decodes each array element on its own.
+    "raw_value",
 ], optional = true }
 libm = "0.2"
 ureq = { workspace = true, optional = true }

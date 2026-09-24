@@ -9,6 +9,9 @@
 //! [`xml`] — into a [`crate::elements::ParsedElementSet`] (the shared
 //! [`crate::elements::Sgp4Elements`] plus identity strings). The
 //! format-detecting [`crate::elements::parse`] entry point dispatches to them.
+//! Each `parse` reads a document holding one OMM and refuses one holding
+//! several; each `parse_all` reads every OMM of such a document, as CelesTrak's
+//! group queries return them.
 //!
 //! Angles are converted to **radians** and mean motion to **rad/s** (orts
 //! conventions) from each format's native units (degrees, rev/day) at parse

@@ -1334,6 +1334,20 @@ section is subdivided by package.
 ### `arika` (Rust, crates.io)
 
 #### Added
+- `omm::{kvn, xml, json}::parse_all` read every OMM a document holds, in
+  document order, as CelesTrak's group queries return them
+  (`GROUP=science&FORMAT=...`): the KVN puts OMMs one after another, each from
+  its `CCSDS_OMM_VERS` line to the next; the XML is an `<ndm>` holding an
+  `<omm>` per satellite (CCSDS 502.0-B-3 §8.12); the JSON is an array. Each
+  OMM is read by the single-set `parse`, so a keyword an OMM leaves out is
+  missing from it rather than taken from another. A document with one OMM is
+  a list of one, and an `<ndm>` or array without any is empty. They stop at
+  the first OMM they cannot read, as `elements::ParseAllError::Record` with its
+  index; a document that cannot be split is `ParseAllError::Document` (a
+  keyword before the first `CCSDS_OMM_VERS`, NDM tags that do not nest, or a
+  message other than an OMM in the NDM). The single-set `parse` still refuses
+  these documents. Pinned by two OMMs of CelesTrak's `GROUP=stations` in each
+  format.
 - `fetch-eop` feature: `EopTable::fetch` / `fetch_default` download the IERS
   `finals2000A.all` series and cache it at `~/.cache/orts/finals2000A.all`
   (24 h), mirroring `CssiSpaceWeather::fetch`. `ClampedEop::new` wraps any

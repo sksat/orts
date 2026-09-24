@@ -1073,6 +1073,16 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `arika` (Rust, crates.io)
 
 #### Added
+- `omm::{kvn, xml, json}::parse_all` は、文書に入っている OMM を全部、文書の順に読む。CelesTrak の
+  group の取得 (`GROUP=science&FORMAT=...`) が返す形に対応する: KVN は OMM を順に並べ、各 OMM は
+  `CCSDS_OMM_VERS` の行から次の `CCSDS_OMM_VERS` の前まで。XML は `<ndm>` の中に衛星ごとの `<omm>`
+  を並べる (CCSDS 502.0-B-3 §8.12)。JSON は配列。各 OMM は 1 つを読む `parse` で読むので、ある OMM に
+  無いキーは、ほかの OMM の値を使わず、無いものとして扱う。OMM が 1 つの文書は要素 1 つの列になり、
+  OMM の無い `<ndm>` や配列は空になる。読めない OMM があるとそこで止まり、
+  `elements::ParseAllError::Record` にその番号を入れて返す。文書を OMM に分けられないとき (最初の
+  `CCSDS_OMM_VERS` より前のキー、入れ子になっていない NDM のタグ、NDM の中の OMM 以外の message) は
+  `ParseAllError::Document`。1 つを読む `parse` は、これまでどおりこれらの文書を拒否する。CelesTrak の
+  `GROUP=stations` の 2 つの OMM を、3 つの形式で固定した
 - `fetch-eop` feature: `EopTable::fetch` / `fetch_default` が IERS の
   `finals2000A.all` を取得し `~/.cache/orts/finals2000A.all` に 24h キャッシュする
   (`CssiSpaceWeather::fetch` と同じ作り)。`ClampedEop::new` が `Borrow<EopTable>`

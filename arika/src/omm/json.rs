@@ -18,7 +18,11 @@ use crate::math::F64Ext;
 
 use serde::Deserialize;
 
-use crate::elements::{ElementsError, ParsedElementSet, Sgp4Elements, Sgp4ElementsFields};
+use serde_json::value::RawValue;
+
+use crate::elements::{
+    ElementsError, ParseAllError, ParsedElementSet, Sgp4Elements, Sgp4ElementsFields,
+};
 use crate::omm::{UnsupportedMetadata, check_metadata};
 
 /// Error type for OMM JSON parsing.
@@ -150,7 +154,43 @@ pub fn parse(json: &str) -> Result<ParsedElementSet, JsonParseError> {
     } else {
         serde_json::from_str(json).map_err(|e| JsonParseError::Malformed(e.to_string()))?
     };
+    from_raw(raw)
+}
 
+/// Parse every OMM an OMM JSON document holds: each object of an array (as
+/// CelesTrak's group queries return, `GROUP=science&FORMAT=JSON`), or the one
+/// object of a document that is not an array.
+///
+/// Stops at the first element set it cannot read. An array that is not JSON is
+/// [`ParseAllError::Document`]; an element of it that is not an OMM object is
+/// [`ParseAllError::Record`] at that element's index. An empty array is an
+/// empty list.
+pub fn parse_all(json: &str) -> Result<Vec<ParsedElementSet>, ParseAllError<JsonParseError>> {
+    let json = crate::elements::strip_bom(json);
+    if !json.trim_start().starts_with('[') {
+        return parse(json)
+            .map(|set| alloc::vec![set])
+            .map_err(|error| ParseAllError::Record { index: 0, error });
+    }
+    // Each element is kept as its text and decoded on its own, so a failure
+    // carries the element's index; decoding straight into the object type
+    // would report only a line and column.
+    let items: Vec<&RawValue> = serde_json::from_str(json)
+        .map_err(|e| ParseAllError::Document(JsonParseError::Malformed(e.to_string())))?;
+    items
+        .into_iter()
+        .enumerate()
+        .map(|(index, item)| {
+            serde_json::from_str::<OmmJson>(item.get())
+                .map_err(|e| JsonParseError::Malformed(e.to_string()))
+                .and_then(from_raw)
+                .map_err(|error| ParseAllError::Record { index, error })
+        })
+        .collect()
+}
+
+/// Turn one decoded OMM object into a [`ParsedElementSet`].
+fn from_raw(raw: OmmJson) -> Result<ParsedElementSet, JsonParseError> {
     // The metadata fields declare how the mean elements must be interpreted;
     // reject anything this crate does not actually honor (see
     // `crate::omm::METADATA`).
@@ -361,5 +401,50 @@ mod tests {
         // Direct calls (not via elements::parse) must also tolerate a leading BOM.
         let bom = ["\u{feff}", ISS_OMM_JSON].concat();
         assert_eq!(parse(&bom).unwrap().elements.fields().norad_cat_id, 25544);
+    }
+
+    #[test]
+    fn parse_all_reads_each_object_of_an_array() {
+        let iss = parse(ISS_OMM_JSON).unwrap();
+        let other = ISS_OMM_JSON.replace("25544", "99999");
+        assert_ne!(other, ISS_OMM_JSON, "fixture no longer carries 25544");
+        let sets = parse_all(&format!("[{ISS_OMM_JSON},{other}]")).expect("two OMMs");
+        assert_eq!(sets.len(), 2);
+        assert_eq!(sets[0], iss);
+        assert_eq!(sets[1].elements.fields().norad_cat_id, 99999);
+        // An object on its own is a list of one; an empty array is empty.
+        assert_eq!(parse_all(ISS_OMM_JSON), Ok(alloc::vec![iss]));
+        assert_eq!(parse_all("[]"), Ok(alloc::vec![]));
+    }
+
+    /// A failure in one element carries its index; a document that is not a
+    /// JSON array at all is refused as a whole.
+    #[test]
+    fn parse_all_says_which_element_it_could_not_read() {
+        let record = |doc: &str| match parse_all(doc) {
+            Err(ParseAllError::Record { index, error }) => (index, error),
+            other => panic!("{doc}: {other:?}"),
+        };
+        let bad_epoch = ISS_OMM_JSON.replace("2024-03-19T12:00:00.000000", "soon");
+        assert_ne!(bad_epoch, ISS_OMM_JSON, "fixture changed");
+        assert!(matches!(
+            record(&format!("[{ISS_OMM_JSON},{bad_epoch}]")),
+            (1, JsonParseError::InvalidEpoch(_))
+        ));
+        // An element that is not an OMM object, including a nested array.
+        assert!(matches!(
+            record(&format!("[[{ISS_OMM_JSON}]]")),
+            (0, JsonParseError::Malformed(_))
+        ));
+        // A key given twice in one object.
+        let twice = ISS_OMM_JSON.replacen("{", "{\"NORAD_CAT_ID\": 1,", 1);
+        match record(&format!("[{ISS_OMM_JSON},{twice}]")) {
+            (1, JsonParseError::Malformed(e)) => assert!(e.contains("duplicate"), "{e}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(
+            parse_all(&format!("[{ISS_OMM_JSON},")),
+            Err(ParseAllError::Document(JsonParseError::Malformed(_)))
+        ));
     }
 }
