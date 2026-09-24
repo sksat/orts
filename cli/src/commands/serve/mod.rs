@@ -1,5 +1,6 @@
 pub mod compute;
 mod connection;
+mod controller_upload;
 mod engine;
 mod history;
 mod manager;
@@ -89,13 +90,25 @@ fn has_explicit_sim_args(sim: &SimArgs) -> bool {
 /// room for a fleet larger than any this simulator runs while keeping what one
 /// unauthenticated client can make the server hold to something bounded.
 ///
-/// Outbound messages are unaffected: this bounds what is read.
+/// Outbound messages are unaffected: this bounds what is read. A binary
+/// message, a controller component, has its own limit,
+/// [`controller_upload::MAX_CONTROLLER_COMPONENT_BYTES`].
 const MAX_CONTROL_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
+
+/// What the socket reads before handing a message over: the larger of the two
+/// limits, each of which the connection then applies to its own kind. A
+/// message past this closes the connection without a reply.
+const MAX_WS_MESSAGE_BYTES: usize =
+    if MAX_CONTROL_MESSAGE_BYTES > controller_upload::MAX_CONTROLLER_COMPONENT_BYTES {
+        MAX_CONTROL_MESSAGE_BYTES
+    } else {
+        controller_upload::MAX_CONTROLLER_COMPONENT_BYTES
+    };
 
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
     let rx = state.tx.subscribe();
     let cmd_tx = state.cmd_tx.clone();
-    ws.max_message_size(MAX_CONTROL_MESSAGE_BYTES)
+    ws.max_message_size(MAX_WS_MESSAGE_BYTES)
         .on_upgrade(move |socket| async move {
             connection::handle_connection(socket, rx, cmd_tx).await;
             eprintln!("Client disconnected");

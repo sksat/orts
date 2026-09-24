@@ -14,6 +14,14 @@ section is subdivided by package.
 ### `orts` (Rust, crates.io)
 
 #### Added
+- `plugin::wasm::ComponentBytes` holds a WASM component as bytes together with
+  their SHA-256, and `WasmPluginCache::build_sync_controller_from_bytes_with_streams`
+  / `build_async_controller_from_bytes_with_streams` build a controller from one
+  without touching the filesystem. The cache compiles one component per digest,
+  which it computes from the bytes itself, so two copies of a component share a
+  compilation and different bytes never share an entry; a path and a digest are
+  separate entries. `plugin-wasm` now depends on `sha2`.
+  ([#556](https://github.com/sksat/orts/issues/556))
 - `PropellantPool` is the propellant a spacecraft carries: one pool, one floor,
   and what is left is the mass the state carries above it. A floor of zero is
   refused — it would sit on the singularity of `F/m`, and a boundary search
@@ -795,6 +803,28 @@ section is subdivided by package.
 ### `orts-cli` (Rust, crates.io, binary)
 
 #### Changed
+- **BREAKING**: a WebSocket client of `serve` sends a controller's component
+  instead of naming a file on the server. A controller `path` in a
+  `start_simulation` or `add_satellite` is refused with an `error`, and the
+  server does not open it; before, it read the file the client named —
+  measured with a FIFO, the read never returned, the simulation stopped
+  streaming, and new connections got no reply. A client now sends the
+  component's bytes as one binary message on `/ws`; the server answers
+  `controller_uploaded` with their SHA-256 and size, and the controller config
+  names the component by `sha256 = "<64 lowercase hex digits>"` in place of
+  `path`. The client may send the component and a message naming it back to
+  back, without waiting for the reply. A connection keeps what it received
+  until it closes, and names only that: a client that reconnects sends its
+  components again, and controllers already built keep running. A component is
+  at most 8 MiB and a connection keeps at most 4; past either the upload is
+  refused with an `error`, and a message past the socket's 8 MiB limit closes
+  the connection without one. Receiving a component checks its size and
+  its first 8 bytes only; whether it compiles is found out when a satellite is
+  built from it. A `--config` file still names its controller by `path`, and
+  refuses a `sha256`, which only a connection can resolve. In the TypeScript
+  bindings `ControllerConfig.path` becomes optional, `ControllerConfig.sha256`
+  is added, and `WsMessage` gains `controller_uploaded`.
+  ([#556](https://github.com/sksat/orts/issues/556))
 - **BREAKING**: `serve` refuses a `space_weather` file path in a WebSocket
   `start_simulation`, as it refuses `[gravity_field]`: a client may leave it
   out or ask for `"auto"`, the CelesTrak fetch. A path named a file on the

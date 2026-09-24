@@ -11,6 +11,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `orts` (Rust, crates.io)
 
 #### Added
+- `plugin::wasm::ComponentBytes` を追加した。WASM の component を bytes とその SHA-256 の組で持つ。
+  `WasmPluginCache::build_sync_controller_from_bytes_with_streams` /
+  `build_async_controller_from_bytes_with_streams` は、filesystem に触れずにそこから controller を
+  作る。cache は digest ごとに component を 1 回 compile し、digest は cache が bytes から自分で
+  計算する。同じ component の 2 つの copy は compile を共有し、違う bytes が同じ entry を引くことは
+  無い。パスと digest は別の entry になる。`plugin-wasm` は `sha2` に依存する
+  ([#556](https://github.com/sksat/orts/issues/556))
 - `PropellantPool` を追加した。宇宙機が積む推進剤をプール 1 つ・床 1 つで表し、残量は state が
   床より上に持っている質量である。床 0 は拒否する (`F/m` の特異点に床を置くことになる。境界の探索は
   交差前のモードで区間を刻み直すので、床を越えて試行するのが設計である)。
@@ -610,6 +617,21 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `orts-cli` (Rust, crates.io, binary)
 
 #### Changed
+- **BREAKING**: `serve` の WebSocket の client は、controller の component を server のファイルの
+  パスで名指しせず、中身を送る。`start_simulation` と `add_satellite` の controller に `path` が
+  あれば `error` を返し、server はそのパスを開かない。以前は client が名指ししたファイルを読んで
+  いた — FIFO で測ると読み込みが戻らず、simulation は state を送らなくなり、新しい接続にも応答が
+  無かった。client は component の中身を `/ws` の binary message 1 つで送る。server は
+  `controller_uploaded` で SHA-256 と大きさを返し、controller の config は `path` の代わりに
+  `sha256 = "<小文字の 16 進 64 桁>"` で component を指す。client は component と、それを指す
+  message を、応答を待たずに続けて送ってよい。接続は受け取った component を切断まで持ち、
+  指せるのはそれだけである: 接続し直した client は component を送り直す。作り済みの controller は
+  動き続ける。component は 8 MiB まで、1 接続 4 個までで、超えると upload に `error` を返す。
+  socket の上限 8 MiB を超える message は、応答無しで接続を閉じる。受け取るときに確かめるのは
+  大きさと先頭 8 byte だけで、compile できるかは衛星を作るときに分かる。`--config` のファイルは
+  これまでどおり `path` で controller を指し、接続でしか解決できない `sha256` は拒否する。
+  TypeScript の bindings では `ControllerConfig.path` が optional になり、`ControllerConfig.sha256`
+  と `WsMessage` の `controller_uploaded` が加わる ([#556](https://github.com/sksat/orts/issues/556))
 - **BREAKING**: `serve` は、WebSocket の `start_simulation` に書かれた `space_weather` の
   ファイルパスを、`[gravity_field]` と同じく拒否する。client は指定しないか、CelesTrak から
   取得する `"auto"` を指定する。パスは server のファイルを指し、manager がそれを読んでいた —

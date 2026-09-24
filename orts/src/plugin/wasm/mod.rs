@@ -17,6 +17,7 @@
 //! [wasm-component-model]: https://component-model.bytecodealliance.org/
 
 pub mod cache;
+pub mod component_bytes;
 pub mod convert;
 pub mod engine;
 pub mod sync_bindings;
@@ -38,6 +39,7 @@ pub use sync_controller as controller;
 pub use sync_host_state as host_state;
 
 pub use cache::WasmPluginCache;
+pub use component_bytes::ComponentBytes;
 pub use engine::WasmEngine;
 pub use sync_controller::WasmController;
 

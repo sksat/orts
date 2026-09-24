@@ -4,6 +4,8 @@ use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
+use super::MAX_CONTROL_MESSAGE_BYTES;
+use super::controller_upload::{Uploaded, UploadedComponents};
 use super::manager::{SimCommand, SimStatusResponse};
 use super::protocol::{ClientMessage, WsMessage};
 
@@ -122,6 +124,16 @@ pub(super) async fn handle_connection(
     main_loop(&mut ws_sender, &mut ws_receiver, &mut rx, &cmd_tx).await;
 }
 
+/// Send `msg` to this client. `Break` when the socket is gone.
+async fn send_message(ws_sender: &mut WsSender, msg: &WsMessage) -> ControlFlow<()> {
+    let json = serde_json::to_string(msg).expect("failed to serialize a server message");
+    if ws_sender.send(Message::Text(json.into())).await.is_err() {
+        ControlFlow::Break(())
+    } else {
+        ControlFlow::Continue(())
+    }
+}
+
 /// Send a command to the simulation manager, await the response, and send
 /// an error message back to the client if the command failed.
 /// Returns `ControlFlow::Break(())` if the connection should be closed.
@@ -185,6 +197,9 @@ async fn main_loop(
     rx: &mut broadcast::Receiver<String>,
     cmd_tx: &mpsc::Sender<SimCommand>,
 ) {
+    // The controller components this client sent; dropped with the
+    // connection. A controller already built from one keeps running.
+    let mut uploads = UploadedComponents::default();
     loop {
         tokio::select! {
             msg = rx.recv() => {
@@ -209,6 +224,20 @@ async fn main_loop(
             ws_msg = ws_receiver.next() => {
                 match ws_msg {
                     Some(Ok(Message::Text(text))) => {
+                        // The socket's own limit is the larger of this and the
+                        // component limit, so a text message is held to its
+                        // own here.
+                        if text.len() > MAX_CONTROL_MESSAGE_BYTES {
+                            let message = format!(
+                                "a text message on /ws is at most {MAX_CONTROL_MESSAGE_BYTES} \
+                                 bytes; this one is {}",
+                                text.len()
+                            );
+                            if send_message(ws_sender, &WsMessage::Error { message }).await.is_break() {
+                                break;
+                            }
+                            continue;
+                        }
                         // A key nothing reads is named on the server's stderr
                         // and the message still runs, the policy a config file
                         // gets: a client built against a newer `orts` keeps
@@ -283,10 +312,15 @@ async fn main_loop(
                                     }
                                     ControlFlow::Continue(())
                                 }
-                                ClientMessage::StartSimulation { config } => {
-                                    dispatch_command(cmd_tx, ws_sender, |respond| {
-                                        SimCommand::Start { config, respond }
-                                    }).await
+                                ClientMessage::StartSimulation { mut config } => {
+                                    match uploads.resolve_config(&mut config) {
+                                        Ok(()) => dispatch_command(cmd_tx, ws_sender, |respond| {
+                                            SimCommand::Start { config, respond }
+                                        }).await,
+                                        Err(message) => {
+                                            send_message(ws_sender, &WsMessage::Error { message }).await
+                                        }
+                                    }
                                 }
                                 ClientMessage::PauseSimulation => {
                                     dispatch_command(cmd_tx, ws_sender, |respond| {
@@ -303,15 +337,35 @@ async fn main_loop(
                                         SimCommand::Terminate { respond }
                                     }).await
                                 }
-                                ClientMessage::AddSatellite { satellite } => {
-                                    dispatch_command(cmd_tx, ws_sender, |respond| {
-                                        SimCommand::AddSatellite { satellite, respond }
-                                    }).await
+                                ClientMessage::AddSatellite { mut satellite } => {
+                                    match uploads.resolve_satellite(&mut satellite, "add_satellite") {
+                                        Ok(()) => dispatch_command(cmd_tx, ws_sender, |respond| {
+                                            SimCommand::AddSatellite { satellite, respond }
+                                        }).await,
+                                        Err(message) => {
+                                            send_message(ws_sender, &WsMessage::Error { message }).await
+                                        }
+                                    }
                                 }
                             };
                             if result.is_break() {
                                 break;
                             }
+                        }
+                    }
+                    // A binary message is a controller component. Frames on one
+                    // socket are handled in order, so a client may send the
+                    // component and a message naming it without waiting for
+                    // the reply in between.
+                    Some(Ok(Message::Binary(bytes))) => {
+                        let reply = match uploads.upload(&bytes) {
+                            Ok(Uploaded { sha256, size }) => {
+                                WsMessage::ControllerUploaded { sha256, size }
+                            }
+                            Err(message) => WsMessage::Error { message },
+                        };
+                        if send_message(ws_sender, &reply).await.is_break() {
+                            break;
                         }
                     }
                     Some(Ok(_)) => {}

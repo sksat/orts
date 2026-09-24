@@ -257,6 +257,10 @@ fn validate_sim_config(config: &SimConfig) -> Result<(), String> {
              an orbit with `--space-weather <PATH>`"
         ));
     }
+    // A controller `path` names a file on the server too. The connection
+    // refused one before forwarding the message; this is the same rule where
+    // the manager takes the command (#556).
+    super::controller_upload::refuse_controller_paths(config)?;
 
     let body = crate::satellite::parse_body(&config.body);
     let mu = body.properties().mu;
@@ -342,7 +346,8 @@ pub(super) async fn simulation_manager(
     while let Some(config) = next_config {
         // `validate_sim_config` has already refused most of what `from_config`
         // cannot build (a non-Earth element set, a `[gravity_field]` over
-        // WebSocket, a TLE that does not parse, a `space_weather` path). It
+        // WebSocket, a TLE that does not parse, a `space_weather` path, a
+        // controller path). It
         // does not fetch space weather, so a `space_weather = "auto"` fetch
         // that fails lands here; the manager task must survive it, so report
         // it and wait for the next `start_simulation`.
@@ -472,17 +477,25 @@ fn handle_command(
             let _ = respond.send(Ok(()));
             return ControlFlow::Break(());
         }
-        SimCommand::AddSatellite { satellite, respond } => match engine.add_satellite(*satellite) {
-            Ok(out) => {
-                for msg in &out.broadcasts {
-                    let _ = tx.send(msg.clone());
+        SimCommand::AddSatellite { satellite, respond } => {
+            // Every `add_satellite` comes from a WebSocket client, so its
+            // controller never names a path: the connection refused one before
+            // forwarding, and the engine is not asked to open one here either.
+            let added =
+                super::controller_upload::refuse_controller_path(&satellite, "add_satellite")
+                    .and_then(|()| engine.add_satellite(*satellite));
+            match added {
+                Ok(out) => {
+                    for msg in &out.broadcasts {
+                        let _ = tx.send(msg.clone());
+                    }
+                    let _ = respond.send(Ok((out.info, out.t)));
                 }
-                let _ = respond.send(Ok((out.info, out.t)));
+                Err(e) => {
+                    let _ = respond.send(Err(e));
+                }
             }
-            Err(e) => {
-                let _ = respond.send(Err(e));
-            }
-        },
+        }
         SimCommand::QueryRange {
             t_min,
             t_max,
@@ -776,28 +789,115 @@ kind = "orts.cmd.set-mode.v1"
 
     /// A fleet where only some satellites have a controller cannot be honored
     /// by any mode, and is rejected here rather than at engine build.
+    ///
+    /// The controller names an uploaded component by `sha256`, as one from a
+    /// WebSocket client does: a `path` would be refused first, for a reason of
+    /// its own.
     #[test]
     fn ws_start_rejects_mixed_controller_config() {
-        let config: SimConfig = toml::from_str(
+        let config: SimConfig = toml::from_str(&format!(
             r#"
 body = "earth"
 dt = 1.0
 
 [[satellites]]
 id = "a"
-orbit = { type = "circular", altitude = 500 }
-attitude = { inertia_diag = [10, 10, 10], mass = 50 }
-controller = { type = "wasm", path = "ctrl.wasm" }
+orbit = {{ type = "circular", altitude = 500 }}
+attitude = {{ inertia_diag = [10, 10, 10], mass = 50 }}
+controller = {{ type = "wasm", sha256 = "{}" }}
 
 [[satellites]]
 id = "b"
-orbit = { type = "circular", altitude = 600 }
+orbit = {{ type = "circular", altitude = 600 }}
+attitude = {{ inertia_diag = [10, 10, 10], mass = 50 }}
+"#,
+            "0".repeat(64)
+        ))
+        .expect("valid test toml");
+        let err = validate_sim_config(&config).unwrap_err();
+        assert!(err.contains("Mixed controller config"), "got: {err}");
+    }
+
+    /// A controller `path` in a WebSocket `start_simulation` is refused, and
+    /// the path is not repeated back (#556).
+    ///
+    /// Measured before this check: a FIFO path held the manager in the read
+    /// of the component, and the server stopped answering new connections.
+    #[test]
+    fn ws_start_refuses_a_controller_path() {
+        let config: SimConfig = toml::from_str(
+            r#"
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
 attitude = { inertia_diag = [10, 10, 10], mass = 50 }
+controller = { type = "wasm", path = "/tmp/ctrl.fifo" }
 "#,
         )
         .expect("valid test toml");
         let err = validate_sim_config(&config).unwrap_err();
-        assert!(err.contains("Mixed controller config"), "got: {err}");
+        assert!(err.contains("not accepted over WebSocket"), "got: {err}");
+        assert!(err.starts_with("satellites[0].controller"), "got: {err}");
+        assert!(!err.contains("ctrl.fifo"), "the path is not echoed: {err}");
+    }
+
+    /// An `add_satellite` whose controller names a path is refused before the
+    /// engine sees it (#556).
+    ///
+    /// The engine here runs orbit-only, which refuses any controlled satellite
+    /// with a message of its own; getting the path refusal instead shows the
+    /// manager checked first, so no mode lets a path through to a build.
+    #[test]
+    fn ws_add_refuses_a_controller_path_before_the_engine() {
+        let config: SimConfig = toml::from_str(
+            r#"
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+"#,
+        )
+        .expect("valid test toml");
+        let params = Arc::new(SimParams::from_config(&config).expect("valid test config"));
+        let data_dir = std::env::temp_dir().join(format!(
+            "orts-manager-test-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let body_radius = params.body.properties().radius;
+        let history = HistoryBuffer::new(5000, data_dir, params.mu, body_radius);
+        let mut engine = ServeEngine::build(params, history)
+            .expect("an orbit-only engine builds")
+            .engine;
+        let satellite: SatelliteConfig = serde_json::from_value(serde_json::json!({
+            "id": "b",
+            "orbit": { "type": "circular", "altitude": 600.0 },
+            "attitude": { "inertia_diag": [10.0, 10.0, 10.0], "mass": 50.0 },
+            "controller": { "type": "wasm", "path": "/tmp/ctrl.fifo" }
+        }))
+        .expect("a valid satellite");
+
+        let (tx, _rx) = broadcast::channel(16);
+        let (respond, mut answer) = oneshot::channel();
+        let mut paused = false;
+        let flow = handle_command(
+            &mut engine,
+            &mut paused,
+            &tx,
+            SimCommand::AddSatellite {
+                satellite: Box::new(satellite),
+                respond,
+            },
+        );
+        assert!(
+            flow.is_continue(),
+            "a refused add keeps the simulation running"
+        );
+        let err = answer
+            .try_recv()
+            .expect("answered at once")
+            .expect_err("a path from a client is refused");
+        assert!(err.contains("not accepted over WebSocket"), "got: {err}");
+        assert!(err.starts_with("add_satellite.controller"), "got: {err}");
     }
 
     #[test]
