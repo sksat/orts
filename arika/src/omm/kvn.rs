@@ -5,6 +5,7 @@
 //! `=`), strips trailing unit annotations (`51.64 [deg]`), and collects the
 //! mean-element keywords into a [`ParsedElementSet`]. Unknown keywords are ignored.
 
+use alloc::collections::BTreeSet;
 use alloc::string::{String, ToString};
 use core::f64::consts::PI;
 use core::fmt;
@@ -33,6 +34,10 @@ pub enum KvnParseError {
     /// The parsed values are not a valid element set (e.g. non-positive mean
     /// motion or out-of-range eccentricity).
     InvalidElements(ElementsError),
+    /// A keyword this reads or checks appears more than once. A KVN OMM
+    /// describes one object, so the text holds more than one OMM (CelesTrak's
+    /// group queries concatenate them) or repeats a field.
+    RepeatedKeyword(&'static str),
 }
 
 impl fmt::Display for KvnParseError {
@@ -45,6 +50,12 @@ impl fmt::Display for KvnParseError {
             KvnParseError::InvalidEpoch(s) => write!(f, "invalid OMM EPOCH: '{s}'"),
             KvnParseError::Unsupported(e) => write!(f, "{e}"),
             KvnParseError::InvalidElements(e) => write!(f, "invalid OMM element set: {e}"),
+            KvnParseError::RepeatedKeyword(k) => {
+                write!(
+                    f,
+                    "OMM keyword {k} appears more than once; expected exactly one OMM"
+                )
+            }
         }
     }
 }
@@ -67,6 +78,12 @@ pub fn parse(kvn: &str) -> Result<ParsedElementSet, KvnParseError> {
     let mut arg_perigee = None; // deg
     let mut mean_anomaly = None; // deg
     let mut bstar = None;
+    // A KVN OMM describes one object (CCSDS 502.0-B-3 §4.1.5), yet CelesTrak's
+    // group queries return several OMMs one after another. Overwriting each
+    // keyword would read the last OMM, with whatever it leaves out taken from
+    // an earlier one, so a keyword read or checked here, or the version line
+    // that opens each OMM, may appear once.
+    let mut seen = BTreeSet::new();
 
     for line in kvn.lines() {
         let line = line.trim();
@@ -78,6 +95,13 @@ pub fn parse(kvn: &str) -> Result<ParsedElementSet, KvnParseError> {
             continue;
         };
         let key = key.trim();
+        if let Some(once) = crate::omm::keywords_read()
+            .chain(["CCSDS_OMM_VERS"])
+            .find(|k| *k == key)
+            && !seen.insert(once)
+        {
+            return Err(KvnParseError::RepeatedKeyword(once));
+        }
         // Trim only — do NOT strip unit annotations here, or a string field
         // like `OBJECT_NAME = SAT [TEST]` would be truncated at '['. Units are
         // stripped per numeric field inside `parse_num`.
@@ -334,6 +358,76 @@ NORAD_CAT_ID = 1";
             assert_ne!(kvn, ISS_OMM_KVN, "fixture no longer contains the theory");
             assert_eq!(parse(&kvn).unwrap(), sgp4, "{spelling:?}");
         }
+    }
+
+    /// A KVN OMM describes one object (CCSDS 502.0-B-3 §4.1.5), but CelesTrak's
+    /// group queries (`GROUP=stations&FORMAT=KVN`) return several OMMs one after
+    /// another, each opening with `CCSDS_OMM_VERS`. The parser overwrote each
+    /// keyword with the later value, so it read the last OMM, with any keyword
+    /// that one leaves out taken from an earlier one (#564).
+    #[test]
+    fn several_omms_in_one_kvn_are_refused() {
+        let other = ISS_OMM_KVN
+            .replace("OBJECT_NAME = ISS (ZARYA)", "OBJECT_NAME = OTHER SAT")
+            .replace("INCLINATION = 51.6400", "INCLINATION = 97.5000")
+            .replace("NORAD_CAT_ID = 25544", "NORAD_CAT_ID = 99999");
+        assert_eq!(other.matches("OTHER SAT").count(), 1);
+        let without_header = |kvn: &str| -> String {
+            kvn.lines()
+                .filter(|l| !l.starts_with("CCSDS_OMM_VERS"))
+                .map(|l| format!("{l}\n"))
+                .collect()
+        };
+        for (what, kvn, repeated) in [
+            (
+                "as CelesTrak returns them",
+                [ISS_OMM_KVN, &other].concat(),
+                "CCSDS_OMM_VERS",
+            ),
+            (
+                "without the header",
+                [without_header(ISS_OMM_KVN), without_header(&other)].concat(),
+                "OBJECT_NAME",
+            ),
+            (
+                "the later one leaving out its name",
+                [
+                    without_header(ISS_OMM_KVN),
+                    without_header(&other)
+                        .replace("OBJECT_NAME = OTHER SAT\n", "")
+                        .replace("OBJECT_ID = 1998-067A\n", ""),
+                ]
+                .concat(),
+                "CENTER_NAME",
+            ),
+            (
+                "one OMM giving its epoch twice",
+                ISS_OMM_KVN.replace(
+                    "EPOCH = 2024-03-19T12:00:00.000000\n",
+                    "EPOCH = 2024-03-19T12:00:00.000000\nEPOCH = 2024-03-19T12:00:00.000000\n",
+                ),
+                "EPOCH",
+            ),
+        ] {
+            assert_eq!(
+                parse(&kvn),
+                Err(KvnParseError::RepeatedKeyword(repeated)),
+                "{what}"
+            );
+        }
+    }
+
+    /// Only a keyword this reads or checks has to be unique: `COMMENT` repeats
+    /// by definition, and the keywords it ignores (`USER_DEFINED_*`, whose
+    /// meaning is left to the exchange partners) are left as they are.
+    #[test]
+    fn keywords_it_does_not_read_may_repeat() {
+        let kvn = ISS_OMM_KVN.replace(
+            "BSTAR = 0.00003\n",
+            "BSTAR = 0.00003\nCOMMENT one\nCOMMENT two\nUSER_DEFINED_X = 1\nUSER_DEFINED_X = 2\n",
+        );
+        assert_ne!(kvn, ISS_OMM_KVN, "fixture no longer contains BSTAR");
+        assert_eq!(parse(&kvn), parse(ISS_OMM_KVN));
     }
 
     #[test]
