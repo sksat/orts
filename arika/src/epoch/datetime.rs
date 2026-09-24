@@ -30,8 +30,10 @@ impl DateTime {
     }
 }
 
-/// The most second decimals [`DateTime`]'s `Display` writes: nanoseconds, the
-/// finest a `u64` count of a minute's worth of units holds with room to spare.
+/// The most second decimals [`DateTime`]'s `Display` writes: nanoseconds, as a
+/// chosen limit. The seconds are an `f64`, and an `Epoch` converts to a
+/// `DateTime` through a single f64 Julian date that resolves about 40 µs, so
+/// further digits would carry nothing.
 const MAX_SECOND_DECIMALS: usize = 9;
 
 /// ISO 8601 UTC, `YYYY-MM-DDThh:mm:ssZ`. A precision gives the seconds that
