@@ -50,23 +50,6 @@ fn de_atmosphere<'de, D: Deserializer<'de>>(de: D) -> Result<String, D::Error> {
     Ok(s)
 }
 
-/// Read `epoch` as text. JSON and YAML give it as a string; TOML may give it as
-/// a string or as a datetime (`epoch = 2024-03-20T12:00:00Z` without quotes),
-/// which serde sees as a map and `Option<String>` refused as "invalid type:
-/// map". A datetime becomes its text, so both go through the check a quoted
-/// epoch does in [`SimConfig::validate`].
-fn de_epoch<'de, D: Deserializer<'de>>(de: D) -> Result<Option<String>, D::Error> {
-    match Option::<toml::Value>::deserialize(de)? {
-        None => Ok(None),
-        Some(toml::Value::String(s)) => Ok(Some(s)),
-        Some(toml::Value::Datetime(dt)) => Ok(Some(dt.to_string())),
-        Some(other) => Err(serde::de::Error::custom(format!(
-            "epoch must be an ISO 8601 string (e.g. 2026-01-01T00:00:00Z), not {}",
-            other.type_str()
-        ))),
-    }
-}
-
 /// JSON/TOML/YAML simulation configuration.
 ///
 /// Also the payload of the `start_simulation` WebSocket message, so the
@@ -104,7 +87,6 @@ pub struct SimConfig {
     pub output_interval: Option<f64>,
     #[ts(optional)]
     pub stream_interval: Option<f64>,
-    #[serde(default, deserialize_with = "de_epoch")]
     #[ts(optional)]
     pub epoch: Option<String>,
     #[serde(default)]
@@ -1471,6 +1453,23 @@ pub fn printable_key(key: &str) -> String {
     out
 }
 
+/// Give a TOML datetime `epoch` as its text.
+///
+/// TOML has a datetime type, and `epoch = 2024-03-20T12:00:00Z` without quotes
+/// is one. serde receives it as a map, so `epoch: Option<String>` refused the
+/// config with "invalid type: map, expected a string" while the quoted form ran
+/// (#569). Replacing it with its text here, where only TOML is read, sends it
+/// through the check a quoted epoch goes through and leaves `epoch` a string in
+/// JSON and YAML, as the `start_simulation` payload declares it.
+fn epoch_datetime_as_text(root: &mut toml::de::DeTable<'_>) {
+    if let Some(value) = root.get_mut("epoch")
+        && let toml::de::DeValue::Datetime(datetime) = value.get_ref()
+    {
+        let text = datetime.to_string();
+        *value.get_mut() = toml::de::DeValue::String(text.into());
+    }
+}
+
 /// A loaded config and the keys in its file that nothing read.
 ///
 /// The keys are paths as `serde_ignored` spells them — `satellites.0.disturbanses`
@@ -1535,10 +1534,16 @@ impl SimConfig {
                 config
             }
             "toml" => {
-                let de = toml::Deserializer::parse(&content)
+                let mut root = toml::de::DeTable::parse(&content)
                     .map_err(|e| format!("Failed to parse TOML config: {e}"))?;
-                serde_ignored::deserialize(de, &mut note)
-                    .map_err(|e| format!("Failed to parse TOML config: {e}"))?
+                epoch_datetime_as_text(root.get_mut());
+                let de = toml::Deserializer::from(root);
+                serde_ignored::deserialize(de, &mut note).map_err(|mut e: toml::de::Error| {
+                    // Built from a table, the deserializer holds no source to
+                    // quote; give it back so the error shows the line.
+                    e.set_input(Some(&content));
+                    format!("Failed to parse TOML config: {e}")
+                })?
             }
             "yaml" | "yml" => {
                 let de = serde_yaml::Deserializer::from_str(&content);
@@ -5705,10 +5710,12 @@ degree = 70
         }
     }
 
-    /// JSON and YAML give the epoch as a string, as before: a missing or null
-    /// epoch is none, and a value of another type is refused naming `epoch`.
+    /// Only TOML has a datetime type, so only TOML reads one. JSON and YAML
+    /// give the epoch as a string, as before: a missing or null epoch is none,
+    /// and another value is refused, including a map spelled like the one serde
+    /// receives for a TOML datetime.
     #[test]
-    fn an_epoch_of_another_format_or_type() {
+    fn an_epoch_outside_toml_is_a_string() {
         let json_satellites = r#""satellites": [{"orbit": {"type": "circular", "altitude": 400}}]"#;
         let yaml_satellites = "satellites:\n  - orbit: {type: circular, altitude: 400}\n";
         for (ext, text, epoch) in [
@@ -5733,13 +5740,29 @@ degree = 70
             let loaded = load_as(ext, &text).unwrap_or_else(|e| panic!("{ext} {text}: {e}"));
             assert_eq!(loaded.config.epoch.as_deref(), epoch, "{ext} {text}");
         }
+        let private = "$__toml_private_datetime";
         for (ext, text) in [
-            ("toml", format!("epoch = 5\n{ONE_TOML_SATELLITE}")),
+            (
+                "json",
+                format!(
+                    r#"{{"epoch": {{"{private}": "2024-03-20T12:00:00Z"}}, {json_satellites}}}"#
+                ),
+            ),
+            (
+                "yaml",
+                format!("epoch: {{\"{private}\": 2024-03-20T12:00:00Z}}\n{yaml_satellites}"),
+            ),
+            (
+                "toml",
+                format!(
+                    "epoch = {{ \"{private}\" = \"2024-03-20T12:00:00Z\" }}\n{ONE_TOML_SATELLITE}"
+                ),
+            ),
             ("json", format!(r#"{{"epoch": 5, {json_satellites}}}"#)),
-            ("yaml", format!("epoch: [2024]\n{yaml_satellites}")),
+            ("toml", format!("epoch = 5\n{ONE_TOML_SATELLITE}")),
         ] {
             let err = load_as(ext, &text).expect_err(&text);
-            assert!(err.contains("epoch"), "{ext}: {err}");
+            assert!(err.contains("expected a string"), "{ext}: {err}");
         }
     }
 }
