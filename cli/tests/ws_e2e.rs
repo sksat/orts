@@ -29,6 +29,12 @@ impl Server {
 
     /// Spawn the CLI binary with custom satellite configurations.
     fn spawn_with_sats(port: u16, sats: &[&str]) -> Self {
+        Self::spawn_with_sats_and_env(port, sats, &[])
+    }
+
+    /// Spawn with custom satellite configurations and extra environment
+    /// variables. With no `sats` the server starts idle.
+    fn spawn_with_sats_and_env(port: u16, sats: &[&str], env: &[(&str, &str)]) -> Self {
         let binary = env!("CARGO_BIN_EXE_orts");
         let mut args = vec!["serve".to_string(), "--port".to_string(), port.to_string()];
         for sat in sats {
@@ -37,6 +43,7 @@ impl Server {
         }
         let mut child = Command::new(binary)
             .env("ORTS_DISABLE_TEXTURE_DOWNLOAD", "1")
+            .envs(env.iter().copied())
             .args(&args)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -83,43 +90,7 @@ impl Server {
 
     /// Spawn in idle mode with extra environment variables.
     fn spawn_idle_with_env(port: u16, env: &[(&str, &str)]) -> Self {
-        let binary = env!("CARGO_BIN_EXE_orts");
-        let args = vec!["serve".to_string(), "--port".to_string(), port.to_string()];
-        let mut child = Command::new(binary)
-            .env("ORTS_DISABLE_TEXTURE_DOWNLOAD", "1")
-            .envs(env.iter().copied())
-            .args(&args)
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("failed to spawn orts");
-
-        let stderr = child.stderr.take().expect("failed to capture stderr");
-        let (tx, rx) = mpsc::channel::<()>();
-
-        let stderr_thread = std::thread::spawn(move || {
-            let reader = BufReader::new(stderr);
-            let mut notified = false;
-            for line in reader.lines() {
-                let line = line.expect("failed to read stderr line");
-                eprintln!("[server stderr] {line}");
-                if !notified && line.contains("Server listening on") {
-                    let _ = tx.send(());
-                    notified = true;
-                }
-            }
-            if !notified {
-                let _ = tx.send(());
-            }
-        });
-
-        rx.recv_timeout(Duration::from_secs(10))
-            .expect("server did not print 'listening' message within 10 seconds");
-
-        Server {
-            child,
-            _stderr_thread: stderr_thread,
-        }
+        Self::spawn_with_sats_and_env(port, &[], env)
     }
 
     fn kill(&mut self) {
@@ -1174,6 +1145,33 @@ async fn send_json(
         .expect("failed to send");
 }
 
+/// Read messages until an `info` or an `error`, the two replies a
+/// `start_simulation` brings, and return it.
+async fn next_info_or_error(
+    read: &mut futures_util::stream::SplitStream<
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+    >,
+) -> serde_json::Value {
+    loop {
+        let msg = next_json(read).await;
+        if msg["type"] == "info" || msg["type"] == "error" {
+            return msg;
+        }
+    }
+}
+
+/// The satellite ids an `info` message lists.
+fn info_satellite_ids(info: &serde_json::Value) -> Vec<String> {
+    info["satellites"]
+        .as_array()
+        .expect("satellites")
+        .iter()
+        .map(|sat| sat["id"].as_str().expect("an id").to_string())
+        .collect()
+}
+
 fn circular_start() -> serde_json::Value {
     serde_json::json!({
         "type": "start_simulation",
@@ -1186,15 +1184,18 @@ fn circular_start() -> serde_json::Value {
     })
 }
 
-/// A `start_simulation` the manager cannot build leaves the server able to
-/// start the next one (#554).
+/// A `start_simulation` whose simulation cannot be built is answered with an
+/// `error` to the client that sent it, and the server starts the next one
+/// (#554, #555).
 ///
 /// The server cannot fetch `space_weather = "auto"`. `validate_sim_config`
 /// accepts `"auto"` without fetching it (a path is refused there, #556), so
-/// the request is acknowledged and the manager meets the failure while it
-/// builds the simulation. It used to panic there, after which the server
-/// closed every connection, new ones included, until it was restarted. The
-/// fetch fails through `UNREACHABLE_PROXY_ENV`.
+/// the failure comes from `SimParams::from_config`. The manager used to panic
+/// there, after which the server closed every connection, new ones included,
+/// until it was restarted (#554). After that was fixed, the request was still
+/// acknowledged before the simulation was built, so the client that sent it
+/// got neither an `error` nor an `info` (#555). The fetch fails through
+/// `UNREACHABLE_PROXY_ENV`.
 ///
 /// `fetch_default` answers from `$HOME/.cache/orts/SW-Last5Years.txt` when
 /// that file is under a day old, without the request, so the server gets an
@@ -1213,6 +1214,10 @@ async fn test_websocket_unbuildable_start_leaves_the_server_usable() {
         let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (mut write, mut read) = ws.split();
         assert_eq!(next_json(&mut read).await["state"], "idle");
+        // A second client, which sends nothing.
+        let (ws, _) = connect_async(&url).await.expect("failed to connect");
+        let (_bystander_write, mut bystander) = ws.split();
+        assert_eq!(next_json(&mut bystander).await["state"], "idle");
 
         // The failing start, then a valid one on the same connection. The
         // connection sends the second only after the server has answered the
@@ -1225,28 +1230,146 @@ async fn test_websocket_unbuildable_start_leaves_the_server_usable() {
         next["config"]["satellites"][0]["id"] = "next".into();
         send_json(&mut write, next).await;
 
-        // The simulation that starts is the second one. Had the first started,
-        // this would be its `info`, or an "already running" error for the
-        // second.
-        let reply = loop {
-            let msg = next_json(&mut read).await;
-            if msg["type"] == "info" || msg["type"] == "error" {
-                break msg;
-            }
-        };
+        let reply = next_info_or_error(&mut read).await;
+        assert_eq!(
+            reply["type"], "error",
+            "the failing start is answered: {reply}"
+        );
+        let message = reply["message"].as_str().expect("an error message");
+        assert!(
+            message.contains("Failed to fetch space weather data from CelesTrak"),
+            "{message}"
+        );
+
+        // The simulation that starts is the second one.
+        let reply = next_info_or_error(&mut read).await;
         assert_eq!(reply["type"], "info", "{reply}");
-        let ids: Vec<&str> = reply["satellites"]
-            .as_array()
-            .expect("satellites")
-            .iter()
-            .map(|sat| sat["id"].as_str().expect("an id"))
-            .collect();
-        assert_eq!(ids, ["/world/sat/next"]);
+        assert_eq!(info_satellite_ids(&reply), ["/world/sat/next"]);
+
+        // The client that sent nothing gets the `info` of the simulation that
+        // started, and nothing about the one that failed.
+        let seen = next_info_or_error(&mut bystander).await;
+        assert_eq!(seen["type"], "info", "{seen}");
+        assert_eq!(info_satellite_ids(&seen), ["/world/sat/next"]);
 
         // A new connection is still answered.
         let (ws, _) = connect_async(&url).await.expect("failed to reconnect");
         let (_write, mut read) = ws.split();
         read_until_type(&mut read, "info", 10).await;
+    })
+    .await;
+
+    server.kill();
+    result.expect("test timed out after 30 seconds");
+}
+
+/// A `start_simulation` the engine refuses is answered to the client that
+/// sent it, and to no other (#555).
+///
+/// A satellite with `streams` and no controller passes `validate_sim_config`
+/// and `SimParams::from_config`, and `ServeEngine::build` refuses it: only a
+/// controller pumps a stream. The refusal used to be broadcast, so every
+/// connected client got an `error` for a request it had not sent.
+#[tokio::test]
+async fn test_websocket_start_the_engine_refuses_is_answered_to_its_sender() {
+    let port = test_port() + 26;
+    let mut server = Server::spawn_idle(port);
+
+    let result = tokio::time::timeout(Duration::from_secs(30), async {
+        let url = format!("ws://localhost:{port}/ws");
+        let (ws, _) = connect_async(&url).await.expect("failed to connect");
+        let (mut write, mut read) = ws.split();
+        assert_eq!(next_json(&mut read).await["state"], "idle");
+        let (ws, _) = connect_async(&url).await.expect("failed to connect");
+        let (_bystander_write, mut bystander) = ws.split();
+        assert_eq!(next_json(&mut bystander).await["state"], "idle");
+
+        // As in `test_websocket_unbuildable_start_leaves_the_server_usable`,
+        // the second start reaches the manager after the first has failed.
+        let mut refused = circular_start();
+        refused["config"]["satellites"][0]["streams"] = serde_json::json!(["uart0"]);
+        send_json(&mut write, refused).await;
+        let mut next = circular_start();
+        next["config"]["satellites"][0]["id"] = "next".into();
+        send_json(&mut write, next).await;
+
+        let reply = next_info_or_error(&mut read).await;
+        assert_eq!(reply["type"], "error", "{reply}");
+        let message = reply["message"].as_str().expect("an error message");
+        assert!(
+            message.contains("no satellite has a controller"),
+            "{message}"
+        );
+        let reply = next_info_or_error(&mut read).await;
+        assert_eq!(reply["type"], "info", "{reply}");
+        assert_eq!(info_satellite_ids(&reply), ["/world/sat/next"]);
+
+        let seen = next_info_or_error(&mut bystander).await;
+        assert_eq!(
+            seen["type"], "info",
+            "a client that sent no request gets no error for it: {seen}"
+        );
+        assert_eq!(info_satellite_ids(&seen), ["/world/sat/next"]);
+    })
+    .await;
+
+    server.kill();
+    result.expect("test timed out after 30 seconds");
+}
+
+/// After the simulation `orts serve` started from its command line is
+/// terminated, a `start_simulation` that cannot be built is answered as well
+/// (#555).
+///
+/// That server runs its first simulation outside the manager an idle server
+/// runs, and hands it the starts that come after a terminate, so the reply
+/// takes a different path to the client. The failure is the
+/// `space_weather = "auto"` fetch of
+/// `test_websocket_unbuildable_start_leaves_the_server_usable`.
+#[tokio::test]
+async fn test_websocket_unbuildable_start_after_terminate_is_answered() {
+    let port = test_port() + 27;
+    let home_dir = tempfile::tempdir().expect("a temporary HOME");
+    let home = home_dir.path().to_str().expect("a UTF-8 temp path");
+    let mut env = UNREACHABLE_PROXY_ENV.to_vec();
+    env.push(("HOME", home));
+    let mut server = Server::spawn_with_sats_and_env(port, &["altitude=400,id=test"], &env);
+
+    let result = tokio::time::timeout(Duration::from_secs(30), async {
+        let url = format!("ws://localhost:{port}/ws");
+        let (ws, _) = connect_async(&url).await.expect("failed to connect");
+        let (mut write, mut read) = ws.split();
+        read_until_type(&mut read, "info", 10).await;
+
+        send_json(
+            &mut write,
+            serde_json::json!({ "type": "terminate_simulation" }),
+        )
+        .await;
+        // States keep streaming until the terminate lands.
+        let (status, _) = read_until_type(&mut read, "status", 500).await;
+        assert_eq!(status["state"], "idle", "{status}");
+
+        let mut failing = circular_start();
+        failing["config"]["space_weather"] = "auto".into();
+        send_json(&mut write, failing).await;
+        let mut next = circular_start();
+        next["config"]["satellites"][0]["id"] = "next".into();
+        send_json(&mut write, next).await;
+
+        let reply = next_info_or_error(&mut read).await;
+        assert_eq!(
+            reply["type"], "error",
+            "the failing start is answered: {reply}"
+        );
+        let message = reply["message"].as_str().expect("an error message");
+        assert!(
+            message.contains("Failed to fetch space weather data from CelesTrak"),
+            "{message}"
+        );
+        let reply = next_info_or_error(&mut read).await;
+        assert_eq!(reply["type"], "info", "{reply}");
+        assert_eq!(info_satellite_ids(&reply), ["/world/sat/next"]);
     })
     .await;
 
@@ -1301,8 +1424,10 @@ async fn test_websocket_add_with_a_malformed_tle_is_refused() {
 /// A NORAD satellite the server cannot fetch is refused at `start_simulation`
 /// (#554).
 ///
-/// `validate_sim_config` builds each satellite's spec, which fetches a NORAD
-/// orbit's TLE; a failed fetch used to panic there. The fetch fails through
+/// Building a satellite's spec fetches a NORAD orbit's TLE. A failed fetch
+/// used to panic in `validate_sim_config`, which built the specs before
+/// `SimParams::from_config` built them again; they are built once now, in
+/// `from_config`, and its error is the reply. The fetch fails through
 /// `UNREACHABLE_PROXY_ENV`.
 #[tokio::test]
 async fn test_websocket_norad_start_the_server_cannot_fetch_is_refused() {
