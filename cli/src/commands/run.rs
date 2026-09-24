@@ -716,19 +716,21 @@ where
         );
     }
 
-    // Propagate in output_interval steps
+    // Propagate in output_interval steps. The output times come from
+    // `OutputSchedule` as `n * interval` (#562): a running sum fell 1.001e-9
+    // short of a 2305 s end after 23050 additions of 0.1, outside the 1e-9 in
+    // which the group counts itself finished, and the run recorded that time
+    // and then the end.
     let last_end_time = params
         .satellites
         .iter()
         .map(|s| end_time_of(params, s))
         .fold(0.0_f64, f64::max);
-    let mut t = 0.0_f64;
+    let mut output = OutputSchedule::new(params.output_interval, last_end_time);
 
     while !group.all_finished() {
-        t += params.output_interval;
-        if t > last_end_time {
-            t = last_end_time;
-        }
+        let t = output.at().min(last_end_time);
+        output.taken();
 
         // Propagation errors are reported, not unwrapped: an invalid step size
         // or a stalled clock is a diagnosable condition, and panicking here
@@ -806,6 +808,12 @@ where
 
     // Record final states for satellites that finished at end_time
     // (covers the case where period doesn't align with output_interval)
+    // TODO: a satellite whose end lies within 1e-9 above an output time is
+    // recorded at that time and counts as finished there; a later output time
+    // carries it to its end, but the gap is under the 1e-9 below, so the end
+    // is not recorded and its last sample is a fraction of a nanosecond early.
+    // Only the run's last end is snapped (above); snapping each satellite's
+    // would need the group to stop at every satellite's end.
     for (i, (entry, dynamics)) in group.satellites_with_dynamics().enumerate() {
         if !entry.terminated && (entry.t - last_output_t[i]) > 1e-9 {
             let tp = TimePoint::new().with_sim_time(entry.t).with_step(steps[i]);
@@ -1138,15 +1146,17 @@ fn lookup_field_names(component_name: &str, n: usize) -> Vec<String> {
     (0..n).map(|i| format!("{short}_{i}")).collect()
 }
 
-/// Where a controlled run has to sample, and therefore where its spans end.
+/// The output times of a run: `interval`, `2 * interval`, … up to `duration`.
 ///
-/// The controlled loop's spans used to end only at controller ticks, which left
-/// `output_interval` with no effect on the samples: the fleet clock is the one
-/// that moves, so an output boundary has to be one of its stops.
+/// `propagate_and_record` samples at each of them. A controlled run also ends
+/// its spans there: its spans used to end only at controller ticks, which left
+/// `output_interval` with no effect on the samples, since the fleet clock is
+/// the one that moves and an output boundary has to be one of its stops.
 ///
 /// `at()` is `n * interval` rather than a running sum: adding the interval each
-/// time falls below the multiple (measured on the tick schedule in #369), and
-/// the samples of a long run would drift off the times the config asked for.
+/// time falls below the multiple (measured on the tick schedule in #369), so
+/// the samples of a long run drift off the times the config asked for, and an
+/// orbit-only run recorded its end twice (#562).
 #[derive(Debug)]
 struct OutputSchedule {
     interval: f64,
@@ -1163,9 +1173,21 @@ impl OutputSchedule {
         }
     }
 
-    /// The next boundary to sample at.
+    /// The next boundary to sample at: `n * interval`, or `duration` itself
+    /// when that lands a rounding below it.
+    ///
+    /// `3 * 0.3` is `0.8999999999999999` and `6 * 0.3` is `1.7999999999999998`.
+    /// Sampling a rounding below the end left the run short of it
+    /// (`propagate_and_record` stops within 1e-9 of the end) or wrote two rows
+    /// the CSV prints alike, one there and one at the end (the controlled
+    /// run's tail), #562.
     fn at(&self) -> f64 {
-        (self.done + 1) as f64 * self.interval
+        let at = (self.done + 1) as f64 * self.interval;
+        if at < self.duration && self.duration - at <= end_snap(self.duration) {
+            self.duration
+        } else {
+            at
+        }
     }
 
     /// End of a span that starts at the current time: the earliest of the next
@@ -1187,6 +1209,17 @@ impl OutputSchedule {
     fn taken(&mut self) {
         self.done += 1;
     }
+}
+
+/// How far below the end a boundary still counts as the end.
+///
+/// 1e-9 is the tolerance within which `IndependentGroup::all_finished` counts a
+/// satellite finished, so a boundary closer than that would end an orbit-only
+/// run short of its end. A few ulps of `duration` cover the one rounding of
+/// `n * interval` at any magnitude: at 8390463.3 s, `27968211 * 0.3` is
+/// 1.9e-9 below it.
+fn end_snap(duration: f64) -> f64 {
+    1e-9_f64.max(4.0 * f64::EPSILON * duration.abs())
 }
 
 /// Whether the ground-station monitors have to see the span that ended at
@@ -1386,9 +1419,10 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Result<Record
     let mut output = OutputSchedule::new(params.output_interval, duration);
     let mut last_output_t = 0.0;
 
-    // Strict: `n * output_interval` can land just below `duration` (3 × 0.3 is
-    // 0.8999999999999999), and a tolerance here would end the run there and
-    // leave `duration` itself unrecorded.
+    // Strict: the run ends at `duration` itself. `OutputSchedule::at` puts a
+    // boundary that lands a rounding below it (3 × 0.3 is 0.8999999999999999)
+    // on `duration`, so the last sample is there; a tolerance here would end
+    // the run before it instead.
     while t < duration {
         // The span ends at whichever comes first: a controller tick, the next
         // output boundary, or the end of the run. `advance_controlled` still
@@ -2320,18 +2354,48 @@ mod tests {
     }
 
     #[test]
-    fn a_boundary_just_below_the_duration_does_not_end_the_run() {
-        // 3 × 0.3 is 0.8999999999999999: sampling there must not be mistaken
-        // for reaching 0.9, or the run's last state is 1e-16 short of it.
+    fn a_boundary_just_below_the_duration_is_the_duration() {
+        // 3 × 0.3 is 0.8999999999999999. The third boundary is 0.9 itself, so
+        // the run reaches its duration and samples it once. Sampling at
+        // 0.8999999999999999 and then recording 0.9 in the tail wrote two rows
+        // the CSV prints as `0.900` (#562).
         let walk = walk_schedule(0.3, 0.9, 1.0);
-        assert_eq!(walk.taken.len(), 3, "got {:?}", walk.taken);
-        assert!(
-            walk.taken[2] < 0.9,
-            "the third boundary is {} , which is not 0.9",
-            walk.taken[2]
-        );
+        assert_eq!(walk.taken, vec![0.3, 0.6, 0.9]);
         assert_eq!(walk.end_t, 0.9, "the run has to reach its duration");
-        assert!(walk.tail_fires, "0.9 itself would never be recorded");
+        assert!(
+            !walk.tail_fires,
+            "0.9 is sampled already; the tail would write it a second time"
+        );
+    }
+
+    /// A boundary a rounding below a large duration is the duration too
+    /// (#562).
+    ///
+    /// At 8390463.3 s, `27968211 * 0.3` is 1.9e-9 below the duration: outside
+    /// a fixed 1e-9, inside the few ulps `end_snap` allows at that magnitude.
+    #[test]
+    fn a_boundary_a_rounding_below_a_large_duration_is_the_duration() {
+        let duration = 8_390_463.3;
+        let last = OutputSchedule {
+            interval: 0.3,
+            duration,
+            done: 27_968_210,
+        };
+        // The gap, not `duration - 1e-9`: an ulp here is 1.9e-9, so that
+        // subtraction cannot be represented.
+        assert!(
+            duration - 27_968_211.0 * 0.3 > 1e-9,
+            "the example has to fall outside a fixed 1e-9"
+        );
+        assert_eq!(last.at(), duration);
+
+        // The boundary an interval earlier is left where it is.
+        let earlier = OutputSchedule {
+            interval: 0.3,
+            duration,
+            done: 27_968_209,
+        };
+        assert_eq!(earlier.at(), 27_968_210.0 * 0.3);
     }
 
     #[test]
@@ -2342,6 +2406,131 @@ mod tests {
             let expected = n as f64 * 0.1;
             assert_eq!(output.at(), expected, "boundary {n} drifted");
             output.taken();
+        }
+    }
+
+    /// The times an orbit-only run records, in the order they were written.
+    fn recorded_sim_times(rec: &Recording, sat_path: &EntityPath) -> Vec<f64> {
+        use orts::record::component::Component;
+        use orts::record::components::Position3D;
+        use orts::record::timeline::{TimeIndex, TimelineName};
+        let store = rec.entity(sat_path).expect("the satellite was recorded");
+        let pos = store
+            .columns
+            .get(&Position3D::component_name())
+            .expect("positions were recorded");
+        let times = store
+            .timelines
+            .get(&TimelineName::SimTime)
+            .expect("sim times were recorded");
+        (0..pos.num_rows())
+            .map(|i| match times.at_logical_row(pos.logical_row_of(i)) {
+                Some(TimeIndex::Seconds(s)) => s,
+                other => panic!("row {i} has no sim time: {other:?}"),
+            })
+            .collect()
+    }
+
+    /// An orbit-only run records one sample per output interval, counted from
+    /// the start, and none twice at the end (#562).
+    ///
+    /// `propagate_and_record` used to add the interval to the previous output
+    /// time. After 23050 additions of 0.1 the time is 1.001e-9 short of the
+    /// 2305 s end, outside the 1e-9 in which the group counts itself finished,
+    /// so the run recorded that time and then the end: two rows the CSV prints
+    /// as `2305.000`. A duration off the interval grid ends on one extra sample
+    /// at the end itself.
+    #[test]
+    fn orbit_only_output_times_are_counted_from_the_start() {
+        for (duration, samples, last) in [("2305", 23_051, 2305.0), ("2305.05", 23_052, 2305.05)] {
+            let params = SimParams::from_sim_args(
+                &args(&[
+                    "--epoch",
+                    "2024-03-20T12:00:00Z",
+                    "--integrator",
+                    "rk4",
+                    "--dt",
+                    "0.1",
+                    "--duration",
+                    duration,
+                ]),
+                false,
+            )
+            .expect("valid args");
+            let rec = run_simulation(&params).expect("the run succeeds");
+            let times = recorded_sim_times(&rec, &params.satellites[0].entity_path());
+
+            assert_eq!(times.len(), samples, "duration {duration}");
+            assert_eq!(*times.last().unwrap(), last, "duration {duration}");
+            for (n, t) in times.iter().take(23_051).enumerate() {
+                let expected = n as f64 * 0.1;
+                assert!(
+                    (t - expected).abs() <= 1e-9,
+                    "duration {duration}: sample {n} at {t}, not {expected}"
+                );
+            }
+            // The CSV prints times to the millisecond, so a gap below half an
+            // interval shows as a repeated row.
+            for pair in times.windows(2) {
+                assert!(
+                    pair[1] - pair[0] >= 0.05 - 1e-9,
+                    "duration {duration}: {} then {}",
+                    pair[0],
+                    pair[1]
+                );
+            }
+        }
+    }
+
+    /// An output time a rounding below the end is the end itself (#562).
+    ///
+    /// `6 * 0.3` is `1.7999999999999998`, and the group counts itself finished
+    /// within 1e-9 of its end, so a run that sampled there would stop short of
+    /// the 1.8 s it was given and record no sample at 1.8. The running sum the
+    /// count replaced reached 1.8 exactly on this input.
+    #[test]
+    fn an_output_time_just_below_the_end_is_the_end() {
+        let params = SimParams::from_sim_args(
+            &args(&[
+                "--epoch",
+                "2024-03-20T12:00:00Z",
+                "--integrator",
+                "rk4",
+                "--dt",
+                "0.3",
+                "--duration",
+                "1.8",
+            ]),
+            false,
+        )
+        .expect("valid args");
+        let rec = run_simulation(&params).expect("the run succeeds");
+        let times = recorded_sim_times(&rec, &params.satellites[0].entity_path());
+        assert_eq!(times.len(), 7, "{times:?}");
+        assert_eq!(*times.last().unwrap(), 1.8, "{times:?}");
+    }
+
+    /// Satellites that end at different times each record their own end once
+    /// (#562), here where neither end is within 1e-9 above an output time (see
+    /// the TODO on the final-state loop of `propagate_and_record`).
+    ///
+    /// With no `--duration`, each satellite runs one orbit of its own, so the
+    /// group's output times go past the shorter one's end; that satellite's
+    /// last sample is its end time, written once.
+    #[test]
+    fn satellites_with_different_ends_each_end_once() {
+        let params = SimParams::from_sim_args(
+            &args(&["--sat", "altitude=800", "--epoch", "2024-03-20T12:00:00Z"]),
+            false,
+        )
+        .expect("valid args");
+        let rec = run_simulation(&params).expect("the run succeeds");
+        for sat in &params.satellites {
+            let times = recorded_sim_times(&rec, &sat.entity_path());
+            assert_eq!(*times.last().unwrap(), sat.period, "{}", sat.id);
+            for pair in times.windows(2) {
+                assert!(pair[1] > pair[0] + 1e-9, "{}: {pair:?}", sat.id);
+            }
         }
     }
 

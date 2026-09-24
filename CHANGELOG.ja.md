@@ -813,6 +813,16 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `dt` と同じなら、モデル評価の作業が 4 分の 1 ほど増える。([#466](https://github.com/sksat/orts/pull/466))
 
 #### Fixed
+- `run` は出力時刻ごとに 1 行だけ書く。出力間隔が小数だと、CSV の最後の行が 2 回出ていた:
+  `--dt 0.2 --duration 3600` で 18002 行になり、最後の 2 行がどちらも `3600.000` だった。出力
+  時刻は間隔の足し算で作っていて、0.2 を 18000 回足すと終端の 3600 s より 1.08e-9 小さい。run が
+  終わったとみなす 1e-9 の範囲の外なので、その時刻と終端の 2 つを記録していた。いまは出力時刻を
+  controlled な run と同じく `n × 間隔` で数え、終端の丸め 1 回分だけ下に来た時刻 (1e-9 以内、
+  大きい時刻では終端の数 ulp 以内) は終端そのものにする。controlled な run も、最後の出力境界が
+  終端のすぐ下に来ると同じく終端を 2 回書いていた — `--output-interval 0.3 --duration 0.9` では
+  `3 × 0.3 = 0.8999999999999999` で記録したあと、ループの後で 0.9 を記録し、どちらも `0.900` と
+  出た。いまは 0.9 で 1 回だけ記録する
+  ([#562](https://github.com/sksat/orts/issues/562))
 - `run` と `serve` は、1 つのコマンドラインに書かれた 2 つの軌道を usage エラー (exit 2) で
   止め、両方のフラグを名指しする: `the argument '--sat <SATS>' cannot be used with
   '--norad-id <NORAD_ID>'`。以前は `SimParams::from_sim_args` が panic していた (exit 101)。
