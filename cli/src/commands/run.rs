@@ -194,6 +194,24 @@ fn end_time_of(params: &SimParams, sat: &crate::satellite::SatelliteSpec) -> f64
     params.duration.unwrap_or(sat.period)
 }
 
+/// The run's epoch as ISO 8601 UTC, to the millisecond, for the CSV header, the
+/// `.rrd` metadata and the `--json` summary.
+///
+/// A TLE epoch carries a fraction of a second, which whole seconds dropped (the
+/// ISS epoch 21:12:48.699 read 21:12:49, #574). Trailing zeros are trimmed, so a
+/// whole-second epoch reads as before. Milliseconds rather than finer:
+/// `Epoch::to_datetime` goes through a single f64 Julian date, which resolves
+/// about 40 µs at present-day dates, so further digits would be noise.
+fn epoch_text(epoch: &arika::epoch::Epoch) -> String {
+    let text = format!("{:.3}", epoch.to_datetime());
+    let seconds = text
+        .strip_suffix('Z')
+        .expect("DateTime renders a trailing Z");
+    // `{:.3}` always writes a `.`, so trimming stops at it before any digit of
+    // the whole seconds.
+    format!("{}Z", seconds.trim_end_matches('0').trim_end_matches('.'))
+}
+
 /// Decide where the simulation data goes. With no `--output`, CSV defaults to
 /// stdout (text) while RRD defaults to `output.rrd` (binary should not land on
 /// a terminal).
@@ -371,7 +389,7 @@ fn build_run_summary(
         command: "run",
         simulation: SimSummary {
             body: params.body.properties().name.to_lowercase(),
-            epoch: params.epoch.as_ref().map(|e| e.to_datetime().to_string()),
+            epoch: params.epoch.as_ref().map(epoch_text),
             dt_s: params.dt,
             output_interval_s: params.output_interval,
             duration_s: params.duration,
@@ -860,7 +878,7 @@ fn sim_metadata(params: &SimParams) -> orts::record::recording::SimMetadata {
     });
     orts::record::recording::SimMetadata {
         epoch_jd: params.epoch.map(|e| e.jd()),
-        epoch_iso: params.epoch.map(|e| e.to_datetime().to_string()),
+        epoch_iso: params.epoch.as_ref().map(epoch_text),
         frame: Some(params.frame.as_str().to_string()),
         mu: Some(params.mu),
         body_radius: Some(params.body.properties().radius),
@@ -1732,6 +1750,24 @@ fn log_controlled_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The epoch text keeps the millisecond a TLE epoch carries (#574) and
+    /// reads as before for a whole second. 12:00:01 comes back from the f64
+    /// Julian date as 12:00:00.999995; to the millisecond it is 12:00:01 again.
+    #[test]
+    fn epoch_text_keeps_the_milliseconds() {
+        let iss = arika::epoch::Epoch::from_tle_epoch(26, 266.883_896_98);
+        assert_eq!(epoch_text(&iss), "2026-09-23T21:12:48.699Z");
+        for (iso, text) in [
+            ("2024-03-20T12:00:00Z", "2024-03-20T12:00:00Z"),
+            ("2024-03-20T12:00:01Z", "2024-03-20T12:00:01Z"),
+            ("2024-03-20T12:00:00.5Z", "2024-03-20T12:00:00.5Z"),
+            ("2024-12-31T23:59:59.9996Z", "2025-01-01T00:00:00Z"),
+        ] {
+            let epoch = arika::epoch::Epoch::from_iso8601(iso).unwrap();
+            assert_eq!(epoch_text(&epoch), text, "{iso}");
+        }
+    }
     use clap::Parser;
 
     /// Build `SimArgs` the way the CLI does, so clap's defaults are exercised

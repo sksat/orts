@@ -652,6 +652,44 @@ fn test_controlled_simulation_via_config() {
     );
 }
 
+/// The CSV header and the `--json` summary give the run's epoch to the
+/// millisecond (#574). A TLE epoch carries a fraction of a second; both
+/// rounded it to whole seconds, 0.3 s off for the ISS epoch below.
+#[test]
+fn test_run_epoch_text_keeps_the_milliseconds() {
+    let binary = env!("CARGO_BIN_EXE_orts");
+    let dir = std::env::temp_dir().join(format!("orts-e2e-epoch-ms-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let csv_path = dir.join("run.csv");
+    let output = Command::new(binary)
+        .args(["run", "--sat", "altitude=400", "--duration", "60"])
+        .args([
+            "--epoch",
+            "2026-09-23T21:12:48.699Z",
+            "--json",
+            "--format",
+            "csv",
+        ])
+        .args(["--output", csv_path.to_str().unwrap()])
+        .output()
+        .expect("failed to execute orts");
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let v: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout is the JSON summary");
+    assert_eq!(v["simulation"]["epoch"], "2026-09-23T21:12:48.699Z");
+    let csv = std::fs::read_to_string(&csv_path).expect("the CSV");
+    let header: Vec<&str> = csv.lines().filter(|l| l.starts_with('#')).collect();
+    assert!(
+        header.contains(&"# epoch = 2026-09-23T21:12:48.699Z"),
+        "{header:?}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// Verify `orts run → rrd → orts convert --format csv` produces the same
 /// metadata headers as `orts run --format csv` (except the source comment).
 #[test]

@@ -1037,6 +1037,13 @@ section is subdivided by package.
   under RK4 when `output_interval` equals `dt`. ([#466](https://github.com/sksat/orts/pull/466))
 
 #### Fixed
+- `run` gives its epoch to the millisecond in the CSV header (`# epoch =`),
+  the `.rrd` metadata and the `--json` summary. All three rounded it to whole
+  seconds, so a TLE epoch, which carries a fraction of a second, read up to
+  0.5 s off: the ISS epoch 2026-09-23T21:12:48.699Z read `21:12:49Z`, about
+  2.3 km along-track. Trailing zeros are trimmed, so a whole-second epoch
+  reads as before; `# epoch_jd` was and stays exact.
+  ([#574](https://github.com/sksat/orts/issues/574))
 - A TOML config may give `epoch` as a datetime, without quotes:
   `epoch = 2024-03-20T12:00:00Z`. TOML reads that as its datetime type, which
   serde passes as a map, and the config was refused with `invalid type: map,
@@ -1342,6 +1349,11 @@ section is subdivided by package.
 ### `arika` (Rust, crates.io)
 
 #### Added
+- `epoch::DateTime`'s `Display` takes a precision for the seconds:
+  `{:.3}` writes `2026-09-23T21:12:48.699Z` (at most nine decimals). The
+  seconds are rounded once, to what is written, and carry into the minute,
+  hour and calendar as whole seconds do; without a precision they stay whole.
+  ([#574](https://github.com/sksat/orts/issues/574))
 - `omm::{kvn, xml, json}::parse_all` read every OMM a document holds, in
   document order, as CelesTrak's group queries return them
   (`GROUP=science&FORMAT=...`): the KVN puts OMMs one after another, each from
