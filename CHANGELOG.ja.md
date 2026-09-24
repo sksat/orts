@@ -813,6 +813,11 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `dt` と同じなら、モデル評価の作業が 4 分の 1 ほど増える。([#466](https://github.com/sksat/orts/pull/466))
 
 #### Fixed
+- `run` は、CSV header (`# epoch =`)、`.rrd` の metadata、`--json` の summary に、epoch をミリ秒まで
+  出す。3 つとも epoch を整数秒に丸めていたので、秒の小数を持つ TLE の epoch は最大 0.5 s ずれて出て
+  いた: ISS の epoch 2026-09-23T21:12:48.699Z は `21:12:49Z` と出ていた (軌道上で約 2.3 km)。末尾の 0
+  は落とすので、整数秒の epoch はこれまでと同じ文字列になる。`# epoch_jd` は以前から正確
+  ([#574](https://github.com/sksat/orts/issues/574))
 - TOML の config で、`epoch` を日時 (引用符なしの `epoch = 2024-03-20T12:00:00Z`) で書ける。TOML は
   これを日時の型として読み、serde には map として渡すので、config は `invalid type: map, expected a
   string` で拒否されていた。引用符付きと、YAML の同じ行は通っていた。いまは TOML の読み込みで日時の
@@ -1079,6 +1084,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `arika` (Rust, crates.io)
 
 #### Added
+- `epoch::DateTime` の `Display` は、秒の小数の桁数を precision で受け取る: `{:.3}` は
+  `2026-09-23T21:12:48.699Z` を書く (最大 9 桁)。秒は書く桁で 1 回だけ丸め、整数秒と同じく分・時・日付へ
+  繰り上がる。precision が無ければ、これまでどおり整数秒
+  ([#574](https://github.com/sksat/orts/issues/574))
 - `omm::{kvn, xml, json}::parse_all` は、文書に入っている OMM を全部、文書の順に読む。CelesTrak の
   group の取得 (`GROUP=science&FORMAT=...`) が返す形に対応する: KVN は OMM を順に並べ、各 OMM は
   `CCSDS_OMM_VERS` の行から次の `CCSDS_OMM_VERS` の前まで。XML は `<ndm>` の中に衛星ごとの `<omm>`

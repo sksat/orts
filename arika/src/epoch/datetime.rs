@@ -30,10 +30,22 @@ impl DateTime {
     }
 }
 
+/// The most second decimals [`DateTime`]'s `Display` writes: nanoseconds, the
+/// finest a `u64` count of a minute's worth of units holds with room to spare.
+const MAX_SECOND_DECIMALS: usize = 9;
+
+/// ISO 8601 UTC, `YYYY-MM-DDThh:mm:ssZ`. A precision gives the seconds that
+/// many decimals (`{:.3}` → `…:48.699Z`, at most nine); without one they are
+/// whole. The seconds are rounded once, to what is written, and a rounding up
+/// to 60 carries into the minute, hour and calendar.
 impl core::fmt::Display for DateTime {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // Round to integer seconds and normalize overflow (e.g. sec=59.999... → 60)
-        let sec = self.sec.round() as u32;
+        let decimals = f.precision().unwrap_or(0).min(MAX_SECOND_DECIMALS);
+        let per_second = 10u64.pow(decimals as u32);
+        // Round to the written precision and normalize overflow (e.g.
+        // sec=59.999... → 60).
+        let units = (self.sec * per_second as f64).round() as u64;
+        let (sec, fraction) = ((units / per_second) as u32, units % per_second);
         let (sec, carry) = if sec >= 60 { (0u32, 1u32) } else { (sec, 0) };
         let min = self.min.saturating_add(carry);
         let (min, carry) = if min >= 60 {
@@ -53,8 +65,12 @@ impl core::fmt::Display for DateTime {
         };
         write!(
             f,
-            "{year:04}-{month:02}-{day:02}T{hour:02}:{min:02}:{sec:02}Z"
-        )
+            "{year:04}-{month:02}-{day:02}T{hour:02}:{min:02}:{sec:02}"
+        )?;
+        if decimals > 0 {
+            write!(f, ".{fraction:0decimals$}")?;
+        }
+        write!(f, "Z")
     }
 }
 

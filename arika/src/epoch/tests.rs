@@ -535,6 +535,43 @@ fn datetime_display_carries_into_the_calendar() {
     );
 }
 
+/// A precision gives the seconds that many decimals (#574): a TLE epoch has a
+/// fraction of a second that whole seconds dropped. The rounding is done once,
+/// to the precision asked for, and carries into the calendar as whole seconds
+/// do; without a precision the seconds stay whole.
+#[test]
+fn datetime_display_takes_a_precision_for_the_seconds() {
+    let iss = DateTime::new(2026, 9, 23, 21, 12, 48.699_072);
+    assert_eq!(iss.to_string(), "2026-09-23T21:12:49Z");
+    assert_eq!(format!("{iss:.0}"), "2026-09-23T21:12:49Z");
+    assert_eq!(format!("{iss:.3}"), "2026-09-23T21:12:48.699Z");
+    assert_eq!(format!("{iss:.6}"), "2026-09-23T21:12:48.699072Z");
+    assert_eq!(
+        format!("{:.3}", DateTime::new(2024, 3, 20, 12, 0, 0.0)),
+        "2024-03-20T12:00:00.000Z"
+    );
+    // 59.9996 is 60.000 to the millisecond: the next day, not second 60.
+    assert_eq!(
+        format!("{:.3}", DateTime::new(2024, 12, 31, 23, 59, 59.9996)),
+        "2025-01-01T00:00:00.000Z"
+    );
+    assert_eq!(
+        format!("{:.3}", DateTime::new(2024, 12, 31, 23, 59, 59.9994)),
+        "2024-12-31T23:59:59.999Z"
+    );
+    // Every rendering reads back to within the precision.
+    let epoch = Epoch::<Utc>::from_iso8601("2024-02-29T23:59:59Z").unwrap();
+    for k in 0..20 {
+        let e = epoch.add_si_seconds(k as f64 * 0.0999);
+        let rendered = format!("{:.3}", e.to_datetime());
+        let back = Epoch::<Utc>::from_iso8601(&rendered)
+            .unwrap_or_else(|| panic!("+{k}×0.0999 s rendered as unreadable {rendered}"));
+        let err = (back.jd() - e.jd()).abs() * 86400.0;
+        // Half a millisecond, plus the ~40 µs a single f64 JD resolves.
+        assert!(err <= 0.5e-3 + 50e-6, "{rendered} is {err} s away");
+    }
+}
+
 // ERA / legacy GMST
 
 #[test]
