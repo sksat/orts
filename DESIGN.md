@@ -362,7 +362,7 @@ command line で渡す config file の `path` は、server を起動した人が
 
 - **送り方**: `/ws` の binary message 1 つが component 1 つ。server は `controller_uploaded` で SHA-256 を返す。JSON に base64 で入れる案は、中身が 4/3 に膨らみ、text message は未読 key の警告のために 2 回 parse されるので採らない。binary の前に宣言の message を置く案は、宣言だけ通って中身が拒否された場合の対応づけを server が状態として持つことになるので採らない
 - **参照**: config に中身を直接書く案は、同じ controller の衛星を並べた fleet が同じ bytes を衛星の数だけ送ることになるので採らない。SHA-256 は client が自分で計算できるので、upload の応答を待たずに次の message を送れる (1 つの接続の message は順に処理される)。compile cache の key にもなる。cache が key を bytes から計算するので、別の bytes が同じ key で cache を引くことはない
-- **保持**: component は送った接続が持ち、切断で捨てる。他の接続が送った component は指せない。1 接続 4 個まで、1 個 8 MiB まで。満杯なら新しい component を拒否する。古いものを追い出すと、受理を伝えた component が使う前に消えるので追い出さない
+- **保持**: component は送った接続が持ち、切断で捨てる。他の接続が送った component は指せない。1 接続 4 個まで、1 個 8 MiB まで、server の全接続の合計で 128 MiB まで。接続の数には上限が無いので、1 接続の上限だけでは server の memory を抑えられない。満杯なら新しい component を拒否する。古いものを追い出すと、受理を伝えた component が使う前に消えるので追い出さない。衛星を作った component は、その衛星が持ち続け、合計には数えない。持ち続けるには衛星を足す必要があり、fleet の他の部分と同じ増え方になる
 - **受理の意味**: upload で確かめるのは大きさと component の先頭 8 byte だけで、compile は衛星を作るときに行う。compile は sync / async の backend ごとに engine が別なので、upload の時点では backend が決まっていない
 - **未解決**: guest の CPU 時間と memory に上限が無い (fuel、epoch interruption、`ResourceLimiter` のどれも設定していない)。client は任意の component を sandbox の中で走らせられる。sandbox は WASI の filesystem、環境変数、network を guest に渡さないが、guest が返らなければ manager はその guest を待ち続ける
 

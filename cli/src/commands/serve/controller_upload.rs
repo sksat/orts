@@ -15,6 +15,9 @@
 //! command line still names a controller by `path`: the person starting the
 //! server wrote it.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use crate::config::{ControllerConfig, SatelliteConfig, SimConfig};
 
 /// The largest controller component a client may send.
@@ -32,6 +35,17 @@ pub(super) const MAX_CONTROLLER_COMPONENT_BYTES: usize = 8 * 1024 * 1024;
 /// eviction would drop a component the client was told it could name.
 #[cfg(feature = "plugin-wasm")]
 pub(super) const MAX_COMPONENTS_PER_CONNECTION: usize = 4;
+
+/// The most component bytes all connections hold together.
+///
+/// The per-connection limit alone does not bound the server: `/ws` takes any
+/// number of unauthenticated connections, and each could hold its 32 MiB for as
+/// long as it stays open. 128 MiB is four connections at their limit, or
+/// hundreds of the example guests' release builds. A connection gives its share
+/// back when it closes. A component a running simulation built a satellite
+/// from stays with that satellite and is not counted here: keeping it takes
+/// adding a satellite, which is how any other part of a fleet grows too.
+pub(super) const MAX_UPLOADED_BYTES_PER_SERVER: usize = 128 * 1024 * 1024;
 
 /// The first 8 bytes of a WASM component: `\0asm`, the component-model
 /// version `0x0d`, and layer 1. A core module has layer 0 and version 1.
@@ -73,20 +87,71 @@ pub(super) struct Uploaded {
     pub size: usize,
 }
 
+/// Component bytes the server's connections hold, against a limit shared by
+/// all of them.
+pub(super) struct UploadBudget {
+    // Read only where uploads are kept, which takes `plugin-wasm`.
+    #[cfg_attr(not(feature = "plugin-wasm"), allow(dead_code))]
+    limit: usize,
+    held: AtomicUsize,
+}
+
+impl UploadBudget {
+    pub(super) fn new(limit: usize) -> Arc<Self> {
+        Arc::new(Self {
+            limit,
+            held: AtomicUsize::new(0),
+        })
+    }
+
+    /// Count `n` more bytes, unless that would pass the limit.
+    #[cfg(feature = "plugin-wasm")]
+    fn try_reserve(&self, n: usize) -> bool {
+        self.held
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |held| {
+                held.checked_add(n).filter(|total| *total <= self.limit)
+            })
+            .is_ok()
+    }
+
+    fn release(&self, n: usize) {
+        self.held.fetch_sub(n, Ordering::AcqRel);
+    }
+}
+
 /// The components one `/ws` connection has received.
-#[derive(Default)]
 pub(super) struct UploadedComponents {
     #[cfg(feature = "plugin-wasm")]
     by_sha256: std::collections::HashMap<String, orts::plugin::wasm::ComponentBytes>,
+    budget: Arc<UploadBudget>,
+    /// Bytes this connection counts against `budget`, given back on drop.
+    reserved: usize,
+}
+
+impl Drop for UploadedComponents {
+    fn drop(&mut self) {
+        self.budget.release(self.reserved);
+    }
 }
 
 impl UploadedComponents {
+    /// An empty list whose uploads count against `budget`.
+    pub(super) fn new(budget: Arc<UploadBudget>) -> Self {
+        Self {
+            #[cfg(feature = "plugin-wasm")]
+            by_sha256: std::collections::HashMap::new(),
+            budget,
+            reserved: 0,
+        }
+    }
+
     /// Keep the component in `bytes`, or say why not.
     ///
     /// Accepting checks the size, the component preamble, and the per-connection
-    /// limit, and nothing more: whether the bytes compile, link against the
-    /// plugin interface, and run is found out when a controller is first built
-    /// from them. Sending the same bytes again is accepted even when full.
+    /// and server-wide limits, and nothing more: whether the bytes compile, link
+    /// against the plugin interface, and run is found out when a controller is
+    /// first built from them. Sending the same bytes again is accepted even when
+    /// full, and counted once.
     pub(super) fn upload(&mut self, bytes: &[u8]) -> Result<Uploaded, String> {
         if bytes.len() > MAX_CONTROLLER_COMPONENT_BYTES {
             return Err(format!(
@@ -119,6 +184,15 @@ impl UploadedComponents {
                      with none"
                 ));
             }
+            if !self.budget.try_reserve(size) {
+                return Err(format!(
+                    "the server's connections already hold close to {} bytes of controller \
+                     components, the most it keeps at once; a connection gives its \
+                     components back when it closes",
+                    self.budget.limit
+                ));
+            }
+            self.reserved += size;
             self.by_sha256.insert(sha256.clone(), component);
         }
         Ok(Uploaded { sha256, size })
@@ -199,6 +273,11 @@ impl UploadedComponents {
 mod tests {
     use super::*;
 
+    /// A connection's list with the server's whole budget to itself.
+    fn store() -> UploadedComponents {
+        UploadedComponents::new(UploadBudget::new(MAX_UPLOADED_BYTES_PER_SERVER))
+    }
+
     fn controlled_satellite(controller: serde_json::Value) -> SatelliteConfig {
         serde_json::from_value(serde_json::json!({
             "id": "a",
@@ -213,7 +292,7 @@ mod tests {
     /// the path.
     #[test]
     fn a_controller_path_is_refused() {
-        let store = UploadedComponents::default();
+        let store = store();
         let mut sat = controlled_satellite(serde_json::json!({
             "type": "wasm", "path": "/tmp/ctrl.fifo"
         }));
@@ -228,7 +307,7 @@ mod tests {
     /// A path next to a `sha256` is still refused: the path check comes first.
     #[test]
     fn a_path_beside_a_sha256_is_refused() {
-        let store = UploadedComponents::default();
+        let store = store();
         let mut sat = controlled_satellite(serde_json::json!({
             "type": "wasm", "path": "ctrl.wasm", "sha256": "0".repeat(64)
         }));
@@ -254,7 +333,7 @@ mod tests {
         assert!(err.starts_with("satellites[1].controller"), "{err}");
 
         let mut config = config;
-        let err = UploadedComponents::default()
+        let err = store()
             .resolve_config(&mut config)
             .expect_err("and so does resolving it");
         assert!(err.starts_with("satellites[1].controller"), "{err}");
@@ -264,7 +343,7 @@ mod tests {
     /// is named as the likely mistake.
     #[test]
     fn bytes_that_are_not_a_component_are_refused() {
-        let mut store = UploadedComponents::default();
+        let mut store = store();
         let core_module = [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x00];
         for bytes in [&core_module[..], b"hello", &COMPONENT_PREAMBLE[..7], &[]] {
             let err = store.upload(bytes).expect_err("not a component");
@@ -275,7 +354,7 @@ mod tests {
     /// Bytes past the size limit are refused before anything else.
     #[test]
     fn a_component_past_the_size_limit_is_refused() {
-        let mut store = UploadedComponents::default();
+        let mut store = store();
         let mut bytes = COMPONENT_PREAMBLE.to_vec();
         bytes.resize(MAX_CONTROLLER_COMPONENT_BYTES + 1, 0);
         let err = store.upload(&bytes).expect_err("one byte over");
@@ -300,7 +379,7 @@ mod tests {
         /// controller naming that digest gets those bytes attached.
         #[test]
         fn an_uploaded_component_is_attached_by_its_digest() {
-            let mut store = UploadedComponents::default();
+            let mut store = store();
             let bytes = fake_component(7);
             let up = store.upload(&bytes).expect("a component is kept");
             assert_eq!(
@@ -329,10 +408,10 @@ mod tests {
         /// connection's store does not answer for it.
         #[test]
         fn a_digest_from_another_connection_is_refused() {
-            let mut elsewhere = UploadedComponents::default();
+            let mut elsewhere = store();
             let up = elsewhere.upload(&fake_component(3)).expect("kept there");
 
-            let here = UploadedComponents::default();
+            let here = store();
             let mut sat = controlled_satellite(serde_json::json!({
                 "type": "wasm", "sha256": up.sha256
             }));
@@ -349,7 +428,7 @@ mod tests {
         /// being repeated back.
         #[test]
         fn a_malformed_digest_is_refused() {
-            let store = UploadedComponents::default();
+            let store = store();
             let long = "z".repeat(10_000);
             for bad in ["ABCDEF", long.as_str(), &"A".repeat(64)] {
                 let mut sat = controlled_satellite(serde_json::json!({
@@ -367,7 +446,7 @@ mod tests {
         /// stay; sending one of those again is still accepted.
         #[test]
         fn a_full_connection_refuses_a_new_component_and_keeps_the_rest() {
-            let mut store = UploadedComponents::default();
+            let mut store = store();
             let kept: Vec<Uploaded> = (0..MAX_COMPONENTS_PER_CONNECTION as u8)
                 .map(|i| store.upload(&fake_component(i)).expect("room left"))
                 .collect();
@@ -391,6 +470,34 @@ mod tests {
                     .resolve_satellite(&mut sat, "add_satellite")
                     .expect("every kept component still resolves");
             }
+        }
+
+        /// Connections share one budget: once it is spent, a new component is
+        /// refused on every connection, and a connection that closes gives its
+        /// share back. Sending a kept component again costs nothing.
+        #[test]
+        fn connections_share_one_budget_and_give_it_back_on_close() {
+            let one = fake_component(1);
+            let budget = UploadBudget::new(2 * one.len());
+            let mut first = UploadedComponents::new(Arc::clone(&budget));
+            first.upload(&fake_component(1)).expect("room for one");
+            first
+                .upload(&fake_component(1))
+                .expect("the same bytes cost nothing");
+
+            let mut second = UploadedComponents::new(Arc::clone(&budget));
+            second
+                .upload(&fake_component(2))
+                .expect("room for a second");
+            let err = second
+                .upload(&fake_component(3))
+                .expect_err("the budget is spent");
+            assert!(err.contains("the most it keeps at once"), "{err}");
+
+            drop(first);
+            second
+                .upload(&fake_component(3))
+                .expect("the closed connection gave its share back");
         }
 
         /// The attached bytes are not something a client can send: a

@@ -816,9 +816,10 @@ section is subdivided by package.
   back, without waiting for the reply. A connection keeps what it received
   until it closes, and names only that: a client that reconnects sends its
   components again, and controllers already built keep running. A component is
-  at most 8 MiB and a connection keeps at most 4; past either the upload is
-  refused with an `error`, and a message past the socket's 8 MiB limit closes
-  the connection without one. Receiving a component checks its size and
+  at most 8 MiB, a connection keeps at most 4, and all connections together
+  hold at most 128 MiB, given back as each closes; past any of these the upload
+  is refused with an `error`, and a message past the socket's 8 MiB limit
+  closes the connection without one. Receiving a component checks its size and
   its first 8 bytes only; whether it compiles is found out when a satellite is
   built from it. A `--config` file still names its controller by `path`, and
   refuses a `sha256`, which only a connection can resolve. In the TypeScript

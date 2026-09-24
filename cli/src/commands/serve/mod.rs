@@ -39,6 +39,8 @@ struct AppState {
     /// The (sat, stream) wired to stdio via `--stream-stdio`, if any. Its
     /// WS endpoint is reserved (answers 409) — one transport per stream.
     reserved_stdio: Option<stream_bridge::StreamKey>,
+    /// Controller component bytes all `/ws` connections hold together.
+    upload_budget: Arc<controller_upload::UploadBudget>,
 }
 
 pub fn run_server(sim: &SimArgs, port: u16, stream_stdio: Option<&str>) -> Result<(), CmdError> {
@@ -108,9 +110,10 @@ const MAX_WS_MESSAGE_BYTES: usize =
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
     let rx = state.tx.subscribe();
     let cmd_tx = state.cmd_tx.clone();
+    let upload_budget = Arc::clone(&state.upload_budget);
     ws.max_message_size(MAX_WS_MESSAGE_BYTES)
         .on_upgrade(move |socket| async move {
-            connection::handle_connection(socket, rx, cmd_tx).await;
+            connection::handle_connection(socket, rx, cmd_tx, upload_budget).await;
             eprintln!("Client disconnected");
         })
 }
@@ -276,6 +279,9 @@ async fn async_server(
         textures: texture_cache,
         bridge,
         reserved_stdio: stdio_key,
+        upload_budget: controller_upload::UploadBudget::new(
+            controller_upload::MAX_UPLOADED_BYTES_PER_SERVER,
+        ),
     };
 
     let app = Router::new()

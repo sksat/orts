@@ -626,7 +626,8 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `sha256 = "<小文字の 16 進 64 桁>"` で component を指す。client は component と、それを指す
   message を、応答を待たずに続けて送ってよい。接続は受け取った component を切断まで持ち、
   指せるのはそれだけである: 接続し直した client は component を送り直す。作り済みの controller は
-  動き続ける。component は 8 MiB まで、1 接続 4 個までで、超えると upload に `error` を返す。
+  動き続ける。component は 8 MiB まで、1 接続 4 個まで、全接続の合計 128 MiB まで (接続を閉じると
+  その分を返す) で、超えると upload に `error` を返す。
   socket の上限 8 MiB を超える message は、応答無しで接続を閉じる。受け取るときに確かめるのは
   大きさと先頭 8 byte だけで、compile できるかは衛星を作るときに分かる。`--config` のファイルは
   これまでどおり `path` で controller を指し、接続でしか解決できない `sha256` は拒否する。
