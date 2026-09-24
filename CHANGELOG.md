@@ -1037,6 +1037,14 @@ section is subdivided by package.
   under RK4 when `output_interval` equals `dt`. ([#466](https://github.com/sksat/orts/pull/466))
 
 #### Fixed
+- A TOML config may give `epoch` as a datetime, without quotes:
+  `epoch = 2024-03-20T12:00:00Z`. TOML reads that as its datetime type, which
+  serde passes as a map, and the config was refused with `invalid type: map,
+  expected a string`, while the quoted form and the same line in YAML ran.
+  The TOML loader now gives a datetime `epoch` as its text, checked as a
+  quoted epoch is, so an offset such as `+09:00` is refused with the same
+  `invalid epoch` error. JSON and YAML still take `epoch` as a string only.
+  ([#569](https://github.com/sksat/orts/issues/569))
 - `run` writes each output time once. With a decimal output interval the last
   CSV row appeared twice: `--dt 0.2 --duration 3600` gave 18002 rows, the last
   two both `3600.000`. The output times were a running sum of the interval,

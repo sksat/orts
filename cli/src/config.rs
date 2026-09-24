@@ -1453,6 +1453,23 @@ pub fn printable_key(key: &str) -> String {
     out
 }
 
+/// Give a TOML datetime `epoch` as its text.
+///
+/// TOML has a datetime type, and `epoch = 2024-03-20T12:00:00Z` without quotes
+/// is one. serde receives it as a map, so `epoch: Option<String>` refused the
+/// config with "invalid type: map, expected a string" while the quoted form ran
+/// (#569). Replacing it with its text here, where only TOML is read, sends it
+/// through the check a quoted epoch goes through and leaves `epoch` a string in
+/// JSON and YAML, as the `start_simulation` payload declares it.
+fn epoch_datetime_as_text(root: &mut toml::de::DeTable<'_>) {
+    if let Some(value) = root.get_mut("epoch")
+        && let toml::de::DeValue::Datetime(datetime) = value.get_ref()
+    {
+        let text = datetime.to_string();
+        *value.get_mut() = toml::de::DeValue::String(text.into());
+    }
+}
+
 /// A loaded config and the keys in its file that nothing read.
 ///
 /// The keys are paths as `serde_ignored` spells them — `satellites.0.disturbanses`
@@ -1517,10 +1534,16 @@ impl SimConfig {
                 config
             }
             "toml" => {
-                let de = toml::Deserializer::parse(&content)
+                let mut root = toml::de::DeTable::parse(&content)
                     .map_err(|e| format!("Failed to parse TOML config: {e}"))?;
-                serde_ignored::deserialize(de, &mut note)
-                    .map_err(|e| format!("Failed to parse TOML config: {e}"))?
+                epoch_datetime_as_text(root.get_mut());
+                let de = toml::Deserializer::from(root);
+                serde_ignored::deserialize(de, &mut note).map_err(|mut e: toml::de::Error| {
+                    // Built from a table, the deserializer holds no source to
+                    // quote; give it back so the error shows the line.
+                    e.set_input(Some(&content));
+                    format!("Failed to parse TOML config: {e}")
+                })?
             }
             "yaml" | "yml" => {
                 let de = serde_yaml::Deserializer::from_str(&content);
@@ -5627,5 +5650,136 @@ degree = 70
     fn unknown_frame_is_rejected_at_deserialize_time() {
         let err = toml::from_str::<SimConfig>("frame = \"eme2000\"\n").unwrap_err();
         assert!(err.to_string().contains("frame"), "{err}");
+    }
+
+    /// Load `text` as a `sim.{ext}` file, through the funnel `orts run` uses.
+    fn load_as(ext: &str, text: &str) -> Result<LoadedConfig, String> {
+        let dir = std::env::temp_dir().join(format!(
+            "orts-epoch-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join(format!("sim.{ext}"));
+        std::fs::write(&path, text).expect("write config");
+        let loaded = SimConfig::load_with_warnings(&path);
+        std::fs::remove_dir_all(&dir).ok();
+        loaded
+    }
+
+    const ONE_TOML_SATELLITE: &str =
+        "\n[[satellites]]\n[satellites.orbit]\ntype = \"circular\"\naltitude = 400\n";
+
+    /// TOML has a datetime type, and `epoch = 2024-03-20T12:00:00Z` without
+    /// quotes is one. serde sees it as a map, so the config was refused with
+    /// "invalid type: map, expected a string" (#569). It reads as the text of
+    /// the datetime, and goes through the check a quoted epoch does.
+    #[test]
+    fn a_toml_datetime_epoch_reads_as_its_text() {
+        for (written, text) in [
+            ("2024-03-20T12:00:00Z", "2024-03-20T12:00:00Z"),
+            // TOML also separates the date and time with a space; the text
+            // of the datetime uses `T`.
+            ("2024-03-20 12:00:00Z", "2024-03-20T12:00:00Z"),
+            // Without an offset, as a quoted epoch without one.
+            ("2024-03-20T12:00:00", "2024-03-20T12:00:00"),
+            ("2024-03-20T12:00:00.5Z", "2024-03-20T12:00:00.5Z"),
+        ] {
+            let native = load_as("toml", &format!("epoch = {written}\n{ONE_TOML_SATELLITE}"))
+                .unwrap_or_else(|e| panic!("{written}: {e}"));
+            assert_eq!(native.config.epoch.as_deref(), Some(text), "{written}");
+            assert!(native.unread_keys.is_empty(), "{:?}", native.unread_keys);
+            let quoted = load_as("toml", &format!("epoch = \"{text}\"\n{ONE_TOML_SATELLITE}"))
+                .unwrap_or_else(|e| panic!("\"{text}\": {e}"));
+            assert_eq!(native.config.epoch, quoted.config.epoch, "{written}");
+        }
+        // A datetime the quoted form refuses is refused with the same error.
+        for written in ["2024-03-20T21:00:00+09:00", "2024-03-20"] {
+            let native = load_as("toml", &format!("epoch = {written}\n{ONE_TOML_SATELLITE}"))
+                .expect_err(written);
+            let quoted = load_as(
+                "toml",
+                &format!("epoch = \"{written}\"\n{ONE_TOML_SATELLITE}"),
+            )
+            .expect_err(written);
+            assert_eq!(native, quoted);
+            assert!(
+                native.contains(&format!("invalid epoch '{written}'")),
+                "{native}"
+            );
+        }
+    }
+
+    /// The TOML loader deserializes from the parsed table, which holds no
+    /// source text of its own, and gives the error its source back. A type
+    /// error below the first line still names its line and column and quotes
+    /// the line.
+    #[test]
+    fn a_toml_type_error_quotes_its_line() {
+        let err = load_as(
+            "toml",
+            &format!(
+                "epoch = 2024-03-20T12:00:00Z\nduration = 60\ndt = \"x\"\n{ONE_TOML_SATELLITE}"
+            ),
+        )
+        .expect_err("dt is not a number");
+        assert!(err.contains("line 3, column 6"), "{err}");
+        assert!(err.contains("3 | dt = \"x\""), "{err}");
+    }
+
+    /// Only TOML has a datetime type, so only TOML reads one. JSON and YAML
+    /// give the epoch as a string, as before: a missing or null epoch is none,
+    /// and another value is refused, including a map spelled like the one serde
+    /// receives for a TOML datetime.
+    #[test]
+    fn an_epoch_outside_toml_is_a_string() {
+        let json_satellites = r#""satellites": [{"orbit": {"type": "circular", "altitude": 400}}]"#;
+        let yaml_satellites = "satellites:\n  - orbit: {type: circular, altitude: 400}\n";
+        for (ext, text, epoch) in [
+            (
+                "json",
+                format!(r#"{{"epoch": "2024-03-20T12:00:00Z", {json_satellites}}}"#),
+                Some("2024-03-20T12:00:00Z"),
+            ),
+            (
+                "json",
+                format!(r#"{{"epoch": null, {json_satellites}}}"#),
+                None,
+            ),
+            ("json", format!("{{{json_satellites}}}"), None),
+            (
+                "yaml",
+                format!("epoch: 2024-03-20T12:00:00Z\n{yaml_satellites}"),
+                Some("2024-03-20T12:00:00Z"),
+            ),
+            ("toml", ONE_TOML_SATELLITE.to_string(), None),
+        ] {
+            let loaded = load_as(ext, &text).unwrap_or_else(|e| panic!("{ext} {text}: {e}"));
+            assert_eq!(loaded.config.epoch.as_deref(), epoch, "{ext} {text}");
+        }
+        let private = "$__toml_private_datetime";
+        for (ext, text) in [
+            (
+                "json",
+                format!(
+                    r#"{{"epoch": {{"{private}": "2024-03-20T12:00:00Z"}}, {json_satellites}}}"#
+                ),
+            ),
+            (
+                "yaml",
+                format!("epoch: {{\"{private}\": 2024-03-20T12:00:00Z}}\n{yaml_satellites}"),
+            ),
+            (
+                "toml",
+                format!(
+                    "epoch = {{ \"{private}\" = \"2024-03-20T12:00:00Z\" }}\n{ONE_TOML_SATELLITE}"
+                ),
+            ),
+            ("json", format!(r#"{{"epoch": 5, {json_satellites}}}"#)),
+            ("toml", format!("epoch = 5\n{ONE_TOML_SATELLITE}")),
+        ] {
+            let err = load_as(ext, &text).expect_err(&text);
+            assert!(err.contains("expected a string"), "{ext}: {err}");
+        }
     }
 }
