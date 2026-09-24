@@ -813,6 +813,11 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `dt` と同じなら、モデル評価の作業が 4 分の 1 ほど増える。([#466](https://github.com/sksat/orts/pull/466))
 
 #### Fixed
+- `convert` は、CSV を書き終えられないときにエラーを出して exit 1 で終わる。読む側が途中で pipe を
+  閉じたとき (`orts convert --format csv x.rrd | head`) や disk が一杯のときに panic して exit 101 で
+  終わっていた。`orts run --format csv | head` は以前から `Error: writing CSV to stdout: Broken pipe` を
+  出して exit 1 で終わる。読めないファイルのエラーも同じ形の `Error: reading <path>: ...` になる
+  ([#572](https://github.com/sksat/orts/issues/572))
 - `run` は、CSV header (`# epoch =`)、`.rrd` の metadata、`--json` の summary に、epoch をミリ秒まで
   出す。3 つとも epoch を整数秒に丸めていたので、秒の小数を持つ TLE の epoch は最大 0.5 s ずれて出て
   いた: ISS の epoch 2026-09-23T21:12:48.699Z は `21:12:49Z` と出ていた (軌道上で約 2.3 km)。末尾の 0

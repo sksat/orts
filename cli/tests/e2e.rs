@@ -772,6 +772,72 @@ fn test_csv_convert_roundtrip_headers_match() {
     let _ = std::fs::remove_file(&rrd_path);
 }
 
+/// Record a long run to `.rrd` in a fresh directory, for `convert` to read.
+///
+/// 60000 s at the default 10 s output interval is 6001 CSV rows, about 0.9 MB:
+/// more than a pipe buffer holds, so a writer to a closed pipe is still
+/// writing when the reader goes away.
+fn record_long_rrd(label: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+    let binary = env!("CARGO_BIN_EXE_orts");
+    let dir = std::env::temp_dir().join(format!("orts-e2e-{label}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let rrd = dir.join("long.rrd");
+    let status = Command::new(binary)
+        .args(["run", "--sat", "altitude=400", "--duration", "60000"])
+        .args(["--output", rrd.to_str().unwrap()])
+        .stderr(Stdio::null())
+        .status()
+        .expect("failed to run orts run");
+    assert!(status.success());
+    (dir, rrd)
+}
+
+/// A reader that closes `orts convert`'s CSV early (`| head`) is a write
+/// error. `convert` panicked out of the writer with exit 101 (#572); it now
+/// reports the error and exits 1, as `orts run --format csv | head` does.
+#[test]
+fn test_convert_to_a_closed_pipe_is_an_error_not_a_panic() {
+    use std::io::Read;
+    let binary = env!("CARGO_BIN_EXE_orts");
+    let (dir, rrd) = record_long_rrd("convert-pipe");
+
+    let mut child = Command::new(binary)
+        .args(["convert", rrd.to_str().unwrap(), "--format", "csv"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to run orts convert");
+    let mut stdout = child.stdout.take().expect("piped stdout");
+    let mut head = [0u8; 64];
+    stdout.read_exact(&mut head).expect("the CSV starts");
+    drop(stdout);
+    let output = child.wait_with_output().expect("orts convert exits");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert!(!stderr.contains("panicked"), "{stderr}");
+    assert!(stderr.contains("Error: writing CSV to stdout"), "{stderr}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A file `convert` cannot finish writing is an error too: `/dev/full` opens
+/// but refuses every write with ENOSPC.
+#[cfg(target_os = "linux")]
+#[test]
+fn test_convert_to_a_full_device_is_an_error_not_a_panic() {
+    let binary = env!("CARGO_BIN_EXE_orts");
+    let (dir, rrd) = record_long_rrd("convert-full");
+    let output = Command::new(binary)
+        .args(["convert", rrd.to_str().unwrap(), "--format", "csv"])
+        .args(["--output", "/dev/full"])
+        .output()
+        .expect("failed to run orts convert");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert!(!stderr.contains("panicked"), "{stderr}");
+    assert!(stderr.contains("Error: writing /dev/full"), "{stderr}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 // --- Agent-friendly output contract ---------------------------------------
 // stdout carries exactly one of: simulation data XOR a JSON run summary.
 // Logs/diagnostics go to stderr. `--output -` (and the legacy "stdout"

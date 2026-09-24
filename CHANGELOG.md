@@ -1037,6 +1037,12 @@ section is subdivided by package.
   under RK4 when `output_interval` equals `dt`. ([#466](https://github.com/sksat/orts/pull/466))
 
 #### Fixed
+- `convert` reports a CSV it cannot finish writing and exits 1. A reader that
+  closed the pipe early (`orts convert --format csv x.rrd | head`) or a full
+  disk made it panic with exit 101, while `orts run --format csv | head`
+  already reported `Error: writing CSV to stdout: Broken pipe` and exited 1.
+  A file it cannot read now prints `Error: reading <path>: ...` in the same
+  form. ([#572](https://github.com/sksat/orts/issues/572))
 - `run` gives its epoch to the millisecond in the CSV header (`# epoch =`),
   the `.rrd` metadata and the `--json` summary. All three rounded it to whole
   seconds, so a TLE epoch, which carries a fraction of a second, read up to
