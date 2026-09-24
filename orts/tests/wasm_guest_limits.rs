@@ -9,7 +9,7 @@
 //! been built:
 //!
 //! ```sh
-//! cd plugin-sdk/examples && cargo +1.91.0 component build --release -p orts-example-plugin-misbehaving-guest
+//! cd plugin-sdk/examples && cargo +1.91.0 component build --release -p orts-test-guest-misbehaving
 //! ```
 
 #![cfg(feature = "plugin-wasm-async")]
@@ -32,7 +32,7 @@ const HANG: Duration = Duration::from_secs(30);
 fn fixture() -> Option<PathBuf> {
     let path = PathBuf::from(format!(
         "{}/../plugin-sdk/examples/target/wasm32-wasip1/release/\
-         orts_example_plugin_misbehaving_guest.wasm",
+         orts_test_guest_misbehaving.wasm",
         env!("CARGO_MANIFEST_DIR")
     ));
     if path.exists() {
@@ -40,7 +40,7 @@ fn fixture() -> Option<PathBuf> {
     } else {
         eprintln!(
             "WASM not found: {}\nBuild: cd plugin-sdk/examples && cargo +1.91.0 component \
-             build --release -p orts-example-plugin-misbehaving-guest",
+             build --release -p orts-test-guest-misbehaving",
             path.display()
         );
         None

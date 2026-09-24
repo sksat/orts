@@ -74,7 +74,7 @@ fn pd_rw_guest_wasm() -> Option<std::path::PathBuf> {
 fn misbehaving_guest_wasm() -> Option<std::path::PathBuf> {
     let path = std::path::PathBuf::from(format!(
         "{}/../plugin-sdk/examples/target/wasm32-wasip1/release/\
-         orts_example_plugin_misbehaving_guest.wasm",
+         orts_test_guest_misbehaving.wasm",
         env!("CARGO_MANIFEST_DIR")
     ));
     if path.exists() {
@@ -82,7 +82,7 @@ fn misbehaving_guest_wasm() -> Option<std::path::PathBuf> {
     } else {
         eprintln!(
             "WASM not found: {}\nBuild: cd plugin-sdk/examples && cargo +1.91.0 component \
-             build --release -p orts-example-plugin-misbehaving-guest",
+             build --release -p orts-test-guest-misbehaving",
             path.display()
         );
         None

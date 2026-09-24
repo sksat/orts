@@ -10,7 +10,9 @@ members = [
     "commandable-mode-ff",
     "commandable-mode-rr",
     "stream-framed-commander",
-    # Test fixture for the host's guest limits, not an example.
+    # Test fixture for the host's guest limits, not an example. Named outside
+    # `orts-example-plugin-*` so the release archives, which take
+    # `orts_example_plugin_*.wasm`, leave it out.
     "misbehaving-guest",
 ]
 # nos3-adcs is excluded from the workspace because its build.rs requires

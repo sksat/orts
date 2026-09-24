@@ -542,7 +542,7 @@ jobs:
 
       - name: Build guest WASM components
         run: |
-          cd plugin-sdk/examples && cargo component build -p orts-example-plugin-pd-rw-control -p orts-example-plugin-commandable-mode-ff -p orts-example-plugin-stream-framed-commander -p orts-example-plugin-misbehaving-guest --release
+          cd plugin-sdk/examples && cargo component build -p orts-example-plugin-pd-rw-control -p orts-example-plugin-commandable-mode-ff -p orts-example-plugin-stream-framed-commander -p orts-test-guest-misbehaving --release
 
       # Real kble binary for the stream-bridge E2E. Installed via
       # cargo-binstall with the version resolved against crates.io;
