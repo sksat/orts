@@ -2741,8 +2741,9 @@ pub(super) mod test_support {
     use orts::plugin::{Command, PluginController, PluginError, TickInput};
     use orts::spacecraft::SpacecraftState;
 
-    /// The fixture controllers' sample period [s]. The engine steps the
-    /// config's default interval of 10 s, so one interval runs ten ticks.
+    /// The fixture controllers' sample period [s]. An engine whose satellite
+    /// declares no streams steps the config's default interval of 10 s, ten
+    /// ticks; one that declares streams steps one tick per interval.
     pub(in crate::commands::serve) const TICK: f64 = 1.0;
 
     /// The stream [`Chatty`] writes to.
@@ -2754,6 +2755,7 @@ pub(super) mod test_support {
         controller: Box<dyn PluginController>,
         streams: &[&str],
     ) -> ServeEngine {
+        let period = controller.sample_period();
         let config: crate::config::SimConfig = toml::from_str(
             r#"
 [[satellites]]
@@ -2810,6 +2812,12 @@ orbit = { type = "circular", altitude = 500 }
             dynamics, state, controller, body,
         )]);
         engine.sat_streams = vec![streams.iter().map(|s| s.to_string()).collect()];
+        // What `ServeEngine::build` sets up for a fleet that declares streams:
+        // realtime pacing, and one controller tick per interval.
+        if !streams.is_empty() {
+            engine.realtime = true;
+            engine.stream_step = uniform_tick(&[period]).expect("a single positive period");
+        }
         engine
     }
 

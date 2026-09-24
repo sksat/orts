@@ -817,9 +817,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   controlled な衛星を 1 機ずつ進める。そのあとで失敗すると (tick まで積分したあとで controller の
   `update` が失敗する、全機が interval の終わりに着いたあとで stream-io の peer が stuck になる)、衛星は
   run の時刻より先にいる。`resume_simulation` は、その衛星を古い時刻から積分し直していた。高度 500 km、
-  interval 10 s で測ると、1 回だけ stuck になった peer のあとで resume した run が t = 10 s として送った
-  最初の sample は衛星の 20 s での state で、10 s での位置から 76 km 離れていた。1 s の tick で失敗した
-  controller のあとでは、同じ sample が 7.6 km ずれていた。いまはそうした run への `resume_simulation` に
+  controller の周期 1 s で測ると、1 回だけ stuck になった peer のあとで resume した run が t = 1 s として
+  送った最初の sample は衛星の 2 s での state で、1 s での位置から 7.6 km 離れていた。最初の tick で
+  失敗した controller のあとでも、t = 10 s の sample が 7.6 km ずれていた。いまはそうした run への
+  `resume_simulation` に
   fault を名指しするエラーを返し、run は `terminate_simulation` と新しい `start_simulation` まで paused の
   まま残る。client が止めた run は、これまでどおり resume できる
   ([#538](https://github.com/sksat/orts/issues/538))

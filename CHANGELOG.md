@@ -1037,19 +1037,20 @@ section is subdivided by package.
   under RK4 when `output_interval` equals `dt`. ([#466](https://github.com/sksat/orts/pull/466))
 
 #### Fixed
-- `serve` refuses to resume a run that a fault paused. An interval steps each
+- `serve` refuses to resume a run paused by a fault. An interval steps each
   controlled satellite before the run's clock moves, so a failure after that —
   a controller whose `update` fails once the satellite was integrated to its
   tick, or a stream-io peer that is stuck once every satellite reached the
   interval's end — left the satellites ahead of the clock, and
   `resume_simulation` integrated them again from the older time. Measured on a
-  500 km orbit with a 10 s interval: after a peer that was stuck once, the
-  first sample the resumed run sent for t = 10 s was the satellite's state at
-  20 s, 76 km from where it is at 10 s; after a controller that failed on its
-  1 s tick, that sample was 7.6 km off. `resume_simulation` on such a run now
+  500 km orbit whose controller ticks every 1 s: after a peer that was stuck
+  once, the first sample the resumed run sent, for t = 1 s, was the
+  satellite's state at 2 s, 7.6 km from where it is at 1 s; after a controller
+  that failed on its first tick, the sample for t = 10 s was 7.6 km off as
+  well. `resume_simulation` on such a run now
   answers with an error that names the fault, and the run stays paused until
-  `terminate_simulation` and a new `start_simulation`. A run a client paused
-  resumes as before. ([#538](https://github.com/sksat/orts/issues/538))
+  `terminate_simulation` and a new `start_simulation`. A run paused by a
+  client resumes as before. ([#538](https://github.com/sksat/orts/issues/538))
 - `convert --format` offers only `csv`, the one format it writes. It offered
   `rrd` too and then refused it with `cannot convert to .rrd format (input is
   already .rrd)`, whatever the input was; clap now refuses `--format rrd` with

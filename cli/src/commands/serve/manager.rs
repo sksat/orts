@@ -409,8 +409,8 @@ fn state_json(out: &crate::sim::core::HistoryState) -> String {
 /// is unaware of it (which is why it has no `paused` field).
 ///
 /// A run is paused because a client paused it, or because a chunk failed, in
-/// which case [`ServeEngine::halted`] holds the fault. Only a run a client
-/// paused resumes.
+/// which case [`ServeEngine::halted`] holds the fault. Only a run paused by a
+/// client resumes.
 fn handle_command(
     engine: &mut ServeEngine,
     paused: &mut bool,
@@ -711,7 +711,7 @@ mod tests {
         (reply, sent)
     }
 
-    /// A run a fault paused stays paused when a client asks to resume it
+    /// A run paused by a fault stays paused when a client asks to resume it
     /// (#538).
     ///
     /// The satellite had been stepped past the engine's clock when the
@@ -733,7 +733,7 @@ mod tests {
         let (reply, sent) = pause_or_resume(&mut engine, &mut paused, |respond| {
             SimCommand::Resume { respond }
         });
-        let refusal = reply.expect_err("resume of a run a fault paused was accepted");
+        let refusal = reply.expect_err("resume of a run paused by a fault was accepted");
         assert!(
             refusal.contains(fault),
             "the refusal names the fault: {refusal}"
@@ -764,7 +764,7 @@ mod tests {
         );
     }
 
-    /// A run the client paused resumes, and steps on from where it stopped.
+    /// A run paused by a client resumes, and steps on from where it stopped.
     #[test]
     fn a_run_the_client_paused_resumes() {
         let mut engine = controlled_engine(Box::new(Chatty), &[TM]);
