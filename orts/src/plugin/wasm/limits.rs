@@ -90,6 +90,22 @@ pub const DEFAULT_MEMORIES: usize = 4;
 /// See [`DEFAULT_INSTANCES`].
 pub const DEFAULT_TABLES: usize = 16;
 
+/// The default [`GuestLimits::resources`]: how many component resources (WASI
+/// streams, pollables, …) a guest may hold at once.
+///
+/// A guest built with `cargo component` holds a handful (its stdio streams, a
+/// pollable while it polls one). wasmtime's own default is 1,000,000 entries,
+/// which a guest keeping every clock subscription it makes would turn into
+/// host memory no other limit counts.
+pub const DEFAULT_RESOURCES: usize = 1024;
+
+/// The most `host-env.log` records a guest may write in one turn. Past it the
+/// turn's further records are dropped, with one warning that says so.
+pub const MAX_LOG_RECORDS: usize = 64;
+
+/// The longest `host-env.log` record written; a longer one is cut here.
+pub const MAX_LOG_RECORD_BYTES: usize = 4096;
+
 /// The most msg-io messages a guest may send in one turn. A controller keeps
 /// twice this for its caller to take (see [`OutboundBacklog`]).
 ///
@@ -117,6 +133,8 @@ pub struct GuestLimits {
     pub memories: usize,
     /// Most tables one store may create.
     pub tables: usize,
+    /// Most component resources the guest may hold at once.
+    pub resources: usize,
 }
 
 impl Default for GuestLimits {
@@ -128,6 +146,7 @@ impl Default for GuestLimits {
             instances: DEFAULT_INSTANCES,
             memories: DEFAULT_MEMORIES,
             tables: DEFAULT_TABLES,
+            resources: DEFAULT_RESOURCES,
         }
     }
 }
@@ -331,8 +350,9 @@ impl ResourceLimiter for GuestLimiter {
     }
 }
 
-/// Bytes of host memory one msg-io outbound keeps: its kind and every string
-/// and byte list in its payload; fixed-size scalars are not counted.
+/// Bytes of host memory one msg-io outbound keeps: its kind, every string and
+/// byte list in its payload, and the storage of each key-value field itself,
+/// so a list of many small fields counts for what it holds.
 ///
 /// A macro because the sync and async bindings generate separate `wit` types
 /// of the same shape, and both host states count them the same way.
@@ -346,7 +366,8 @@ macro_rules! outbound_bytes {
                 $wit::Payload::KeyValue(fields) => fields
                     .iter()
                     .map(|f| {
-                        f.name.len()
+                        ::core::mem::size_of_val(f)
+                            + f.name.len()
                             + match &f.value {
                                 $wit::Value::Text(s) => s.len(),
                                 $wit::Value::Bytes(b) => b.len(),
@@ -400,6 +421,53 @@ impl OutboxBudget {
     }
 }
 
+/// Counts the `host-env.log` records of the current turn against
+/// [`MAX_LOG_RECORDS`].
+#[derive(Debug, Default)]
+pub(super) struct LogBudget {
+    records: usize,
+}
+
+/// What to do with one guest log record.
+pub(super) enum LogAdmit {
+    /// Write it (cut to [`MAX_LOG_RECORD_BYTES`]).
+    Write,
+    /// Drop it, and write one warning that the rest of the turn's are dropped.
+    DropAndNote,
+    /// Drop it quietly: the warning went out already.
+    Drop,
+}
+
+impl LogBudget {
+    pub(super) fn admit(&mut self) -> LogAdmit {
+        self.records += 1;
+        match self.records.cmp(&(MAX_LOG_RECORDS + 1)) {
+            core::cmp::Ordering::Less => LogAdmit::Write,
+            core::cmp::Ordering::Equal => LogAdmit::DropAndNote,
+            core::cmp::Ordering::Greater => LogAdmit::Drop,
+        }
+    }
+
+    /// A new turn starts with a fresh count.
+    pub(super) fn reset(&mut self) {
+        self.records = 0;
+    }
+}
+
+/// `message` in at most [`MAX_LOG_RECORD_BYTES`] bytes: cut at a character
+/// boundary and marked with `…` (inside the limit) when longer.
+pub(super) fn bounded_log_record(message: &str) -> std::borrow::Cow<'_, str> {
+    const MARK: &str = "…";
+    if message.len() <= MAX_LOG_RECORD_BYTES {
+        return std::borrow::Cow::Borrowed(message);
+    }
+    let mut end = MAX_LOG_RECORD_BYTES - MARK.len();
+    while !message.is_char_boundary(end) {
+        end -= 1;
+    }
+    std::borrow::Cow::Owned(format!("{}{MARK}", &message[..end]))
+}
+
 /// The msg-io messages a controller keeps for its caller between
 /// `take_outbound` calls: a caller that never takes them halts the simulation
 /// instead of growing without bound.
@@ -449,7 +517,8 @@ fn message_bytes(msg: &crate::plugin::Message) -> usize {
             Payload::KeyValue(fields) => fields
                 .iter()
                 .map(|f| {
-                    f.name.len()
+                    core::mem::size_of_val(f)
+                        + f.name.len()
                         + match &f.value {
                             Value::Text(s) => s.len(),
                             Value::Bytes(b) => b.len(),
@@ -458,4 +527,71 @@ fn message_bytes(msg: &crate::plugin::Message) -> usize {
                 })
                 .sum(),
         }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A turn writes [`MAX_LOG_RECORDS`] records, notes the drop once, and
+    /// drops the rest quietly; the next turn writes again.
+    #[test]
+    fn a_turn_writes_at_most_the_log_limit() {
+        let mut budget = LogBudget::default();
+        let mut written = 0;
+        let mut noted = 0;
+        for _ in 0..MAX_LOG_RECORDS + 10 {
+            match budget.admit() {
+                LogAdmit::Write => written += 1,
+                LogAdmit::DropAndNote => noted += 1,
+                LogAdmit::Drop => {}
+            }
+        }
+        assert_eq!((written, noted), (MAX_LOG_RECORDS, 1));
+        budget.reset();
+        assert!(matches!(budget.admit(), LogAdmit::Write));
+    }
+
+    /// A long record is cut at a character boundary and marked, the mark
+    /// included in the limit; a short one passes as it is.
+    #[test]
+    fn a_long_log_record_is_cut_at_a_character_boundary() {
+        assert_eq!(bounded_log_record("short"), "short");
+        let exact = "a".repeat(MAX_LOG_RECORD_BYTES);
+        assert_eq!(bounded_log_record(&exact), exact.as_str());
+
+        let ascii = bounded_log_record(&"a".repeat(10_000)).into_owned();
+        assert!(ascii.ends_with('…'), "marked as cut");
+        assert_eq!(ascii.len(), MAX_LOG_RECORD_BYTES);
+
+        // Three-byte characters: 4093 is not a boundary, 4092 is.
+        let wide = bounded_log_record(&"あ".repeat(2000)).into_owned();
+        assert!(wide.ends_with('…'));
+        assert_eq!(wide.len(), 4092 + '…'.len_utf8());
+        assert!(wide.len() <= MAX_LOG_RECORD_BYTES);
+    }
+
+    /// Each key-value field counts for its own storage, so a message of many
+    /// empty fields is not free.
+    #[test]
+    fn empty_key_value_fields_still_count() {
+        use crate::plugin::{Message, NamedValue, NodeId, Payload, Value};
+        let fields = vec![
+            NamedValue {
+                name: String::new(),
+                value: Value::Boolean(true),
+            };
+            1000
+        ];
+        let msg = Message {
+            src: NodeId::Ground,
+            dst: NodeId::Ground,
+            kind: String::new(),
+            payload: Payload::KeyValue(fields),
+        };
+        assert_eq!(
+            message_bytes(&msg),
+            1000 * core::mem::size_of::<NamedValue>()
+        );
+    }
 }

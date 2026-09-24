@@ -158,7 +158,9 @@ section is subdivided by package.
   until the guest hands it back — may last 5 s of wall time, measured with
   epoch interruption; waiting in `wait-tick` for the next tick is not part of
   it. Each linear memory is capped at 256 MiB, each table at 65,536 elements,
-  and a store at 32 instances, 4 memories and 16 tables. A guest may send 4096
+  and a store at 32 instances, 4 memories, 16 tables and 1024 component
+  resources (WASI streams, pollables). A guest may write 64 `host-env.log`
+  records per tick, each cut to 4 KiB; the rest are dropped with one warning. A guest may send 4096
   msg-io messages or 4 MiB of them per tick, and a controller keeps twice as
   many for its caller; messages sent during instantiation or `metadata` are
   dropped (a guest built with the SDK runs `init` in both `metadata` and

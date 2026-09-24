@@ -17,7 +17,10 @@ use std::collections::VecDeque;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
-use super::limits::{GuestLimiter, GuestLimits, OutboxBudget, TurnClock, outbound_bytes};
+use super::limits::{
+    GuestLimiter, GuestLimits, LogAdmit, LogBudget, OutboxBudget, TurnClock, bounded_log_record,
+    outbound_bytes,
+};
 use super::stream_state::{
     DEFAULT_STREAM_CAPACITY, ReadOutcome, StreamDelivery, Streams, WriteOutcome,
 };
@@ -141,6 +144,8 @@ pub struct HostState {
     /// A fault from the turn before the first tick (the start of `run`),
     /// reported with the first tick's response.
     early_fault: Option<String>,
+    /// `host-env.log` records of the current turn, against the per-turn limit.
+    log_budget: LogBudget,
 
     /// Current mode name reported by the guest's `current_mode` export.
     /// Stored in an `Arc<Mutex>` so the outer `WasmController` can read
@@ -163,7 +168,11 @@ impl HostState {
             label: label.into(),
             field: crate::magnetic::field_for_body(body),
             wasi: wasmtime_wasi::WasiCtxBuilder::new().build(),
-            table: wasmtime_wasi::ResourceTable::new(),
+            table: {
+                let mut table = wasmtime_wasi::ResourceTable::new();
+                table.set_max_capacity(limits.resources);
+                table
+            },
             input_rx,
             output_tx,
             pending_cmd: None,
@@ -178,6 +187,7 @@ impl HostState {
             limiter: GuestLimiter::new(limits),
             outbox_budget: OutboxBudget::default(),
             early_fault: None,
+            log_budget: LogBudget::default(),
             current_mode,
         }
     }
@@ -190,6 +200,7 @@ impl HostState {
     /// the start of `run`, so what `init` sends there would arrive twice.
     pub(super) fn take_turn_fault(&mut self) -> Option<String> {
         self.outbox.clear();
+        self.log_budget.reset();
         let outbox = self.outbox_budget.take_fault();
         self.protocol_fault.take().or(outbox)
     }
@@ -217,6 +228,22 @@ impl wasmtime::component::HasData for HostState {
 
 impl host_env::Host for HostState {
     fn log(&mut self, level: host_env::LogLevel, message: String) {
+        // Bounded per turn and per record, so a guest cannot flood the host's
+        // log (or the disk it goes to) inside a turn the epoch can reach.
+        match self.log_budget.admit() {
+            LogAdmit::Write => {}
+            LogAdmit::DropAndNote => {
+                log::warn!(
+                    "[wasm:{}] more than {} log records in one tick; the rest of this \
+                     tick's are dropped",
+                    self.label,
+                    super::limits::MAX_LOG_RECORDS
+                );
+                return;
+            }
+            LogAdmit::Drop => return,
+        }
+        let message = bounded_log_record(&message);
         match level {
             host_env::LogLevel::Trace => log::trace!("[wasm:{}] {}", self.label, message),
             host_env::LogLevel::Debug => log::debug!("[wasm:{}] {}", self.label, message),
@@ -267,8 +294,9 @@ impl tick_io::Host for HostState {
             return None;
         }
         // The guest hands control back: its turn ends, and so does the count
-        // of the messages it sent in it.
+        // of the messages and log records it sent in it.
         let turn_fault = self.outbox_budget.take_fault();
+        self.log_budget.reset();
         if !self.is_first_wait {
             let command = self.pending_cmd.take();
             let outgoing = std::mem::take(&mut self.outbox);
@@ -641,6 +669,33 @@ mod tests {
             payload: wit::Payload::Json("{}".to_string()),
         });
         assert_eq!(state.outbox.len(), 1);
+    }
+
+    /// A message of many empty key-value fields counts for the fields'
+    /// storage: enough of them in one turn pass the byte limit and fault the
+    /// tick, where counting only names and text let them through.
+    #[test]
+    fn empty_key_value_fields_count_against_the_turn() {
+        let mut state = make_state();
+        let field = wit::NamedValue {
+            name: String::new(),
+            value: wit::Value::Boolean(true),
+        };
+        let per_message = 10_000;
+        let messages = super::super::limits::MAX_MESSAGE_BYTES
+            / (per_message * std::mem::size_of_val(&field))
+            + 1;
+        for _ in 0..messages {
+            state.send_message(wit::Outbound {
+                dst: wit::NodeId::Ground,
+                kind: String::new(),
+                payload: wit::Payload::KeyValue(vec![field.clone(); per_message]),
+            });
+        }
+        assert!(
+            state.outbox.len() < messages,
+            "the last message is past the byte limit and dropped"
+        );
     }
 
     /// Messages sent before `run` (in `metadata`) are dropped with that turn,

@@ -125,7 +125,9 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   から (instantiate、`metadata`、`run` の開始、`wait-tick` が tick を返したとき) guest が返す
   までを turn と呼び、1 turn は wall clock で 5 s まで (epoch interruption で測る)。
   `wait-tick` で次の tick を待つ時間は turn に数えない。linear memory 1 つは 256 MiB まで、
-  table 1 つは 65,536 要素まで、store あたり instance 32・memory 4・table 16 まで。guest が
+  table 1 つは 65,536 要素まで、store あたり instance 32・memory 4・table 16・component resource
+  (WASI の stream や pollable) 1024 まで。`host-env.log` は 1 tick に 64 record まで、1 record は
+  4 KiB までに切り、超えた分は 1 度の warning とともに捨てる。guest が
   1 tick に送れる msg-io は 4096 件・4 MiB までで、controller が caller のために溜めるのは
   その 2 倍まで。instantiate と `metadata` の中で送った message は捨てる (SDK の guest は
   `metadata` と `run` の両方で `init` を呼ぶので、以前は 2 回届いていた)。WASI の clock の待ちはすぐ ready になるので、guest は epoch の届かない host の

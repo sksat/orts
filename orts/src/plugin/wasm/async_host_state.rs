@@ -17,7 +17,9 @@ use super::async_bindings::orts::plugin::msg_io;
 use super::async_bindings::orts::plugin::stream_io;
 use super::async_bindings::orts::plugin::tick_io;
 use super::async_bindings::orts::plugin::types as wit;
-use super::limits::{GuestLimiter, OutboxBudget, TurnClock, outbound_bytes};
+use super::limits::{
+    GuestLimiter, LogAdmit, LogBudget, OutboxBudget, TurnClock, bounded_log_record, outbound_bytes,
+};
 use super::stream_state::{ReadOutcome, StreamDelivery, Streams, WriteOutcome};
 
 /// One tick's worth of host → guest input for the async backend.
@@ -85,6 +87,8 @@ pub(super) struct AsyncHostState {
     /// A fault from the turn before the first tick, reported with the first
     /// tick's response.
     pub(super) early_fault: Option<String>,
+    /// `host-env.log` records of the current turn, against the per-turn limit.
+    pub(super) log_budget: LogBudget,
 }
 
 impl AsyncHostState {
@@ -92,6 +96,7 @@ impl AsyncHostState {
     /// messages sent in it; see the sync backend's `HostState::take_turn_fault`.
     pub(super) fn take_turn_fault(&mut self) -> Option<String> {
         self.outbox.clear();
+        self.log_budget.reset();
         let outbox = self.outbox_budget.take_fault();
         self.protocol_fault.take().or(outbox)
     }
@@ -116,6 +121,21 @@ impl wit::Host for AsyncHostState {}
 
 impl host_env::Host for AsyncHostState {
     async fn log(&mut self, level: host_env::LogLevel, message: String) {
+        // Bounded per turn and per record; see the sync backend.
+        match self.log_budget.admit() {
+            LogAdmit::Write => {}
+            LogAdmit::DropAndNote => {
+                log::warn!(
+                    "[wasm:{}] more than {} log records in one tick; the rest of this \
+                     tick's are dropped",
+                    self.label,
+                    super::limits::MAX_LOG_RECORDS
+                );
+                return;
+            }
+            LogAdmit::Drop => return,
+        }
+        let message = bounded_log_record(&message);
         match level {
             host_env::LogLevel::Trace => log::trace!("[wasm:{}] {}", self.label, message),
             host_env::LogLevel::Debug => log::debug!("[wasm:{}] {}", self.label, message),
@@ -165,8 +185,9 @@ impl tick_io::Host for AsyncHostState {
             return None;
         }
         // The guest hands control back: its turn ends, and so does the count
-        // of the messages it sent in it.
+        // of the messages and log records it sent in it.
         let turn_fault = self.outbox_budget.take_fault();
+        self.log_budget.reset();
         if !self.is_first_wait {
             let command = self.pending_cmd.take();
             let outgoing = std::mem::take(&mut self.outbox);

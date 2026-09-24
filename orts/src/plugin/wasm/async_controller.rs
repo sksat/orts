@@ -236,7 +236,11 @@ impl AsyncWasmController {
                     label: label_for_task,
                     field: crate::magnetic::field_for_body(body),
                     wasi: wasmtime_wasi::WasiCtxBuilder::new().build(),
-                    table: wasmtime_wasi::ResourceTable::new(),
+                    table: {
+                        let mut table = wasmtime_wasi::ResourceTable::new();
+                        table.set_max_capacity(limits.resources);
+                        table
+                    },
                     input_rx,
                     output_tx: output_tx.clone(),
                     pending_cmd: None,
@@ -251,6 +255,7 @@ impl AsyncWasmController {
                     limiter: GuestLimiter::new(limits),
                     outbox_budget: OutboxBudget::default(),
                     early_fault: None,
+                    log_budget: super::limits::LogBudget::default(),
                 };
                 let mut store = Store::new(engine.inner(), host_state);
                 // Limits go on before any guest code runs; see the sync backend.
