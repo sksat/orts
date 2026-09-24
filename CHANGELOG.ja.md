@@ -813,6 +813,12 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `dt` と同じなら、モデル評価の作業が 4 分の 1 ほど増える。([#466](https://github.com/sksat/orts/pull/466))
 
 #### Fixed
+- TOML の config で、`epoch` を日時 (引用符なしの `epoch = 2024-03-20T12:00:00Z`) で書ける。TOML は
+  これを日時の型として読み、serde には map として渡すので、config は `invalid type: map, expected a
+  string` で拒否されていた。引用符付きと、YAML の同じ行は通っていた。いまは日時をその文字列として読み、
+  引用符付きの epoch と同じ検査をするので、`+09:00` のような offset は同じ `invalid epoch` のエラーで
+  拒否される。文字列でも日時でもない `epoch` は、JSON でもエラーに `epoch` の名前が出る
+  ([#569](https://github.com/sksat/orts/issues/569))
 - `run` は出力時刻ごとに 1 行だけ書く。出力間隔が小数だと、CSV の最後の行が 2 回出ていた:
   `--dt 0.2 --duration 3600` で 18002 行になり、最後の 2 行がどちらも `3600.000` だった。出力
   時刻は間隔の足し算で作っていて、0.2 を 18000 回足すと終端の 3600 s より 1.08e-9 小さい。run が

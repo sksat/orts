@@ -50,6 +50,23 @@ fn de_atmosphere<'de, D: Deserializer<'de>>(de: D) -> Result<String, D::Error> {
     Ok(s)
 }
 
+/// Read `epoch` as text. JSON and YAML give it as a string; TOML may give it as
+/// a string or as a datetime (`epoch = 2024-03-20T12:00:00Z` without quotes),
+/// which serde sees as a map and `Option<String>` refused as "invalid type:
+/// map". A datetime becomes its text, so both go through the check a quoted
+/// epoch does in [`SimConfig::validate`].
+fn de_epoch<'de, D: Deserializer<'de>>(de: D) -> Result<Option<String>, D::Error> {
+    match Option::<toml::Value>::deserialize(de)? {
+        None => Ok(None),
+        Some(toml::Value::String(s)) => Ok(Some(s)),
+        Some(toml::Value::Datetime(dt)) => Ok(Some(dt.to_string())),
+        Some(other) => Err(serde::de::Error::custom(format!(
+            "epoch must be an ISO 8601 string (e.g. 2026-01-01T00:00:00Z), not {}",
+            other.type_str()
+        ))),
+    }
+}
+
 /// JSON/TOML/YAML simulation configuration.
 ///
 /// Also the payload of the `start_simulation` WebSocket message, so the
@@ -87,6 +104,7 @@ pub struct SimConfig {
     pub output_interval: Option<f64>,
     #[ts(optional)]
     pub stream_interval: Option<f64>,
+    #[serde(default, deserialize_with = "de_epoch")]
     #[ts(optional)]
     pub epoch: Option<String>,
     #[serde(default)]
@@ -5627,5 +5645,101 @@ degree = 70
     fn unknown_frame_is_rejected_at_deserialize_time() {
         let err = toml::from_str::<SimConfig>("frame = \"eme2000\"\n").unwrap_err();
         assert!(err.to_string().contains("frame"), "{err}");
+    }
+
+    /// Load `text` as a `sim.{ext}` file, through the funnel `orts run` uses.
+    fn load_as(ext: &str, text: &str) -> Result<LoadedConfig, String> {
+        let dir = std::env::temp_dir().join(format!(
+            "orts-epoch-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join(format!("sim.{ext}"));
+        std::fs::write(&path, text).expect("write config");
+        let loaded = SimConfig::load_with_warnings(&path);
+        std::fs::remove_dir_all(&dir).ok();
+        loaded
+    }
+
+    const ONE_TOML_SATELLITE: &str =
+        "\n[[satellites]]\n[satellites.orbit]\ntype = \"circular\"\naltitude = 400\n";
+
+    /// TOML has a datetime type, and `epoch = 2024-03-20T12:00:00Z` without
+    /// quotes is one. serde sees it as a map, so the config was refused with
+    /// "invalid type: map, expected a string" (#569). It reads as the text of
+    /// the datetime, and goes through the check a quoted epoch does.
+    #[test]
+    fn a_toml_datetime_epoch_reads_as_its_text() {
+        for (written, text) in [
+            ("2024-03-20T12:00:00Z", "2024-03-20T12:00:00Z"),
+            // TOML also separates the date and time with a space; the text
+            // of the datetime uses `T`.
+            ("2024-03-20 12:00:00Z", "2024-03-20T12:00:00Z"),
+            // Without an offset, as a quoted epoch without one.
+            ("2024-03-20T12:00:00", "2024-03-20T12:00:00"),
+            ("2024-03-20T12:00:00.5Z", "2024-03-20T12:00:00.5Z"),
+        ] {
+            let native = load_as("toml", &format!("epoch = {written}\n{ONE_TOML_SATELLITE}"))
+                .unwrap_or_else(|e| panic!("{written}: {e}"));
+            assert_eq!(native.config.epoch.as_deref(), Some(text), "{written}");
+            assert!(native.unread_keys.is_empty(), "{:?}", native.unread_keys);
+            let quoted = load_as("toml", &format!("epoch = \"{text}\"\n{ONE_TOML_SATELLITE}"))
+                .unwrap_or_else(|e| panic!("\"{text}\": {e}"));
+            assert_eq!(native.config.epoch, quoted.config.epoch, "{written}");
+        }
+        // A datetime the quoted form refuses is refused with the same error.
+        for written in ["2024-03-20T21:00:00+09:00", "2024-03-20"] {
+            let native = load_as("toml", &format!("epoch = {written}\n{ONE_TOML_SATELLITE}"))
+                .expect_err(written);
+            let quoted = load_as(
+                "toml",
+                &format!("epoch = \"{written}\"\n{ONE_TOML_SATELLITE}"),
+            )
+            .expect_err(written);
+            assert_eq!(native, quoted);
+            assert!(
+                native.contains(&format!("invalid epoch '{written}'")),
+                "{native}"
+            );
+        }
+    }
+
+    /// JSON and YAML give the epoch as a string, as before: a missing or null
+    /// epoch is none, and a value of another type is refused naming `epoch`.
+    #[test]
+    fn an_epoch_of_another_format_or_type() {
+        let json_satellites = r#""satellites": [{"orbit": {"type": "circular", "altitude": 400}}]"#;
+        let yaml_satellites = "satellites:\n  - orbit: {type: circular, altitude: 400}\n";
+        for (ext, text, epoch) in [
+            (
+                "json",
+                format!(r#"{{"epoch": "2024-03-20T12:00:00Z", {json_satellites}}}"#),
+                Some("2024-03-20T12:00:00Z"),
+            ),
+            (
+                "json",
+                format!(r#"{{"epoch": null, {json_satellites}}}"#),
+                None,
+            ),
+            ("json", format!("{{{json_satellites}}}"), None),
+            (
+                "yaml",
+                format!("epoch: 2024-03-20T12:00:00Z\n{yaml_satellites}"),
+                Some("2024-03-20T12:00:00Z"),
+            ),
+            ("toml", ONE_TOML_SATELLITE.to_string(), None),
+        ] {
+            let loaded = load_as(ext, &text).unwrap_or_else(|e| panic!("{ext} {text}: {e}"));
+            assert_eq!(loaded.config.epoch.as_deref(), epoch, "{ext} {text}");
+        }
+        for (ext, text) in [
+            ("toml", format!("epoch = 5\n{ONE_TOML_SATELLITE}")),
+            ("json", format!(r#"{{"epoch": 5, {json_satellites}}}"#)),
+            ("yaml", format!("epoch: [2024]\n{yaml_satellites}")),
+        ] {
+            let err = load_as(ext, &text).expect_err(&text);
+            assert!(err.contains("epoch"), "{ext}: {err}");
+        }
     }
 }
