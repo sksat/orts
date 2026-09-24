@@ -1037,6 +1037,16 @@ section is subdivided by package.
   under RK4 when `output_interval` equals `dt`. ([#466](https://github.com/sksat/orts/pull/466))
 
 #### Fixed
+- `serve` answers a WebSocket `start_simulation` once the simulation is
+  built, so a start that fails while it is built reaches the client that sent
+  it as an `error`. The server used to answer as soon as the config passed its
+  checks: a `space_weather = "auto"` fetch that then failed was reported only
+  on the server's stderr, and the client got neither an `error` nor an `info`.
+  A refusal from the engine build (for example `streams` on a satellite
+  without a controller) went to every connected client, and now goes to the
+  one that sent the request. A start with a NORAD satellite fetches its TLE
+  once, where it fetched it twice.
+  ([#555](https://github.com/sksat/orts/issues/555))
 - `convert --format` offers only `csv`, the one format it writes. It offered
   `rrd` too and then refused it with `cannot convert to .rrd format (input is
   already .rrd)`, whatever the input was; clap now refuses `--format rrd` with
@@ -1094,9 +1104,8 @@ section is subdivided by package.
   satellite the server cannot fetch or whose `space_weather = "auto"` fetch
   fails, and an `add_satellite` with a malformed TLE, which also lost the
   running simulation. The server now keeps serving, and the client gets an
-  error for the NORAD and TLE requests. A failed `"auto"` fetch is still
-  reported only on the server's stderr, because the server fetches it after
-  acknowledging the request ([#555](https://github.com/sksat/orts/issues/555)).
+  error for each of these requests
+  ([#555](https://github.com/sksat/orts/issues/555)).
   ([#554](https://github.com/sksat/orts/issues/554))
 - `--sat` refuses a spec with a part it would not read, where it used to run
   a different orbit with exit 0: `altitude800` (no `=`) ran the default 400

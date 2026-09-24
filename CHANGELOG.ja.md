@@ -813,6 +813,14 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `dt` と同じなら、モデル評価の作業が 4 分の 1 ほど増える。([#466](https://github.com/sksat/orts/pull/466))
 
 #### Fixed
+- `serve` は WebSocket の `start_simulation` に、simulation を組み立て終えてから応答する。
+  組み立ての途中で失敗した start は、送った client に `error` として返る。以前は config が
+  検査を通った時点で応答していたので、その後 `space_weather = "auto"` の取得に失敗すると、
+  失敗は server の stderr にだけ出て、client には `error` も `info` も届かなかった。engine
+  の組み立てでの拒否 (たとえば controller の無い衛星の `streams`) は接続中のすべての client
+  に送っていたが、いまは要求を送った client にだけ送る。NORAD の衛星を含む start は、TLE を
+  2 回取得していたのを 1 回だけ取得する。
+  ([#555](https://github.com/sksat/orts/issues/555))
 - `convert --format` は、実際に書ける `csv` だけを選択肢に出す。以前は `rrd` も選択肢に出し、入力に
   よらず `cannot convert to .rrd format (input is already .rrd)` で拒否していた。いまは clap が
   `--format rrd` を `[possible values: csv]` と exit 2 で拒否する。help にも、入力が記録した `.rrd`
@@ -857,9 +865,8 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   WebSocket client も同じ panic を起こせ、その後 server は再起動するまですべての接続を閉じて
   いた: server が取得できない NORAD の衛星や、取得に失敗する `space_weather = "auto"` を
   指定した `start_simulation` と、壊れた TLE の `add_satellite` で、後者は走っていた
-  simulation も失っていた。いまは server が動き続け、NORAD と TLE の要求には client に
-  エラーが返る。`"auto"` の取得は要求に応答した後に行うので、その失敗はまだ server の
-  stderr にしか出ない
+  simulation も失っていた。いまは server が動き続け、これらの要求には client にエラーが
+  返る
   ([#555](https://github.com/sksat/orts/issues/555))
   ([#554](https://github.com/sksat/orts/issues/554))
 - `--sat` は、読まない部分を含む spec を拒否する。以前は別の軌道で exit 0 のまま走っていた:
