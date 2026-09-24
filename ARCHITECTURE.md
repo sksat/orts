@@ -199,7 +199,16 @@ WASI and the Component Model.
   throttle).
 - **Runtime:** `wasmtime` with the Pulley interpreter for deterministic,
   host-independent execution.
-- **Distribution:** `.wasm` (portable).
+- **Distribution:** `.wasm` (portable). A config names a controller's file by
+  `path`; a WebSocket client of `orts serve --allow-controller-upload` sends
+  the component's bytes instead and names them by `sha256`
+  (`cli/src/commands/serve/controller_upload.rs`). `WasmPluginCache` compiles
+  one component per path or per digest.
+- **Limits:** every guest runs under `GuestLimits`
+  (`orts/src/plugin/wasm/limits.rs`): a wall-clock deadline per turn through
+  epoch interruption, caps on memory, tables, instances, component resources,
+  msg-io messages and log records, and WASI clock waits that return at once.
+  See [DESIGN.md](DESIGN.md) for the reasons.
 
 WASM guests are driven through the `PluginController` trait; built-in
 native controllers implement the separate `DiscreteController` trait.

@@ -1,5 +1,6 @@
 pub mod compute;
 mod connection;
+mod controller_upload;
 mod engine;
 mod history;
 mod manager;
@@ -38,9 +39,19 @@ struct AppState {
     /// The (sat, stream) wired to stdio via `--stream-stdio`, if any. Its
     /// WS endpoint is reserved (answers 409) — one transport per stream.
     reserved_stdio: Option<stream_bridge::StreamKey>,
+    /// Controller component bytes all `/ws` connections hold together.
+    upload_budget: Arc<controller_upload::UploadBudget>,
+    /// `--allow-controller-upload`: whether a client may send controller
+    /// components and name them by `sha256`.
+    allow_controller_upload: bool,
 }
 
-pub fn run_server(sim: &SimArgs, port: u16, stream_stdio: Option<&str>) -> Result<(), CmdError> {
+pub fn run_server(
+    sim: &SimArgs,
+    port: u16,
+    stream_stdio: Option<&str>,
+    allow_controller_upload: bool,
+) -> Result<(), CmdError> {
     // Parse + reject malformed flags before starting the runtime so a typo
     // fails fast instead of surfacing as a dead endpoint later.
     let stdio_key = match stream_stdio {
@@ -56,7 +67,13 @@ pub fn run_server(sim: &SimArgs, port: u16, stream_stdio: Option<&str>) -> Resul
     let plugin_overrides = manager::PluginBackendOverrides::from_sim_args(sim);
     let rt = tokio::runtime::Runtime::new()
         .map_err(|e| CmdError::failure(format!("creating the tokio runtime: {e}")))?;
-    rt.block_on(async_server(sim, port, stdio_key, plugin_overrides))
+    rt.block_on(async_server(
+        sim,
+        port,
+        stdio_key,
+        plugin_overrides,
+        allow_controller_upload,
+    ))
 }
 
 /// Parse a `--stream-stdio` value of the form `sat/stream` (both halves
@@ -89,15 +106,31 @@ fn has_explicit_sim_args(sim: &SimArgs) -> bool {
 /// room for a fleet larger than any this simulator runs while keeping what one
 /// unauthenticated client can make the server hold to something bounded.
 ///
-/// Outbound messages are unaffected: this bounds what is read.
+/// Outbound messages are unaffected: this bounds what is read. A binary
+/// message, a controller component, has its own limit,
+/// [`controller_upload::MAX_CONTROLLER_COMPONENT_BYTES`].
 const MAX_CONTROL_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
+
+/// What the socket reads before handing a message over: the larger of the two
+/// limits, each of which the connection then applies to its own kind. A
+/// message past this closes the connection without a reply.
+const MAX_WS_MESSAGE_BYTES: usize =
+    if MAX_CONTROL_MESSAGE_BYTES > controller_upload::MAX_CONTROLLER_COMPONENT_BYTES {
+        MAX_CONTROL_MESSAGE_BYTES
+    } else {
+        controller_upload::MAX_CONTROLLER_COMPONENT_BYTES
+    };
 
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
     let rx = state.tx.subscribe();
     let cmd_tx = state.cmd_tx.clone();
-    ws.max_message_size(MAX_CONTROL_MESSAGE_BYTES)
+    let uploads = controller_upload::UploadedComponents::new(
+        Arc::clone(&state.upload_budget),
+        state.allow_controller_upload,
+    );
+    ws.max_message_size(MAX_WS_MESSAGE_BYTES)
         .on_upgrade(move |socket| async move {
-            connection::handle_connection(socket, rx, cmd_tx).await;
+            connection::handle_connection(socket, rx, cmd_tx, uploads).await;
             eprintln!("Client disconnected");
         })
 }
@@ -137,6 +170,7 @@ async fn async_server(
     port: u16,
     stdio_key: Option<stream_bridge::StreamKey>,
     plugin_overrides: manager::PluginBackendOverrides,
+    allow_controller_upload: bool,
 ) -> Result<(), CmdError> {
     let addr = format!("0.0.0.0:{port}");
     let listener = TcpListener::bind(&addr)
@@ -263,6 +297,10 @@ async fn async_server(
         textures: texture_cache,
         bridge,
         reserved_stdio: stdio_key,
+        upload_budget: controller_upload::UploadBudget::new(
+            controller_upload::MAX_UPLOADED_BYTES_PER_SERVER,
+        ),
+        allow_controller_upload,
     };
 
     let app = Router::new()

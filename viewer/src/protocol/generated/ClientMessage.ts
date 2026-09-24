@@ -12,7 +12,10 @@ import type { SimConfig } from "./SimConfig";
 import type { ThrusterConfig } from "./ThrusterConfig";
 
 /**
- * Client-to-server WebSocket message.
+ * Client-to-server WebSocket message, sent as a text message.
+ *
+ * A binary message on `/ws` is not one of these: it is a controller
+ * component, answered with `controller_uploaded` or `error`.
  *
  * The `#[derive(TS)]` here (and on every type reachable from this enum)
  * generates the TypeScript wire types consumed by the viewer; see

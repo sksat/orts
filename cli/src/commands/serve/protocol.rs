@@ -8,7 +8,10 @@ use crate::config::{SatelliteConfig, SimConfig};
 use crate::satellite::SatelliteInfo;
 use crate::sim::core::HistoryState;
 
-/// Client-to-server WebSocket message.
+/// Client-to-server WebSocket message, sent as a text message.
+///
+/// A binary message on `/ws` is not one of these: it is a controller
+/// component, answered with `controller_uploaded` or `error`.
 ///
 /// The `#[derive(TS)]` here (and on every type reachable from this enum)
 /// generates the TypeScript wire types consumed by the viewer; see
@@ -166,6 +169,17 @@ pub enum WsMessage {
     /// Notification that high-resolution textures are now available for a body.
     #[serde(rename = "textures_ready")]
     TexturesReady { body: String },
+    /// The connection kept the controller component its client sent as a
+    /// binary message. A controller config on the same connection names it by
+    /// `sha256`. Kept means stored: whether it compiles and runs is found out
+    /// when a controller is built from it.
+    #[serde(rename = "controller_uploaded")]
+    ControllerUploaded {
+        /// SHA-256 of the bytes, 64 lowercase hexadecimal digits.
+        sha256: String,
+        /// Length of the component in bytes.
+        size: usize,
+    },
     /// Error response.
     #[serde(rename = "error")]
     Error { message: String },

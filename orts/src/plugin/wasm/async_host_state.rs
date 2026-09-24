@@ -17,6 +17,9 @@ use super::async_bindings::orts::plugin::msg_io;
 use super::async_bindings::orts::plugin::stream_io;
 use super::async_bindings::orts::plugin::tick_io;
 use super::async_bindings::orts::plugin::types as wit;
+use super::limits::{
+    GuestLimiter, LogAdmit, LogBudget, OutboxBudget, TurnClock, bounded_log_record, outbound_bytes,
+};
 use super::stream_state::{ReadOutcome, StreamDelivery, Streams, WriteOutcome};
 
 /// One tick's worth of host → guest input for the async backend.
@@ -42,8 +45,9 @@ pub(super) enum GuestResponse {
         outgoing: Vec<wit::Outbound>,
         /// Bytes the guest wrote to each named stream this tick.
         stream_outbound: Vec<(String, Vec<u8>)>,
-        /// Host-authoritative stream fault → halt the simulation.
-        stream_fault: Option<String>,
+        /// Host-authoritative fault (stream-io overrun / wiring, msg-io
+        /// flood) → halt the simulation.
+        host_fault: Option<String>,
     },
     /// The guest's `run()` function returned or errored. No more
     /// responses will be produced.
@@ -67,6 +71,35 @@ pub(super) struct AsyncHostState {
     /// stream-io byte streams (declared at construction).
     pub(super) streams: Streams,
     pub(super) is_first_wait: bool,
+    /// Set once the guest's `run` has started; see the sync backend's
+    /// `HostState::in_run`.
+    pub(super) in_run: bool,
+    /// Set once `wait_tick` saw the outer controller gone.
+    pub(super) shut_down: bool,
+    /// A protocol violation the guest committed outside a tick.
+    pub(super) protocol_fault: Option<String>,
+    /// Age of the turn the guest is in, read by the epoch-deadline callback.
+    pub(super) turn: TurnClock,
+    /// Memory / table / instance limits, installed as the store's limiter.
+    pub(super) limiter: GuestLimiter,
+    /// msg-io sends of the current turn, against the per-turn limits.
+    pub(super) outbox_budget: OutboxBudget,
+    /// A fault from the turn before the first tick, reported with the first
+    /// tick's response.
+    pub(super) early_fault: Option<String>,
+    /// `host-env.log` records of the current turn, against the per-turn limit.
+    pub(super) log_budget: LogBudget,
+}
+
+impl AsyncHostState {
+    /// End a turn outside `run` (instantiation, `metadata`), dropping the
+    /// messages sent in it; see the sync backend's `HostState::take_turn_fault`.
+    pub(super) fn take_turn_fault(&mut self) -> Option<String> {
+        self.outbox.clear();
+        self.log_budget.reset();
+        let outbox = self.outbox_budget.take_fault();
+        self.protocol_fault.take().or(outbox)
+    }
 }
 
 impl wasmtime_wasi::WasiView for AsyncHostState {
@@ -88,6 +121,21 @@ impl wit::Host for AsyncHostState {}
 
 impl host_env::Host for AsyncHostState {
     async fn log(&mut self, level: host_env::LogLevel, message: String) {
+        // Bounded per turn and per record; see the sync backend.
+        match self.log_budget.admit() {
+            LogAdmit::Write => {}
+            LogAdmit::DropAndNote => {
+                log::warn!(
+                    "[wasm:{}] more than {} log records in one tick; the rest of this \
+                     tick's are dropped",
+                    self.label,
+                    super::limits::MAX_LOG_RECORDS
+                );
+                return;
+            }
+            LogAdmit::Drop => return,
+        }
+        let message = bounded_log_record(&message);
         match level {
             host_env::LogLevel::Trace => log::trace!("[wasm:{}] {}", self.label, message),
             host_env::LogLevel::Debug => log::debug!("[wasm:{}] {}", self.label, message),
@@ -126,22 +174,42 @@ impl tick_io::Host for AsyncHostState {
     /// Returns `None` if the outer controller has been dropped, so
     /// the guest can exit its main loop cleanly.
     async fn wait_tick(&mut self) -> Option<wit::TickInput> {
+        if !self.in_run {
+            // No tick comes before the constructor returns; see the sync
+            // backend.
+            self.protocol_fault
+                .get_or_insert_with(|| "the guest called wait-tick before run".to_string());
+            return None;
+        }
+        if self.shut_down {
+            return None;
+        }
+        // The guest hands control back: its turn ends, and so does the count
+        // of the messages and log records it sent in it.
+        let turn_fault = self.outbox_budget.take_fault();
+        self.log_budget.reset();
         if !self.is_first_wait {
             let command = self.pending_cmd.take();
             let outgoing = std::mem::take(&mut self.outbox);
             let stream_outbound = self.streams.drain_outbound();
-            let stream_fault = self.streams.fault().map(str::to_string);
+            let host_fault = self
+                .streams
+                .fault()
+                .map(str::to_string)
+                .or(self.early_fault.take())
+                .or(turn_fault);
             let _ = self
                 .output_tx
                 .send(GuestResponse::Tick {
                     command,
                     outgoing,
                     stream_outbound,
-                    stream_fault,
+                    host_fault,
                 })
                 .await;
         } else {
             self.is_first_wait = false;
+            self.early_fault = turn_fault;
         }
         // `recv` yields `None` when the outer side drops the sender;
         // an inner `None` is the explicit shutdown signal. Either way
@@ -166,9 +234,14 @@ impl tick_io::Host for AsyncHostState {
                         self.streams.close(&d.name);
                     }
                 }
+                // Control goes back to the guest: its turn starts now.
+                self.turn.start();
                 Some(packet.input)
             }
-            Some(None) | None => None,
+            Some(None) | None => {
+                self.shut_down = true;
+                None
+            }
         }
     }
 
@@ -186,7 +259,10 @@ impl msg_io::Host for AsyncHostState {
     }
 
     async fn send_message(&mut self, msg: wit::Outbound) {
-        self.outbox.push(msg);
+        // Past the per-turn limits the message is dropped and the tick fails.
+        if self.outbox_budget.admit(outbound_bytes!(wit, &msg)) {
+            self.outbox.push(msg);
+        }
     }
 }
 

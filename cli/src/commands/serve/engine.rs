@@ -505,13 +505,15 @@ impl ServeEngine {
                 #[cfg(not(feature = "plugin-wasm"))]
                 let mut ctx = crate::sim::controlled::ControlledBuildContext { params: &params };
                 for spec in &params.satellites {
-                    let sat = crate::sim::controlled::build_controlled_satellite(
+                    let mut sat = crate::sim::controlled::build_controlled_satellite(
                         spec,
                         params.epoch,
                         0.0,
                         &mut ctx,
                     )
                     .map_err(|e| format!("controlled satellite '{}': {e}", spec.id))?;
+                    // `serve` routes no msg-io; see `ControlledSatellite`.
+                    sat.discards_messages = true;
                     controlled_sats.push(sat);
                     metas.push(SatMeta {
                         spec: spec.clone(),
@@ -1267,7 +1269,7 @@ impl ServeEngine {
         // Evaluate the initial state at the instant the satellite enters the
         // running sim (epoch + current_t), so a TLE/OMM is propagated to "now".
         let initial_epoch = self.params.epoch.map(|e| e.add_si_seconds(self.current_t));
-        let new_sat = {
+        let mut new_sat = {
             let mut ctx = crate::sim::controlled::ControlledBuildContext {
                 params: &self.params,
                 wasm_cache,
@@ -1281,6 +1283,8 @@ impl ServeEngine {
             )
             .map_err(|e| format!("build controlled satellite: {e}"))?
         };
+        // `serve` routes no msg-io; see `ControlledSatellite`.
+        new_sat.discards_messages = true;
 
         let initial = new_sat.state.plant.orbit.clone();
         let attitude_q = new_sat.state.plant.attitude.quaternion;

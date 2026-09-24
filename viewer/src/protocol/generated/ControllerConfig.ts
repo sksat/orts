@@ -6,9 +6,16 @@ import type { JsonValue } from "./serde_json/JsonValue";
  */
 export type ControllerConfig = { "type": "wasm", 
 /**
- * `.wasm` ファイルのパス。
+ * `.wasm` ファイルのパス。command line で渡す config file だけが使える。
+ * `orts serve` は WebSocket の client が送ったパスを開かない。
  */
-path: string, 
+path?: string, 
+/**
+ * WebSocket の client が `/ws` に binary message で送った component の
+ * SHA-256 (小文字の 16 進 64 桁)。同じ接続で送ったものだけを指せる。
+ * server を `--allow-controller-upload` で起動したときだけ受け付ける。
+ */
+sha256?: string, 
 /**
  * ゲストの `init` に渡す設定 (JSON value)。
  */

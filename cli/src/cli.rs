@@ -114,6 +114,13 @@ pub enum Commands {
         /// the server shuts down (the kble harness owns this process).
         #[arg(long, value_name = "SAT/STREAM")]
         stream_stdio: Option<String>,
+
+        /// Allow WebSocket clients to upload WASM controllers and run them.
+        /// Without it, a binary message on /ws and a controller named by
+        /// `sha256` are refused. A `--config` controller named by `path` needs
+        /// no flag.
+        #[arg(long)]
+        allow_controller_upload: bool,
     },
     /// Replay a recorded simulation file through the WebSocket viewer
     Replay {

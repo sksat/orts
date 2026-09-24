@@ -36,18 +36,31 @@
 //!   - receive command from channel
 //! Drop WasmController:
 //!   - drop input_tx → guest's wait_tick fails → worker thread exits
+//!   - wait for the worker for at most one turn deadline, then leave it
 //! ```
+//!
+//! ## Limits
+//!
+//! The store runs under [`GuestLimits`]: a turn deadline enforced through the
+//! engine's epoch, and memory / table / instance caps through a
+//! `ResourceLimiter`. The outer thread never waits on the worker for longer
+//! than the deadline plus a grace, so a guest blocked in a host call where
+//! the epoch cannot reach it fails the call instead of holding its caller.
 
 use std::collections::HashMap;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Instant;
 
 use wasmtime::Store;
 use wasmtime::component::Component;
 
 use super::convert::sync as convert;
 use super::engine::WasmEngine;
+use super::limits::{
+    GuestLimits, OutboundBacklog, clock_waits_return_at_once, guest_error, stuck_in_host_message,
+};
 use super::stream_state::{DEFAULT_STREAM_CAPACITY, StreamDelivery};
 use super::sync_bindings::orts::plugin::types as wit;
 use super::sync_bindings::{Plugin, PluginPre};
@@ -82,8 +95,15 @@ pub struct WasmController {
     /// next tick's inbox on `update()`.
     pending_inbound: Vec<Message>,
     /// Outbound messages emitted by the guest, awaiting pickup via
-    /// [`Self::take_outbound`].
-    outbound_buffer: Vec<Message>,
+    /// [`Self::take_outbound`]; bounded, so a caller that never takes them
+    /// halts the simulation instead of filling memory.
+    outbound: OutboundBacklog,
+    /// The limits the guest runs under; also how long the outer thread
+    /// waits for the worker.
+    limits: GuestLimits,
+    /// Set when the worker did not answer in time. It is then left to finish
+    /// on its own: `Drop` does not wait for it again.
+    abandoned: bool,
 
     // ─── stream-io transport state ──────────────────────────────
     /// Inbound byte deliveries / close signals queued via
@@ -110,7 +130,7 @@ impl WasmController {
 
     /// Instantiate a WASM guest controller wired to the given `stream-io`
     /// streams (declared up front; the host maps each local name to an
-    /// external endpoint).
+    /// external endpoint), under the default [`GuestLimits`].
     ///
     /// Spawns a dedicated worker thread that owns the `Store` and
     /// drives the guest's `run()` loop. Returns after the guest's
@@ -121,6 +141,25 @@ impl WasmController {
         config: &str,
         stream_names: Vec<String>,
         body: arika::body::KnownBody,
+    ) -> Result<Self, PluginError> {
+        Self::new_with_limits(
+            pre,
+            label,
+            config,
+            stream_names,
+            body,
+            GuestLimits::default(),
+        )
+    }
+
+    /// As [`new_with_streams`](Self::new_with_streams), under `limits`.
+    pub fn new_with_limits(
+        pre: &PluginPre<HostState>,
+        label: impl Into<String>,
+        config: &str,
+        stream_names: Vec<String>,
+        body: arika::body::KnownBody,
+        limits: GuestLimits,
     ) -> Result<Self, PluginError> {
         let label = label.into();
         let config = config.to_string();
@@ -152,15 +191,28 @@ impl WasmController {
                     worker_current_mode,
                     worker_streams,
                     body,
+                    limits,
                 );
             })
             .map_err(|e| PluginError::Init(format!("failed to spawn worker thread: {e}")))?;
 
-        // Wait for the worker to send metadata (or fail).
-        let sample_period = metadata_rx
-            .recv()
-            .map_err(|_| PluginError::Init("worker thread exited before metadata".to_string()))?
-            .map_err(|e| PluginError::Init(format!("metadata failed: {e}")))?;
+        // Wait for the worker to send metadata (or fail). Instantiation and
+        // `metadata` are a turn each; past both deadlines the guest is blocked
+        // in a host call, and the worker is left to it.
+        let waited = limits.host_wait(2);
+        let sample_period = match metadata_rx.recv_timeout(waited) {
+            Ok(result) => result.map_err(|e| PluginError::Init(format!("metadata failed: {e}")))?,
+            // Returning drops the join handle, which leaves the worker to
+            // finish on its own.
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                return Err(PluginError::Init(stuck_in_host_message(waited)));
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(PluginError::Init(
+                    "worker thread exited before metadata".to_string(),
+                ));
+            }
+        };
 
         Ok(Self {
             worker: Some(worker),
@@ -171,7 +223,9 @@ impl WasmController {
             _current_mode: current_mode,
             node_id: NodeId::Satellite(0),
             pending_inbound: Vec::new(),
-            outbound_buffer: Vec::new(),
+            outbound: OutboundBacklog::default(),
+            limits,
+            abandoned: false,
             pending_stream_inbound: Vec::new(),
             stream_outbound_buffer: HashMap::new(),
         })
@@ -185,6 +239,7 @@ impl WasmController {
         let mut linker = wasmtime::component::Linker::new(engine.inner());
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker)
             .map_err(|e| PluginError::Init(format!("WASI add_to_linker failed: {e}")))?;
+        clock_waits_return_at_once(&mut linker)?;
         Plugin::add_to_linker::<HostState, HostState>(&mut linker, |state| state)
             .map_err(|e| PluginError::Init(format!("add_to_linker failed: {e}")))?;
         let instance_pre = linker
@@ -200,8 +255,29 @@ impl Drop for WasmController {
         // Drop the input sender so the worker's `wait_tick` unblocks
         // with an error and the guest's run() returns.
         self.input_tx.take();
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
+        let Some(worker) = self.worker.take() else {
+            return;
+        };
+        if self.abandoned {
+            // Already found stuck; waiting again would only repeat that.
+            return;
+        }
+        // Read responses until the worker says it is done, so a send of its
+        // never blocks on a full channel, and give up after one turn: a guest
+        // still running wasm has trapped by then, and one blocked in a host
+        // call is left to finish on its own.
+        let wait = self.limits.host_wait(1);
+        let started = Instant::now();
+        loop {
+            let left = wait.saturating_sub(started.elapsed());
+            match self.output_rx.recv_timeout(left) {
+                Ok(GuestResponse::Done(_)) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    let _ = worker.join();
+                    return;
+                }
+                Ok(GuestResponse::Tick { .. }) => continue,
+                Err(mpsc::RecvTimeoutError::Timeout) => return,
+            }
         }
     }
 }
@@ -225,7 +301,7 @@ impl PluginController for WasmController {
     /// Drain every message the guest has emitted so far. Each message
     /// carries the host-stamped `src`.
     fn take_outbound(&mut self) -> Vec<Message> {
-        std::mem::take(&mut self.outbound_buffer)
+        self.outbound.take()
     }
 
     /// Set this controller's node identity (stamped as `src` on
@@ -277,30 +353,51 @@ impl PluginController for WasmController {
 
         let stream_inbound = std::mem::take(&mut self.pending_stream_inbound);
 
-        input_tx
+        if input_tx
             .send(TickPacket {
                 input: wit_obs,
                 inbox,
                 stream_inbound,
             })
-            .map_err(|_| PluginError::Runtime("worker thread exited".to_string()))?;
+            .is_err()
+        {
+            // The worker is gone. If it said why on the way out, that is the
+            // error worth reporting, not the closed channel.
+            return Err(match self.output_rx.try_recv() {
+                Ok(GuestResponse::Done(Err(e))) => {
+                    PluginError::Runtime(format!("guest error: {e}"))
+                }
+                _ => PluginError::Runtime("worker thread exited".to_string()),
+            });
+        }
 
-        let response = self
-            .output_rx
-            .recv()
-            .map_err(|_| PluginError::Runtime("worker thread exited".to_string()))?;
+        let waited = self.limits.host_wait(1);
+        let response = match self.output_rx.recv_timeout(waited) {
+            Ok(response) => response,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                // The guest is neither running wasm (the epoch would have
+                // stopped it) nor waiting for a tick. Nothing more is sent to
+                // it, and `Drop` leaves it be.
+                self.abandoned = true;
+                self.input_tx = None;
+                return Err(PluginError::Runtime(stuck_in_host_message(waited)));
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(PluginError::Runtime("worker thread exited".to_string()));
+            }
+        };
 
         match response {
             GuestResponse::Tick {
                 command,
                 outgoing,
                 stream_outbound,
-                stream_fault,
+                host_fault,
             } => {
-                // A latched stream fault (overrun / wiring inconsistency) is
-                // host-authoritative: halt the simulation regardless of
-                // whether the guest observed the byte-level error.
-                if let Some(fault) = stream_fault {
+                // A latched host fault (stream overrun / wiring inconsistency,
+                // msg-io flood) is host-authoritative: halt the simulation
+                // regardless of whether the guest observed an error.
+                if let Some(fault) = host_fault {
                     return Err(PluginError::Runtime(fault));
                 }
 
@@ -308,12 +405,14 @@ impl PluginController for WasmController {
                 // (prevents the guest from spoofing its origin) and buffer it.
                 for ob in outgoing {
                     let ob: Outbound = convert::outbound_from_wit(ob);
-                    self.outbound_buffer.push(Message {
-                        src: self.node_id,
-                        dst: ob.dst,
-                        kind: ob.kind,
-                        payload: ob.payload,
-                    });
+                    self.outbound
+                        .push(Message {
+                            src: self.node_id,
+                            dst: ob.dst,
+                            kind: ob.kind,
+                            payload: ob.payload,
+                        })
+                        .map_err(PluginError::Runtime)?;
                 }
 
                 // Buffer guest-written stream bytes for `stream_take`. The
@@ -362,6 +461,7 @@ fn worker_main(
     current_mode: Arc<Mutex<Option<String>>>,
     stream_names: Vec<String>,
     body: arika::body::KnownBody,
+    limits: GuestLimits,
 ) {
     let engine = pre.engine();
     let host_state = HostState::new(
@@ -371,20 +471,33 @@ fn worker_main(
         current_mode,
         stream_names,
         body,
+        limits,
     );
     let mut store = Store::new(engine, host_state);
+    // Limits go on before any guest code runs: instantiation may run start
+    // functions, and allocates the guest's initial memory.
+    store.limiter(|state| &mut state.limiter);
+    store.set_epoch_deadline(1);
+    store.epoch_deadline_callback(|ctx| ctx.data().turn.on_epoch(false));
 
+    store.data_mut().turn.start();
     let plugin = match pre.instantiate(&mut store) {
         Ok(p) => p,
         Err(e) => {
-            let _ = metadata_tx.send(Err(format!("instantiate: {e}")));
+            let _ = metadata_tx.send(Err(format!("instantiate: {}", guest_error(&e))));
             return;
         }
     };
+    // Instantiation is a turn of its own (start functions run in it).
+    if let Some(fault) = store.data_mut().take_turn_fault() {
+        let _ = metadata_tx.send(Err(format!("instantiate: {fault}")));
+        return;
+    }
 
     // Query metadata first (before run() takes over the thread).
     // `metadata(config)` also validates config — a bad config fails
     // here instead of on the first `update()` call.
+    store.data_mut().turn.start();
     let metadata = match plugin.call_metadata(&mut store, &config) {
         Ok(Ok(md)) => md,
         Ok(Err(guest_err)) => {
@@ -392,10 +505,14 @@ fn worker_main(
             return;
         }
         Err(e) => {
-            let _ = metadata_tx.send(Err(format!("metadata call: {e}")));
+            let _ = metadata_tx.send(Err(format!("metadata call: {}", guest_error(&e))));
             return;
         }
     };
+    if let Some(fault) = store.data_mut().take_turn_fault() {
+        let _ = metadata_tx.send(Err(format!("metadata: {fault}")));
+        return;
+    }
     // Validate sample_period — guest is supposed to return positive
     // finite values, but host-side scheduler code expects this too.
     let sample_period_s = metadata.sample_period_s;
@@ -410,11 +527,13 @@ fn worker_main(
     // Drive the guest's run() loop. This blocks for the entire
     // lifetime of the guest. On normal termination or error, send
     // a Done signal through the output channel.
+    store.data_mut().begin_run();
+    store.data_mut().turn.start();
     let result = plugin.call_run(&mut store, &config);
     let done = match result {
         Ok(Ok(())) => Ok(()),
         Ok(Err(guest_err)) => Err(guest_err),
-        Err(trap) => Err(format!("trap: {trap}")),
+        Err(trap) => Err(format!("trap: {}", guest_error(&trap))),
     };
     let _ = output_tx.send(GuestResponse::Done(done));
 }

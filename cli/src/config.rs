@@ -1133,16 +1133,64 @@ impl AttitudeConfig {
 #[serde(tag = "type", deny_unknown_fields)]
 #[ts(export)]
 pub enum ControllerConfig {
-    /// WASM Component ゲストプラグイン。
+    /// WASM Component ゲストプラグイン。`path` と `sha256` のどちらか一方で
+    /// component を指す。
     #[serde(rename = "wasm")]
     Wasm {
-        /// `.wasm` ファイルのパス。
-        path: String,
+        /// `.wasm` ファイルのパス。command line で渡す config file だけが使える。
+        /// `orts serve` は WebSocket の client が送ったパスを開かない。
+        #[serde(default)]
+        #[ts(optional)]
+        path: Option<String>,
+        /// WebSocket の client が `/ws` に binary message で送った component の
+        /// SHA-256 (小文字の 16 進 64 桁)。同じ接続で送ったものだけを指せる。
+        /// server を `--allow-controller-upload` で起動したときだけ受け付ける。
+        #[serde(default)]
+        #[ts(optional)]
+        sha256: Option<String>,
         /// ゲストの `init` に渡す設定 (JSON value)。
         #[serde(default)]
         #[ts(as = "Option<_>", optional)]
         config: serde_json::Value,
+        /// `sha256` が指す component の中身。serve の接続が送られた component
+        /// から引いて付ける。wire からは設定できず、serialize もされない。
+        #[cfg(feature = "plugin-wasm")]
+        #[serde(skip)]
+        #[ts(skip)]
+        uploaded: Option<orts::plugin::wasm::ComponentBytes>,
     },
+}
+
+/// Whether `s` spells a SHA-256 the way `sha256` is written: 64 lowercase
+/// hexadecimal digits.
+pub fn is_sha256_hex(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+impl ControllerConfig {
+    /// Refuse a controller that names its component twice, or not at all.
+    ///
+    /// Whether a `path` or a `sha256` is acceptable depends on where the
+    /// config came from, and is checked there: a file loaded from the command
+    /// line refuses `sha256` ([`SimConfig::load_with_warnings`]), and
+    /// `orts serve` refuses `path` from a WebSocket client.
+    pub fn validate(&self) -> Result<(), String> {
+        match self {
+            ControllerConfig::Wasm { path, sha256, .. } => match (path, sha256) {
+                (Some(_), Some(_)) => {
+                    Err("give the component by `path` or by `sha256`, not both".to_string())
+                }
+                (None, None) => Err("name the component: `path` for a file, in a config \
+                     given on the command line, or `sha256` for one a WebSocket client \
+                     uploaded to `orts serve`"
+                    .to_string()),
+                (None, Some(sha256)) if !is_sha256_hex(sha256) => {
+                    Err("`sha256` must be 64 lowercase hexadecimal digits".to_string())
+                }
+                _ => Ok(()),
+            },
+        }
+    }
 }
 
 /// センサ選択。
@@ -1558,6 +1606,21 @@ impl SimConfig {
         };
 
         config.validate()?;
+        // A `sha256` names a component a WebSocket client sent to `orts serve`,
+        // held by that client's connection. A file has no such connection, so
+        // the reference could only fail later, when the controller is built.
+        for (i, sat) in config.satellites.iter().enumerate() {
+            if let Some(ControllerConfig::Wasm {
+                sha256: Some(_), ..
+            }) = &sat.controller
+            {
+                return Err(format!(
+                    "satellites[{i}].controller: `sha256` names a component a WebSocket \
+                     client uploaded to `orts serve`, which a config file has none of; \
+                     give the component's `path`"
+                ));
+            }
+        }
 
         Ok(LoadedConfig {
             config,
@@ -1775,6 +1838,11 @@ impl SatelliteConfig {
     /// dynamic `add_satellite` is rejected before it can reach
     /// `ThrusterSpec::new()` and panic on e.g. zero-length directions.
     pub fn validate(&self) -> Result<(), String> {
+        if let Some(controller) = &self.controller {
+            controller
+                .validate()
+                .map_err(|e| format!("controller: {e}"))?;
+        }
         if let Some(thruster) = &self.thruster {
             thruster.validate().map_err(|e| format!("thruster: {e}"))?;
         }
@@ -2777,7 +2845,7 @@ satellites:
         // Controller
         let ctrl = sat.controller.as_ref().unwrap();
         assert!(
-            matches!(ctrl, ControllerConfig::Wasm { path, .. } if path.contains("plugin.wasm"))
+            matches!(ctrl, ControllerConfig::Wasm { path: Some(path), .. } if path.contains("plugin.wasm"))
         );
 
         // Sensors
@@ -3311,6 +3379,89 @@ kind = "orts.cmd.set-mode.v1"
         assert!(config.satellites[0].controller.is_none());
         assert!(config.satellites[0].sensors.is_none());
         assert!(config.satellites[0].reaction_wheels.is_none());
+    }
+
+    /// A controller names its component exactly once: by `path` or by a
+    /// well-formed `sha256`.
+    #[test]
+    fn a_controller_names_its_component_once() {
+        let controller = |fields: &str| -> ControllerConfig {
+            serde_json::from_str(&format!(r#"{{"type": "wasm"{fields}}}"#))
+                .expect("a controller that deserializes")
+        };
+        let digest = "0123456789abcdef".repeat(4);
+
+        controller(r#", "path": "ctrl.wasm""#)
+            .validate()
+            .expect("a path alone");
+        controller(&format!(r#", "sha256": "{digest}""#))
+            .validate()
+            .expect("a digest alone");
+
+        let both = controller(&format!(r#", "path": "ctrl.wasm", "sha256": "{digest}""#))
+            .validate()
+            .unwrap_err();
+        assert!(both.contains("not both"), "{both}");
+        let neither = controller("").validate().unwrap_err();
+        assert!(neither.contains("name the component"), "{neither}");
+        // A `null` is no path: it neither names a file nor counts as naming one.
+        let null = controller(r#", "path": null"#).validate().unwrap_err();
+        assert!(null.contains("name the component"), "{null}");
+        for bad in [
+            digest.to_uppercase(),
+            digest[..63].to_string(),
+            "g".repeat(64),
+        ] {
+            let err = controller(&format!(r#", "sha256": "{bad}""#))
+                .validate()
+                .unwrap_err();
+            assert!(
+                err.contains("64 lowercase hexadecimal digits"),
+                "{bad}: {err}"
+            );
+        }
+    }
+
+    /// A config file refuses a `sha256`, in every format: it names a
+    /// component a WebSocket client uploaded, and a file has none.
+    #[test]
+    fn a_config_file_refuses_a_controller_sha256() {
+        let dir = std::env::temp_dir().join(format!(
+            "orts-config-sha256-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let digest = "0".repeat(64);
+        let satellite = serde_json::json!({
+            "id": "a",
+            "orbit": { "type": "circular", "altitude": 500.0 },
+            "attitude": { "inertia_diag": [10.0, 10.0, 10.0], "mass": 50.0 },
+            "controller": { "type": "wasm", "sha256": digest },
+        });
+        let config = serde_json::json!({ "satellites": [satellite] });
+        let files = [
+            ("sim.json", serde_json::to_string(&config).unwrap()),
+            ("sim.yaml", serde_yaml::to_string(&config).unwrap()),
+            (
+                "sim.toml",
+                format!(
+                    "[[satellites]]\nid = \"a\"\norbit = {{ type = \"circular\", altitude = 500 }}\n\
+                     attitude = {{ inertia_diag = [10, 10, 10], mass = 50 }}\n\
+                     controller = {{ type = \"wasm\", sha256 = \"{digest}\" }}\n"
+                ),
+            ),
+        ];
+        for (name, text) in files {
+            let path = dir.join(name);
+            std::fs::write(&path, text).expect("write config");
+            let err = SimConfig::load_with_warnings(&path)
+                .err()
+                .unwrap_or_else(|| panic!("{name}: a sha256 in a file is refused"));
+            assert!(err.starts_with("satellites[0].controller"), "{name}: {err}");
+            assert!(err.contains("give the component's `path`"), "{name}: {err}");
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

@@ -17,6 +17,10 @@ use std::collections::VecDeque;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
+use super::limits::{
+    GuestLimiter, GuestLimits, LogAdmit, LogBudget, OutboxBudget, TurnClock, bounded_log_record,
+    outbound_bytes,
+};
 use super::stream_state::{
     DEFAULT_STREAM_CAPACITY, ReadOutcome, StreamDelivery, Streams, WriteOutcome,
 };
@@ -61,11 +65,12 @@ pub(super) enum GuestResponse {
         /// Bytes the guest wrote to each named stream this tick, flushed
         /// to the outer controller for pickup by the host bridge.
         stream_outbound: Vec<(String, Vec<u8>)>,
-        /// Host-authoritative stream fault (overrun / wiring inconsistency)
-        /// latched up to this tick. `Some(_)` tells `update()` to halt the
-        /// simulation with a `PluginError`, independent of whether the guest
-        /// observed the `Err(overrun)` on its own `read`/`write`.
-        stream_fault: Option<String>,
+        /// Host-authoritative fault latched up to this tick: a stream-io
+        /// overrun / wiring inconsistency, or a msg-io flood past
+        /// [`super::limits::MAX_MESSAGES`] / `MAX_MESSAGE_BYTES`. `Some(_)`
+        /// tells `update()` to halt the simulation with a `PluginError`,
+        /// independent of whether the guest observed an error of its own.
+        host_fault: Option<String>,
     },
     /// The guest's `run()` function returned or errored. No more
     /// responses will be produced.
@@ -119,6 +124,28 @@ pub struct HostState {
     /// must NOT send a response (there's nothing to report yet), it
     /// just blocks waiting for the first input.
     is_first_wait: bool,
+    /// Set once the guest's `run` has started. `wait_tick` before then
+    /// (from instantiation or `metadata`) has no tick to wait for; blocking
+    /// there would hold the controller's constructor forever, since no
+    /// `update()` comes before `new` returns.
+    in_run: bool,
+    /// Set once `wait_tick` saw the outer controller gone. Later calls
+    /// return `None` at once, without sending a response nobody reads.
+    shut_down: bool,
+    /// A protocol violation the guest committed outside a tick, reported by
+    /// the worker when the call it happened in returns.
+    protocol_fault: Option<String>,
+    /// Age of the turn the guest is in, read by the epoch-deadline callback.
+    pub(super) turn: TurnClock,
+    /// Memory / table / instance limits, installed as the store's limiter.
+    pub(super) limiter: GuestLimiter,
+    /// msg-io sends of the current turn, against the per-turn limits.
+    outbox_budget: OutboxBudget,
+    /// A fault from the turn before the first tick (the start of `run`),
+    /// reported with the first tick's response.
+    early_fault: Option<String>,
+    /// `host-env.log` records of the current turn, against the per-turn limit.
+    log_budget: LogBudget,
 
     /// Current mode name reported by the guest's `current_mode` export.
     /// Stored in an `Arc<Mutex>` so the outer `WasmController` can read
@@ -135,12 +162,17 @@ impl HostState {
         current_mode: Arc<Mutex<Option<String>>>,
         stream_names: Vec<String>,
         body: arika::body::KnownBody,
+        limits: GuestLimits,
     ) -> Self {
         Self {
             label: label.into(),
             field: crate::magnetic::field_for_body(body),
             wasi: wasmtime_wasi::WasiCtxBuilder::new().build(),
-            table: wasmtime_wasi::ResourceTable::new(),
+            table: {
+                let mut table = wasmtime_wasi::ResourceTable::new();
+                table.set_max_capacity(limits.resources);
+                table
+            },
             input_rx,
             output_tx,
             pending_cmd: None,
@@ -148,8 +180,34 @@ impl HostState {
             outbox: Vec::new(),
             streams: Streams::new(stream_names, DEFAULT_STREAM_CAPACITY),
             is_first_wait: true,
+            in_run: false,
+            shut_down: false,
+            protocol_fault: None,
+            turn: TurnClock::new(limits.turn_deadline),
+            limiter: GuestLimiter::new(limits),
+            outbox_budget: OutboxBudget::default(),
+            early_fault: None,
+            log_budget: LogBudget::default(),
             current_mode,
         }
+    }
+
+    /// End a turn outside `run` (instantiation, `metadata`): the protocol or
+    /// msg-io fault the guest committed in it, and a fresh message count.
+    ///
+    /// Messages sent in such a turn are dropped. Nothing can take them before
+    /// the first tick, and a guest built with the SDK runs its `init` again at
+    /// the start of `run`, so what `init` sends there would arrive twice.
+    pub(super) fn take_turn_fault(&mut self) -> Option<String> {
+        self.outbox.clear();
+        self.log_budget.reset();
+        let outbox = self.outbox_budget.take_fault();
+        self.protocol_fault.take().or(outbox)
+    }
+
+    /// The guest's `run` is about to start; `wait_tick` may block from now on.
+    pub(super) fn begin_run(&mut self) {
+        self.in_run = true;
     }
 }
 
@@ -170,6 +228,22 @@ impl wasmtime::component::HasData for HostState {
 
 impl host_env::Host for HostState {
     fn log(&mut self, level: host_env::LogLevel, message: String) {
+        // Bounded per turn and per record, so a guest cannot flood the host's
+        // log (or the disk it goes to) inside a turn the epoch can reach.
+        match self.log_budget.admit() {
+            LogAdmit::Write => {}
+            LogAdmit::DropAndNote => {
+                log::warn!(
+                    "[wasm:{}] more than {} log records in one tick; the rest of this \
+                     tick's are dropped",
+                    self.label,
+                    super::limits::MAX_LOG_RECORDS
+                );
+                return;
+            }
+            LogAdmit::Drop => return,
+        }
+        let message = bounded_log_record(&message);
         match level {
             host_env::LogLevel::Trace => log::trace!("[wasm:{}] {}", self.label, message),
             host_env::LogLevel::Debug => log::debug!("[wasm:{}] {}", self.label, message),
@@ -208,11 +282,31 @@ impl tick_io::Host for HostState {
     /// Returns `None` if the outer `WasmController` has been dropped,
     /// signaling the guest to exit its main loop cleanly.
     fn wait_tick(&mut self) -> Option<wit::TickInput> {
+        if !self.in_run {
+            // No tick comes before the constructor returns, so a block here
+            // would never end. `None` hands control back; the worker then
+            // fails the call.
+            self.protocol_fault
+                .get_or_insert_with(|| "the guest called wait-tick before run".to_string());
+            return None;
+        }
+        if self.shut_down {
+            return None;
+        }
+        // The guest hands control back: its turn ends, and so does the count
+        // of the messages and log records it sent in it.
+        let turn_fault = self.outbox_budget.take_fault();
+        self.log_budget.reset();
         if !self.is_first_wait {
             let command = self.pending_cmd.take();
             let outgoing = std::mem::take(&mut self.outbox);
             let stream_outbound = self.streams.drain_outbound();
-            let stream_fault = self.streams.fault().map(str::to_string);
+            let host_fault = self
+                .streams
+                .fault()
+                .map(str::to_string)
+                .or(self.early_fault.take())
+                .or(turn_fault);
             // If the outer side has dropped the receiver (Controller
             // was dropped), this send fails — that's fine, we'll
             // return None below and the guest will exit cleanly.
@@ -220,10 +314,13 @@ impl tick_io::Host for HostState {
                 command,
                 outgoing,
                 stream_outbound,
-                stream_fault,
+                host_fault,
             });
         } else {
+            // No response goes out before the first tick; the start of
+            // `run`'s fault waits for the first one.
             self.is_first_wait = false;
+            self.early_fault = turn_fault;
         }
 
         // `recv()` returns Err only when the sender half (input_tx in
@@ -251,9 +348,15 @@ impl tick_io::Host for HostState {
                         self.streams.close(&d.name);
                     }
                 }
+                // Control goes back to the guest: its turn starts now, not
+                // when it started waiting.
+                self.turn.start();
                 Some(packet.input)
             }
-            Err(_) => None,
+            Err(_) => {
+                self.shut_down = true;
+                None
+            }
         }
     }
 
@@ -278,7 +381,12 @@ impl msg_io::Host for HostState {
     /// Capture an outbound message (append). Forwarded to the outer
     /// `update()` on the next `wait_tick`; `src` is stamped by the host there.
     fn send_message(&mut self, msg: wit::Outbound) {
-        self.outbox.push(msg);
+        // Past the per-turn limits the message is dropped and the tick fails;
+        // keeping it would let a guest fill host memory, which no
+        // linear-memory limit covers.
+        if self.outbox_budget.admit(outbound_bytes!(wit, &msg)) {
+            self.outbox.push(msg);
+        }
     }
 }
 
@@ -325,7 +433,17 @@ mod tests {
         let (_, input_rx) = mpsc::channel();
         let (output_tx, _) = mpsc::sync_channel(1);
         let current_mode = Arc::new(Mutex::new(None));
-        HostState::new("test", input_rx, output_tx, current_mode, Vec::new(), body)
+        let mut state = HostState::new(
+            "test",
+            input_rx,
+            output_tx,
+            current_mode,
+            Vec::new(),
+            body,
+            GuestLimits::default(),
+        );
+        state.begin_run();
+        state
     }
 
     /// `seq` is encoded into `kind` so tests can assert delivery order /
@@ -393,7 +511,9 @@ mod tests {
             current_mode,
             Vec::new(),
             arika::body::KnownBody::Earth,
+            GuestLimits::default(),
         );
+        state.begin_run();
 
         // Tick 0 delivers two messages; the guest drains only one.
         input_tx
@@ -470,6 +590,213 @@ mod tests {
         assert_eq!(state.outbox.len(), 2);
         assert_eq!(state.outbox[0].kind, "test.tlm.v1");
         assert_eq!(state.outbox[1].kind, "test.tlm.v2");
+    }
+
+    /// `wait_tick` before `run` returns at once and records the violation:
+    /// blocking there would never end, since no tick is sent before the
+    /// controller's constructor returns.
+    #[test]
+    fn wait_tick_before_run_returns_at_once() {
+        let (_input_tx, input_rx) = mpsc::channel::<TickPacket>();
+        let (output_tx, _output_rx) = mpsc::sync_channel::<GuestResponse>(1);
+        let mut state = HostState::new(
+            "test",
+            input_rx,
+            output_tx,
+            Arc::new(Mutex::new(None)),
+            Vec::new(),
+            arika::body::KnownBody::Earth,
+            GuestLimits::default(),
+        );
+        assert!(state.wait_tick().is_none(), "no tick outside run");
+        assert_eq!(
+            state.protocol_fault.as_deref(),
+            Some("the guest called wait-tick before run")
+        );
+    }
+
+    /// A guest sending past the per-turn message limit has the rest of its
+    /// messages dropped, and the tick carries the fault.
+    #[test]
+    fn a_message_flood_is_dropped_and_faults_the_tick() {
+        let (input_tx, input_rx) = mpsc::channel::<TickPacket>();
+        let (output_tx, output_rx) = mpsc::sync_channel::<GuestResponse>(4);
+        let mut state = HostState::new(
+            "test",
+            input_rx,
+            output_tx,
+            Arc::new(Mutex::new(None)),
+            Vec::new(),
+            arika::body::KnownBody::Earth,
+            GuestLimits::default(),
+        );
+        state.begin_run();
+        for _ in 0..2 {
+            input_tx
+                .send(TickPacket {
+                    input: dummy_tick_input(),
+                    inbox: vec![],
+                    stream_inbound: vec![],
+                })
+                .unwrap();
+        }
+        state.wait_tick();
+        for _ in 0..super::super::limits::MAX_MESSAGES + 10 {
+            state.send_message(wit::Outbound {
+                dst: wit::NodeId::Ground,
+                kind: "test.tlm.v1".to_string(),
+                payload: wit::Payload::Binary(vec![0; 8]),
+            });
+        }
+        assert_eq!(state.outbox.len(), super::super::limits::MAX_MESSAGES);
+        state.wait_tick();
+        match output_rx.try_recv() {
+            Ok(GuestResponse::Tick {
+                outgoing,
+                host_fault,
+                ..
+            }) => {
+                assert_eq!(outgoing.len(), super::super::limits::MAX_MESSAGES);
+                let fault = host_fault.expect("the flood faults the tick");
+                assert!(fault.contains("msg-io"), "{fault}");
+            }
+            _ => panic!("the tick's response was sent"),
+        }
+        // The next turn starts with a fresh count.
+        state.send_message(wit::Outbound {
+            dst: wit::NodeId::Ground,
+            kind: "test.tlm.v1".to_string(),
+            payload: wit::Payload::Json("{}".to_string()),
+        });
+        assert_eq!(state.outbox.len(), 1);
+    }
+
+    /// A message of many empty key-value fields counts for the fields'
+    /// storage: enough of them in one turn pass the byte limit and fault the
+    /// tick, where counting only names and text let them through.
+    #[test]
+    fn empty_key_value_fields_count_against_the_turn() {
+        let mut state = make_state();
+        let field = wit::NamedValue {
+            name: String::new(),
+            value: wit::Value::Boolean(true),
+        };
+        let per_message = 10_000;
+        let messages = super::super::limits::MAX_MESSAGE_BYTES
+            / (per_message * std::mem::size_of_val(&field))
+            + 1;
+        for _ in 0..messages {
+            state.send_message(wit::Outbound {
+                dst: wit::NodeId::Ground,
+                kind: String::new(),
+                payload: wit::Payload::KeyValue(vec![field.clone(); per_message]),
+            });
+        }
+        assert!(
+            state.outbox.len() < messages,
+            "the last message is past the byte limit and dropped"
+        );
+    }
+
+    /// Messages sent before `run` (in `metadata`) are dropped with that turn,
+    /// so they do not add to what the first tick's response carries.
+    #[test]
+    fn messages_sent_before_run_are_dropped() {
+        let mut state = make_state_for(arika::body::KnownBody::Earth);
+        state.in_run = false;
+        state.send_message(wit::Outbound {
+            dst: wit::NodeId::Ground,
+            kind: "t".to_string(),
+            payload: wit::Payload::Json(String::new()),
+        });
+        assert_eq!(state.outbox.len(), 1);
+        assert_eq!(state.take_turn_fault(), None);
+        assert!(
+            state.outbox.is_empty(),
+            "the metadata turn's message is gone"
+        );
+    }
+
+    /// Messages sent before the first tick are a turn of their own: they do
+    /// not share a count with the first tick, and a flood there is reported
+    /// with the first tick's response.
+    #[test]
+    fn the_turn_before_the_first_tick_has_its_own_message_count() {
+        let (input_tx, input_rx) = mpsc::channel::<TickPacket>();
+        let (output_tx, output_rx) = mpsc::sync_channel::<GuestResponse>(4);
+        let mut state = HostState::new(
+            "test",
+            input_rx,
+            output_tx,
+            Arc::new(Mutex::new(None)),
+            Vec::new(),
+            arika::body::KnownBody::Earth,
+            GuestLimits::default(),
+        );
+        state.begin_run();
+        let send = |state: &mut HostState, n: usize| {
+            for _ in 0..n {
+                state.send_message(wit::Outbound {
+                    dst: wit::NodeId::Ground,
+                    kind: "t".to_string(),
+                    payload: wit::Payload::Json(String::new()),
+                });
+            }
+        };
+        let limit = super::super::limits::MAX_MESSAGES;
+        for _ in 0..2 {
+            input_tx
+                .send(TickPacket {
+                    input: dummy_tick_input(),
+                    inbox: vec![],
+                    stream_inbound: vec![],
+                })
+                .unwrap();
+        }
+        // The start of `run`: most of a turn's worth.
+        send(&mut state, limit - 1);
+        state.wait_tick();
+        // The first tick: most of a turn's worth again, which fits.
+        send(&mut state, limit - 1);
+        state.wait_tick();
+        match output_rx.try_recv() {
+            Ok(GuestResponse::Tick { host_fault, .. }) => {
+                assert_eq!(host_fault, None, "each turn stayed under the limit")
+            }
+            _ => panic!("the first tick's response was sent"),
+        }
+
+        // A flood before the first tick is reported with the first response.
+        let (input_tx, input_rx) = mpsc::channel::<TickPacket>();
+        let (output_tx, output_rx) = mpsc::sync_channel::<GuestResponse>(4);
+        let mut state = HostState::new(
+            "test",
+            input_rx,
+            output_tx,
+            Arc::new(Mutex::new(None)),
+            Vec::new(),
+            arika::body::KnownBody::Earth,
+            GuestLimits::default(),
+        );
+        state.begin_run();
+        for _ in 0..2 {
+            input_tx
+                .send(TickPacket {
+                    input: dummy_tick_input(),
+                    inbox: vec![],
+                    stream_inbound: vec![],
+                })
+                .unwrap();
+        }
+        send(&mut state, limit + 1);
+        state.wait_tick();
+        state.wait_tick();
+        match output_rx.try_recv() {
+            Ok(GuestResponse::Tick { host_fault, .. }) => {
+                assert!(host_fault.is_some_and(|f| f.contains("msg-io")))
+            }
+            _ => panic!("the first tick's response was sent"),
+        }
     }
 
     /// The host answers zero where this crate has no field model.

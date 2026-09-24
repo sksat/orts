@@ -1,4 +1,5 @@
-//! Shared cache of compiled WASM plugins keyed by file path.
+//! Shared cache of compiled WASM plugins keyed by file path or by the
+//! SHA-256 of a component given as bytes.
 //!
 //! Compiling a WASM Component (running Cranelift) is the most expensive
 //! step of constructing a plugin-backed satellite. When a simulation
@@ -8,8 +9,8 @@
 //! - a single shared sync [`WasmEngine`] (Pulley target),
 //! - optionally, a single shared async [`WasmEngine`] and
 //!   [`AsyncRuntime`] (feature `plugin-wasm-async`),
-//! - per-path compiled sync + async [`Component`]s and their
-//!   pre-linked instances.
+//! - per-path (or per-digest, for a [`ComponentBytes`]) compiled sync +
+//!   async [`Component`]s and their pre-linked instances.
 //!
 //! Typical usage:
 //!
@@ -33,13 +34,16 @@
 //! the linker; subsequent calls reuse both. Building 1000 satellites
 //! with a shared cache takes ~seconds instead of ~minutes.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use wasmtime::component::Component;
 
+use super::component_bytes::ComponentBytes;
 use super::engine::WasmEngine;
+use super::limits::GuestLimits;
 use super::sync_bindings::PluginPre;
 use super::sync_controller::WasmController;
 use super::sync_host_state::HostState;
@@ -57,10 +61,12 @@ use super::async_runtime::{AsyncMode, AsyncRuntime};
 /// `plugin-wasm-async` feature is enabled, a single async
 /// `WasmEngine` + `AsyncRuntime` that are created lazily on first
 /// async use. Plugin components are compiled per backend and cached
-/// by file path.
+/// by file path, or by digest for a component given as bytes.
 pub struct WasmPluginCache {
     sync_engine: Arc<WasmEngine>,
-    sync_plugins: HashMap<PathBuf, CachedSyncPlugin>,
+    sync_plugins: HashMap<PluginKey, CachedSyncPlugin>,
+    /// The limits every controller this cache builds runs under.
+    limits: GuestLimits,
 
     /// Execution mode used when the `AsyncRuntime` is lazily created.
     /// Set at construction and immutable afterwards; the runtime is
@@ -69,6 +75,50 @@ pub struct WasmPluginCache {
     async_mode: AsyncMode,
     #[cfg(feature = "plugin-wasm-async")]
     async_state: Option<AsyncCacheState>,
+}
+
+/// Which cache entry a plugin is.
+///
+/// Paths and digests are separate namespaces: a file whose name spells a
+/// digest is not the component with that digest.
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum PluginKey {
+    Path(PathBuf),
+    Sha256([u8; 32]),
+}
+
+/// Where a plugin's bytes come from.
+#[derive(Clone, Copy)]
+enum Source<'a> {
+    Path(&'a Path),
+    Bytes(&'a ComponentBytes),
+}
+
+impl<'a> Source<'a> {
+    fn key(self) -> PluginKey {
+        match self {
+            Source::Path(path) => PluginKey::Path(path.to_path_buf()),
+            Source::Bytes(component) => PluginKey::Sha256(*component.sha256()),
+        }
+    }
+
+    /// How an error names the plugin.
+    fn describe(self) -> String {
+        match self {
+            Source::Path(path) => format!("'{}'", path.display()),
+            Source::Bytes(component) => format!("component sha256 {}", component.sha256_hex()),
+        }
+    }
+
+    /// The bytes to compile. Only a path touches the filesystem.
+    fn read(self) -> Result<Cow<'a, [u8]>, PluginError> {
+        match self {
+            Source::Path(path) => std::fs::read(path).map(Cow::Owned).map_err(|e| {
+                PluginError::Init(format!("cannot read WASM at '{}': {e}", path.display()))
+            }),
+            Source::Bytes(component) => Ok(Cow::Borrowed(component.bytes())),
+        }
+    }
 }
 
 /// A compiled component and its pre-linked sync instance, kept alive
@@ -84,7 +134,7 @@ struct CachedSyncPlugin {
 struct AsyncCacheState {
     engine: Arc<WasmEngine>,
     runtime: Arc<AsyncRuntime>,
-    plugins: HashMap<PathBuf, AsyncPluginPreBuilt>,
+    plugins: HashMap<PluginKey, AsyncPluginPreBuilt>,
 }
 
 impl WasmPluginCache {
@@ -103,6 +153,7 @@ impl WasmPluginCache {
         Ok(Self {
             sync_engine,
             sync_plugins: HashMap::new(),
+            limits: GuestLimits::default(),
             #[cfg(feature = "plugin-wasm-async")]
             async_mode: AsyncMode::Deterministic,
             #[cfg(feature = "plugin-wasm-async")]
@@ -118,6 +169,7 @@ impl WasmPluginCache {
         Ok(Self {
             sync_engine,
             sync_plugins: HashMap::new(),
+            limits: GuestLimits::default(),
             async_mode,
             async_state: None,
         })
@@ -132,6 +184,18 @@ impl WasmPluginCache {
     #[cfg(feature = "plugin-wasm-async")]
     pub fn async_mode(&self) -> AsyncMode {
         self.async_mode
+    }
+
+    /// Build every controller from now on under `limits` instead of the
+    /// default [`GuestLimits`].
+    pub fn with_guest_limits(mut self, limits: GuestLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// The limits the controllers this cache builds run under.
+    pub fn guest_limits(&self) -> GuestLimits {
+        self.limits
     }
 
     /// Borrow the underlying shared sync engine.
@@ -165,25 +229,49 @@ impl WasmPluginCache {
         stream_names: Vec<String>,
         body: arika::body::KnownBody,
     ) -> Result<WasmController, PluginError> {
-        let pre = self.get_or_load_sync(path)?;
-        WasmController::new_with_streams(pre, label, config, stream_names, body)
+        let limits = self.limits;
+        let pre = self.get_or_load_sync(Source::Path(path))?;
+        WasmController::new_with_limits(pre, label, config, stream_names, body, limits)
     }
 
-    fn get_or_load_sync(&mut self, path: &Path) -> Result<&PluginPre<HostState>, PluginError> {
-        if !self.sync_plugins.contains_key(path) {
-            let bytes = std::fs::read(path).map_err(|e| {
-                PluginError::Init(format!("cannot read WASM at '{}': {e}", path.display()))
-            })?;
+    /// As [`build_sync_controller_with_streams`](Self::build_sync_controller_with_streams)
+    /// for a component given as bytes, cached by its SHA-256.
+    ///
+    /// Nothing is read from the filesystem. Two [`ComponentBytes`] holding the
+    /// same bytes share one compilation.
+    pub fn build_sync_controller_from_bytes_with_streams(
+        &mut self,
+        component: &ComponentBytes,
+        label: &str,
+        config: &str,
+        stream_names: Vec<String>,
+        body: arika::body::KnownBody,
+    ) -> Result<WasmController, PluginError> {
+        let limits = self.limits;
+        let pre = self.get_or_load_sync(Source::Bytes(component))?;
+        WasmController::new_with_limits(pre, label, config, stream_names, body, limits)
+    }
+
+    fn get_or_load_sync(
+        &mut self,
+        source: Source<'_>,
+    ) -> Result<&PluginPre<HostState>, PluginError> {
+        let key = source.key();
+        if !self.sync_plugins.contains_key(&key) {
+            let bytes = source.read()?;
             let component = Component::new(self.sync_engine.inner(), &bytes).map_err(|e| {
-                PluginError::Init(format!("WASM compile failed for '{}': {e}", path.display()))
+                PluginError::Init(format!(
+                    "WASM compile failed for {}: {e}",
+                    source.describe()
+                ))
             })?;
             let pre = WasmController::prepare(&self.sync_engine, &component)?;
             self.sync_plugins
-                .insert(path.to_path_buf(), CachedSyncPlugin { component, pre });
+                .insert(key.clone(), CachedSyncPlugin { component, pre });
         }
         Ok(&self
             .sync_plugins
-            .get(path)
+            .get(&key)
             .expect("just inserted if missing")
             .pre)
     }
@@ -217,8 +305,27 @@ impl WasmPluginCache {
         stream_names: Vec<String>,
         body: arika::body::KnownBody,
     ) -> Result<AsyncWasmController, PluginError> {
-        let built = self.get_or_load_async(path)?;
-        AsyncWasmController::new_with_streams(built, label, config, stream_names, body)
+        let limits = self.limits;
+        let built = self.get_or_load_async(Source::Path(path))?;
+        AsyncWasmController::new_with_limits(built, label, config, stream_names, body, limits)
+    }
+
+    /// As [`build_async_controller_with_streams`](Self::build_async_controller_with_streams)
+    /// for a component given as bytes, cached by its SHA-256.
+    ///
+    /// Nothing is read from the filesystem. Two [`ComponentBytes`] holding the
+    /// same bytes share one compilation.
+    pub fn build_async_controller_from_bytes_with_streams(
+        &mut self,
+        component: &ComponentBytes,
+        label: &str,
+        config: &str,
+        stream_names: Vec<String>,
+        body: arika::body::KnownBody,
+    ) -> Result<AsyncWasmController, PluginError> {
+        let limits = self.limits;
+        let built = self.get_or_load_async(Source::Bytes(component))?;
+        AsyncWasmController::new_with_limits(built, label, config, stream_names, body, limits)
     }
 
     /// Borrow the async engine, creating it if this is the first
@@ -249,22 +356,117 @@ impl WasmPluginCache {
         Ok(())
     }
 
-    fn get_or_load_async(&mut self, path: &Path) -> Result<&AsyncPluginPreBuilt, PluginError> {
+    fn get_or_load_async(
+        &mut self,
+        source: Source<'_>,
+    ) -> Result<&AsyncPluginPreBuilt, PluginError> {
         self.ensure_async_state()?;
         let state = self.async_state.as_mut().unwrap();
-        if !state.plugins.contains_key(path) {
-            let bytes = std::fs::read(path).map_err(|e| {
-                PluginError::Init(format!("cannot read WASM at '{}': {e}", path.display()))
-            })?;
+        let key = source.key();
+        if !state.plugins.contains_key(&key) {
+            let bytes = source.read()?;
             let component = Component::new(state.engine.inner(), &bytes).map_err(|e| {
                 PluginError::Init(format!(
-                    "async WASM compile failed for '{}': {e}",
-                    path.display()
+                    "async WASM compile failed for {}: {e}",
+                    source.describe()
                 ))
             })?;
             let built = AsyncPluginPreBuilt::new(&state.engine, &state.runtime, &component)?;
-            state.plugins.insert(path.to_path_buf(), built);
+            state.plugins.insert(key.clone(), built);
         }
-        Ok(state.plugins.get(path).expect("just inserted if missing"))
+        Ok(state.plugins.get(&key).expect("just inserted if missing"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PD_RW_CONFIG: &str = r#"{"kp":1.0,"kd":2.0,"sample_period":0.1}"#;
+
+    /// The pd-rw-control guest, or `None` (with a note) on a checkout that
+    /// has not built it.
+    fn pd_rw_guest() -> Option<(PathBuf, Vec<u8>)> {
+        let path = PathBuf::from(format!(
+            "{}/../plugin-sdk/examples/target/wasm32-wasip1/release/\
+             orts_example_plugin_pd_rw_control.wasm",
+            env!("CARGO_MANIFEST_DIR")
+        ));
+        match std::fs::read(&path) {
+            Ok(bytes) => Some((path, bytes)),
+            Err(_) => {
+                eprintln!(
+                    "WASM not found: {}\nBuild: cd plugin-sdk/examples && \
+                     cargo +1.91.0 component build --release -p orts-example-plugin-pd-rw-control",
+                    path.display()
+                );
+                None
+            }
+        }
+    }
+
+    /// Two `ComponentBytes` holding the same bytes compile once, and the same
+    /// component read from its file is a separate entry.
+    ///
+    /// The digest names the entry, so separately received copies of one
+    /// component share a compilation, as satellites sharing one controller
+    /// file do.
+    #[test]
+    fn the_same_bytes_compile_once_and_a_path_is_its_own_entry() {
+        let Some((path, bytes)) = pd_rw_guest() else {
+            return;
+        };
+        let mut cache = WasmPluginCache::new().expect("a cache needs no plugin file");
+        let first = ComponentBytes::new(bytes.clone());
+        let second = ComponentBytes::new(bytes);
+        for (label, component) in [("a", &first), ("b", &second)] {
+            cache
+                .build_sync_controller_from_bytes_with_streams(
+                    component,
+                    label,
+                    PD_RW_CONFIG,
+                    Vec::new(),
+                    arika::body::KnownBody::Earth,
+                )
+                .expect("the pd-rw guest builds from its bytes");
+        }
+        assert_eq!(cache.sync_plugins.len(), 1, "one digest, one compilation");
+
+        cache
+            .build_sync_controller(&path, "c", PD_RW_CONFIG, arika::body::KnownBody::Earth)
+            .expect("the pd-rw guest builds from its file");
+        assert_eq!(
+            cache.sync_plugins.len(),
+            2,
+            "a path and a digest are separate entries"
+        );
+    }
+
+    /// A component given as bytes that does not compile is named by digest,
+    /// and nothing is read from disk to find out.
+    #[test]
+    fn bytes_that_do_not_compile_are_named_by_digest() {
+        let mut cache = WasmPluginCache::new().expect("a cache needs no plugin file");
+        let garbage = ComponentBytes::new(b"\0asm\x0d\x00\x01\x00not a component".to_vec());
+        let err = cache
+            .build_sync_controller_from_bytes_with_streams(
+                &garbage,
+                "a",
+                "",
+                Vec::new(),
+                arika::body::KnownBody::Earth,
+            )
+            .err()
+            .expect("garbage after the preamble does not compile");
+        let text = err.to_string();
+        assert!(
+            text.contains(&format!("component sha256 {}", garbage.sha256_hex())),
+            "{text}"
+        );
+        assert!(!text.contains("cannot read WASM"), "{text}");
+        assert!(
+            cache.sync_plugins.is_empty(),
+            "a failed compile is not kept"
+        );
     }
 }

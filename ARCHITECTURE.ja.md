@@ -187,7 +187,14 @@ classDiagram
   磁気モーメント、RW 毎の回転速度 or トルク、スラスタ毎のスロットル) を返す。
 - **ランタイム:** `wasmtime` の Pulley interpreter でホスト非依存な決定論的
   実行を保証。
-- **配布:** `.wasm` (可搬)。
+- **配布:** `.wasm` (可搬)。config は controller のファイルを `path` で指す。
+  `orts serve --allow-controller-upload` の WebSocket の client は component の中身を
+  送り、`sha256` で指す (`cli/src/commands/serve/controller_upload.rs`)。
+  `WasmPluginCache` はパスごと・digest ごとに component を 1 回 compile する。
+- **上限:** すべての guest は `GuestLimits` (`orts/src/plugin/wasm/limits.rs`) の下で
+  走る。epoch interruption による turn ごとの wall clock の期限、memory・table・
+  instance・component resource・msg-io の message・log の record の上限、すぐ返る
+  WASI の clock の待ち。理由は [DESIGN.md](DESIGN.md) を参照。
 
 WASM guest は `PluginController` trait で駆動される。native 制御則は別の
 `DiscreteController` trait を実装しており、両者の統一は計画段階

@@ -17,8 +17,10 @@
 //! [wasm-component-model]: https://component-model.bytecodealliance.org/
 
 pub mod cache;
+pub mod component_bytes;
 pub mod convert;
 pub mod engine;
+pub mod limits;
 pub mod sync_bindings;
 pub mod sync_controller;
 pub mod sync_host_state;
@@ -38,7 +40,9 @@ pub use sync_controller as controller;
 pub use sync_host_state as host_state;
 
 pub use cache::WasmPluginCache;
+pub use component_bytes::ComponentBytes;
 pub use engine::WasmEngine;
+pub use limits::GuestLimits;
 pub use sync_controller::WasmController;
 
 #[cfg(feature = "plugin-wasm-async")]
