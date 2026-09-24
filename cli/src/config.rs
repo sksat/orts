@@ -5710,6 +5710,23 @@ degree = 70
         }
     }
 
+    /// The TOML loader deserializes from the parsed table, which holds no
+    /// source text of its own, and gives the error its source back. A type
+    /// error below the first line still names its line and column and quotes
+    /// the line.
+    #[test]
+    fn a_toml_type_error_quotes_its_line() {
+        let err = load_as(
+            "toml",
+            &format!(
+                "epoch = 2024-03-20T12:00:00Z\nduration = 60\ndt = \"x\"\n{ONE_TOML_SATELLITE}"
+            ),
+        )
+        .expect_err("dt is not a number");
+        assert!(err.contains("line 3, column 6"), "{err}");
+        assert!(err.contains("3 | dt = \"x\""), "{err}");
+    }
+
     /// Only TOML has a datetime type, so only TOML reads one. JSON and YAML
     /// give the epoch as a string, as before: a missing or null epoch is none,
     /// and another value is refused, including a map spelled like the one serde
