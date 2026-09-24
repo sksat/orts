@@ -415,7 +415,8 @@ jobs:
             --test wasm_async_backend \
             --test plugin_msg_commandable_mode \
             --test plugin_stream_framed \
-            --test block_on_from_spawn_blocking
+            --test block_on_from_spawn_blocking \
+            --test wasm_guest_limits
 
   # NOS3 ADCS SILS E2E: builds the NOS3 generic_adcs WASM plugin
   # (C FFI via wasi-sdk) and verifies B-dot detumbling reduces angular
@@ -541,7 +542,7 @@ jobs:
 
       - name: Build guest WASM components
         run: |
-          cd plugin-sdk/examples && cargo component build -p orts-example-plugin-pd-rw-control -p orts-example-plugin-commandable-mode-ff -p orts-example-plugin-stream-framed-commander --release
+          cd plugin-sdk/examples && cargo component build -p orts-example-plugin-pd-rw-control -p orts-example-plugin-commandable-mode-ff -p orts-example-plugin-stream-framed-commander -p orts-example-plugin-misbehaving-guest --release
 
       # Real kble binary for the stream-bridge E2E. Installed via
       # cargo-binstall with the version resolved against crates.io;

@@ -4,8 +4,13 @@
 //! A client does not name a controller by a path on the server: it sends the
 //! component's bytes as a binary message on `/ws`, the server replies with
 //! `controller_uploaded` and their SHA-256, and a controller config names the
-//! component by that digest. A config file given on the server's command line
-//! still names its controller by `path`.
+//! component by that digest. The server accepts uploads only when started with
+//! `--allow-controller-upload`. A config file given on the server's command
+//! line still names its controller by `path`.
+//!
+//! The uploaded guests that break the limits every guest runs under (a turn
+//! that never ends, memory growth past the cap) use the `misbehaving-guest`
+//! fixture, and run under the default 5 s turn deadline.
 //!
 //! Requires:
 //! - `plugin-wasm-async` feature enabled
@@ -60,6 +65,25 @@ fn pd_rw_guest_wasm() -> Option<std::path::PathBuf> {
              Build: cd plugin-sdk/examples && cargo +1.91.0 component build -p orts-example-plugin-pd-rw-control --release\n\
              Skipping serve dynamic-add e2e test.",
             wasm_path.display()
+        );
+        None
+    }
+}
+
+/// The `misbehaving-guest` fixture, or `None` if it has not been built.
+fn misbehaving_guest_wasm() -> Option<std::path::PathBuf> {
+    let path = std::path::PathBuf::from(format!(
+        "{}/../plugin-sdk/examples/target/wasm32-wasip1/release/\
+         orts_example_plugin_misbehaving_guest.wasm",
+        env!("CARGO_MANIFEST_DIR")
+    ));
+    if path.exists() {
+        Some(path)
+    } else {
+        eprintln!(
+            "WASM not found: {}\nBuild: cd plugin-sdk/examples && cargo +1.91.0 component \
+             build --release -p orts-example-plugin-misbehaving-guest",
+            path.display()
         );
         None
     }
@@ -223,6 +247,11 @@ impl Server {
         }
     }
 
+    /// Whether the server process is still running.
+    fn is_alive(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
+    }
+
     async fn connect(&self) -> (WsWrite, WsRead) {
         let url = format!("ws://localhost:{}/ws", self.port);
         let (ws, _) = tokio::time::timeout(REPLY_TIMEOUT, connect_async(&url))
@@ -299,7 +328,7 @@ async fn serve_dynamic_controlled_add_succeeds() {
     };
     let cfg_file = write_controlled_config(&wasm_path);
     let cfg_path = cfg_file.path().to_string_lossy().to_string();
-    let server = Server::spawn(&["--config", &cfg_path]);
+    let server = Server::spawn(&["--config", &cfg_path, "--allow-controller-upload"]);
 
     let wasm = std::fs::read(&wasm_path).expect("read the guest");
     let sha256 = orts::plugin::wasm::ComponentBytes::new(wasm.clone()).sha256_hex();
@@ -518,7 +547,7 @@ async fn an_uploaded_component_starts_a_simulation_on_its_own_connection() {
     let Some(wasm_path) = pd_rw_guest_wasm() else {
         return;
     };
-    let server = Server::spawn(&[]);
+    let server = Server::spawn(&["--allow-controller-upload"]);
     let wasm = std::fs::read(&wasm_path).expect("read the guest");
 
     let result = tokio::time::timeout(Duration::from_secs(60), async {
@@ -573,4 +602,171 @@ async fn an_uploaded_component_starts_a_simulation_on_its_own_connection() {
     .await;
 
     result.expect("test timed out");
+}
+
+/// Without `--allow-controller-upload`, a component sent as a binary message
+/// and a controller named by `sha256` are both refused, with an error naming
+/// the flag. The `--config` controller, named by path, runs without it.
+#[tokio::test]
+async fn without_the_flag_uploads_and_digests_are_refused() {
+    let Some(wasm_path) = pd_rw_guest_wasm() else {
+        return;
+    };
+    let cfg_file = write_controlled_config(&wasm_path);
+    let cfg_path = cfg_file.path().to_string_lossy().to_string();
+    let server = Server::spawn(&["--config", &cfg_path]);
+    let wasm = std::fs::read(&wasm_path).expect("read the guest");
+    let sha256 = orts::plugin::wasm::ComponentBytes::new(wasm.clone()).sha256_hex();
+
+    let result = tokio::time::timeout(Duration::from_secs(60), async {
+        let (mut write, mut read) = server.connect().await;
+        let initial = read_until_type(&mut read, "state").await;
+        assert_eq!(initial["entity_path"], "/world/sat/initial-sat");
+
+        write
+            .send(Message::Binary(wasm.into()))
+            .await
+            .expect("failed to send the component");
+        let reply = read_until(&mut read, "the reply to the upload", 400, |m| {
+            m["type"] == "error" || m["type"] == "controller_uploaded"
+        })
+        .await;
+        assert_eq!(
+            reply["message"],
+            "WebSocket WASM controllers require starting orts serve with --allow-controller-upload",
+            "{reply}"
+        );
+
+        let sat = controlled_satellite("dynamic-sat", serde_json::json!({ "sha256": sha256 }));
+        send_json(&mut write, &add_satellite(sat)).await;
+        let reply = add_reply(&mut read).await;
+        assert_eq!(reply["type"], "error", "{reply}");
+        let message = reply["message"].as_str().expect("an error message");
+        assert!(
+            message.starts_with("add_satellite.controller:")
+                && message.contains("--allow-controller-upload"),
+            "{message}"
+        );
+    })
+    .await;
+
+    result.expect("test timed out");
+}
+
+/// Upload `guest` on a server running the pd-rw config, add a satellite
+/// running it with `guest_config`, and return what the run broadcasts when it
+/// halts, plus the first message a connection opened after the halt gets.
+async fn run_uploaded_guest_until_it_halts(
+    server: &Server,
+    guest: &std::path::Path,
+    guest_config: serde_json::Value,
+) -> (serde_json::Value, serde_json::Value, serde_json::Value) {
+    let wasm = std::fs::read(guest).expect("read the fixture");
+    let (mut write, mut read) = server.connect().await;
+    let _state = read_until_type(&mut read, "state").await;
+
+    write
+        .send(Message::Binary(wasm.into()))
+        .await
+        .expect("failed to send the component");
+    let uploaded = read_until_type(&mut read, "controller_uploaded").await;
+    let mut controller = serde_json::json!({ "sha256": uploaded["sha256"] });
+    controller["config"] = guest_config;
+    let sat = controlled_satellite("misbehaving", controller);
+    send_json(&mut write, &add_satellite(sat)).await;
+    let added = add_reply(&mut read).await;
+    assert_eq!(
+        added["type"], "satellite_added",
+        "metadata is well-behaved: {added}"
+    );
+
+    // The first tick of the new controller breaks the limit; the chunk fails,
+    // and the run halts. `REPLY_TIMEOUT` bounds each message, and the states
+    // of the initial satellite keep coming until the halt.
+    let halted = read_until(&mut read, "the halt", 2000, |m| m["type"] == "error").await;
+    let status = read_until_type(&mut read, "status").await;
+
+    let (_write2, mut read2) = server.connect().await;
+    let first = next_json(&mut read2).await;
+    (halted, status, first)
+}
+
+/// An uploaded guest that never returns from a tick halts the run with an
+/// error naming the turn deadline, instead of holding the server; a client
+/// connecting afterwards is answered.
+#[tokio::test]
+async fn an_uploaded_guest_that_never_returns_halts_the_run() {
+    let (Some(pd_rw), Some(guest)) = (pd_rw_guest_wasm(), misbehaving_guest_wasm()) else {
+        return;
+    };
+    let cfg_file = write_controlled_config(&pd_rw);
+    let cfg_path = cfg_file.path().to_string_lossy().to_string();
+    let mut server = Server::spawn(&["--config", &cfg_path, "--allow-controller-upload"]);
+
+    let result = tokio::time::timeout(Duration::from_secs(60), async {
+        let started = std::time::Instant::now();
+        let (halted, status, first) = run_uploaded_guest_until_it_halts(
+            &server,
+            &guest,
+            serde_json::json!({ "fault": "spin-in-update", "sample_period": 0.1 }),
+        )
+        .await;
+        let message = halted["message"].as_str().expect("an error message");
+        assert!(
+            message.starts_with("simulation halted:") && message.contains("(turn deadline)"),
+            "{message}"
+        );
+        assert_eq!(status["state"], "paused", "{status}");
+        assert_eq!(
+            first["type"], "info",
+            "a new connection is answered: {first}"
+        );
+        // Bounded by the 5 s deadline, not by the guest.
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "{:?}",
+            started.elapsed()
+        );
+    })
+    .await;
+
+    result.expect("test timed out");
+    assert!(server.is_alive(), "the server survives the guest");
+}
+
+/// An uploaded guest growing its memory past the cap halts the run with an
+/// error naming the limit, and the server process carries on.
+#[tokio::test]
+async fn an_uploaded_guest_growing_memory_halts_the_run() {
+    let (Some(pd_rw), Some(guest)) = (pd_rw_guest_wasm(), misbehaving_guest_wasm()) else {
+        return;
+    };
+    let cfg_file = write_controlled_config(&pd_rw);
+    let cfg_path = cfg_file.path().to_string_lossy().to_string();
+    let mut server = Server::spawn(&["--config", &cfg_path, "--allow-controller-upload"]);
+
+    let result = tokio::time::timeout(Duration::from_secs(60), async {
+        let (halted, status, first) = run_uploaded_guest_until_it_halts(
+            &server,
+            &guest,
+            serde_json::json!({ "fault": "grow-memory-in-update", "sample_period": 0.1 }),
+        )
+        .await;
+        let message = halted["message"].as_str().expect("an error message");
+        assert!(
+            message.starts_with("simulation halted:")
+                && message.contains("linear memory")
+                && message.contains("268435456-byte limit"),
+            "{message}"
+        );
+        assert_eq!(status["state"], "paused", "{status}");
+        assert_eq!(
+            first["type"], "info",
+            "a new connection is answered: {first}"
+        );
+    })
+    .await;
+
+    result.expect("test timed out");
+    assert!(server.is_alive(), "the server survives the guest");
 }

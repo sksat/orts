@@ -43,6 +43,7 @@ use wasmtime::component::Component;
 
 use super::component_bytes::ComponentBytes;
 use super::engine::WasmEngine;
+use super::limits::GuestLimits;
 use super::sync_bindings::PluginPre;
 use super::sync_controller::WasmController;
 use super::sync_host_state::HostState;
@@ -64,6 +65,8 @@ use super::async_runtime::{AsyncMode, AsyncRuntime};
 pub struct WasmPluginCache {
     sync_engine: Arc<WasmEngine>,
     sync_plugins: HashMap<PluginKey, CachedSyncPlugin>,
+    /// The limits every controller this cache builds runs under.
+    limits: GuestLimits,
 
     /// Execution mode used when the `AsyncRuntime` is lazily created.
     /// Set at construction and immutable afterwards; the runtime is
@@ -150,6 +153,7 @@ impl WasmPluginCache {
         Ok(Self {
             sync_engine,
             sync_plugins: HashMap::new(),
+            limits: GuestLimits::default(),
             #[cfg(feature = "plugin-wasm-async")]
             async_mode: AsyncMode::Deterministic,
             #[cfg(feature = "plugin-wasm-async")]
@@ -165,6 +169,7 @@ impl WasmPluginCache {
         Ok(Self {
             sync_engine,
             sync_plugins: HashMap::new(),
+            limits: GuestLimits::default(),
             async_mode,
             async_state: None,
         })
@@ -179,6 +184,18 @@ impl WasmPluginCache {
     #[cfg(feature = "plugin-wasm-async")]
     pub fn async_mode(&self) -> AsyncMode {
         self.async_mode
+    }
+
+    /// Build every controller from now on under `limits` instead of the
+    /// default [`GuestLimits`].
+    pub fn with_guest_limits(mut self, limits: GuestLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// The limits the controllers this cache builds run under.
+    pub fn guest_limits(&self) -> GuestLimits {
+        self.limits
     }
 
     /// Borrow the underlying shared sync engine.
@@ -212,8 +229,9 @@ impl WasmPluginCache {
         stream_names: Vec<String>,
         body: arika::body::KnownBody,
     ) -> Result<WasmController, PluginError> {
+        let limits = self.limits;
         let pre = self.get_or_load_sync(Source::Path(path))?;
-        WasmController::new_with_streams(pre, label, config, stream_names, body)
+        WasmController::new_with_limits(pre, label, config, stream_names, body, limits)
     }
 
     /// As [`build_sync_controller_with_streams`](Self::build_sync_controller_with_streams)
@@ -229,8 +247,9 @@ impl WasmPluginCache {
         stream_names: Vec<String>,
         body: arika::body::KnownBody,
     ) -> Result<WasmController, PluginError> {
+        let limits = self.limits;
         let pre = self.get_or_load_sync(Source::Bytes(component))?;
-        WasmController::new_with_streams(pre, label, config, stream_names, body)
+        WasmController::new_with_limits(pre, label, config, stream_names, body, limits)
     }
 
     fn get_or_load_sync(
@@ -286,8 +305,9 @@ impl WasmPluginCache {
         stream_names: Vec<String>,
         body: arika::body::KnownBody,
     ) -> Result<AsyncWasmController, PluginError> {
+        let limits = self.limits;
         let built = self.get_or_load_async(Source::Path(path))?;
-        AsyncWasmController::new_with_streams(built, label, config, stream_names, body)
+        AsyncWasmController::new_with_limits(built, label, config, stream_names, body, limits)
     }
 
     /// As [`build_async_controller_with_streams`](Self::build_async_controller_with_streams)
@@ -303,8 +323,9 @@ impl WasmPluginCache {
         stream_names: Vec<String>,
         body: arika::body::KnownBody,
     ) -> Result<AsyncWasmController, PluginError> {
+        let limits = self.limits;
         let built = self.get_or_load_async(Source::Bytes(component))?;
-        AsyncWasmController::new_with_streams(built, label, config, stream_names, body)
+        AsyncWasmController::new_with_limits(built, label, config, stream_names, body, limits)
     }
 
     /// Borrow the async engine, creating it if this is the first

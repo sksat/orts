@@ -30,10 +30,11 @@
 //!   one OS thread per controller (~8-16 MB of reserved stack each);
 //!   async spawns a tokio task (~few KB). This is what makes 1000+
 //!   satellites feasible.
-//! - **Isolation**: a misbehaving guest (infinite loop, runaway
-//!   computation) can stall the single worker thread and starve all
-//!   other satellites on it. Mitigation: future work with
-//!   `Engine::increment_epoch()` + epoch deadlines.
+//! - **Isolation**: a guest runs under [`GuestLimits`]. Its store yields to
+//!   the runtime at every engine epoch, so a long turn does not hold the
+//!   single worker thread by itself, and traps once the turn passes its
+//!   deadline. The outer side waits for the task for at most the deadline
+//!   plus a grace, then aborts it.
 //! - **Determinism**: the runtime uses `worker_threads(1)` so task
 //!   scheduling is stable across runs, which is required for the
 //!   oracle / replay workflow.
@@ -71,6 +72,10 @@ use super::async_host_state::{AsyncHostState, GuestResponse, TickPacket};
 use super::async_runtime::AsyncRuntime;
 use super::convert::r#async as convert;
 use super::engine::WasmEngine;
+use super::limits::{
+    GuestLimiter, GuestLimits, OutboundBacklog, OutboxBudget, TurnClock,
+    clock_waits_return_at_once, guest_error, stuck_in_host_message,
+};
 use super::stream_state::{DEFAULT_STREAM_CAPACITY, StreamDelivery, Streams};
 
 use crate::plugin::controller::PluginController;
@@ -99,6 +104,7 @@ impl AsyncPluginPreBuilt {
         let mut linker = wasmtime::component::Linker::new(engine.inner());
         wasmtime_wasi::p2::add_to_linker_async(&mut linker)
             .map_err(|e| PluginError::Init(format!("WASI add_to_linker_async failed: {e}")))?;
+        clock_waits_return_at_once(&mut linker)?;
         AsyncPlugin::add_to_linker::<AsyncHostState, AsyncHostState>(&mut linker, |state| state)
             .map_err(|e| PluginError::Init(format!("async add_to_linker failed: {e}")))?;
         let instance_pre = linker
@@ -150,7 +156,12 @@ pub struct AsyncWasmController {
     // ─── msg-io transport state (mirror of sync backend) ────────
     node_id: NodeId,
     pending_inbound: Vec<Message>,
-    outbound_buffer: Vec<Message>,
+    outbound: OutboundBacklog,
+
+    /// The limits the guest runs under; also how long the outer side waits.
+    limits: GuestLimits,
+    /// The guest's task, aborted on drop or when it stops answering.
+    task: tokio::task::AbortHandle,
 
     // ─── stream-io transport state (mirror of sync backend) ─────
     pending_stream_inbound: Vec<StreamDelivery>,
@@ -175,13 +186,32 @@ impl AsyncWasmController {
     }
 
     /// As [`new`](Self::new) but wired to the given `stream-io` streams
-    /// (declared up front).
+    /// (declared up front), under the default [`GuestLimits`].
     pub fn new_with_streams(
         built: &AsyncPluginPreBuilt,
         label: impl Into<String>,
         config: &str,
         stream_names: Vec<String>,
         body: arika::body::KnownBody,
+    ) -> Result<Self, PluginError> {
+        Self::new_with_limits(
+            built,
+            label,
+            config,
+            stream_names,
+            body,
+            GuestLimits::default(),
+        )
+    }
+
+    /// As [`new_with_streams`](Self::new_with_streams), under `limits`.
+    pub fn new_with_limits(
+        built: &AsyncPluginPreBuilt,
+        label: impl Into<String>,
+        config: &str,
+        stream_names: Vec<String>,
+        body: arika::body::KnownBody,
+        limits: GuestLimits,
     ) -> Result<Self, PluginError> {
         let label = label.into();
         let config = config.to_string();
@@ -199,74 +229,111 @@ impl AsyncWasmController {
         // Spawn the satellite task onto the runtime. Ownership of
         // `Store` and the `call_run` future is entirely inside the
         // task, which avoids a self-referential controller struct.
-        runtime.handle().spawn(async move {
-            let host_state = AsyncHostState {
-                label: label_for_task,
-                field: crate::magnetic::field_for_body(body),
-                wasi: wasmtime_wasi::WasiCtxBuilder::new().build(),
-                table: wasmtime_wasi::ResourceTable::new(),
-                input_rx,
-                output_tx: output_tx.clone(),
-                pending_cmd: None,
-                inbox: VecDeque::new(),
-                outbox: Vec::new(),
-                streams: Streams::new(stream_names, DEFAULT_STREAM_CAPACITY),
-                is_first_wait: true,
-            };
-            let mut store = Store::new(engine.inner(), host_state);
+        let task = runtime
+            .handle()
+            .spawn(async move {
+                let host_state = AsyncHostState {
+                    label: label_for_task,
+                    field: crate::magnetic::field_for_body(body),
+                    wasi: wasmtime_wasi::WasiCtxBuilder::new().build(),
+                    table: wasmtime_wasi::ResourceTable::new(),
+                    input_rx,
+                    output_tx: output_tx.clone(),
+                    pending_cmd: None,
+                    inbox: VecDeque::new(),
+                    outbox: Vec::new(),
+                    streams: Streams::new(stream_names, DEFAULT_STREAM_CAPACITY),
+                    is_first_wait: true,
+                    in_run: false,
+                    shut_down: false,
+                    protocol_fault: None,
+                    turn: TurnClock::new(limits.turn_deadline),
+                    limiter: GuestLimiter::new(limits),
+                    outbox_budget: OutboxBudget::default(),
+                    early_fault: None,
+                };
+                let mut store = Store::new(engine.inner(), host_state);
+                // Limits go on before any guest code runs; see the sync backend.
+                store.limiter(|state| &mut state.limiter);
+                store.set_epoch_deadline(1);
+                store.epoch_deadline_callback(|ctx| ctx.data().turn.on_epoch(true));
 
-            let plugin = match pre.instantiate_async(&mut store).await {
-                Ok(p) => p,
-                Err(e) => {
-                    let _ = meta_tx.send(Err(format!("instantiate_async: {e}")));
+                store.data_mut().turn.start();
+                let plugin = match pre.instantiate_async(&mut store).await {
+                    Ok(p) => p,
+                    Err(e) => {
+                        let _ =
+                            meta_tx.send(Err(format!("instantiate_async: {}", guest_error(&e))));
+                        return;
+                    }
+                };
+                // Instantiation is a turn of its own (start functions run in it).
+                if let Some(fault) = store.data_mut().take_turn_fault() {
+                    let _ = meta_tx.send(Err(format!("instantiate_async: {fault}")));
                     return;
                 }
-            };
-            let _ = &component; // keep component alive with the task
+                let _ = &component; // keep component alive with the task
 
-            // Query metadata(config) — validates config and returns
-            // sample_period. Errors are surfaced to `new()` below.
-            let metadata = match plugin.call_metadata(&mut store, &config).await {
-                Ok(Ok(md)) => md,
-                Ok(Err(guest_err)) => {
-                    let _ = meta_tx.send(Err(format!("metadata: {guest_err}")));
+                // Query metadata(config) — validates config and returns
+                // sample_period. Errors are surfaced to `new()` below.
+                store.data_mut().turn.start();
+                let metadata = match plugin.call_metadata(&mut store, &config).await {
+                    Ok(Ok(md)) => md,
+                    Ok(Err(guest_err)) => {
+                        let _ = meta_tx.send(Err(format!("metadata: {guest_err}")));
+                        return;
+                    }
+                    Err(trap) => {
+                        let _ = meta_tx.send(Err(format!("metadata call: {}", guest_error(&trap))));
+                        return;
+                    }
+                };
+                if let Some(fault) = store.data_mut().take_turn_fault() {
+                    let _ = meta_tx.send(Err(format!("metadata: {fault}")));
                     return;
                 }
-                Err(trap) => {
-                    let _ = meta_tx.send(Err(format!("metadata call: {trap}")));
+                if !metadata.sample_period_s.is_finite() || metadata.sample_period_s <= 0.0 {
+                    let _ = meta_tx.send(Err(format!(
+                        "guest returned invalid sample_period: {}",
+                        metadata.sample_period_s
+                    )));
                     return;
                 }
-            };
-            if !metadata.sample_period_s.is_finite() || metadata.sample_period_s <= 0.0 {
-                let _ = meta_tx.send(Err(format!(
-                    "guest returned invalid sample_period: {}",
-                    metadata.sample_period_s
-                )));
-                return;
-            }
-            let _ = meta_tx.send(Ok(metadata.sample_period_s));
+                let _ = meta_tx.send(Ok(metadata.sample_period_s));
 
-            // Drive the guest main loop for the rest of the task's
-            // lifetime. When the outer side drops its `input_tx`,
-            // `wait_tick` sees `None` and the guest `run()` returns.
-            let run_result = plugin.call_run(&mut store, &config).await;
-            let done = match run_result {
-                Ok(Ok(())) => Ok(()),
-                Ok(Err(guest_err)) => Err(guest_err),
-                Err(trap) => Err(format!("trap: {trap}")),
-            };
-            let _ = output_tx.send(GuestResponse::Done(done)).await;
-        });
+                // Drive the guest main loop for the rest of the task's
+                // lifetime. When the outer side drops its `input_tx`,
+                // `wait_tick` sees `None` and the guest `run()` returns.
+                store.data_mut().in_run = true;
+                store.data_mut().turn.start();
+                let run_result = plugin.call_run(&mut store, &config).await;
+                let done = match run_result {
+                    Ok(Ok(())) => Ok(()),
+                    Ok(Err(guest_err)) => Err(guest_err),
+                    Err(trap) => Err(format!("trap: {}", guest_error(&trap))),
+                };
+                let _ = output_tx.send(GuestResponse::Done(done)).await;
+            })
+            .abort_handle();
 
         // Wait for metadata on the caller thread using the runtime's
         // handle. This thread is NOT in the runtime, so block_on is
-        // safe (no nested-block_on panic).
-        let sample_period_s = runtime.handle().block_on(async move {
-            meta_rx
-                .await
+        // safe (no nested-block_on panic). Instantiation and `metadata` are a
+        // turn each; past both deadlines the guest is blocked in a host call.
+        let waited = limits.host_wait(2);
+        let metadata = runtime
+            .handle()
+            .block_on(async move { tokio::time::timeout(waited, meta_rx).await });
+        let sample_period_s = match metadata {
+            Ok(result) => result
                 .map_err(|_| PluginError::Init("async task dropped before metadata".to_string()))?
                 .map_err(|e| PluginError::Init(format!("metadata: {e}")))
-        })?;
+                .inspect_err(|_| task.abort())?,
+            Err(_) => {
+                task.abort();
+                return Err(PluginError::Init(stuck_in_host_message(waited)));
+            }
+        };
 
         Ok(Self {
             runtime,
@@ -276,7 +343,9 @@ impl AsyncWasmController {
             name: format!("wasm-async:{label}"),
             node_id: NodeId::Satellite(0),
             pending_inbound: Vec::new(),
-            outbound_buffer: Vec::new(),
+            outbound: OutboundBacklog::default(),
+            limits,
+            task,
             pending_stream_inbound: Vec::new(),
             stream_outbound_buffer: HashMap::new(),
         })
@@ -297,7 +366,7 @@ impl PluginController for AsyncWasmController {
     }
 
     fn take_outbound(&mut self) -> Vec<Message> {
-        std::mem::take(&mut self.outbound_buffer)
+        self.outbound.take()
     }
 
     fn set_node_id(&mut self, id: NodeId) {
@@ -335,29 +404,50 @@ impl PluginController for AsyncWasmController {
         let stream_inbound = std::mem::take(&mut self.pending_stream_inbound);
         let input_tx = self.input_tx.clone();
         let output_rx = &mut self.output_rx;
+        let waited = self.limits.host_wait(1);
+        let task = self.task.clone();
 
         let (command, outgoing, stream_outbound) = self.runtime.handle().block_on(async move {
-            input_tx
+            if input_tx
                 .send(Some(TickPacket {
                     input: wit_obs,
                     inbox,
                     stream_inbound,
                 }))
                 .await
-                .map_err(|_| PluginError::Runtime("async task dropped".to_string()))?;
-            match output_rx
-                .recv()
-                .await
+                .is_err()
+            {
+                // The task is gone. If it said why on the way out, that is
+                // the error worth reporting, not the closed channel.
+                return Err(match output_rx.try_recv() {
+                    Ok(GuestResponse::Done(Err(e))) => {
+                        PluginError::Runtime(format!("guest error: {e}"))
+                    }
+                    _ => PluginError::Runtime("async task dropped".to_string()),
+                });
+            }
+            let response = match tokio::time::timeout(waited, output_rx.recv()).await {
+                Ok(response) => response,
+                Err(_) => {
+                    // Neither running wasm (the epoch would have stopped it)
+                    // nor waiting for a tick: the guest is blocked in a host
+                    // call. Aborting drops its store at that await.
+                    task.abort();
+                    return Err(PluginError::Runtime(stuck_in_host_message(waited)));
+                }
+            };
+            match response
                 .ok_or_else(|| PluginError::Runtime("async task channel closed".to_string()))?
             {
                 GuestResponse::Tick {
                     command,
                     outgoing,
                     stream_outbound,
-                    stream_fault,
+                    host_fault,
                 } => {
-                    // Host-authoritative stream fault → halt the simulation.
-                    if let Some(fault) = stream_fault {
+                    // Host-authoritative fault (stream-io, msg-io flood) →
+                    // halt the simulation.
+                    if let Some(fault) = host_fault {
                         return Err(PluginError::Runtime(fault));
                     }
                     Ok((command, outgoing, stream_outbound))
@@ -374,12 +464,14 @@ impl PluginController for AsyncWasmController {
         // Inject the host-controlled `src` onto guest outbound (anti-spoof).
         for ob in outgoing {
             let ob: Outbound = convert::outbound_from_wit(ob);
-            self.outbound_buffer.push(Message {
-                src: self.node_id,
-                dst: ob.dst,
-                kind: ob.kind,
-                payload: ob.payload,
-            });
+            self.outbound
+                .push(Message {
+                    src: self.node_id,
+                    dst: ob.dst,
+                    kind: ob.kind,
+                    payload: ob.payload,
+                })
+                .map_err(PluginError::Runtime)?;
         }
 
         // Buffer guest-written stream bytes for `stream_take`. Bound it here
@@ -405,14 +497,11 @@ impl PluginController for AsyncWasmController {
 
 impl Drop for AsyncWasmController {
     fn drop(&mut self) {
-        // Best-effort shutdown signal: send None on the input channel
-        // so the guest's wait_tick returns None and the main loop
-        // exits. If the runtime has already been dropped, the send
-        // silently fails and we just return.
-        let input_tx = self.input_tx.clone();
-        let _ = self
-            .runtime
-            .handle()
-            .block_on(async move { input_tx.send(None).await });
+        // Nothing reads this controller's output any more, so the guest need
+        // not finish on its own: tell it to stop, and abort the task so a
+        // guest that ignores that (or is blocked in a host call) is dropped at
+        // its next await rather than left on the runtime. Neither call waits.
+        let _ = self.input_tx.try_send(None);
+        self.task.abort();
     }
 }

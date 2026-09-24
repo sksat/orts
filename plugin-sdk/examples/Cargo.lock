@@ -386,6 +386,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "orts-example-plugin-misbehaving-guest"
+version = "0.0.0"
+dependencies = [
+ "orts-plugin-sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "orts-example-plugin-pd-rw-control"
 version = "0.0.0"
 dependencies = [

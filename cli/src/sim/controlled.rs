@@ -101,6 +101,12 @@ pub struct ControlledSatellite {
     /// Thruster specs (空なら thruster なし)。ZOH 境界で ThrusterAssembly を
     /// 作り直すために保持する。
     pub thruster_specs: Vec<ThrusterSpec>,
+    /// Drop the msg-io messages the controller sent, after each tick.
+    ///
+    /// `orts serve` routes no msg-io, so nothing takes the messages; left in
+    /// the controller they would reach its backlog limit and halt the run.
+    /// `orts run` leaves this off and logs them.
+    pub discards_messages: bool,
     /// Sim time this satellite's controller schedule is anchored at [s]: where
     /// the satellite entered the simulation.
     tick_base_t: f64,
@@ -147,6 +153,7 @@ impl ControlledSatellite {
             mtq_max_moment: 0.0,
             body,
             thruster_specs: Vec::new(),
+            discards_messages: false,
             tick_base_t: 0.0,
             ticks_done: 0,
         }
@@ -368,6 +375,7 @@ pub fn build_controlled_satellite(
         mtq_max_moment,
         body: params.body,
         thruster_specs,
+        discards_messages: false,
         tick_base_t: start_t,
         ticks_done: 0,
     })
@@ -773,6 +781,9 @@ pub fn tick_controller(
             .apply(&cmd)
             .map_err(|e| format!("actuator error at t={t_next:.3}: {e}"))?;
     }
+    if sat.discards_messages {
+        drop(sat.controller.take_outbound());
+    }
     // Only once the whole tick has landed: `apply_held_commands` can reject a
     // command whose length does not match the actuator, and a schedule advanced
     // past a tick that failed would resume on the wrong phase.
@@ -1135,6 +1146,7 @@ mod tests {
             mtq_max_moment: 0.0,
             body: arika::body::KnownBody::Earth,
             thruster_specs: Vec::new(),
+            discards_messages: false,
             tick_base_t: start_t,
             ticks_done: 0,
         };

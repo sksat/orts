@@ -1,12 +1,11 @@
 use std::ops::ControlFlow;
-use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use super::MAX_CONTROL_MESSAGE_BYTES;
-use super::controller_upload::{UploadBudget, Uploaded, UploadedComponents};
+use super::controller_upload::{Uploaded, UploadedComponents};
 use super::manager::{SimCommand, SimStatusResponse};
 use super::protocol::{ClientMessage, WsMessage};
 
@@ -17,7 +16,7 @@ pub(super) async fn handle_connection(
     socket: WebSocket,
     mut rx: broadcast::Receiver<String>,
     cmd_tx: mpsc::Sender<SimCommand>,
-    upload_budget: Arc<UploadBudget>,
+    uploads: UploadedComponents,
 ) {
     let (mut ws_sender, mut ws_receiver): (WsSender, WsReceiver) = socket.split();
 
@@ -117,27 +116,13 @@ pub(super) async fn handle_connection(
                 return;
             }
 
-            main_loop(
-                &mut ws_sender,
-                &mut ws_receiver,
-                &mut rx,
-                &cmd_tx,
-                upload_budget,
-            )
-            .await;
+            main_loop(&mut ws_sender, &mut ws_receiver, &mut rx, &cmd_tx, uploads).await;
             return;
         }
     }
 
     // Idle client: main loop (waiting for start_simulation or other messages)
-    main_loop(
-        &mut ws_sender,
-        &mut ws_receiver,
-        &mut rx,
-        &cmd_tx,
-        upload_budget,
-    )
-    .await;
+    main_loop(&mut ws_sender, &mut ws_receiver, &mut rx, &cmd_tx, uploads).await;
 }
 
 /// Send `msg` to this client. `Break` when the socket is gone.
@@ -212,12 +197,11 @@ async fn main_loop(
     ws_receiver: &mut WsReceiver,
     rx: &mut broadcast::Receiver<String>,
     cmd_tx: &mpsc::Sender<SimCommand>,
-    upload_budget: Arc<UploadBudget>,
+    mut uploads: UploadedComponents,
 ) {
-    // The controller components this client sent; dropped with the
-    // connection, which gives their share of the budget back. A controller
-    // already built from one keeps running.
-    let mut uploads = UploadedComponents::new(upload_budget);
+    // `uploads` holds the controller components this client sent; dropped
+    // with the connection, which gives their share of the budget back. A
+    // controller already built from one keeps running.
     loop {
         tokio::select! {
             msg = rx.recv() => {

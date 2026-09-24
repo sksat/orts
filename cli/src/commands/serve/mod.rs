@@ -41,9 +41,17 @@ struct AppState {
     reserved_stdio: Option<stream_bridge::StreamKey>,
     /// Controller component bytes all `/ws` connections hold together.
     upload_budget: Arc<controller_upload::UploadBudget>,
+    /// `--allow-controller-upload`: whether a client may send controller
+    /// components and name them by `sha256`.
+    allow_controller_upload: bool,
 }
 
-pub fn run_server(sim: &SimArgs, port: u16, stream_stdio: Option<&str>) -> Result<(), CmdError> {
+pub fn run_server(
+    sim: &SimArgs,
+    port: u16,
+    stream_stdio: Option<&str>,
+    allow_controller_upload: bool,
+) -> Result<(), CmdError> {
     // Parse + reject malformed flags before starting the runtime so a typo
     // fails fast instead of surfacing as a dead endpoint later.
     let stdio_key = match stream_stdio {
@@ -59,7 +67,13 @@ pub fn run_server(sim: &SimArgs, port: u16, stream_stdio: Option<&str>) -> Resul
     let plugin_overrides = manager::PluginBackendOverrides::from_sim_args(sim);
     let rt = tokio::runtime::Runtime::new()
         .map_err(|e| CmdError::failure(format!("creating the tokio runtime: {e}")))?;
-    rt.block_on(async_server(sim, port, stdio_key, plugin_overrides))
+    rt.block_on(async_server(
+        sim,
+        port,
+        stdio_key,
+        plugin_overrides,
+        allow_controller_upload,
+    ))
 }
 
 /// Parse a `--stream-stdio` value of the form `sat/stream` (both halves
@@ -110,10 +124,13 @@ const MAX_WS_MESSAGE_BYTES: usize =
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
     let rx = state.tx.subscribe();
     let cmd_tx = state.cmd_tx.clone();
-    let upload_budget = Arc::clone(&state.upload_budget);
+    let uploads = controller_upload::UploadedComponents::new(
+        Arc::clone(&state.upload_budget),
+        state.allow_controller_upload,
+    );
     ws.max_message_size(MAX_WS_MESSAGE_BYTES)
         .on_upgrade(move |socket| async move {
-            connection::handle_connection(socket, rx, cmd_tx, upload_budget).await;
+            connection::handle_connection(socket, rx, cmd_tx, uploads).await;
             eprintln!("Client disconnected");
         })
 }
@@ -153,6 +170,7 @@ async fn async_server(
     port: u16,
     stdio_key: Option<stream_bridge::StreamKey>,
     plugin_overrides: manager::PluginBackendOverrides,
+    allow_controller_upload: bool,
 ) -> Result<(), CmdError> {
     let addr = format!("0.0.0.0:{port}");
     let listener = TcpListener::bind(&addr)
@@ -282,6 +300,7 @@ async fn async_server(
         upload_budget: controller_upload::UploadBudget::new(
             controller_upload::MAX_UPLOADED_BYTES_PER_SERVER,
         ),
+        allow_controller_upload,
     };
 
     let app = Router::new()
