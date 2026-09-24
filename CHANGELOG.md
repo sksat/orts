@@ -1037,6 +1037,11 @@ section is subdivided by package.
   under RK4 when `output_interval` equals `dt`. ([#466](https://github.com/sksat/orts/pull/466))
 
 #### Fixed
+- `convert --format` offers only `csv`, the one format it writes. It offered
+  `rrd` too and then refused it with `cannot convert to .rrd format (input is
+  already .rrd)`, whatever the input was; clap now refuses `--format rrd` with
+  `[possible values: csv]` and exit 2. The help says the input is a recorded
+  `.rrd` file.
 - `convert` reports a CSV it cannot finish writing and exits 1. A reader that
   closed the pipe early (`orts convert --format csv x.rrd | head`) or a full
   disk made it panic with exit 101, while `orts run --format csv | head`

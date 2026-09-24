@@ -124,14 +124,14 @@ pub enum Commands {
         #[arg(long, default_value_t = 9001)]
         port: u16,
     },
-    /// Convert between data formats
+    /// Convert a recorded .rrd file to another format
     Convert {
-        /// Input file path
+        /// Recorded .rrd file to convert
         input: String,
 
         /// Output format
         #[arg(long)]
-        format: OutputFormat,
+        format: ConvertFormat,
 
         /// Output path (default: stdout)
         #[arg(long)]
@@ -175,6 +175,16 @@ pub enum ConfigFormat {
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum OutputFormat {
     Rrd,
+    Csv,
+}
+
+/// What `orts convert` writes a recorded `.rrd` as.
+///
+/// Its own type rather than [`OutputFormat`]: `convert` reads an `.rrd`, so
+/// `rrd` is not a format it converts to, and offering it only for the command
+/// to refuse it left the help promising a conversion there was none of.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ConvertFormat {
     Csv,
 }
 

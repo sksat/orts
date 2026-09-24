@@ -813,6 +813,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `dt` と同じなら、モデル評価の作業が 4 分の 1 ほど増える。([#466](https://github.com/sksat/orts/pull/466))
 
 #### Fixed
+- `convert --format` は、実際に書ける `csv` だけを選択肢に出す。以前は `rrd` も選択肢に出し、入力に
+  よらず `cannot convert to .rrd format (input is already .rrd)` で拒否していた。いまは clap が
+  `--format rrd` を `[possible values: csv]` と exit 2 で拒否する。help にも、入力が記録した `.rrd`
+  ファイルであることを書いた
 - `convert` は、CSV を書き終えられないときにエラーを出して exit 1 で終わる。読む側が途中で pipe を
   閉じたとき (`orts convert --format csv x.rrd | head`) や disk が一杯のときに panic して exit 101 で
   終わっていた。`orts run --format csv | head` は以前から `Error: writing CSV to stdout: Broken pipe` を

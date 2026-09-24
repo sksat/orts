@@ -1,4 +1,4 @@
-use crate::cli::OutputFormat;
+use crate::cli::ConvertFormat;
 
 use super::CmdError;
 
@@ -9,11 +9,11 @@ use super::CmdError;
 /// code path as `orts run --format csv`.
 pub fn run_convert(
     input: &str,
-    format: OutputFormat,
+    format: ConvertFormat,
     output: Option<&str>,
 ) -> Result<(), CmdError> {
     match format {
-        OutputFormat::Csv => {
+        ConvertFormat::Csv => {
             let rec = orts::record::rerun_export::load_as_recording(input)
                 .map_err(|e| CmdError::failure(format!("reading {input}: {e}")))?;
 
@@ -41,8 +41,5 @@ pub fn run_convert(
             }
             Ok(())
         }
-        OutputFormat::Rrd => Err(CmdError::failure(
-            "cannot convert to .rrd format (input is already .rrd)",
-        )),
     }
 }
