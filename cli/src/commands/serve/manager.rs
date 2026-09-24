@@ -18,8 +18,7 @@ use super::protocol::WsMessage;
 use super::stream_bridge::{OutboundPush, StreamBridge, StreamEndpoint, StreamKey};
 use crate::cli::{PluginAsyncModeChoice, PluginBackendChoice, SimArgs};
 use crate::config::{SatelliteConfig, SimConfig};
-use crate::satellite::{SatelliteInfo, SatelliteSpec};
-use crate::sim::mode::validate_satellite_spec;
+use crate::satellite::SatelliteInfo;
 use crate::sim::params::SimParams;
 use orts::setup::default_third_bodies;
 
@@ -63,6 +62,10 @@ impl PluginBackendOverrides {
 /// Command sent from connection handlers to the simulation manager.
 pub(super) enum SimCommand {
     /// Start a simulation from idle state.
+    ///
+    /// `respond` is answered once the simulation is built, with `Ok`, or with
+    /// the reason it could not be: the config was refused, its parameters did
+    /// not build, or the engine did not.
     Start {
         config: Box<SimConfig>,
         respond: oneshot::Sender<Result<(), String>>,
@@ -116,6 +119,16 @@ pub(super) enum SimStatusResponse {
         terminated_events: Vec<String>,
         history_states: Vec<crate::sim::core::HistoryState>,
     },
+}
+
+/// A `start_simulation` the idle loop accepted and has not answered yet.
+///
+/// `params` are built once, from the request's config; `respond` is the
+/// requesting connection's reply channel, answered once the engine is built
+/// (see [`run_simulation_loop`]).
+struct PendingStart {
+    params: SimParams,
+    respond: oneshot::Sender<Result<(), String>>,
 }
 
 /// Why the simulation loop exited.
@@ -198,22 +211,31 @@ pub(super) async fn simulation_manager_with_params(
     let data_dir = std::env::temp_dir().join(format!("orts-{}", std::process::id()));
     let body_radius = params.body.properties().radius;
     let history = HistoryBuffer::new(5000, data_dir, params.mu, body_radius);
-    match run_simulation_loop(params, cmd_rx, tx.clone(), history, Arc::clone(&bridge)).await {
+    // No client asked for this simulation, so there is nobody to answer.
+    match run_simulation_loop(
+        params,
+        None,
+        cmd_rx,
+        tx.clone(),
+        history,
+        Arc::clone(&bridge),
+    )
+    .await
+    {
         (LoopExit::Terminated, mut returned_rx) => {
             // Legacy path: after terminate, go idle and allow restart.
             eprintln!("Simulation manager: idle, waiting for start_simulation...");
-            if let Some(config) = idle_loop(&mut returned_rx).await {
-                // Delegate to the standard manager for subsequent runs.
-                simulation_manager(
-                    Some(config),
-                    cli_plugin_overrides,
-                    returned_rx,
-                    tx,
-                    texture_tx,
-                    bridge,
-                )
-                .await;
-            }
+            let next = idle_loop(&mut returned_rx).await;
+            // Run the clients' simulations the way the standard manager does.
+            run_client_starts(
+                next,
+                cli_plugin_overrides,
+                returned_rx,
+                tx,
+                texture_tx,
+                bridge,
+            )
+            .await;
         }
         (LoopExit::Disconnected, _) => {}
     }
@@ -221,6 +243,15 @@ pub(super) async fn simulation_manager_with_params(
 
 /// Validate a SimConfig before starting. Returns Err with a user-facing message
 /// if the config is invalid (e.g., mixed attitude settings).
+///
+/// The config alone decides: nothing here opens a file or fetches. The
+/// satellites are built afterwards, once, by `SimParams::from_config` — a
+/// NORAD orbit's TLE is fetched there. Building them here as well fetched
+/// every NORAD TLE twice (#555). What a built spec used to be checked for is
+/// refused by `SimConfig::validate` from the config already (a TLE or NORAD
+/// orbit about another body, attitude or a controller on only part of the
+/// fleet, an attitude that cannot be propagated), and `ServeEngine::build`
+/// checks the built specs again.
 fn validate_sim_config(config: &SimConfig) -> Result<(), String> {
     // Field-level validation (non-zero direction, finite values, …) mirrors
     // what `SimConfig::load` runs for file-based configs, so WebSocket
@@ -257,33 +288,18 @@ fn validate_sim_config(config: &SimConfig) -> Result<(), String> {
              an orbit with `--space-weather <PATH>`"
         ));
     }
-
-    let body = crate::satellite::parse_body(&config.body);
-    let mu = body.properties().mu;
-    let specs: Vec<SatelliteSpec> = config
-        .satellites
-        .iter()
-        .enumerate()
-        .map(|(i, s)| s.to_satellite_spec(i, body, mu))
-        .collect::<Result<_, String>>()?;
-    // SGP4/TEME is Earth-centered: reject a non-Earth TLE/OMM config here so a
-    // WebSocket `StartSimulation` returns an error to the client at the
-    // `start_simulation` reply, before `SimParams::from_config` runs.
-    crate::sim::params::validate_element_set_body(body, &specs)?;
-    // Reject fleets that no single mode can honor (mixed attitude / mixed
-    // controller) with the same rule `ServeEngine::build` and `orts run` use,
-    // so a WebSocket `StartSimulation` fails here instead of at engine build.
-    crate::sim::mode::select_sim_mode(&specs)?;
-    // Validate inertia tensors are invertible
-    for spec in &specs {
-        validate_satellite_spec(spec)?;
-    }
     Ok(())
 }
 
 /// Drain the cmd_rx, handling only GetStatus (as idle) and rejecting others,
-/// until a Start command arrives or the channel disconnects.
-async fn idle_loop(cmd_rx: &mut mpsc::Receiver<SimCommand>) -> Option<SimConfig> {
+/// until a Start command whose parameters build arrives or the channel
+/// disconnects.
+///
+/// A Start is answered here only when it fails: `validate_sim_config` refuses
+/// the config, or `SimParams::from_config` cannot build it (a NORAD TLE or a
+/// `space_weather = "auto"` that cannot be fetched). A Start whose parameters
+/// build comes back unanswered, as a [`PendingStart`].
+async fn idle_loop(cmd_rx: &mut mpsc::Receiver<SimCommand>) -> Option<PendingStart> {
     loop {
         let Some(cmd) = cmd_rx.recv().await else {
             return None; // All senders dropped
@@ -293,13 +309,20 @@ async fn idle_loop(cmd_rx: &mut mpsc::Receiver<SimCommand>) -> Option<SimConfig>
                 let _ = respond.send(SimStatusResponse::Idle);
             }
             SimCommand::Start { config, respond } => {
-                // Validate config before acknowledging
                 if let Err(e) = validate_sim_config(&config) {
                     let _ = respond.send(Err(e));
                     continue;
                 }
-                let _ = respond.send(Ok(()));
-                return Some(*config);
+                // The manager task must survive a config it cannot build, so
+                // the failure goes back to the client and the loop keeps
+                // waiting for the next `start_simulation`.
+                match SimParams::from_config(&config) {
+                    Ok(params) => return Some(PendingStart { params, respond }),
+                    Err(e) => {
+                        eprintln!("Simulation manager: cannot start simulation: {e}");
+                        let _ = respond.send(Err(e));
+                    }
+                }
             }
             SimCommand::AddSatellite { respond, .. } => {
                 let _ = respond.send(Err("Simulation is not running".to_string()));
@@ -323,41 +346,35 @@ async fn idle_loop(cmd_rx: &mut mpsc::Receiver<SimCommand>) -> Option<SimConfig>
 /// Simulation manager: handles idle/running state and commands.
 /// Loops between idle and running states; after terminate it returns to idle.
 pub(super) async fn simulation_manager(
-    initial_config: Option<SimConfig>,
     cli_plugin_overrides: PluginBackendOverrides,
     mut cmd_rx: mpsc::Receiver<SimCommand>,
     tx: broadcast::Sender<String>,
     texture_tx: super::textures::TextureRequestSender,
     bridge: Arc<StreamBridge>,
 ) {
-    // Determine the first config to start with.
-    let mut next_config = if let Some(config) = initial_config {
-        Some(config)
-    } else {
-        eprintln!("Simulation manager: idle, waiting for start_simulation...");
-        idle_loop(&mut cmd_rx).await
-    };
+    eprintln!("Simulation manager: idle, waiting for start_simulation...");
+    let first = idle_loop(&mut cmd_rx).await;
+    run_client_starts(first, cli_plugin_overrides, cmd_rx, tx, texture_tx, bridge).await;
+}
 
-    // Main manager loop: start simulation, run until terminated, return to idle.
-    while let Some(config) = next_config {
-        // `validate_sim_config` has already refused most of what `from_config`
-        // cannot build (a non-Earth element set, a `[gravity_field]` over
-        // WebSocket, a TLE that does not parse, a `space_weather` path). It
-        // does not fetch space weather, so a `space_weather = "auto"` fetch
-        // that fails lands here; the manager task must survive it, so report
-        // it and wait for the next `start_simulation`.
-        // TODO(#555): the request was acknowledged already, so this `Err`
-        // reaches the server's stderr and not the client.
-        let mut params_inner = match SimParams::from_config(&config) {
-            Ok(params) => params,
-            Err(e) => {
-                eprintln!("Simulation manager: cannot start simulation: {e}");
-                next_config = idle_loop(&mut cmd_rx).await;
-                continue;
-            }
-        };
-        cli_plugin_overrides.apply(&mut params_inner);
-        let params = Arc::new(params_inner);
+/// Run each simulation a client's `start_simulation` asked for, from `next`
+/// on: run until terminated, return to idle, and take the next one, until the
+/// command channel disconnects.
+async fn run_client_starts(
+    mut next: Option<PendingStart>,
+    cli_plugin_overrides: PluginBackendOverrides,
+    mut cmd_rx: mpsc::Receiver<SimCommand>,
+    tx: broadcast::Sender<String>,
+    texture_tx: super::textures::TextureRequestSender,
+    bridge: Arc<StreamBridge>,
+) {
+    while let Some(PendingStart {
+        mut params,
+        respond,
+    }) = next
+    {
+        cli_plugin_overrides.apply(&mut params);
+        let params = Arc::new(params);
 
         // Request texture downloads for all bodies in the system.
         let _ = texture_tx.send(system_body_names(&params)).await;
@@ -366,11 +383,20 @@ pub(super) async fn simulation_manager(
         let body_radius = params.body.properties().radius;
         let history = HistoryBuffer::new(5000, data_dir, params.mu, body_radius);
         eprintln!("Simulation manager: starting simulation...");
-        match run_simulation_loop(params, cmd_rx, tx.clone(), history, Arc::clone(&bridge)).await {
+        match run_simulation_loop(
+            params,
+            Some(respond),
+            cmd_rx,
+            tx.clone(),
+            history,
+            Arc::clone(&bridge),
+        )
+        .await
+        {
             (LoopExit::Terminated, returned_rx) => {
                 cmd_rx = returned_rx;
                 eprintln!("Simulation manager: idle, waiting for start_simulation...");
-                next_config = idle_loop(&mut cmd_rx).await;
+                next = idle_loop(&mut cmd_rx).await;
             }
             (LoopExit::Disconnected, _) => return,
         }
@@ -500,8 +526,16 @@ fn handle_command(
 /// Core simulation loop: builds the engine, drives propagation, dispatches
 /// commands, and paces output to the wall clock. Returns the exit reason and
 /// gives back the command receiver for reuse.
+///
+/// `requester` is the reply channel of the `start_simulation` that asked for
+/// this simulation. It is answered once the engine is built: `Err` if the
+/// build fails, and no other client hears of that failure; `Ok` if it
+/// succeeds, before the first `info` is broadcast. `None` is the simulation
+/// `orts serve` starts from its own command line, which no client asked for;
+/// its build failure is broadcast to whoever is connected.
 async fn run_simulation_loop(
     params: Arc<SimParams>,
+    requester: Option<oneshot::Sender<Result<(), String>>>,
     mut cmd_rx: mpsc::Receiver<SimCommand>,
     tx: broadcast::Sender<String>,
     history: HistoryBuffer,
@@ -520,12 +554,22 @@ async fn run_simulation_loop(
         Ok(init) => init,
         Err(e) => {
             eprintln!("Simulation startup error: {e}");
-            let err_msg = serde_json::to_string(&WsMessage::Error { message: e })
-                .expect("failed to serialize error");
-            let _ = tx.send(err_msg);
+            match requester {
+                Some(respond) => {
+                    let _ = respond.send(Err(e));
+                }
+                None => {
+                    let err_msg = serde_json::to_string(&WsMessage::Error { message: e })
+                        .expect("failed to serialize error");
+                    let _ = tx.send(err_msg);
+                }
+            }
             return (LoopExit::Terminated, cmd_rx);
         }
     };
+    if let Some(respond) = requester {
+        let _ = respond.send(Ok(()));
+    }
 
     // Broadcast the engine's initial Info + state messages.
     for msg in initial_broadcasts {
