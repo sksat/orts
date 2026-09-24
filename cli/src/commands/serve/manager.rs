@@ -407,6 +407,10 @@ fn state_json(out: &crate::sim::core::HistoryState) -> String {
 /// `paused` is **serve-layer** state: pausing does not change physics, it just
 /// stops the loop from calling [`ServeEngine::step_chunk`]. The engine itself
 /// is unaware of it (which is why it has no `paused` field).
+///
+/// A run is paused because a client paused it, or because a chunk failed, in
+/// which case [`ServeEngine::halted`] holds the fault. Only a run a client
+/// paused resumes.
 fn handle_command(
     engine: &mut ServeEngine,
     paused: &mut bool,
@@ -449,7 +453,14 @@ fn handle_command(
             }
         }
         SimCommand::Resume { respond } => {
-            if !*paused {
+            if let Some(fault) = engine.halted() {
+                // The satellites may be ahead of the engine's clock, which
+                // only a new run puts right. The run stays paused.
+                let _ = respond.send(Err(format!(
+                    "Cannot resume: the simulation halted on a fault ({fault}). \
+                     Send terminate_simulation, then start_simulation"
+                )));
+            } else if !*paused {
                 let _ = respond.send(Err("Simulation is not paused".to_string()));
             } else {
                 *paused = false;
@@ -621,7 +632,8 @@ async fn run_simulation_loop(
                 // Controller fault (bad command / guest trap / stream-io
                 // overrun) or integration error. The sim state can no longer
                 // be trusted; halt (pause) instead of integrating forward, and
-                // tell clients.
+                // tell clients. The engine keeps the fault, so a resume is
+                // refused.
                 log::error!("simulation halted: {e}");
                 let msg = serde_json::to_string(&WsMessage::Error {
                     message: format!("simulation halted: {e}"),
@@ -677,8 +689,116 @@ async fn run_simulation_loop(
 
 #[cfg(test)]
 mod tests {
+    use super::super::engine::test_support::{
+        Chatty, FailsFirstTick, NullStreamIo, StuckOnce, TM, controlled_engine,
+    };
     use super::*;
     use arika::body::KnownBody;
+
+    /// What `handle_command` replied to a pause or a resume, and what it
+    /// broadcast.
+    fn pause_or_resume(
+        engine: &mut ServeEngine,
+        paused: &mut bool,
+        command: fn(oneshot::Sender<Result<(), String>>) -> SimCommand,
+    ) -> (Result<(), String>, Vec<String>) {
+        let (tx, mut rx) = broadcast::channel(16);
+        let (respond, mut reply) = oneshot::channel();
+        let flow = handle_command(engine, paused, &tx, command(respond));
+        assert!(flow.is_continue(), "neither command ends the run");
+        let reply = reply.try_recv().expect("the command is answered at once");
+        let sent = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        (reply, sent)
+    }
+
+    /// A run a fault paused stays paused when a client asks to resume it
+    /// (#538).
+    ///
+    /// The satellite had been stepped past the engine's clock when the
+    /// interval failed, so resuming would integrate the advanced state from
+    /// the older time.
+    fn assert_resume_is_refused_after(
+        mut engine: ServeEngine,
+        streams: &mut dyn StreamIo,
+        fault: &str,
+    ) {
+        let error = engine
+            .step_chunk(1, streams)
+            .err()
+            .expect("the fixture's fault halts the run");
+        assert!(error.contains(fault), "got: {error}");
+        // What the serve loop does with a chunk that failed.
+        let mut paused = true;
+
+        let (reply, sent) = pause_or_resume(&mut engine, &mut paused, |respond| {
+            SimCommand::Resume { respond }
+        });
+        let refusal = reply.expect_err("resume of a run a fault paused was accepted");
+        assert!(
+            refusal.contains(fault),
+            "the refusal names the fault: {refusal}"
+        );
+        assert!(
+            refusal.contains("start_simulation"),
+            "and says how to go on: {refusal}"
+        );
+        assert!(paused, "the run stays paused");
+        assert!(sent.is_empty(), "no status goes out: {sent:?}");
+    }
+
+    #[test]
+    fn a_run_a_stuck_peer_paused_is_not_resumed() {
+        assert_resume_is_refused_after(
+            controlled_engine(Box::new(Chatty), &[TM]),
+            &mut StuckOnce::default(),
+            "not draining",
+        );
+    }
+
+    #[test]
+    fn a_run_a_failed_controller_paused_is_not_resumed() {
+        assert_resume_is_refused_after(
+            controlled_engine(Box::new(FailsFirstTick::default()), &[]),
+            &mut NullStreamIo,
+            "controller error",
+        );
+    }
+
+    /// A run the client paused resumes, and steps on from where it stopped.
+    #[test]
+    fn a_run_the_client_paused_resumes() {
+        let mut engine = controlled_engine(Box::new(Chatty), &[TM]);
+        let step = engine.effective_step();
+        engine
+            .step_chunk(1, &mut NullStreamIo)
+            .expect("a peer that is not connected discards the bytes");
+        let mut paused = false;
+
+        let (reply, sent) = pause_or_resume(&mut engine, &mut paused, |respond| {
+            SimCommand::Pause { respond }
+        });
+        reply.expect("a running run pauses");
+        assert!(paused);
+        assert!(
+            sent.len() == 1 && sent[0].contains("\"paused\""),
+            "the clients hear the run paused: {sent:?}"
+        );
+
+        let (reply, sent) = pause_or_resume(&mut engine, &mut paused, |respond| {
+            SimCommand::Resume { respond }
+        });
+        reply.expect("a run the client paused resumes");
+        assert!(!paused);
+        assert!(
+            sent.len() == 1 && sent[0].contains("\"running\""),
+            "the clients hear the run resumed: {sent:?}"
+        );
+
+        engine
+            .step_chunk(1, &mut NullStreamIo)
+            .expect("the resumed run steps");
+        assert_eq!(engine.current_t(), 2.0 * step, "from where it stopped");
+    }
 
     fn sim_args(extra: &[&str]) -> SimArgs {
         use clap::Parser;

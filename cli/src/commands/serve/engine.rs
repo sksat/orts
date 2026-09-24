@@ -400,7 +400,25 @@ pub(super) struct ServeEngine {
     /// succeeds, while the replay ring already holds the entry. That belongs to
     /// `step_chunk`'s return contract, which the orbit-only terminations of the
     /// same chunk share (#487).
+    ///
+    /// A chunk that fails *before* these were taken leaves them here for good:
+    /// the engine does not step after a fault (see `halted`).
+    /// TODO(#487): report them from the chunk that failed.
     pending_terminations: Vec<(SatId, crate::sim::controlled::Termination)>,
+    /// The error of the chunk that failed, once one has. Set by
+    /// [`Self::step_chunk`] and never cleared: every error it returns ends the
+    /// engine's run, and a new run is a new engine.
+    ///
+    /// An interval steps each controlled satellite before the clock moves.
+    /// `advance_controlled` commits a satellite's state at every controller
+    /// tick, while `current_t` and `steps_done` advance only once the whole
+    /// interval has gone through. A failure in between leaves the satellites
+    /// ahead of `current_t`: a controller's `update` that fails after the
+    /// integration to its tick, or a stuck outbound peer once every satellite
+    /// reached the interval's end. `advance_controlled` integrates from the
+    /// time it is handed, so stepping on would take the advanced state for one
+    /// at the older time (#538).
+    halted: Option<String>,
     current_t: f64,
     /// How many `stream_step` boundaries have been crossed. The next boundary
     /// is `(steps_done + 1) * stream_step`, not `current_t + stream_step`:
@@ -732,6 +750,7 @@ impl ServeEngine {
             info: info_msg,
             terminated_events: VecDeque::new(),
             pending_terminations: Vec::new(),
+            halted: None,
             current_t: 0.0,
             steps_done: 0,
             has_perturbations,
@@ -768,6 +787,12 @@ impl ServeEngine {
     /// Current simulation time.
     pub(super) fn current_t(&self) -> f64 {
         self.current_t
+    }
+
+    /// The error that halted this engine, if a chunk has failed. The engine
+    /// does not step again once it has (see the field's doc).
+    pub(super) fn halted(&self) -> Option<&str> {
+        self.halted.as_deref()
     }
 
     /// Pump staged inbound bytes from the injected sink into each controller
@@ -833,7 +858,29 @@ impl ServeEngine {
     /// stream-io overrun) or an integration error — aborts the chunk with
     /// `Err`; the serve layer halts (pauses) the simulation rather than
     /// integrating untrusted state forward.
+    ///
+    /// Every error ends the engine's run: the first is kept in `halted`, and
+    /// each later call returns it again without touching the satellites.
     pub(super) fn step_chunk(
+        &mut self,
+        outputs_per_chunk: usize,
+        streams: &mut dyn StreamIo,
+    ) -> Result<StepOutput, String> {
+        if let Some(fault) = &self.halted {
+            return Err(format!(
+                "the simulation halted on a fault and does not step again: {fault}"
+            ));
+        }
+        let chunk = self.run_chunk(outputs_per_chunk, streams);
+        if let Err(fault) = &chunk {
+            self.halted = Some(fault.clone());
+        }
+        chunk
+    }
+
+    /// The intervals of one chunk. [`Self::step_chunk`] keeps the error that
+    /// ends it.
+    fn run_chunk(
         &mut self,
         outputs_per_chunk: usize,
         streams: &mut dyn StreamIo,
@@ -892,9 +939,9 @@ impl ServeEngine {
             self.pump_streams_inbound(streams)?;
 
             // Controlled satellites: step in dt_ctrl increments up to target_t.
-            // Into the engine's own queue: an error here halts the step, and
-            // whatever stopped before it still has to reach the client, which
-            // the next step that succeeds does.
+            // Into the engine's own queue: an error here halts the run, and
+            // whatever stopped before it waits there unreported, since the
+            // engine does not step after a fault (TODO(#487)).
             self.group.step_controlled_to(
                 self.current_t,
                 target_t,
@@ -1474,21 +1521,11 @@ fn uniform_tick(periods: &[f64]) -> Result<f64, String> {
 
 #[cfg(test)]
 mod tests {
+    use super::test_support::{
+        Chatty, FailsFirstTick, NullStreamIo, StuckOnce, TICK, TM, controlled_engine,
+        satellite_position_and_time,
+    };
     use super::*;
-
-    /// A [`StreamIo`] that has nothing to pump. Orbit-only / spacecraft runs
-    /// never touch it (their pumps early-return), so it just satisfies
-    /// `step_chunk`'s parameter for the non-streamed engine tests below.
-    struct NullStreamIo;
-
-    impl StreamIo for NullStreamIo {
-        fn take_inbound(&mut self, _sat_idx: usize, _name: &str) -> (Vec<u8>, bool) {
-            (Vec::new(), false)
-        }
-        fn push_outbound(&mut self, _sat_idx: usize, _name: &str, _bytes: Vec<u8>) -> OutboundPush {
-            OutboundPush::NoPeer
-        }
-    }
 
     /// Build an engine from a TOML config snippet. The whole point of the
     /// engine/serve split (issue #99) is that this needs no tokio runtime,
@@ -2606,5 +2643,271 @@ attitude = {{ inertia_diag = [10, 20, 30], mass = 50 }}
             "{names:?}"
         );
         assert!(!names.iter().any(|n| n == "zonal_gravity"), "{names:?}");
+    }
+
+    /// A stuck outbound peer fails the interval after the satellite has been
+    /// stepped to the interval's end, while the engine's clock stays at its
+    /// start (#538). The engine then refuses to step: integrating from the
+    /// clock would take the advanced state for one at the older time.
+    #[test]
+    fn a_stuck_peer_stops_the_engine_for_good() {
+        let mut engine = controlled_engine(Box::new(Chatty), &[TM]);
+        // The same peer for both calls, as the serve loop keeps it: stuck on
+        // the first push, draining by the second.
+        let mut peer = StuckOnce::default();
+
+        let err = engine
+            .step_chunk(1, &mut peer)
+            .err()
+            .expect("a stuck peer halts the run");
+        assert!(err.contains("not draining"), "got: {err}");
+        let (position, state_t) = satellite_position_and_time(&engine);
+        assert_eq!(engine.current_t(), 0.0, "the clock stays at the start");
+        assert_eq!(
+            state_t,
+            engine.effective_step(),
+            "while the satellite reached the interval's end"
+        );
+        assert_eq!(peer.pushes, 1);
+
+        let refused = engine
+            .step_chunk(1, &mut peer)
+            .err()
+            .expect("a halted engine stepped again once its peer drained");
+        assert!(
+            refused.contains("not draining"),
+            "the refusal carries the fault that halted the run: {refused}"
+        );
+        assert_eq!(
+            satellite_position_and_time(&engine),
+            (position, state_t),
+            "the satellite was integrated again"
+        );
+        assert_eq!(peer.pushes, 1, "the refused step sent bytes to the peer");
+        assert_eq!(engine.current_t(), 0.0);
+    }
+
+    /// A controller whose `update` fails after the satellite was integrated
+    /// to its tick leaves the state at the tick and the clock at the start of
+    /// the interval (#538). The engine refuses to step again, as it does
+    /// after a stuck peer.
+    #[test]
+    fn a_failed_controller_stops_the_engine_for_good() {
+        let controller = FailsFirstTick::default();
+        let updates = Arc::clone(&controller.updates);
+        let mut engine = controlled_engine(Box::new(controller), &[]);
+        let calls = || updates.load(std::sync::atomic::Ordering::SeqCst);
+
+        let err = engine
+            .step_chunk(1, &mut NullStreamIo)
+            .err()
+            .expect("a failed update halts the run");
+        assert!(err.contains("controller error"), "got: {err}");
+        let (position, state_t) = satellite_position_and_time(&engine);
+        assert_eq!(engine.current_t(), 0.0, "the clock stays at the start");
+        assert_eq!(
+            state_t, TICK,
+            "while the satellite was integrated to the tick that failed"
+        );
+        assert_eq!(calls(), 1);
+
+        let refused = engine
+            .step_chunk(1, &mut NullStreamIo)
+            .err()
+            .expect("a halted engine stepped again once its controller recovered");
+        assert!(
+            refused.contains("controller error"),
+            "the refusal carries the fault that halted the run: {refused}"
+        );
+        assert_eq!(
+            satellite_position_and_time(&engine),
+            (position, state_t),
+            "the satellite was integrated again"
+        );
+        assert_eq!(calls(), 1, "the refused step ran the controller");
+        assert_eq!(engine.current_t(), 0.0);
+    }
+}
+
+/// Controlled engines and fault injectors, for the tests of this module and of
+/// the serve loop (`super::manager`).
+///
+/// A controlled satellite needs a plugin guest, which a unit test cannot
+/// build. The engine is built from an orbit-only config and its group is then
+/// replaced, which only this module can do.
+#[cfg(test)]
+pub(super) mod test_support {
+    use super::*;
+    use orts::plugin::{Command, PluginController, PluginError, TickInput};
+    use orts::spacecraft::SpacecraftState;
+
+    /// The fixture controllers' sample period [s]. The engine steps the
+    /// config's default interval of 10 s, so one interval runs ten ticks.
+    pub(in crate::commands::serve) const TICK: f64 = 1.0;
+
+    /// The stream [`Chatty`] writes to.
+    pub(in crate::commands::serve) const TM: &str = "tm";
+
+    /// An engine flying one satellite, "sat-a", on a 500 km circular orbit
+    /// under `controller`, with `streams` declared on it.
+    pub(in crate::commands::serve) fn controlled_engine(
+        controller: Box<dyn PluginController>,
+        streams: &[&str],
+    ) -> ServeEngine {
+        let config: crate::config::SimConfig = toml::from_str(
+            r#"
+[[satellites]]
+id = "sat-a"
+orbit = { type = "circular", altitude = 500 }
+"#,
+        )
+        .expect("valid test toml");
+        let params = Arc::new(SimParams::from_config(&config).expect("valid test config"));
+        let data_dir = std::env::temp_dir().join(format!(
+            "orts-engine-fixture-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let body = arika::body::KnownBody::Earth;
+        let mu = body.properties().mu;
+        let history = HistoryBuffer::new(5000, data_dir, mu, body.properties().radius);
+        let mut engine = ServeEngine::build(params, history)
+            .expect("engine builds")
+            .engine;
+
+        let dynamics = orts::setup::build_spacecraft_dynamics(
+            &body,
+            orts::setup::CentralGravity::Zonal { mu },
+            None,
+            &orts::setup::SatelliteParams {
+                has_drag: false,
+                ballistic_coeff: None,
+                srp_area_to_mass: None,
+                srp_cr: None,
+                disturbances: orts::setup::DisturbanceTorques::default(),
+                shape: None,
+            },
+            &[],
+            nalgebra::Matrix3::identity() * 10.0,
+            None,
+        )
+        .expect("Earth has a Sun ephemeris");
+        let r = body.properties().radius + 500.0;
+        let v = (mu / r).sqrt();
+        let plant = SpacecraftState {
+            orbit: orts::orbital::OrbitalState::new(
+                nalgebra::Vector3::new(r, 0.0, 0.0),
+                nalgebra::Vector3::new(0.0, v, 0.0),
+            ),
+            attitude: orts::attitude::AttitudeState {
+                quaternion: nalgebra::Vector4::new(1.0, 0.0, 0.0, 0.0),
+                angular_velocity: nalgebra::Vector3::zeros(),
+            },
+            mass: 500.0,
+        };
+        let state = dynamics.initial_augmented_state(plant);
+        engine.group = SimGroup::Controlled(vec![ControlledSatellite::for_test(
+            dynamics, state, controller, body,
+        )]);
+        engine.sat_streams = vec![streams.iter().map(|s| s.to_string()).collect()];
+        engine
+    }
+
+    /// Where the fixture's satellite is [km], and the time its state belongs
+    /// to [s].
+    pub(in crate::commands::serve) fn satellite_position_and_time(
+        engine: &ServeEngine,
+    ) -> (nalgebra::Vector3<f64>, f64) {
+        let SimGroup::Controlled(sats) = &engine.group else {
+            panic!("the fixture builds a controlled engine");
+        };
+        (*sats[0].state.plant.orbit.position(), sats[0].state_t)
+    }
+
+    /// A controller that commands nothing and has bytes for [`TM`] whenever
+    /// the host asks.
+    pub(in crate::commands::serve) struct Chatty;
+
+    impl PluginController for Chatty {
+        fn name(&self) -> &str {
+            "chatty"
+        }
+        fn sample_period(&self) -> f64 {
+            TICK
+        }
+        fn update(&mut self, _input: &TickInput<'_>) -> Result<Option<Command>, PluginError> {
+            Ok(None)
+        }
+        fn stream_take(&mut self, stream: &str) -> Vec<u8> {
+            if stream == TM {
+                b"telemetry".to_vec()
+            } else {
+                Vec::new()
+            }
+        }
+    }
+
+    /// A controller whose first `update` fails, as a guest trap would, and
+    /// whose later ones command nothing.
+    #[derive(Default)]
+    pub(in crate::commands::serve) struct FailsFirstTick {
+        /// How many times `update` was called, shared with the test that
+        /// hands the controller to the engine.
+        pub updates: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl PluginController for FailsFirstTick {
+        fn name(&self) -> &str {
+            "fails-first-tick"
+        }
+        fn sample_period(&self) -> f64 {
+            TICK
+        }
+        fn update(&mut self, _input: &TickInput<'_>) -> Result<Option<Command>, PluginError> {
+            let earlier = self
+                .updates
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if earlier == 0 {
+                Err(PluginError::Runtime("guest trapped".to_string()))
+            } else {
+                Ok(None)
+            }
+        }
+    }
+
+    /// A [`StreamIo`] that has nothing to pump. Orbit-only / spacecraft runs
+    /// never touch it (their pumps early-return), and neither does a
+    /// controlled satellite that declares no streams.
+    pub(in crate::commands::serve) struct NullStreamIo;
+
+    impl StreamIo for NullStreamIo {
+        fn take_inbound(&mut self, _sat_idx: usize, _name: &str) -> (Vec<u8>, bool) {
+            (Vec::new(), false)
+        }
+        fn push_outbound(&mut self, _sat_idx: usize, _name: &str, _bytes: Vec<u8>) -> OutboundPush {
+            OutboundPush::NoPeer
+        }
+    }
+
+    /// A peer that is connected and stuck on the first push, and drains every
+    /// later one: one that recovered before a client asked to resume.
+    #[derive(Default)]
+    pub(in crate::commands::serve) struct StuckOnce {
+        /// How many pushes reached the peer.
+        pub pushes: usize,
+    }
+
+    impl StreamIo for StuckOnce {
+        fn take_inbound(&mut self, _sat_idx: usize, _name: &str) -> (Vec<u8>, bool) {
+            (Vec::new(), false)
+        }
+        fn push_outbound(&mut self, _sat_idx: usize, _name: &str, _bytes: Vec<u8>) -> OutboundPush {
+            self.pushes += 1;
+            if self.pushes == 1 {
+                OutboundPush::Stuck
+            } else {
+                OutboundPush::Sent
+            }
+        }
     }
 }
