@@ -43,7 +43,7 @@ tobari = { path = "tobari", version = "=0.2.0" }
 nalgebra = "0.35"
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "sync", "time", "fs", "io-util"] }
-tokio-tungstenite = "0.29"
+tokio-tungstenite = "0.30"
 kble-socket = { version = "0.5", features = ["stdio", "tungstenite"] }
 bytes = "1"
 axum = { version = "0.8", features = ["ws"] }
