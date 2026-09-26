@@ -382,7 +382,6 @@ pub(super) async fn simulation_manager(
     }
 }
 
-/// Serialize one history state as a `WsMessage::State` JSON string.
 /// What [`deliver_chunk`] left for the caller to do.
 struct Delivery {
     /// State samples still to be sent, paced to the wall clock.
@@ -458,6 +457,7 @@ fn deliver_chunk(
     }
 }
 
+/// Serialize one history state as a `WsMessage::State` JSON string.
 fn state_json(out: &crate::sim::core::HistoryState) -> String {
     serde_json::to_string(&WsMessage::State {
         entity_path: out.entity_path.clone(),
