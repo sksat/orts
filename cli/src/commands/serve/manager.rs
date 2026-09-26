@@ -430,7 +430,8 @@ fn deliver_chunk(
 
     // Controller fault (bad command / guest trap / stream-io overrun) or
     // integration error. The sim state can no longer be trusted, so the caller
-    // pauses instead of integrating forward, and the clients are told.
+    // pauses instead of integrating forward, and the clients are told. The
+    // engine keeps the fault, so a resume is refused.
     log::error!("simulation halted: {error}");
     for out in &partial.states {
         let _ = tx.send(state_json(out));
