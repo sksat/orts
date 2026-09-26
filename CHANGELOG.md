@@ -1106,6 +1106,19 @@ section is subdivided by package.
   refused too: one satellite takes one orbit, as a config's
   `orbit = { type = ... }` does. The `--sat` help in `orts run --help` lists every key.
   ([#558](https://github.com/sksat/orts/issues/558))
+- An orbit large enough to overflow its derived period was accepted, and each
+  mode then read the infinite period differently. The period is derived
+  (`2 pi sqrt(r0^3 / mu)` for a circular orbit, `2 pi / n` from a TLE's or
+  OMM's mean motion) and is a satellite's end time whenever `--duration` is
+  absent, so
+  `orbit = { type = "circular", altitude = 1e103 }` — accepted, `r0^3`
+  overflows — meant "never finishes" on the orbit-only and spacecraft paths,
+  "ends at the next longest period" on the controlled path (measured: 5676.98 s
+  next to a 500 km satellite, less than a thousandth of the huge orbit) and
+  "runs the historical 3600 s" for a fleet of one. It is now refused where the
+  simulation parameters are built, so every mode answers the same, and the
+  config's own validation derives the circular case so `orts config validate`
+  refuses it as well ([#492](https://github.com/sksat/orts/issues/492)).
 - The angular momentum a saturating reaction wheel used to lose (see `orts`
   above) was lost on the `mode = "controlled"` path too — `orts run
   --controller` and `orts serve` — which stepped with `advance_to` and so had no
