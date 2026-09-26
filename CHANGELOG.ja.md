@@ -813,6 +813,17 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `dt` と同じなら、モデル評価の作業が 4 分の 1 ほど増える。([#466](https://github.com/sksat/orts/pull/466))
 
 #### Fixed
+- `serve` は、fault で paused になった run の resume を拒否する。interval は run の時刻を進める前に、
+  controlled な衛星を 1 機ずつ進める。そのあとで失敗すると (tick まで積分したあとで controller の
+  `update` が失敗する、全機が interval の終わりに着いたあとで stream-io の peer が stuck になる)、衛星は
+  run の時刻より先にいる。`resume_simulation` は、その衛星を古い時刻から積分し直していた。高度 500 km、
+  controller の周期 1 s で測ると、1 回だけ stuck になった peer のあとで resume した run が t = 1 s として
+  送った最初の sample は衛星の 2 s での state で、1 s での位置から 7.6 km 離れていた。最初の tick で
+  失敗した controller のあとでも、t = 10 s の sample が 7.6 km ずれていた。いまはそうした run への
+  `resume_simulation` に
+  fault を名指しするエラーを返し、run は `terminate_simulation` と新しい `start_simulation` まで paused の
+  まま残る。client が止めた run は、これまでどおり resume できる
+  ([#538](https://github.com/sksat/orts/issues/538))
 - `convert --format` は、実際に書ける `csv` だけを選択肢に出す。以前は `rrd` も選択肢に出し、入力に
   よらず `cannot convert to .rrd format (input is already .rrd)` で拒否していた。いまは clap が
   `--format rrd` を `[possible values: csv]` と exit 2 で拒否する。help にも、入力が記録した `.rrd`
