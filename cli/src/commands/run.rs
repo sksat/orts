@@ -1276,13 +1276,11 @@ fn monitors_want(span_end_t: f64, fleet_event_t: f64, duration: f64, stopped_any
 /// usable left the answer is the historical 3600 s. Neither is a horizon that
 /// covers such a satellite — it is a guard against a number no run can use.
 ///
-/// It is reachable from a config the CLI accepts: a circular orbit is validated
-/// on a finite altitude and `radius + altitude > 0`, while the period is
-/// `2 pi sqrt(r0^3 / mu)`, and `r0 = 1e103` overflows `r0^3` to infinity.
-/// (Underflow is not reachable that way: the smallest `r0` an altitude can
-/// reach is one ulp of the body's radius, 9.09e-13 km for Earth, whose period
-/// is 8.63e-21 s.) Validating the derived period so every mode refuses it
-/// belongs with the other paths that take it as an end time — see #492.
+/// Nothing that gets here carries such a period any more:
+/// [`validate_derived_periods`](crate::sim::params::validate_derived_periods)
+/// refuses it when the simulation parameters are built, and the config's own
+/// validation derives the circular case and refuses it too (#492). The filter
+/// stays as the defence of a function that answers an end time.
 fn fleet_duration(explicit: Option<f64>, periods: impl Iterator<Item = f64>) -> f64 {
     if let Some(duration) = explicit {
         return duration;

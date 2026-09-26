@@ -219,6 +219,10 @@ pub fn ensure_streams_unused(satellites: &[SatelliteSpec]) -> Result<(), String>
 /// 読む経路（`orts config validate` を含む）と、spec しか持たない serve の実行時
 /// `add_satellite` 経路が同じ規則を通るようにしている。
 pub fn validate_satellite_spec(spec: &SatelliteSpec) -> Result<(), String> {
+    // The period is this satellite's end time on every mode that has no
+    // explicit duration, and the serve layer's `add_satellite` reaches here
+    // rather than through the `SimParams` constructors (#492).
+    crate::sim::params::ensure_usable_period(&spec.id, spec.period)?;
     let Some(att) = &spec.attitude_config else {
         return Ok(());
     };
@@ -231,6 +235,27 @@ mod tests {
     use super::*;
     use crate::config::SimConfig;
     use crate::satellite::parse_body;
+
+    /// The satellites a client adds at runtime go through this, so an orbit
+    /// whose derived period overflows is refused there too (#492).
+    #[test]
+    fn a_spec_whose_period_overflows_is_refused() {
+        let specs = specs(
+            r#"
+body = "earth"
+dt = 10.0
+
+[[satellites]]
+id = "huge"
+orbit = { type = "circular", altitude = 1e103 }
+"#,
+        );
+        let err = validate_satellite_spec(&specs[0]).expect_err("the spec is refused");
+        assert!(
+            err.contains("huge") && err.contains("period"),
+            "the message names the satellite and what is wrong: {err}"
+        );
+    }
 
     fn specs(toml: &str) -> Vec<SatelliteSpec> {
         let config: SimConfig = toml::from_str(toml).expect("config parses");
