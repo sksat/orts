@@ -868,6 +868,15 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   キーがある場合 (TLE の行と `altitude` では `altitude` が捨てられていた) も拒否する。config の
   `orbit = { type = ... }` と同じく、1 つの衛星は 1 つの軌道を持つ。`orts run --help` の `--sat` の説明に全部の
   キーを載せた ([#558](https://github.com/sksat/orts/issues/558))
+- `orts serve` は、chunk の途中の interval が失敗すると、それまでの interval が確定させた終了通知を
+  捨てていた。接続中の client には届かない。engine は chunk (既定 10 output interval) を回して最後に
+  state と `simulation_terminated` を返すが、後半の interval で controller fault・stream-io の
+  overflow・integration error が起きると、代わりにエラーを返し、serve ループは確定済みの分を配信せずに
+  run を paused にしていた。通知は replay 用の一覧に残るので、あとから接続した client だけが知る
+  ことになり、恒久的な fault (guest trap、不正な command) では運ぶ chunk が二度と来ない。失敗した
+  chunk はエラーと一緒にそれまでの出力を返すようにし、serve ループは paused にする前にそれを配信する
+  (後続がないので state は pacing しない)
+  ([#487](https://github.com/sksat/orts/issues/487))。
 - 飽和した reaction wheel が角運動量を失う問題 (上の `orts` を参照) は
   `mode = "controlled"` の経路 — `orts run --controller` と `orts serve` — でも
   起きていた。この経路は `advance_to` で刻んでおり、止まる境界を持っていなかった。

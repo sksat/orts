@@ -357,12 +357,41 @@ pub(super) struct EngineInit {
 /// Result of [`ServeEngine::step_chunk`]: the paced state samples plus any
 /// immediate broadcasts (currently `simulation_terminated` events) produced
 /// during the chunk.
+#[derive(Debug)]
 pub(super) struct StepOutput {
     /// Per-output-interval state samples, sorted by time. The serve layer
     /// paces these to the wall clock.
     pub states: Vec<HistoryState>,
     /// Pre-serialized messages to broadcast immediately (not paced), in order.
     pub broadcasts: Vec<String>,
+}
+
+/// A chunk that ended on an error, with what it had already produced.
+///
+/// The intervals before the failing one are done: the satellites they stopped
+/// were reported and put in the replay list, and their state samples are in
+/// the history. Handing them back with the error is what lets the serve layer
+/// deliver them to the clients that are connected — otherwise a permanent
+/// fault (a guest trap, a bad command) means a termination those clients never
+/// hear about, while a client that connects later reads it from the replay
+/// list.
+pub(super) struct ChunkFailure {
+    /// Why the chunk stopped, as the serve layer reports it.
+    pub error: String,
+    /// The samples and broadcasts the intervals before it produced.
+    pub partial: StepOutput,
+}
+
+impl std::fmt::Debug for ChunkFailure {
+    /// The counts rather than the samples: this is what a test's `expect`
+    /// prints, and a chunk's worth of states is unreadable there.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChunkFailure")
+            .field("error", &self.error)
+            .field("states", &self.partial.states.len())
+            .field("broadcasts", &self.partial.broadcasts.len())
+            .finish()
+    }
 }
 
 /// Result of [`ServeEngine::add_satellite`].
@@ -395,11 +424,9 @@ pub(super) struct ServeEngine {
     /// stepping a later satellite of the same interval therefore leaves the
     /// entries here.
     ///
-    /// A chunk that fails *after* these were taken still loses the live
-    /// broadcast — `StepOutput` reaches the manager only for a chunk that
-    /// succeeds, while the replay ring already holds the entry. That belongs to
-    /// `step_chunk`'s return contract, which the orbit-only terminations of the
-    /// same chunk share (#487).
+    /// Entries taken in an interval that then fails are reported all the same:
+    /// their broadcast is part of the [`ChunkFailure::partial`] the chunk hands
+    /// back, and the serve layer sends that before it pauses the run.
     pending_terminations: Vec<(SatId, crate::sim::controlled::Termination)>,
     current_t: f64,
     /// How many `stream_step` boundaries have been crossed. The next boundary
@@ -837,150 +864,28 @@ impl ServeEngine {
         &mut self,
         outputs_per_chunk: usize,
         streams: &mut dyn StreamIo,
-    ) -> Result<StepOutput, String> {
+    ) -> Result<StepOutput, ChunkFailure> {
         let mut all_outputs = Vec::new();
         let mut broadcasts = Vec::new();
         let body_radius = self.params.body.properties().radius;
 
         for _ in 0..outputs_per_chunk {
-            let target_t = (self.steps_done + 1) as f64 * self.stream_step;
-
-            // Orbit boundary reset (only for unperturbed 2-body, orbit-only mode)
-            if !self.has_perturbations {
-                let n = self.group.len();
-                let resets: Vec<(SatId, OrbitalState)> = (0..n)
-                    .filter_map(|i| {
-                        if !self.group.is_terminated(i)
-                            && self.current_t >= self.metas[i].next_orbit_reset_t - 1e-9
-                        {
-                            Some((
-                                self.group.sat_id(i),
-                                // Periodic 2-body reset to the orbit's reference
-                                // (epoch) state. The element set was validated
-                                // when the satellite was built, so re-evaluating
-                                // it here cannot fail.
-                                self.metas[i]
-                                    .spec
-                                    .initial_state(self.params.mu, self.params.epoch)
-                                    .expect(
-                                        "reset of an already-built initial state must not fail",
-                                    ),
-                            ))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-
-                for (id, new_state) in &resets {
-                    self.group.reset_orbit_state(id, new_state.clone());
-                    if let Some(i) = self
-                        .metas
-                        .iter()
-                        .position(|m| m.spec.id.as_str() == AsRef::<str>::as_ref(id))
-                    {
-                        self.metas[i].next_orbit_reset_t =
-                            self.current_t + self.metas[i].spec.period;
-                    }
-                }
+            if let Err(error) =
+                self.step_one_interval(streams, body_radius, &mut all_outputs, &mut broadcasts)
+            {
+                // A satellite this interval stopped before it failed is
+                // reported here: the interval turns its entry into a message
+                // only after every satellite has been stepped.
+                self.report_pending_terminations(&mut broadcasts);
+                all_outputs.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap());
+                return Err(ChunkFailure {
+                    error,
+                    partial: StepOutput {
+                        states: all_outputs,
+                        broadcasts,
+                    },
+                });
             }
-
-            // stream-io bridge: freeze this interval's inbound bytes into the
-            // controllers before stepping; flush FSW output to the peers
-            // after. (With streams wired, `stream_step` equals the controller
-            // tick, so this is the tick-boundary pump.)
-            self.pump_streams_inbound(streams)?;
-
-            // Controlled satellites: step in dt_ctrl increments up to target_t.
-            // Into the engine's own queue: an error here halts the step, and
-            // whatever stopped before it still has to reach the client, which
-            // the next step that succeeds does.
-            self.group.step_controlled_to(
-                self.current_t,
-                target_t,
-                &self.params,
-                &mut self.pending_terminations,
-                &self.metas,
-            )?;
-
-            self.pump_streams_outbound(streams)?;
-
-            // Integration errors are no longer fatal panics: surface them as
-            // an engine error so the serve layer halts gracefully (and so the
-            // failure mode is unit-testable without a runtime).
-            let outcome = self
-                .group
-                .propagate_to(target_t)
-                .map_err(|e| format!("integration error at t={target_t:.3}: {e}"))?;
-
-            let n = self.group.len();
-            let is_controlled = matches!(self.group, SimGroup::Controlled(_));
-            for i in 0..n {
-                if self.group.is_terminated(i) {
-                    continue;
-                }
-
-                let t = if is_controlled {
-                    target_t
-                } else {
-                    self.group.sat_t(i)
-                };
-                let snap = self.group.snapshot(i, t);
-                let hs = make_history_state(
-                    self.metas[i].spec.entity_path(),
-                    t,
-                    snap.orbit.position(),
-                    snap.orbit.velocity(),
-                    self.params.mu,
-                    body_radius,
-                    snap.loads,
-                    snap.attitude,
-                );
-
-                if hs.t >= self.metas[i].next_save_t - 1e-9 {
-                    self.history.push(hs.clone());
-                    self.metas[i].next_save_t += self.params.output_interval;
-                }
-
-                all_outputs.push(hs);
-            }
-
-            // The controlled satellites are stepped outside `propagate_to`, so
-            // their terminations are added here and travel the same path: the
-            // broadcast, and the ring replayed to a client that reconnects.
-            let mut outcome = outcome;
-            for (id, term) in std::mem::take(&mut self.pending_terminations) {
-                outcome
-                    .terminations
-                    .push(orts::group::prop_group::SatelliteTermination {
-                        satellite_id: id,
-                        t: term.t,
-                        reason: term.reason,
-                    });
-            }
-
-            for term in &outcome.terminations {
-                eprintln!(
-                    "Simulation terminated for {} at t={:.2}s: {}",
-                    term.satellite_id, term.t, term.reason
-                );
-                let sid_str: &str = term.satellite_id.as_ref();
-                let term_entity_path = orts::record::entity_path::EntityPath::parse(&format!(
-                    "/world/sat/{}",
-                    sid_str
-                ));
-                let msg = serde_json::to_string(&WsMessage::SimulationTerminated {
-                    entity_path: term_entity_path,
-                    t: term.t,
-                    reason: term.reason.clone(),
-                })
-                .expect("failed to serialize termination message");
-                push_terminated_capped(&mut self.terminated_events, msg.clone());
-                broadcasts.push(msg);
-            }
-
-            self.current_t = target_t;
-            self.steps_done += 1;
         }
 
         all_outputs.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap());
@@ -988,6 +893,179 @@ impl ServeEngine {
             states: all_outputs,
             broadcasts,
         })
+    }
+
+    /// One output interval: the pumps, the step, the samples it produces.
+    ///
+    /// Separate from [`ServeEngine::step_chunk`] so that the samples and
+    /// broadcasts an interval finished are kept by the caller, whichever way
+    /// this interval ends.
+    fn step_one_interval(
+        &mut self,
+        streams: &mut dyn StreamIo,
+        body_radius: f64,
+        all_outputs: &mut Vec<HistoryState>,
+        broadcasts: &mut Vec<String>,
+    ) -> Result<(), String> {
+        let target_t = (self.steps_done + 1) as f64 * self.stream_step;
+
+        // Orbit boundary reset (only for unperturbed 2-body, orbit-only mode)
+        if !self.has_perturbations {
+            let n = self.group.len();
+            let resets: Vec<(SatId, OrbitalState)> = (0..n)
+                .filter_map(|i| {
+                    if !self.group.is_terminated(i)
+                        && self.current_t >= self.metas[i].next_orbit_reset_t - 1e-9
+                    {
+                        Some((
+                            self.group.sat_id(i),
+                            // Periodic 2-body reset to the orbit's reference
+                            // (epoch) state. The element set was validated
+                            // when the satellite was built, so re-evaluating
+                            // it here cannot fail.
+                            self.metas[i]
+                                .spec
+                                .initial_state(self.params.mu, self.params.epoch)
+                                .expect("reset of an already-built initial state must not fail"),
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            for (id, new_state) in &resets {
+                self.group.reset_orbit_state(id, new_state.clone());
+                if let Some(i) = self
+                    .metas
+                    .iter()
+                    .position(|m| m.spec.id.as_str() == AsRef::<str>::as_ref(id))
+                {
+                    self.metas[i].next_orbit_reset_t = self.current_t + self.metas[i].spec.period;
+                }
+            }
+        }
+
+        // stream-io bridge: freeze this interval's inbound bytes into the
+        // controllers before stepping; flush FSW output to the peers
+        // after. (With streams wired, `stream_step` equals the controller
+        // tick, so this is the tick-boundary pump.)
+        self.pump_streams_inbound(streams)?;
+
+        // Controlled satellites: step in dt_ctrl increments up to target_t.
+        // Into the engine's own queue: an error here halts the step, and what
+        // stopped before it is reported by `step_chunk`'s failure branch,
+        // since the serve layer pauses the run rather than stepping again.
+        self.group.step_controlled_to(
+            self.current_t,
+            target_t,
+            &self.params,
+            &mut self.pending_terminations,
+            &self.metas,
+        )?;
+
+        self.pump_streams_outbound(streams)?;
+
+        // Integration errors are no longer fatal panics: surface them as
+        // an engine error so the serve layer halts gracefully (and so the
+        // failure mode is unit-testable without a runtime).
+        let outcome = self
+            .group
+            .propagate_to(target_t)
+            .map_err(|e| format!("integration error at t={target_t:.3}: {e}"))?;
+
+        let n = self.group.len();
+        let is_controlled = matches!(self.group, SimGroup::Controlled(_));
+        for i in 0..n {
+            if self.group.is_terminated(i) {
+                continue;
+            }
+
+            let t = if is_controlled {
+                target_t
+            } else {
+                self.group.sat_t(i)
+            };
+            let snap = self.group.snapshot(i, t);
+            let hs = make_history_state(
+                self.metas[i].spec.entity_path(),
+                t,
+                snap.orbit.position(),
+                snap.orbit.velocity(),
+                self.params.mu,
+                body_radius,
+                snap.loads,
+                snap.attitude,
+            );
+
+            if hs.t >= self.metas[i].next_save_t - 1e-9 {
+                self.history.push(hs.clone());
+                self.metas[i].next_save_t += self.params.output_interval;
+            }
+
+            all_outputs.push(hs);
+        }
+
+        // The controlled satellites are stepped outside `propagate_to`, so
+        // their terminations are added here and travel the same path: the
+        // broadcast, and the ring replayed to a client that reconnects.
+        let mut outcome = outcome;
+        for (id, term) in std::mem::take(&mut self.pending_terminations) {
+            outcome
+                .terminations
+                .push(orts::group::prop_group::SatelliteTermination {
+                    satellite_id: id,
+                    t: term.t,
+                    reason: term.reason,
+                });
+        }
+
+        for term in &outcome.terminations {
+            self.report_termination(&term.satellite_id, term.t, &term.reason, broadcasts);
+        }
+
+        self.current_t = target_t;
+        self.steps_done += 1;
+        Ok(())
+    }
+
+    /// Announce one satellite's termination: the log line, the replay list and
+    /// the broadcast the connected clients receive.
+    fn report_termination(
+        &mut self,
+        satellite_id: &SatId,
+        t: f64,
+        reason: &str,
+        broadcasts: &mut Vec<String>,
+    ) {
+        eprintln!("Simulation terminated for {satellite_id} at t={t:.2}s: {reason}");
+        let sid_str: &str = satellite_id.as_ref();
+        let term_entity_path =
+            orts::record::entity_path::EntityPath::parse(&format!("/world/sat/{sid_str}"));
+        let msg = serde_json::to_string(&WsMessage::SimulationTerminated {
+            entity_path: term_entity_path,
+            t,
+            reason: reason.to_string(),
+        })
+        .expect("failed to serialize termination message");
+        push_terminated_capped(&mut self.terminated_events, msg.clone());
+        broadcasts.push(msg);
+    }
+
+    /// Report the controlled terminations an interval confirmed before it
+    /// failed.
+    ///
+    /// `step_controlled_to` stops a satellite and leaves it in
+    /// `pending_terminations`; the interval turns those into messages after it
+    /// has stepped every satellite, so a failure in between (a later
+    /// satellite's controller, the outbound pump, the integration) would leave
+    /// them in the queue. A fault that does not clear means no later interval
+    /// takes them, and they would reach neither the connected clients nor the
+    /// replay list.
+    fn report_pending_terminations(&mut self, broadcasts: &mut Vec<String>) {
+        for (id, term) in std::mem::take(&mut self.pending_terminations) {
+            self.report_termination(&id, term.t, &term.reason, broadcasts);
+        }
     }
 
     /// Record a satellite added at runtime in the retained Info.
@@ -1739,6 +1817,282 @@ orbit = { type = "circular", altitude = 50 }
             second.broadcasts
         );
         assert_eq!(init.engine.status_data().terminated_events.len(), 1);
+    }
+
+    /// A chunk that fails partway hands back the terminations its finished
+    /// intervals produced, so the clients that are connected hear about them.
+    ///
+    /// The fault is the real one: the inbound pump reports a staging overflow,
+    /// which `step_chunk` turns into its error. Before this, that error threw
+    /// away the broadcast of the satellite that had already stopped, and a
+    /// permanent fault (a guest trap, a bad command) meant no later chunk
+    /// would carry it either.
+    #[test]
+    fn a_failed_chunk_keeps_what_its_finished_intervals_produced() {
+        use orts::plugin::{Command, PluginController, PluginError, TickInput};
+        use orts::spacecraft::SpacecraftState;
+
+        struct Idle;
+        impl PluginController for Idle {
+            fn name(&self) -> &str {
+                "idle"
+            }
+            fn sample_period(&self) -> f64 {
+                1.0
+            }
+            fn update(&mut self, _input: &TickInput<'_>) -> Result<Option<Command>, PluginError> {
+                Ok(None)
+            }
+        }
+
+        /// Reports a staging overflow from the second interval's pump on.
+        struct OverflowsAfterTheFirstInterval {
+            takes: usize,
+        }
+        impl StreamIo for OverflowsAfterTheFirstInterval {
+            fn take_inbound(&mut self, _sat_idx: usize, _name: &str) -> (Vec<u8>, bool) {
+                self.takes += 1;
+                (Vec::new(), self.takes > 1)
+            }
+            fn push_outbound(
+                &mut self,
+                _sat_idx: usize,
+                _name: &str,
+                _bytes: Vec<u8>,
+            ) -> OutboundPush {
+                OutboundPush::NoPeer
+            }
+        }
+
+        // The config gives the engine its metas and history; the group is then
+        // replaced, which is what a controlled run has and what TOML alone
+        // cannot build here (that needs a WASM plugin).
+        let mut init = engine_from_toml(
+            r#"
+[[satellites]]
+id = "doomed"
+orbit = { type = "circular", altitude = 50 }
+
+[[satellites]]
+id = "healthy"
+orbit = { type = "circular", altitude = 500 }
+"#,
+        )
+        .expect("engine builds");
+
+        let body = arika::body::KnownBody::Earth;
+        let mu = body.properties().mu;
+        // 50 km up is inside the atmosphere at t=0, so that satellite's first
+        // interval ends it; 500 km keeps flying and keeps producing samples.
+        let controlled = |altitude: f64| {
+            let dynamics = orts::setup::build_spacecraft_dynamics(
+                &body,
+                orts::setup::CentralGravity::Zonal { mu },
+                None,
+                &orts::setup::SatelliteParams {
+                    has_drag: false,
+                    ballistic_coeff: None,
+                    srp_area_to_mass: None,
+                    srp_cr: None,
+                    disturbances: orts::setup::DisturbanceTorques::default(),
+                    shape: None,
+                },
+                &[],
+                nalgebra::Matrix3::identity() * 10.0,
+                None,
+            )
+            .expect("Earth has a Sun ephemeris");
+            let r = body.properties().radius + altitude;
+            let v = (mu / r).sqrt();
+            let plant = SpacecraftState {
+                orbit: orts::orbital::OrbitalState::new(
+                    nalgebra::Vector3::new(r, 0.0, 0.0),
+                    nalgebra::Vector3::new(0.0, v, 0.0),
+                ),
+                attitude: orts::attitude::AttitudeState {
+                    quaternion: nalgebra::Vector4::new(1.0, 0.0, 0.0, 0.0),
+                    angular_velocity: nalgebra::Vector3::zeros(),
+                },
+                mass: 500.0,
+            };
+            let state = dynamics.initial_augmented_state(plant);
+            ControlledSatellite::for_test(dynamics, state, Box::new(Idle), body)
+        };
+        init.engine.group = SimGroup::Controlled(vec![controlled(50.0), controlled(500.0)]);
+        // A declared stream is what the pumps walk, so this is what lets the
+        // inbound pump be the thing that fails. One stream on one satellite
+        // means one `take_inbound` per interval.
+        init.engine.sat_streams = vec![vec!["tc".to_string()], Vec::new()];
+
+        let mut streams = OverflowsAfterTheFirstInterval { takes: 0 };
+        let failure = init
+            .engine
+            .step_chunk(2, &mut streams)
+            .expect_err("the second interval's pump overflows");
+
+        assert!(
+            failure.error.contains("inbound staging overflow"),
+            "the error is the pump's: {}",
+            failure.error
+        );
+        assert_eq!(
+            failure.partial.broadcasts.len(),
+            1,
+            "the termination of the first interval comes back with the error: {:?}",
+            failure.partial.broadcasts
+        );
+        assert!(failure.partial.broadcasts[0].contains("simulation_terminated"));
+        assert!(
+            failure.partial.broadcasts[0].contains("doomed"),
+            "and it names the satellite: {}",
+            failure.partial.broadcasts[0]
+        );
+        assert!(
+            failure
+                .partial
+                .states
+                .iter()
+                .any(|st| st.entity_path.to_string().contains("healthy")),
+            "and so do the samples the surviving satellite produced in it: {:?}",
+            failure.partial.states.len()
+        );
+        assert_eq!(
+            init.engine.status_data().terminated_events.len(),
+            1,
+            "the replay list holds it exactly once"
+        );
+
+        // A later chunk that succeeds must not repeat it.
+        let after = init
+            .engine
+            .step_chunk(1, &mut NullStreamIo)
+            .expect("stepping a stopped fleet is not an error");
+        assert!(
+            after.broadcasts.is_empty(),
+            "the termination went out twice: {:?}",
+            after.broadcasts
+        );
+        assert_eq!(init.engine.status_data().terminated_events.len(), 1);
+    }
+
+    /// A termination the failing interval itself confirmed is reported too.
+    ///
+    /// `step_controlled_to` stops a satellite and leaves it in
+    /// `pending_terminations`; the interval turns those into messages after
+    /// every satellite has been stepped, so a failure in between — here the
+    /// outbound pump meeting a stuck peer — used to leave the entry in the
+    /// queue, out of reach of both the connected clients and the replay list.
+    #[test]
+    fn a_termination_confirmed_before_the_failure_is_reported() {
+        use orts::plugin::{Command, PluginController, PluginError, TickInput};
+        use orts::spacecraft::SpacecraftState;
+
+        /// Writes a byte every tick, so the outbound pump has something to push.
+        struct Chatty;
+        impl PluginController for Chatty {
+            fn name(&self) -> &str {
+                "chatty"
+            }
+            fn sample_period(&self) -> f64 {
+                1.0
+            }
+            fn update(&mut self, _input: &TickInput<'_>) -> Result<Option<Command>, PluginError> {
+                Ok(None)
+            }
+            fn stream_take(&mut self, _stream: &str) -> Vec<u8> {
+                vec![0x42]
+            }
+        }
+
+        /// The peer a `--stream-stdio` client would be: connected and stuck.
+        struct StuckPeer;
+        impl StreamIo for StuckPeer {
+            fn take_inbound(&mut self, _sat_idx: usize, _name: &str) -> (Vec<u8>, bool) {
+                (Vec::new(), false)
+            }
+            fn push_outbound(
+                &mut self,
+                _sat_idx: usize,
+                _name: &str,
+                _bytes: Vec<u8>,
+            ) -> OutboundPush {
+                OutboundPush::Stuck
+            }
+        }
+
+        let mut init = engine_from_toml(
+            r#"
+[[satellites]]
+id = "doomed"
+orbit = { type = "circular", altitude = 50 }
+"#,
+        )
+        .expect("engine builds");
+
+        let body = arika::body::KnownBody::Earth;
+        let mu = body.properties().mu;
+        let dynamics = orts::setup::build_spacecraft_dynamics(
+            &body,
+            orts::setup::CentralGravity::Zonal { mu },
+            None,
+            &orts::setup::SatelliteParams {
+                has_drag: false,
+                ballistic_coeff: None,
+                srp_area_to_mass: None,
+                srp_cr: None,
+                disturbances: orts::setup::DisturbanceTorques::default(),
+                shape: None,
+            },
+            &[],
+            nalgebra::Matrix3::identity() * 10.0,
+            None,
+        )
+        .expect("Earth has a Sun ephemeris");
+        // 50 km up: inside the atmosphere at t=0, so this interval stops it.
+        let r = body.properties().radius + 50.0;
+        let v = (mu / r).sqrt();
+        let plant = SpacecraftState {
+            orbit: orts::orbital::OrbitalState::new(
+                nalgebra::Vector3::new(r, 0.0, 0.0),
+                nalgebra::Vector3::new(0.0, v, 0.0),
+            ),
+            attitude: orts::attitude::AttitudeState {
+                quaternion: nalgebra::Vector4::new(1.0, 0.0, 0.0, 0.0),
+                angular_velocity: nalgebra::Vector3::zeros(),
+            },
+            mass: 500.0,
+        };
+        let state = dynamics.initial_augmented_state(plant);
+        init.engine.group = SimGroup::Controlled(vec![ControlledSatellite::for_test(
+            dynamics,
+            state,
+            Box::new(Chatty),
+            body,
+        )]);
+        init.engine.sat_streams = vec![vec!["tm".to_string()]];
+
+        let failure = init
+            .engine
+            .step_chunk(1, &mut StuckPeer)
+            .expect_err("the outbound pump meets a stuck peer");
+
+        assert!(
+            failure.error.contains("not draining"),
+            "the error is the peer's: {}",
+            failure.error
+        );
+        assert_eq!(
+            failure.partial.broadcasts.len(),
+            1,
+            "the termination this interval confirmed is reported: {:?}",
+            failure.partial.broadcasts
+        );
+        assert!(failure.partial.broadcasts[0].contains("simulation_terminated"));
+        assert_eq!(
+            init.engine.status_data().terminated_events.len(),
+            1,
+            "and a client that connects later reads it once"
+        );
     }
 
     #[test]
