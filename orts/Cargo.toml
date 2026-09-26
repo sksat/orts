@@ -43,6 +43,8 @@ serde.workspace = true
 thiserror.workspace = true
 wasmtime = { workspace = true, optional = true }
 wasmtime-wasi = { workspace = true, optional = true }
+# Names a WASM component given as bytes, so the plugin cache compiles it once.
+sha2 = { version = "0.11", default-features = false, optional = true }
 tokio = { version = "1", default-features = false, features = [
     "rt",
     "rt-multi-thread",
@@ -55,7 +57,7 @@ fetch-weather = ["tobari/fetch-cssi"]
 fetch-horizons = ["arika/fetch-horizons"]
 # Phase P1: load WASM Component guest controllers at runtime via
 # wasmtime + Pulley interpreter. See `orts::plugin::wasm`.
-plugin-wasm = ["dep:wasmtime", "dep:wasmtime-wasi"]
+plugin-wasm = ["dep:wasmtime", "dep:wasmtime-wasi", "dep:sha2"]
 # Phase P1+: async WASM backend (fiber suspension via wasmtime async).
 # Allows a single worker thread to multiplex N satellite controllers
 # instead of the default sync backend's thread-per-satellite model.

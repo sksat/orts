@@ -101,6 +101,12 @@ pub struct ControlledSatellite {
     /// Thruster specs (空なら thruster なし)。ZOH 境界で ThrusterAssembly を
     /// 作り直すために保持する。
     pub thruster_specs: Vec<ThrusterSpec>,
+    /// Drop the msg-io messages the controller sent, after each tick.
+    ///
+    /// `orts serve` routes no msg-io, so nothing takes the messages; left in
+    /// the controller they would reach its backlog limit and halt the run.
+    /// `orts run` leaves this off and logs them.
+    pub discards_messages: bool,
     /// Sim time this satellite's controller schedule is anchored at [s]: where
     /// the satellite entered the simulation.
     tick_base_t: f64,
@@ -147,6 +153,7 @@ impl ControlledSatellite {
             mtq_max_moment: 0.0,
             body,
             thruster_specs: Vec::new(),
+            discards_messages: false,
             tick_base_t: 0.0,
             ticks_done: 0,
         }
@@ -368,6 +375,7 @@ pub fn build_controlled_satellite(
         mtq_max_moment,
         body: params.body,
         thruster_specs,
+        discards_messages: false,
         tick_base_t: start_t,
         ticks_done: 0,
     })
@@ -773,6 +781,9 @@ pub fn tick_controller(
             .apply(&cmd)
             .map_err(|e| format!("actuator error at t={t_next:.3}: {e}"))?;
     }
+    if sat.discards_messages {
+        drop(sat.controller.take_outbound());
+    }
     // Only once the whole tick has landed: `apply_held_commands` can reject a
     // command whose length does not match the actuator, and a schedule advanced
     // past a tick that failed would resume on the wrong phase.
@@ -800,6 +811,43 @@ pub fn tick_controller(
 
 // builder helpers
 
+/// Where a WASM controller's component comes from.
+#[cfg(feature = "plugin-wasm")]
+enum WasmComponent<'a> {
+    /// A file, named by a config given on the command line.
+    Path(&'a std::path::Path),
+    /// Bytes a WebSocket client uploaded to `orts serve`.
+    Uploaded(&'a orts::plugin::wasm::ComponentBytes),
+}
+
+/// The component a controller config names.
+///
+/// A `sha256` is answered only by the bytes attached to it, never by a file,
+/// so a reference that was not resolved fails here rather than falling back
+/// to the filesystem.
+#[cfg(feature = "plugin-wasm")]
+fn wasm_component<'a>(
+    path: Option<&'a str>,
+    sha256: Option<&str>,
+    uploaded: Option<&'a orts::plugin::wasm::ComponentBytes>,
+) -> Result<WasmComponent<'a>, String> {
+    match (path, sha256, uploaded) {
+        (_, Some(sha256), Some(bytes)) if bytes.sha256_hex() == sha256 => {
+            Ok(WasmComponent::Uploaded(bytes))
+        }
+        (_, Some(sha256), Some(bytes)) => Err(format!(
+            "controller component sha256 {sha256} carries the bytes of sha256 {}",
+            bytes.sha256_hex()
+        )),
+        (_, Some(sha256), None) => Err(format!(
+            "controller component sha256 {sha256} was not uploaded: a `sha256` names a \
+             component a WebSocket client sent to `orts serve` on its own connection"
+        )),
+        (Some(path), None, _) => Ok(WasmComponent::Path(std::path::Path::new(path))),
+        (None, None, _) => Err("controller names no component (`path` or `sha256`)".to_string()),
+    }
+}
+
 fn build_controller(
     config: &ControllerConfig,
     label: &str,
@@ -808,7 +856,12 @@ fn build_controller(
 ) -> Result<Box<dyn PluginController>, String> {
     match config {
         #[cfg(feature = "plugin-wasm")]
-        ControllerConfig::Wasm { path, config } => {
+        ControllerConfig::Wasm {
+            path,
+            sha256,
+            config,
+            uploaded,
+        } => {
             // An omitted `[satellites.controller.config]` deserializes to
             // `Value::Null`, whose `to_string()` is `"null"` — not something a
             // guest can parse as its config struct. `Plugin::init` takes the
@@ -819,33 +872,52 @@ fn build_controller(
             } else {
                 config.to_string()
             };
-            let wasm_path = std::path::Path::new(path);
+            let component = wasm_component(path.as_deref(), sha256.as_deref(), uploaded.as_ref())?;
+            let cache = &mut *ctx.wasm_cache;
+            let body = ctx.params.body;
+            let streams = streams.to_vec();
             match ctx.plugin_backend {
                 ResolvedPluginBackend::Sync => {
-                    let ctrl = ctx
-                        .wasm_cache
-                        .build_sync_controller_with_streams(
-                            wasm_path,
+                    let ctrl = match component {
+                        WasmComponent::Path(path) => cache.build_sync_controller_with_streams(
+                            path,
                             label,
                             &config_str,
-                            streams.to_vec(),
-                            ctx.params.body,
-                        )
-                        .map_err(|e| format!("WasmController build failed: {e}"))?;
+                            streams,
+                            body,
+                        ),
+                        WasmComponent::Uploaded(bytes) => cache
+                            .build_sync_controller_from_bytes_with_streams(
+                                bytes,
+                                label,
+                                &config_str,
+                                streams,
+                                body,
+                            ),
+                    }
+                    .map_err(|e| format!("WasmController build failed: {e}"))?;
                     Ok(Box::new(ctrl))
                 }
                 #[cfg(feature = "plugin-wasm-async")]
                 ResolvedPluginBackend::Async => {
-                    let ctrl = ctx
-                        .wasm_cache
-                        .build_async_controller_with_streams(
-                            wasm_path,
+                    let ctrl = match component {
+                        WasmComponent::Path(path) => cache.build_async_controller_with_streams(
+                            path,
                             label,
                             &config_str,
-                            streams.to_vec(),
-                            ctx.params.body,
-                        )
-                        .map_err(|e| format!("AsyncWasmController build failed: {e}"))?;
+                            streams,
+                            body,
+                        ),
+                        WasmComponent::Uploaded(bytes) => cache
+                            .build_async_controller_from_bytes_with_streams(
+                                bytes,
+                                label,
+                                &config_str,
+                                streams,
+                                body,
+                            ),
+                    }
+                    .map_err(|e| format!("AsyncWasmController build failed: {e}"))?;
                     Ok(Box::new(ctrl))
                 }
             }
@@ -1074,6 +1146,7 @@ mod tests {
             mtq_max_moment: 0.0,
             body: arika::body::KnownBody::Earth,
             thruster_specs: Vec::new(),
+            discards_messages: false,
             tick_base_t: start_t,
             ticks_done: 0,
         };

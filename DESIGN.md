@@ -352,12 +352,44 @@ orts の長期的な API 契約として安定化させる対象はこの WIT �
 - Component Model と wit-bindgen を first-class で使える (wasmi を採用しなかったのは Component Model 非対応のため)
 - 配布は portable な `.wasm` (実行時に Cranelift で compile)。事前コンパイル済み `.cwasm` の配布は [ROADMAP.md](ROADMAP.md)
 
+### WebSocket の client から controller を受け取る
+
+`orts serve` は接続を認証しないので、WebSocket の client が送ったパスを server のファイルとして開かない。
+`[gravity_field]` と `space_weather` のパスと同じ扱いで、controller の `.wasm` も client がパスで名指しすると拒否する。
+client は component の中身を送り、config はその SHA-256 で component を指す (`controller = { type = "wasm", sha256 = "…" }`)。
+command line で渡す config file の `path` は、server を起動した人が書くのでこれまでどおり受け付ける。
+逆に config file の `sha256` は拒否する。file には component を送った接続が無く、参照を解決できないからである。
+upload は client の code を server で走らせるので、server を `--allow-controller-upload` で起動したときだけ受け付ける。
+flag が無ければ binary message も `sha256` の controller も、flag を名指しする error で拒否する。
+
+- **送り方**: `/ws` の binary message 1 つが component 1 つ。server は `controller_uploaded` で SHA-256 を返す。JSON に base64 で入れる案は、中身が 4/3 に膨らみ、text message は未読 key の警告のために 2 回 parse されるので採らない。binary の前に宣言の message を置く案は、宣言だけ通って中身が拒否された場合の対応づけを server が状態として持つことになるので採らない
+- **参照**: config に中身を直接書く案は、同じ controller の衛星を並べた fleet が同じ bytes を衛星の数だけ送ることになるので採らない。SHA-256 は client が自分で計算できるので、upload の応答を待たずに次の message を送れる (1 つの接続の message は順に処理される)。compile cache の key にもなる。cache が key を bytes から計算するので、別の bytes が同じ key で cache を引くことはない
+- **保持**: component は送った接続が持ち、切断で捨てる。他の接続が送った component は指せない。1 接続 4 個まで、1 個 8 MiB まで、server の全接続の合計で 128 MiB まで。接続の数には上限が無いので、1 接続の上限だけでは server の memory を抑えられない。満杯なら新しい component を拒否する。古いものを追い出すと、受理を伝えた component が使う前に消えるので追い出さない。衛星を作った component は、その衛星が持ち続け、合計には数えない。持ち続けるには衛星を足す必要があり、fleet の他の部分と同じ増え方になる
+- **受理の意味**: upload で確かめるのは大きさと component の先頭 8 byte だけで、compile は衛星を作るときに行う。compile は sync / async の backend ごとに engine が別なので、upload の時点では backend が決まっていない
+- **sandbox**: WASI の filesystem、環境変数、network は guest に渡さない。CPU 時間と memory は次節の上限で抑える
+
+### guest の実行の上限
+
+guest は host が書いていない code で、upload を許した `orts serve` では host が選んでもいない。
+そのため、どこから来た bytes か (config file の `path`、upload) によらず、すべての WASM controller を同じ上限で走らせる (`orts::plugin::wasm::GuestLimits`)。
+config file の guest も、bug で返らなければ `orts run` を止め、`orts serve` の manager を止める。
+
+- **turn の期限 (wall clock)**: guest が制御を持っている区間を turn と呼ぶ。host が制御を渡したとき (instantiate、`metadata` の呼び出し、`run` の開始、`wait-tick` が tick を返したとき) に始まり、guest が `wait-tick` を呼ぶか呼び出しから返ると終わる。1 turn が 5 s を超えると trap にする。`wait-tick` の中で次の tick を待つ時間は turn に数えない。engine の epoch を 10 ms ごとに進める thread を engine ごとに置き、store の epoch deadline callback が turn の経過時間を見る。async backend の store は epoch ごとに runtime へ yield するので、長い turn が worker thread を占有しない
+- **fuel を採らない理由**: fuel は同じ入力なら同じ命令で止まる (決定論) が、要件は manager を止める wall clock の上限で、epoch の方が instrumentation が軽い。tick ごとの fuel の補充には host import から `Store` に触る仕組み (call hook など) も要る
+- **host の中で止まる guest**: host の関数の中で止まった guest は wasm を走らせていないので、epoch が届かない。sync backend では、その待ちが host の中断も回収もできない OS thread を 1 本持ち続ける。guest の WASI context (preopen 無し、stdin は閉じ、socket の address はすべて拒否) で guest が待てるものとして見つけたのは clock の待ち (`std::thread::sleep` は monotonic clock の subscription を poll する) なので、linker の monotonic clock を差し替え、subscription がすぐ ready になるようにした。controller は simulation の時刻で動き、wall clock で待つものが無い。`now` と `resolution` はこれまでどおり clock を読む。ほかの host の関数が止まった場合に備え、controller は guest を turn の期限 + 1 s までしか待たず、過ぎたら止まった guest として error を返す。そのとき sync backend は worker thread を手放し、async backend は task を abort する
+- **`run` の前の `wait-tick`**: `run` の前 (`metadata` の中など) に来る tick は無い。待たずに `None` を返し、呼び出しを error にする
+- **memory**: linear memory 1 つあたり 256 MiB、table 1 つあたり 65,536 要素、store あたり instance 32・memory 4・table 16・component resource (WASI の stream や pollable) 1024 まで。超える grow は上限を名指しする error の trap になる。wasmtime の既定の個数上限 (各 10,000) のままだと、1 つあたりの上限が個数倍に膨らむ。example の guest で測った最大は memory 1,179,648 bytes (C の `nos3-adcs`)、table 109 要素
+- **msg-io**: `send-message` は message を host の memory に copy するので、linear memory の上限では抑えられない。1 turn に 4096 件・4 MiB まで。controller が caller に渡す前に溜める量はその 2 倍まで (最初の tick の応答は、`run` の開始から最初の tick までの turn と最初の tick の turn の 2 つ分を運ぶ)。超えたら tick を error にする。instantiate と `metadata` の中で送った message は捨てる。最初の tick より前に受け取る者は無く、SDK の guest は `metadata` と `run` の両方で `init` を呼ぶので、残すと 2 回届く。`orts serve` は msg-io を配送しないので、tick ごとに message を捨てる
+- **log**: `host-env.log` は 1 turn に 64 record まで、1 record は 4 KiB まで。超えた record は捨て、捨てたことを 1 度だけ warning で書く。host の log (とその先の disk) を guest が埋められないようにする
+- **決定論との関係**: 上限の内側で終わる実行は、上限を入れる前と同じ出力になり、sync と async の backend は bit-exact のままである。期限は wall clock なので、期限に近い guest が止まるかどうかは machine の負荷に依存しうる。期限で止まった実行は不完全な実行であって、別の結果ではない
+
 ### 決定論性の運用ルール
 
 - guest / host 両方で libm crate を強制する (sin/cos 等の host libm 実装差で oracle が破綻するため)
 - guest 側は HashMap 禁止、BTreeMap のみ (iteration 順序の決定論)
 - wasmtime / wit-bindgen は minor 固定で pin し、更新時に oracle 回帰テストを回す
 - host 側で `Command::is_finite()` を毎 tick チェックし、guest の NaN 出力を弾く
+- guest の実行の上限 (turn の期限) は wall clock で測るので、止まるかどうかは決定論の対象外。上限の内側で終わる実行の出力は変わらない (「guest の実行の上限」参照)
 
 ### sync / async デュアルバックエンド
 

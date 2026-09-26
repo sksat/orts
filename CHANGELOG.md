@@ -14,6 +14,19 @@ section is subdivided by package.
 ### `orts` (Rust, crates.io)
 
 #### Added
+- `plugin::wasm::ComponentBytes` holds a WASM component as bytes together with
+  their SHA-256, and `WasmPluginCache::build_sync_controller_from_bytes_with_streams`
+  / `build_async_controller_from_bytes_with_streams` build a controller from one
+  without touching the filesystem. The cache compiles one component per digest,
+  which it computes from the bytes itself, so two copies of a component share a
+  compilation and different bytes never share an entry; a path and a digest are
+  separate entries. `plugin-wasm` now depends on `sha2`.
+  ([#556](https://github.com/sksat/orts/issues/556))
+- `plugin::wasm::GuestLimits` says what one WASM controller guest may use (see
+  the Changed entry on guest limits). `WasmPluginCache::with_guest_limits`,
+  `WasmController::new_with_limits` and `AsyncWasmController::new_with_limits`
+  build under given limits; every other constructor uses the defaults.
+  ([#556](https://github.com/sksat/orts/issues/556))
 - `PropellantPool` is the propellant a spacecraft carries: one pool, one floor,
   and what is left is the mass the state carries above it. A floor of zero is
   refused — it would sit on the singularity of `F/m`, and a boundary search
@@ -138,6 +151,32 @@ section is subdivided by package.
   ([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
+- **BREAKING**: every WASM controller runs under limits, whichever way its
+  component arrived, and a guest past one fails the call with an error naming
+  the limit. A *turn* — from the host handing the guest control
+  (instantiation, `metadata`, the start of `run`, `wait-tick` returning a tick)
+  until the guest hands it back — may last 5 s of wall time, measured with
+  epoch interruption; waiting in `wait-tick` for the next tick is not part of
+  it. Each linear memory is capped at 256 MiB, each table at 65,536 elements,
+  and a store at 32 instances, 4 memories, 16 tables and 1024 component
+  resources (WASI streams, pollables). A guest may write 64 `host-env.log`
+  records per tick, each cut to 4 KiB; the rest are dropped with one warning. A guest may send 4096
+  msg-io messages or 4 MiB of them per tick, and a controller keeps twice as
+  many for its caller; messages sent during instantiation or `metadata` are
+  dropped (a guest built with the SDK runs `init` in both `metadata` and
+  `run`, so they used to arrive twice). WASI clock waits are ready at once, so a guest cannot
+  sleep in a host call, where no epoch reaches it; `now` still reads the
+  clock. Should another host call block, a controller waits for its guest one
+  deadline plus 1 s at most and fails the call, and `Drop` no longer waits on
+  a guest that does not stop. `wait-tick` before `run` returns `None` and fails
+  construction, where it used to block it forever. Measured on the example
+  guests: the largest linear memory is 1,179,648 bytes (`nos3-adcs`) and the
+  largest table 109 elements. The engine now interrupts on epochs, so a
+  `Store` made directly from `WasmEngine::inner()` must call
+  `Store::set_epoch_deadline` before running wasm, or the wasm traps at once.
+  A run that completes inside the limits produces the same output as before;
+  whether a guest close to the deadline completes can depend on machine load.
+  ([#556](https://github.com/sksat/orts/issues/556))
 - **Breaking:** a reaction wheel says how its torque follows its command with
   `TorqueResponse`, in place of `Rw::motor_time_constant: Option<f64>`. The
   variant names the model and its field names the quantity —
@@ -795,6 +834,40 @@ section is subdivided by package.
 ### `orts-cli` (Rust, crates.io, binary)
 
 #### Changed
+- **BREAKING**: a WebSocket client of `serve` sends a controller's component
+  instead of naming a file on the server. A controller `path` in a
+  `start_simulation` or `add_satellite` is refused with an `error`, and the
+  server does not open it; before, it read the file the client named —
+  measured with a FIFO, the read never returned, the simulation stopped
+  streaming, and new connections got no reply. A client now sends the
+  component's bytes as one binary message on `/ws`; the server answers
+  `controller_uploaded` with their SHA-256 and size, and the controller config
+  names the component by `sha256 = "<64 lowercase hex digits>"` in place of
+  `path`. The server accepts uploads only when started with
+  `--allow-controller-upload`; without it, a binary message and a `sha256`
+  controller are refused with `WebSocket WASM controllers require starting
+  orts serve with --allow-controller-upload`. The client may send the
+  component and a message naming it back to back, without waiting for the
+  reply. A connection keeps what it received
+  until it closes, and names only that: a client that reconnects sends its
+  components again, and controllers already built keep running. A component is
+  at most 8 MiB, a connection keeps at most 4, and all connections together
+  hold at most 128 MiB, given back as each closes; past any of these the upload
+  is refused with an `error`, and a message past the socket's 8 MiB limit
+  closes the connection without one. Receiving a component checks its size and
+  its first 8 bytes only; whether it compiles is found out when a satellite is
+  built from it. A `--config` file still names its controller by `path`, and
+  refuses a `sha256`, which only a connection can resolve. In the TypeScript
+  bindings `ControllerConfig.path` becomes optional, `ControllerConfig.sha256`
+  is added, and `WsMessage` gains `controller_uploaded`.
+  ([#556](https://github.com/sksat/orts/issues/556))
+- `run` and `serve` run every WASM controller under the guest limits of
+  `orts` (a 5 s turn deadline, memory and msg-io caps). In `serve`, a guest
+  past one halts the run with `simulation halted: …` naming the limit, where a
+  guest that never returned used to hold the manager until the process was
+  killed. `serve` drops the msg-io messages a controller sends after each
+  tick: it routes none, and they used to pile up for the whole run.
+  ([#556](https://github.com/sksat/orts/issues/556))
 - **BREAKING**: `serve` refuses a `space_weather` file path in a WebSocket
   `start_simulation`, as it refuses `[gravity_field]`: a client may leave it
   out or ask for `"auto"`, the CelesTrak fetch. A path named a file on the

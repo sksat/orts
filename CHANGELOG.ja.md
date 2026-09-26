@@ -11,6 +11,17 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `orts` (Rust, crates.io)
 
 #### Added
+- `plugin::wasm::ComponentBytes` を追加した。WASM の component を bytes とその SHA-256 の組で持つ。
+  `WasmPluginCache::build_sync_controller_from_bytes_with_streams` /
+  `build_async_controller_from_bytes_with_streams` は、filesystem に触れずにそこから controller を
+  作る。cache は digest ごとに component を 1 回 compile し、digest は cache が bytes から自分で
+  計算する。同じ component の 2 つの copy は compile を共有し、違う bytes が同じ entry を引くことは
+  無い。パスと digest は別の entry になる。`plugin-wasm` は `sha2` に依存する
+  ([#556](https://github.com/sksat/orts/issues/556))
+- `plugin::wasm::GuestLimits` を追加した。WASM controller の guest 1 つが使える上限を表す
+  (Changed の guest の上限の項を参照)。`WasmPluginCache::with_guest_limits`、
+  `WasmController::new_with_limits`、`AsyncWasmController::new_with_limits` は与えた上限で
+  作り、ほかの constructor は既定値を使う ([#556](https://github.com/sksat/orts/issues/556))
 - `PropellantPool` を追加した。宇宙機が積む推進剤をプール 1 つ・床 1 つで表し、残量は state が
   床より上に持っている質量である。床 0 は拒否する (`F/m` の特異点に床を置くことになる。境界の探索は
   交差前のモードで区間を刻み直すので、床を越えて試行するのが設計である)。
@@ -109,6 +120,26 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   variant で表される。([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
+- **BREAKING**: すべての WASM controller を、component の出所によらず上限の下で走らせる。
+  上限を超えた guest の呼び出しは、上限を名指しする error になる。host が guest に制御を渡して
+  から (instantiate、`metadata`、`run` の開始、`wait-tick` が tick を返したとき) guest が返す
+  までを turn と呼び、1 turn は wall clock で 5 s まで (epoch interruption で測る)。
+  `wait-tick` で次の tick を待つ時間は turn に数えない。linear memory 1 つは 256 MiB まで、
+  table 1 つは 65,536 要素まで、store あたり instance 32・memory 4・table 16・component resource
+  (WASI の stream や pollable) 1024 まで。`host-env.log` は 1 tick に 64 record まで、1 record は
+  4 KiB までに切り、超えた分は 1 度の warning とともに捨てる。guest が
+  1 tick に送れる msg-io は 4096 件・4 MiB までで、controller が caller のために溜めるのは
+  その 2 倍まで。instantiate と `metadata` の中で送った message は捨てる (SDK の guest は
+  `metadata` と `run` の両方で `init` を呼ぶので、以前は 2 回届いていた)。WASI の clock の待ちはすぐ ready になるので、guest は epoch の届かない host の
+  呼び出しの中で眠れない (`now` はこれまでどおり clock を読む)。ほかの host の呼び出しが止まった
+  場合も、controller は guest を期限 + 1 s までしか待たずに呼び出しを error にし、`Drop` も
+  止まらない guest を待たない。`run` の前の `wait-tick` は `None` を返して構築を error にする (以前は
+  構築が永久に止まった)。example の guest で測った最大は linear memory 1,179,648 bytes
+  (`nos3-adcs`)、table 109 要素。engine が epoch で割り込むようになったので、
+  `WasmEngine::inner()` から直接作る `Store` は wasm を走らせる前に
+  `Store::set_epoch_deadline` を呼ぶ必要がある (呼ばないと wasm はすぐ trap する)。上限の内側で
+  終わる実行の出力は以前と同じで、期限に近い guest が終わるかどうかは machine の負荷に依存しうる
+  ([#556](https://github.com/sksat/orts/issues/556))
 - **Breaking:** reaction wheel が、トルクが指令にどう追従するかを `TorqueResponse` で表すように
   なった (`Rw::motor_time_constant: Option<f64>` を置き換える)。variant がモデルを、field が量を
   名指しする: `with_motor_lag(0.05)` では 50 ms が時定数か無駄時間かを言っておらず、
@@ -610,6 +641,31 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `orts-cli` (Rust, crates.io, binary)
 
 #### Changed
+- **BREAKING**: `serve` の WebSocket の client は、controller の component を server のファイルの
+  パスで名指しせず、中身を送る。`start_simulation` と `add_satellite` の controller に `path` が
+  あれば `error` を返し、server はそのパスを開かない。以前は client が名指ししたファイルを読んで
+  いた — FIFO で測ると読み込みが戻らず、simulation は state を送らなくなり、新しい接続にも応答が
+  無かった。client は component の中身を `/ws` の binary message 1 つで送る。server は
+  `controller_uploaded` で SHA-256 と大きさを返し、controller の config は `path` の代わりに
+  `sha256 = "<小文字の 16 進 64 桁>"` で component を指す。server は
+  `--allow-controller-upload` で起動したときだけ upload を受け付け、flag が無ければ binary
+  message と `sha256` の controller を `WebSocket WASM controllers require starting orts serve
+  with --allow-controller-upload` で拒否する。client は component と、それを指す
+  message を、応答を待たずに続けて送ってよい。接続は受け取った component を切断まで持ち、
+  指せるのはそれだけである: 接続し直した client は component を送り直す。作り済みの controller は
+  動き続ける。component は 8 MiB まで、1 接続 4 個まで、全接続の合計 128 MiB まで (接続を閉じると
+  その分を返す) で、超えると upload に `error` を返す。
+  socket の上限 8 MiB を超える message は、応答無しで接続を閉じる。受け取るときに確かめるのは
+  大きさと先頭 8 byte だけで、compile できるかは衛星を作るときに分かる。`--config` のファイルは
+  これまでどおり `path` で controller を指し、接続でしか解決できない `sha256` は拒否する。
+  TypeScript の bindings では `ControllerConfig.path` が optional になり、`ControllerConfig.sha256`
+  と `WsMessage` の `controller_uploaded` が加わる ([#556](https://github.com/sksat/orts/issues/556))
+- `run` と `serve` は、すべての WASM controller を `orts` の guest の上限 (turn の期限 5 s、
+  memory と msg-io の上限) の下で走らせる。`serve` では上限を超えた guest が、上限を名指しする
+  `simulation halted: …` で run を止める。以前は返らない guest が、process を kill するまで
+  manager を止めていた。`serve` は controller が送った msg-io の message を tick ごとに捨てる。
+  `serve` は message を配送せず、以前は run の間ずっと溜まっていた
+  ([#556](https://github.com/sksat/orts/issues/556))
 - **BREAKING**: `serve` は、WebSocket の `start_simulation` に書かれた `space_weather` の
   ファイルパスを、`[gravity_field]` と同じく拒否する。client は指定しないか、CelesTrak から
   取得する `"auto"` を指定する。パスは server のファイルを指し、manager がそれを読んでいた —

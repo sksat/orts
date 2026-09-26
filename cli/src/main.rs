@@ -48,10 +48,12 @@ fn main() {
             sim,
             port,
             stream_stdio,
+            allow_controller_upload,
         } => exit_on_error(commands::serve::run_server(
             &sim,
             port,
             stream_stdio.as_deref(),
+            allow_controller_upload,
         )),
         Commands::Replay { input, port } => commands::replay::run_replay(&input, port),
         Commands::Convert {

@@ -1,0 +1,14 @@
+[package]
+name = "orts-test-guest-misbehaving"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Test fixture: a guest that breaks the host's limits on request"
+
+[dependencies]
+orts-plugin-sdk = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lib]
+crate-type = ["cdylib"]

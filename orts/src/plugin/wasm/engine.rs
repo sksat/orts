@@ -17,8 +17,18 @@
 //! SIMD lowering. That is the configuration we rely on to get
 //! bit-reproducible plugin behaviour across machines (see DESIGN.md
 //! "WASM backend": 決定論を config 調整なしで担保).
+//!
+//! ## Turn deadline
+//!
+//! The engine is also built with epoch interruption, and advances its epoch
+//! every [`EPOCH_TICK`] from a thread of its own. Each controller's store turns
+//! an epoch into a check of how long its guest has held control (see
+//! [`super::limits`]). The checks do not change what a guest computes, only
+//! whether a guest past its deadline is stopped.
 
 use wasmtime::{Config, Engine};
+
+use super::limits::EPOCH_TICK;
 
 use crate::plugin::error::PluginError;
 
@@ -43,9 +53,11 @@ impl WasmEngine {
         let mut config = Config::new();
         config
             .target("pulley64")
-            .map_err(|err| PluginError::Init(format!("pulley64 target unsupported: {err}")))?;
+            .map_err(|err| PluginError::Init(format!("pulley64 target unsupported: {err}")))?
+            .epoch_interruption(true);
         let inner = Engine::new(&config)
             .map_err(|err| PluginError::Init(format!("wasmtime Engine::new failed: {err}")))?;
+        spawn_epoch_ticker(&inner)?;
         Ok(Self { inner })
     }
 
@@ -71,10 +83,37 @@ impl WasmEngine {
     /// Access the underlying `wasmtime::Engine`.
     ///
     /// Used by `WasmController` to instantiate `Component`s and
-    /// `Store`s against this engine.
+    /// `Store`s against this engine. The engine interrupts on epochs, so a
+    /// `Store` made from it must set an epoch deadline
+    /// (`Store::set_epoch_deadline`) before running wasm, or the wasm traps at
+    /// once.
     pub fn inner(&self) -> &Engine {
         &self.inner
     }
+}
+
+/// Advance `engine`'s epoch every [`EPOCH_TICK`] until the engine is dropped.
+///
+/// The thread holds the engine weakly and upgrades it only around the
+/// increment, so it never keeps an engine alive; it ends at the first tick
+/// after the last handle is gone. It is a plain thread rather than a task on
+/// the async backend's runtime, so a guest holding that runtime's worker cannot
+/// stop the clock that stops the guest.
+fn spawn_epoch_ticker(engine: &Engine) -> Result<(), PluginError> {
+    let weak = engine.weak();
+    std::thread::Builder::new()
+        .name("wasm-epoch-ticker".to_string())
+        .spawn(move || {
+            loop {
+                std::thread::sleep(EPOCH_TICK);
+                match weak.upgrade() {
+                    Some(engine) => engine.increment_epoch(),
+                    None => break,
+                }
+            }
+        })
+        .map(|_| ())
+        .map_err(|e| PluginError::Init(format!("failed to spawn the epoch ticker: {e}")))
 }
 
 #[cfg(test)]
@@ -108,11 +147,48 @@ mod tests {
         // 4. our `WasmEngine::inner()` hand-off works.
         let module = Module::new(engine.inner(), ADD_WAT).expect("module compile must succeed");
         let mut store = Store::new(engine.inner(), ());
+        store.set_epoch_deadline(1);
         let instance = Instance::new(&mut store, &module, &[]).expect("instantiation must succeed");
         let add = instance
             .get_typed_func::<(i32, i32), i32>(&mut store, "add")
             .expect("module must export add");
         let result = add.call(&mut store, (1, 2)).expect("add must run");
         assert_eq!(result, 3);
+    }
+
+    /// A loop that never ends is stopped by the engine's epoch: the ticker
+    /// advances it, and a store whose deadline has passed traps.
+    ///
+    /// This is what the turn deadline rests on, measured on Pulley rather than
+    /// assumed from native code.
+    #[test]
+    fn an_endless_loop_is_interrupted_by_the_epoch() {
+        let engine = WasmEngine::new().expect("Pulley engine must construct on this target");
+        let module = Module::new(
+            engine.inner(),
+            r#"(module (func (export "spin") (loop $l (br $l))))"#,
+        )
+        .expect("module compile must succeed");
+        let mut store = Store::new(engine.inner(), ());
+        // Trap once the ticker has advanced the epoch a few times.
+        store.set_epoch_deadline(3);
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiation must succeed");
+        let spin = instance
+            .get_typed_func::<(), ()>(&mut store, "spin")
+            .expect("module must export spin");
+        let started = std::time::Instant::now();
+        let err = spin
+            .call(&mut store, ())
+            .expect_err("the loop is interrupted");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "interrupted after {:?}",
+            started.elapsed()
+        );
+        assert_eq!(
+            err.downcast_ref::<wasmtime::Trap>(),
+            Some(&wasmtime::Trap::Interrupt),
+            "{err:?}"
+        );
     }
 }

@@ -28,4 +28,12 @@ torques?: Array<ModelTorque>,
 /**
  * Attitude telemetry (present only when SpacecraftDynamics is used).
  */
-attitude?: AttitudePayload, } | { "type": "history", states: Array<HistoryState>, } | { "type": "query_range_response", t_min: number, t_max: number, states: Array<HistoryState>, } | { "type": "simulation_terminated", entity_path: string, t: number, reason: string, } | { "type": "status", state: string, } | { "type": "satellite_added", satellite: SatelliteInfo, t: number, } | { "type": "textures_ready", body: string, } | { "type": "error", message: string, };
+attitude?: AttitudePayload, } | { "type": "history", states: Array<HistoryState>, } | { "type": "query_range_response", t_min: number, t_max: number, states: Array<HistoryState>, } | { "type": "simulation_terminated", entity_path: string, t: number, reason: string, } | { "type": "status", state: string, } | { "type": "satellite_added", satellite: SatelliteInfo, t: number, } | { "type": "textures_ready", body: string, } | { "type": "controller_uploaded", 
+/**
+ * SHA-256 of the bytes, 64 lowercase hexadecimal digits.
+ */
+sha256: string, 
+/**
+ * Length of the component in bytes.
+ */
+size: number, } | { "type": "error", message: string, };
