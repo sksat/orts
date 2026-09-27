@@ -369,8 +369,12 @@ pub(super) struct StepOutput {
 /// A chunk that ended on an error, with what it had already produced.
 ///
 /// The intervals before the failing one are done: the satellites they stopped
-/// were reported and put in the replay list, and their state samples are in
-/// the history. Handing them back with the error is what lets the serve layer
+/// were reported and put in the replay list, and their samples on an output
+/// interval are in the history. The partial output holds more than that: the
+/// samples between output intervals (a stream step shorter than
+/// `output_interval` produces them, and the history does not keep them), and
+/// the terminations of controlled satellites the failing interval confirmed
+/// before it failed. Handing them back with the error is what lets the serve layer
 /// deliver them to the clients that are connected — otherwise a permanent
 /// fault (a guest trap, a bad command) means a termination those clients never
 /// hear about, while a client that connects later reads it from the replay

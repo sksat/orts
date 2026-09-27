@@ -409,9 +409,11 @@ struct Delivery {
 ///
 /// The order is what this can do, not a guarantee: a fleet that stops more
 /// satellites in one chunk than the channel holds still outruns a client that
-/// is not draining. Every termination is in `terminated_events` as well, which
-/// a client reads on (re)connect, so what a lagged client loses it can still
-/// recover — over a reconnect rather than in place.
+/// is not draining. The latest [`super::engine::TERMINATED_EVENTS_CAP`] terminations are in
+/// `terminated_events` as well, which a client reads on (re)connect, so what a
+/// lagged client loses among those it can still recover — over a reconnect
+/// rather than in place. A chunk that stops more satellites than that cap
+/// loses its earliest terminations from both paths.
 fn deliver_chunk(
     tx: &broadcast::Sender<String>,
     chunk: Result<StepOutput, ChunkFailure>,
