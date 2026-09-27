@@ -400,9 +400,12 @@ struct Delivery {
 /// The samples go out before the terminations on that path. The channel holds
 /// 256 messages and drops the oldest once a receiver falls behind, so a chunk
 /// with more samples than that would push a termination sent first out of a
-/// slow client's buffer. A dropped sample is recoverable — the history holds
-/// it, and a client can query the range — while a termination reaches a
-/// running client only here.
+/// slow client's buffer. A dropped sample that falls on an output interval is
+/// recoverable — the history keeps one sample per `output_interval`, and a
+/// client can query the range — while a termination reaches a running client
+/// only here. The samples between output intervals, which a stream step
+/// shorter than `output_interval` produces, are not in the history and are
+/// lost with the dropped message.
 ///
 /// The order is what this can do, not a guarantee: a fleet that stops more
 /// satellites in one chunk than the channel holds still outruns a client that
