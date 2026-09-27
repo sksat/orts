@@ -267,7 +267,6 @@ async fn async_server(
         }
         None => {
             tokio::spawn(manager::simulation_manager(
-                None,
                 plugin_overrides,
                 cmd_rx,
                 mgr_tx,
