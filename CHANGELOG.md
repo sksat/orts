@@ -1124,15 +1124,15 @@ section is subdivided by package.
   answers with an error that names the fault, and the run stays paused until
   `terminate_simulation` and a new `start_simulation`. A run paused by a
   client resumes as before. ([#538](https://github.com/sksat/orts/issues/538))
-- `serve` answers a WebSocket `start_simulation` once the simulation is
-  built, so a start that fails while it is built reaches the client that sent
-  it as an `error`. The server used to answer as soon as the config passed its
-  checks: a `space_weather = "auto"` fetch that then failed was reported only
-  on the server's stderr, and the client got neither an `error` nor an `info`.
-  A refusal from the engine build (for example `streams` on a satellite
-  without a controller) went to every connected client, and now goes to the
-  one that sent the request. A start with a NORAD satellite fetches its TLE
-  once, where it fetched it twice.
+- `serve` answers a WebSocket `start_simulation` once its engine is built, so
+  the client that sent the request gets an `error` when the
+  `space_weather = "auto"` fetch fails or the engine refuses the config (for
+  example `streams` on a satellite without a controller). The server used to
+  accept the request as soon as the config passed its checks: a failed
+  `"auto"` fetch was reported only on the server's stderr, and the client got
+  neither an `error` nor an `info`; an engine refusal went to every connected
+  client. A start with a NORAD satellite fetches its TLE once, where it
+  fetched it twice.
   ([#555](https://github.com/sksat/orts/issues/555))
 - `convert --format` offers only `csv`, the one format it writes. It offered
   `rrd` too and then refused it with `cannot convert to .rrd format (input is

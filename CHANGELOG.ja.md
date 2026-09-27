@@ -880,13 +880,12 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   fault を名指しするエラーを返し、run は `terminate_simulation` と新しい `start_simulation` まで paused の
   まま残る。client が止めた run は、これまでどおり resume できる
   ([#538](https://github.com/sksat/orts/issues/538))
-- `serve` は WebSocket の `start_simulation` に、simulation を組み立て終えてから応答する。
-  組み立ての途中で失敗した start は、送った client に `error` として返る。以前は config が
-  検査を通った時点で応答していたので、その後 `space_weather = "auto"` の取得に失敗すると、
-  失敗は server の stderr にだけ出て、client には `error` も `info` も届かなかった。engine
-  の組み立てでの拒否 (たとえば controller の無い衛星の `streams`) は接続中のすべての client
-  に送っていたが、いまは要求を送った client にだけ送る。NORAD の衛星を含む start は、TLE を
-  2 回取得していたのを 1 回だけ取得する。
+- `serve` は WebSocket の `start_simulation` に、engine を作り終えてから応答する。
+  `space_weather = "auto"` の取得に失敗したときや、engine が config を拒否したとき (たとえば
+  controller の無い衛星の `streams`) は、要求を送った client に `error` が返る。以前は config が
+  検査を通った時点で要求を受け付けていたので、その後の `"auto"` の取得の失敗は server の stderr
+  にだけ出て、client には `error` も `info` も届かなかった。engine の拒否は、接続中のすべての
+  client に送っていた。NORAD の衛星を含む start は、TLE を 2 回取得していたのを 1 回だけ取得する。
   ([#555](https://github.com/sksat/orts/issues/555))
 - `convert --format` は、実際に書ける `csv` だけを選択肢に出す。以前は `rrd` も選択肢に出し、入力に
   よらず `cannot convert to .rrd format (input is already .rrd)` で拒否していた。いまは clap が
