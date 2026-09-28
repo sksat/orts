@@ -408,3 +408,70 @@ test("an attitude view with no spacecraft yet says so, rather than blaming one",
   await expect(page.locator('[data-testid="attitude-no-spacecraft"]')).toBeVisible();
   await expect(page.locator('[data-testid="attitude-no-data"]')).toHaveCount(0);
 });
+
+test("each view keeps its own frame, and the arrow toggles are shared", async ({ page }) => {
+  // The state contract of the view switch: the orbit view's frame and the
+  // attitude view's frame are separate choices, so picking one in a view leaves
+  // the other where the reader put it; the arrow toggles are one setting, so
+  // switching a direction off in either view switches it off in both.
+  await page.goto("/?noAutoConnect=1");
+  await connect(page);
+
+  // Both arrows are drawn once the scene has the sample and the Sun ephemeris;
+  // centring waits for the first sample, as the carry-over test explains.
+  const drawnKinds = () =>
+    page.evaluate((id) => {
+      const w = window as unknown as Record<string, unknown>;
+      const get = w.__debug_get_direction_vectors as
+        | ((id: string) => { kind: string }[] | null)
+        | undefined;
+      return (get?.(id) ?? []).map((v) => v.kind).sort();
+    }, SAT_ENTITY_PATH);
+  await expect
+    .poll(
+      () =>
+        page.evaluate((id) => {
+          const w = window as unknown as Record<string, unknown>;
+          const get = w.__debug_get_sat_world_quat as ((id: string) => number[] | null) | undefined;
+          return get?.(id) != null;
+        }, SAT_ENTITY_PATH),
+      { timeout: 30000 },
+    )
+    .toBe(true);
+
+  // Orbit view: centre on the satellite (LVLH by default), then choose inertial.
+  await page
+    .locator('[data-testid="frame-selector-select"]')
+    .selectOption(`satellite:${SAT_ENTITY_PATH}`);
+  const orbitInertial = page.locator('[data-testid="frame-orientation-inertial"]');
+  await orbitInertial.click();
+  await expect(orbitInertial).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(drawnKinds, { timeout: 15000 }).toEqual(["nadir", "sun"]);
+
+  // Attitude view: a different frame, and the Sun switched off.
+  await page.locator('[data-testid="view-attitude"]').click();
+  const attitudeLvlh = page.locator('[data-testid="attitude-orientation-lvlh"]');
+  await attitudeLvlh.click();
+  await expect(attitudeLvlh).toHaveAttribute("aria-pressed", "true");
+  const sun = page.locator('[data-testid="direction-vector-sun"]');
+  await sun.click();
+  await expect(sun).toHaveAttribute("aria-pressed", "false");
+  await expect.poll(drawnKinds, { timeout: 15000 }).toEqual(["nadir"]);
+
+  // Back to orbit: its own frame survived the attitude view's choice, and the
+  // Sun stays off — in the control and in the scene.
+  await page.locator('[data-testid="view-orbit"]').click();
+  await expect(orbitInertial, "the orbit frame is the orbit view's own").toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(sun, "the arrow toggle is shared").toHaveAttribute("aria-pressed", "false");
+  await expect.poll(drawnKinds, { timeout: 15000 }).toEqual(["nadir"]);
+
+  // And to attitude again: its frame survived the round trip too.
+  await page.locator('[data-testid="view-attitude"]').click();
+  await expect(attitudeLvlh, "the attitude frame is the attitude view's own").toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+});
