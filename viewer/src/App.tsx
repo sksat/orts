@@ -7,6 +7,7 @@ const arikaReady = initArika();
 
 import type { TimeRange } from "@sksat/uneri";
 import appStyles from "./App.module.css";
+import { unitAttitude } from "./attitude.js";
 import { entityPathToBodyId, resolveBodyDefinitions } from "./bodies.js";
 import { AttitudeOverlay } from "./components/AttitudeOverlay.js";
 import { CameraViewProbe } from "./components/CameraViewProbe.js";
@@ -25,7 +26,6 @@ import {
   resolveDirectionVectors,
 } from "./directionVectors.js";
 import type { DisplayFrame, Vec3 as DisplayVec3 } from "./displayFrame.js";
-import { unitAttitude } from "./displayFrame.js";
 import { centrePositionIsUsable, resolveSceneFrame } from "./frameResolve.js";
 import { toViewerReferenceFrame } from "./frameToViewer.js";
 import { CSV_SOURCE_ID, RRD_SOURCE_ID, useFileSource } from "./hooks/useFileSource.js";
