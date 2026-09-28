@@ -1,5 +1,72 @@
+/*
+ * orts brand for the docs site. Colours come from assets/README.md; grays keep
+ * a slight hue (250 on ink, the paper's own 86.8 on paper) instead of neutral.
+ *
+ * Nothing here relies on colour alone: links are underlined, the current
+ * sidebar entry has a bar and a heavier weight, focus is a thick outline.
+ * Contrast ratios below were checked against protanopia, deuteranopia and
+ * tritanopia simulations as well as normal vision.
+ */
+
 :root {
+  --sl-color-white: #fff;
+  --sl-color-gray-1: oklch(0.894 0.007 250);
+  --sl-color-gray-2: oklch(0.732 0.016 250);
+  --sl-color-gray-3: oklch(0.588 0.021 250);
+  --sl-color-gray-4: oklch(0.409 0.021 250);
+  --sl-color-gray-5: oklch(0.305 0.018 250);
+  --sl-color-gray-6: oklch(0.222 0.014 250);
+  --sl-color-black: #0e0e10;
+  --sl-color-accent-low: oklch(0.28 0.06 240);
+  --sl-color-accent: oklch(0.58 0.12 240);
+  --sl-color-accent-high: oklch(0.8 0.1 240);
+  /* Links on ink. The brand blue (L 0.58) is 4.57:1 here but 4.32:1 under
+     tritanopia; L 0.72 holds 6.82:1. */
+  --sl-color-text-accent: oklch(0.72 0.11 240);
+  --sl-color-orange-low: oklch(0.3 0.06 70);
+  --sl-color-orange: oklch(0.72 0.12 70);
+  --sl-color-orange-high: oklch(0.86 0.09 70);
+  --sl-color-blue-low: var(--sl-color-accent-low);
+  --sl-color-blue: var(--sl-color-accent);
+  --sl-color-blue-high: var(--sl-color-accent-high);
+
+  --orts-blue: oklch(0.58 0.12 240);
+  --orts-focus: oklch(0.8 0.1 240);
+  --orts-radius: 6px;
+  --orts-hairline: color-mix(in oklab, var(--sl-color-gray-5) 70%, transparent);
+
   --sl-nav-height: 6rem;
+  --sl-content-width: 44rem;
+  --sl-text-h1: 2.6rem;
+  --sl-text-h2: 1.6rem;
+  --sl-text-h3: 1.25rem;
+  --sl-text-h4: 1.075rem;
+}
+
+:root[data-theme="light"] {
+  --sl-color-white: oklch(0.209 0.012 86.8);
+  --sl-color-gray-1: oklch(0.273 0.015 86.8);
+  --sl-color-gray-2: oklch(0.341 0.018 86.8);
+  --sl-color-gray-3: oklch(0.46 0.02 86.8);
+  --sl-color-gray-4: oklch(0.63 0.018 86.8);
+  --sl-color-gray-5: oklch(0.814 0.011 86.8);
+  --sl-color-gray-6: oklch(0.905 0.008 86.8);
+  --sl-color-gray-7: oklch(0.935 0.006 86.8);
+  --sl-color-black: #f5f1e8;
+  --sl-color-accent-low: oklch(0.9 0.05 240);
+  /* 0.53 is 4.61:1 on paper but 4.21:1 under protanopia; 0.50 holds 4.82:1. */
+  --sl-color-accent: oklch(0.5 0.11 240);
+  --sl-color-accent-high: oklch(0.4 0.09 240);
+  --sl-color-text-accent: oklch(0.5 0.11 240);
+  --sl-color-orange-low: oklch(0.9 0.05 70);
+  /* C 0.12 leaves sRGB at the L needed for 4.5:1 on paper. */
+  --sl-color-orange: oklch(0.54 0.11 70);
+  --sl-color-orange-high: oklch(0.4 0.09 70);
+  --sl-color-blue-low: var(--sl-color-accent-low);
+  --sl-color-blue: var(--sl-color-accent);
+  --sl-color-blue-high: var(--sl-color-accent-high);
+
+  --orts-focus: oklch(0.45 0.11 240);
 }
 
 a.site-title img {
@@ -10,4 +77,72 @@ a.site-title img {
 /* Pull the brand wordmark flush to the viewport edge */
 header.header {
   padding-inline-start: 0;
+}
+
+h1#_top,
+.sl-markdown-content :is(h2, h3, h4),
+.hero h1 {
+  text-wrap: balance;
+}
+h1#_top {
+  font-weight: 600;
+  padding-bottom: 1.3rem;
+  /* An orbit arc under the page title: brand blue #2382ba, amber #d49648. */
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='22' viewBox='0 0 260 22'%3E%3Cpath d='M2 20 Q130 -6 258 20' fill='none' stroke='%232382ba' stroke-width='1.25' stroke-opacity='.75'/%3E%3Ccircle cx='186' cy='9.3' r='3.2' fill='%23d49648'/%3E%3C/svg%3E")
+    left bottom / 260px 22px no-repeat;
+}
+.sl-markdown-content h2 {
+  font-weight: 600;
+  margin-top: 2.6rem;
+}
+.sl-markdown-content h3 {
+  font-weight: 600;
+}
+.sl-markdown-content {
+  line-height: 1.75;
+}
+
+/* Links in prose: underlined, so they read without their colour. */
+.sl-markdown-content a:not(:where(.not-content *)) {
+  text-decoration-line: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 0.22em;
+}
+.sl-markdown-content a:not(:where(.not-content *)):hover {
+  text-decoration-thickness: 2.5px;
+}
+
+:where(a, button, summary, input, select):focus-visible {
+  outline: 3px solid var(--orts-focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Sidebar: the current page is a bar, a tint and a heavier weight. */
+.sidebar-pane {
+  background: var(--sl-color-black);
+  border-inline-end: 1px solid var(--orts-hairline);
+}
+.sidebar-content .group-label,
+.sidebar-content summary {
+  font-weight: 600;
+  color: var(--sl-color-white);
+}
+.sidebar-content a {
+  border-radius: var(--orts-radius);
+}
+.sidebar-content a[aria-current="page"] {
+  background: color-mix(in oklab, var(--orts-blue) 16%, transparent);
+  color: var(--sl-color-white);
+  font-weight: 700;
+  box-shadow: inset 3px 0 0 var(--sl-color-text-accent);
+}
+
+.sl-markdown-content code:not(pre code) {
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+.sl-link-button {
+  border-radius: var(--orts-radius);
 }

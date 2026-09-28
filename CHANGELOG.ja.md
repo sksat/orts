@@ -1910,6 +1910,11 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   — 例: <https://sksat.github.io/orts/llms.txt> を agent に渡す。`llms-full.txt`
   は全文、`llms-small.txt` は自動生成 API リファレンスを除いた要約版。([#225](https://github.com/sksat/orts/pull/225))
 
+#### Changed
+- ドキュメントサイトを orts のブランド色（ink / paper の地、ブランドの青の accent）にした。本文中の
+  リンクの下線を太くし、sidebar の現在ページは色に加えて左の bar と太字で示す。文字とこれらの印は、
+  P 型・D 型・T 型のシミュレーションでも WCAG の contrast（文字 4.5:1、印 3:1）を満たす。
+
 #### Fixed
 - ドキュメントサイトのコードブロックが light テーマでもシンタックスハイライトされるようにした。Starlight
   既定の light 用コードテーマはコマンドと文字列を同じ青で塗っていた。One Dark Pro / One Light に替え、
