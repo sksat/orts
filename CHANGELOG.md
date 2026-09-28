@@ -2373,6 +2373,10 @@ section is subdivided by package.
 - The documentation site's header is 60px tall instead of 96px and
   translucent. The wordmark's drawing shrinks from 84×48px to 64×36px: the
   site's copy of the SVG has its viewBox cut down to the drawing.
+- On the documentation site, h2 / h3 / h4 are smaller on wide screens (25.6 /
+  20 / 17.2px, from 35 / 29 / 24px), the page title has an orbit arc drawn
+  under it, link buttons have 6px corners instead of a pill shape, and inline
+  code has 4px corners.
 
 #### Fixed
 - Code blocks on the documentation site keep their syntax highlighting in the

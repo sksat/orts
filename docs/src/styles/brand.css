@@ -36,8 +36,8 @@
   --orts-hairline: color-mix(in oklab, var(--sl-color-gray-5) 70%, transparent);
 
   --sl-nav-height: 3.75rem;
-  --sl-content-width: 44rem;
-  --sl-text-h1: 2.6rem;
+  /* Smaller than Starlight's desktop steps (35 / 29 / 24px): the API pages
+     give each item an h2 or h3, and the default sizes spread them out. */
   --sl-text-h2: 1.6rem;
   --sl-text-h3: 1.25rem;
   --sl-text-h4: 1.075rem;
@@ -91,22 +91,11 @@ h1#_top,
   text-wrap: balance;
 }
 h1#_top {
-  font-weight: 600;
   padding-bottom: 1.3rem;
   /* An orbit arc under the page title: brand blue #2382ba, amber #d49648. */
   background:
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='22' viewBox='0 0 260 22'%3E%3Cpath d='M2 20 Q130 -6 258 20' fill='none' stroke='%232382ba' stroke-width='1.25' stroke-opacity='.75'/%3E%3Ccircle cx='186' cy='9.3' r='3.2' fill='%23d49648'/%3E%3C/svg%3E")
     left bottom / 260px 22px no-repeat;
-}
-.sl-markdown-content h2 {
-  font-weight: 600;
-  margin-top: 2.6rem;
-}
-.sl-markdown-content h3 {
-  font-weight: 600;
-}
-.sl-markdown-content {
-  line-height: 1.75;
 }
 
 /* Links in prose: underlined, so they read without their colour. */
@@ -129,14 +118,6 @@ h1#_top {
 .sidebar-pane {
   background: var(--sl-color-black);
   border-inline-end: 1px solid var(--orts-hairline);
-}
-.sidebar-content .group-label,
-.sidebar-content summary {
-  font-weight: 600;
-  color: var(--sl-color-white);
-}
-.sidebar-content a {
-  border-radius: var(--orts-radius);
 }
 .sidebar-content a[aria-current="page"] {
   background: color-mix(in oklab, var(--orts-blue) 16%, transparent);
