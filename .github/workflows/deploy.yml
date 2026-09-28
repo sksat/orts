@@ -68,7 +68,10 @@ jobs:
 
       - name: Install ImageMagick (texture conversion — cache miss only)
         if: steps.texture-cache.outputs.cache-hit != 'true'
-        run: sudo apt-get install -y imagemagick
+        # The runner image's package index goes stale: the archive drops a
+        # package version once a newer one replaces it, and an install from
+        # the stale index then fails with 404.
+        run: sudo apt-get update && sudo apt-get install -y imagemagick
 
       # One invocation for both resolutions: each source image is downloaded once
       # and resized twice. Two invocations re-downloaded the 21600x10800 Blue
