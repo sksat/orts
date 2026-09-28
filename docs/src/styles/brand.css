@@ -2,27 +2,30 @@
  * orts brand for the docs site. Colours come from assets/README.md; grays keep
  * a slight hue (250 on ink, the paper's own 86.8 on paper) instead of neutral.
  *
+ * Every text colour is at least as far from its ground as Starlight's default
+ * is from Starlight's ground, in normal vision and in protanopia,
+ * deuteranopia and tritanopia simulations. On ink that is Starlight's own
+ * lightness; paper is darker than white, so the light-mode text is darker.
+ *
  * Nothing here relies on colour alone: links are underlined, the current
  * sidebar entry has a bar and a heavier weight, focus is a thick outline.
- * Contrast ratios below were checked against protanopia, deuteranopia and
- * tritanopia simulations as well as normal vision.
  */
 
 :root {
   --sl-color-white: #fff;
-  --sl-color-gray-1: oklch(0.894 0.007 250);
-  --sl-color-gray-2: oklch(0.732 0.016 250);
-  --sl-color-gray-3: oklch(0.588 0.021 250);
-  --sl-color-gray-4: oklch(0.409 0.021 250);
-  --sl-color-gray-5: oklch(0.305 0.018 250);
-  --sl-color-gray-6: oklch(0.222 0.014 250);
+  --sl-color-gray-1: oklch(0.95 0.016 250);
+  --sl-color-gray-2: oklch(0.816 0.016 250);
+  --sl-color-gray-3: oklch(0.639 0.016 250);
+  --sl-color-gray-4: oklch(0.464 0.016 250);
+  --sl-color-gray-5: oklch(0.341 0.016 250);
+  --sl-color-gray-6: oklch(0.27 0.016 250);
   --sl-color-black: #0e0e10;
   --sl-color-accent-low: oklch(0.28 0.06 240);
   --sl-color-accent: oklch(0.58 0.12 240);
   --sl-color-accent-high: oklch(0.8 0.1 240);
-  /* Links on ink. The brand blue (L 0.58) is 4.57:1 here but 4.32:1 under
-     tritanopia; L 0.72 holds 6.82:1. */
-  --sl-color-text-accent: oklch(0.72 0.11 240);
+  /* Links on ink: Starlight's default link is 10.5:1; C 0.08 is the most
+     chroma sRGB allows at the L that matches it. */
+  --sl-color-text-accent: oklch(0.84 0.08 240);
   --sl-color-orange-low: oklch(0.3 0.06 70);
   --sl-color-orange: oklch(0.72 0.12 70);
   --sl-color-orange-high: oklch(0.86 0.09 70);
@@ -36,28 +39,24 @@
   --orts-hairline: color-mix(in oklab, var(--sl-color-gray-5) 70%, transparent);
 
   --sl-nav-height: 3.75rem;
-  /* Smaller than Starlight's desktop steps (35 / 29 / 24px): the API pages
-     give each item an h2 or h3, and the default sizes spread them out. */
-  --sl-text-h2: 1.6rem;
-  --sl-text-h3: 1.25rem;
-  --sl-text-h4: 1.075rem;
 }
 
 :root[data-theme="light"] {
-  --sl-color-white: oklch(0.209 0.012 86.8);
-  --sl-color-gray-1: oklch(0.273 0.015 86.8);
-  --sl-color-gray-2: oklch(0.341 0.018 86.8);
-  --sl-color-gray-3: oklch(0.46 0.02 86.8);
-  --sl-color-gray-4: oklch(0.63 0.018 86.8);
+  --sl-color-white: oklch(0.135 0.016 86.8);
+  --sl-color-gray-1: oklch(0.226 0.016 86.8);
+  --sl-color-gray-2: oklch(0.308 0.016 86.8);
+  --sl-color-gray-3: oklch(0.435 0.016 86.8);
+  --sl-color-gray-4: oklch(0.608 0.016 86.8);
+  /* Surfaces keep their step from paper, as Starlight's do from white. */
   --sl-color-gray-5: oklch(0.814 0.011 86.8);
   --sl-color-gray-6: oklch(0.905 0.008 86.8);
   --sl-color-gray-7: oklch(0.935 0.006 86.8);
   --sl-color-black: #f5f1e8;
   --sl-color-accent-low: oklch(0.9 0.05 240);
-  /* 0.53 is 4.61:1 on paper but 4.21:1 under protanopia; 0.50 holds 4.82:1. */
-  --sl-color-accent: oklch(0.5 0.11 240);
+  /* Links on paper: Starlight's default link is 5.75:1 on white. */
+  --sl-color-accent: oklch(0.459 0.11 240);
   --sl-color-accent-high: oklch(0.4 0.09 240);
-  --sl-color-text-accent: oklch(0.5 0.11 240);
+  --sl-color-text-accent: oklch(0.459 0.11 240);
   --sl-color-orange-low: oklch(0.9 0.05 70);
   /* C 0.12 leaves sRGB at the L needed for 4.5:1 on paper. */
   --sl-color-orange: oklch(0.54 0.11 70);

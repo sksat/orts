@@ -2367,16 +2367,16 @@ section is subdivided by package.
 #### Changed
 - The documentation site uses the orts brand colours (ink / paper grounds,
   brand blue accent). Prose links get a thicker underline and the current
-  sidebar entry is marked by a bar and a heavier weight as well as by colour;
-  text and these marks keep WCAG contrast (4.5:1 text, 3:1 marks) in
-  protanopia, deuteranopia and tritanopia simulations.
+  sidebar entry is marked by a bar and a heavier weight as well as by colour.
+  Every text colour keeps at least the contrast Starlight's default had, in
+  normal vision and in protanopia, deuteranopia and tritanopia simulations;
+  the bar and the focus outline keep 3:1.
 - The documentation site's header is 60px tall instead of 96px and
   translucent. The wordmark's drawing shrinks from 84×48px to 64×36px: the
   site's copy of the SVG has its viewBox cut down to the drawing.
-- On the documentation site, h2 / h3 / h4 are smaller on wide screens (25.6 /
-  20 / 17.2px, from 35 / 29 / 24px), the page title has an orbit arc drawn
-  under it, link buttons have 6px corners instead of a pill shape, and inline
-  code has 4px corners.
+- On the documentation site, the page title has an orbit arc drawn under it,
+  link buttons have 6px corners instead of a pill shape, and inline code has
+  4px corners.
 
 #### Fixed
 - Code blocks on the documentation site keep their syntax highlighting in the
