@@ -48,6 +48,32 @@ export interface SceneFrameContext {
   cameraTracking: boolean;
 }
 
+/**
+ * Whether a spacecraft's position can centre the scene on it.
+ *
+ * A non-finite component is no position: it would put the origin offset and the
+ * camera's up vector at NaN. Everything finite is accepted, zero included — a
+ * spacecraft at the body's centre is drawn at the origin like any other centre,
+ * and only the directions needing a *bearing* from it drop out. The UI asks this
+ * so a control cannot be disabled over a scene that draws.
+ *
+ * Answering false is how the NaN is avoided rather than a report of it:
+ * `resolveSceneFrame` then keeps the entity as the centre with no origin, which
+ * is how it holds a state that has not arrived, and the camera stays where it is
+ * until a usable sample lands.
+ *
+ * The magnitude a float32 uniform can hold is deliberately not judged here.
+ * Positions reach the renderer divided by the scene's scale radius — itself the
+ * central body's radius over the amplification — so the limit lives in units this
+ * function is not given, and testing the kilometres would reject positions the
+ * renderer draws perfectly well. See #451, where the scale is in scope.
+ */
+export function centrePositionIsUsable(
+  position: readonly number[] | null | undefined,
+): position is readonly number[] {
+  return position != null && position.length === 3 && position.every(Number.isFinite);
+}
+
 export function resolveSceneFrame(
   frame: ReferenceFrame,
   getEntity: FrameEntityLookup,
@@ -66,11 +92,9 @@ export function resolveSceneFrame(
 
   const id = frame.center.id;
   const state = getEntity(id);
-  // A non-finite position is no position: it cannot centre the scene, and passing
-  // it on would put the origin offset and the camera's up vector at NaN, which
-  // blanks the canvas. Treated like a state that has not arrived — the entity is
-  // still the centre, so the camera stays put until a usable sample lands.
-  if (state == null || !state.position.every(Number.isFinite)) {
+  // Treated like a state that has not arrived — the entity is still the centre,
+  // so the camera stays put until a usable sample lands.
+  if (state == null || !centrePositionIsUsable(state.position)) {
     return { ...inert, centeredSatId: id };
   }
 

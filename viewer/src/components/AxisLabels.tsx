@@ -1,59 +1,6 @@
 import { useMemo } from "react";
-import * as THREE from "three";
-import {
-  AXIS_COLORS,
-  AXIS_LETTERS,
-  axisColorCss,
-  axisLabelPositions,
-  axisLabelScale,
-} from "../axisTriad.js";
-
-/**
- * One canvas texture per letter, made on first use and kept.
- *
- * Lazily, not at module scope: the module is imported by tests running without a
- * DOM, and a canvas at import time would throw there.
- */
-const textureCache = new Map<string, THREE.Texture>();
-
-/** Above the scene's meshes, which use the default 0. */
-const LABEL_RENDER_ORDER = 10;
-
-const TEXTURE_SIZE = 128;
-
-function letterTexture(letter: string, color: number): THREE.Texture {
-  const key = `${letter}:${color}`;
-  const cached = textureCache.get(key);
-  if (cached) return cached;
-
-  const canvas = document.createElement("canvas");
-  canvas.width = TEXTURE_SIZE;
-  canvas.height = TEXTURE_SIZE;
-  const ctx = canvas.getContext("2d");
-  if (ctx) {
-    ctx.font = `bold ${TEXTURE_SIZE * 0.76}px ui-sans-serif, system-ui, sans-serif`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    // Outline first: a letter over a bright 3D model needs its own contrast, and
-    // the scene's background cannot be relied on behind it.
-    ctx.lineWidth = TEXTURE_SIZE * 0.1;
-    // Hex with alpha rather than `rgba(0, 0, 0, 0.85)`: `shadcn add` rewrites
-    // colour functions, and it drops a component from this one, leaving
-    // `rgba(0, 0, 0.85)` in a consumer's copy. Canvas ignores an invalid
-    // `strokeStyle` and keeps the previous one, so the outline the installed
-    // registry item draws would not be the one written here. The registry item
-    // itself carries the source unchanged; the mangling is in the install step.
-    ctx.strokeStyle = "#000000d9";
-    ctx.strokeText(letter, TEXTURE_SIZE / 2, TEXTURE_SIZE * 0.54);
-    ctx.fillStyle = axisColorCss(color);
-    ctx.fillText(letter, TEXTURE_SIZE / 2, TEXTURE_SIZE * 0.54);
-  }
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  textureCache.set(key, texture);
-  return texture;
-}
+import { AXIS_COLORS, AXIS_LETTERS, axisLabelPositions, axisLabelScale } from "../axisTriad.js";
+import { LABEL_RENDER_ORDER, labelTexture } from "./labelTexture.js";
 
 interface AxisLabelsProps {
   /** Axis length in scene units — the labels sit just past each tip. */
@@ -78,11 +25,10 @@ interface AxisLabelsProps {
 export function AxisLabels({ length, opacity = 1 }: AxisLabelsProps) {
   const labels = useMemo(() => {
     const positions = axisLabelPositions(length);
-    return AXIS_LETTERS.map((letter, i) => ({
-      letter,
-      texture: letterTexture(letter, AXIS_COLORS[i]),
-      position: positions[i],
-    }));
+    return AXIS_LETTERS.map((letter, i) => {
+      const label = labelTexture(letter, AXIS_COLORS[i]);
+      return { letter, label, position: positions[i] };
+    });
   }, [length]);
   const scale = axisLabelScale(length);
 
@@ -92,7 +38,9 @@ export function AxisLabels({ length, opacity = 1 }: AxisLabelsProps) {
         <sprite
           key={label.letter}
           position={label.position}
-          scale={[scale, scale, scale]}
+          // The texture is as wide as the letter needs, so a square sprite would
+          // stretch it: a bold "X" measures narrower than the texture is tall.
+          scale={[scale * label.label.aspect, scale, scale]}
           // Drawn last and without a depth test, so a letter on an axis pointing
           // away from the camera stays readable instead of hiding inside the
           // spacecraft. The axis *arrow* is still depth-tested, so it disappearing
@@ -100,7 +48,7 @@ export function AxisLabels({ length, opacity = 1 }: AxisLabelsProps) {
           renderOrder={LABEL_RENDER_ORDER}
         >
           <spriteMaterial
-            map={label.texture}
+            map={label.label.texture}
             transparent
             opacity={opacity}
             depthTest={false}

@@ -45,6 +45,53 @@ Key metrics to check:
 - **Max gap**: Maximum consecutive columns without a series' color. Equal gaps for both series = OK (chart padding). Asymmetric gaps = NaN issue
 - **Both columns**: Columns where both colors present — should be majority of data area
 
+### The 3D Scene: Measure the Scene Graph, Not Pixels
+
+The pixel guidance above is for the uPlot **2D** canvases. For the WebGL 3D scene,
+prefer a dev-only debug hook that reads the *rendered* Three.js scene graph:
+
+```javascript
+// window.__debug_get_sat_world_quat(id)      → rendered world quaternion
+// window.__debug_get_direction_vectors(id)   → arrow directions, measured from
+//                                              the arrow's origin to its head
+```
+
+Reasons this beats a pixel test for the 3D view:
+
+- A few triangles on a dark background fail a pixel test for reasons unrelated to
+  the geometry (anti-aliasing, camera framing, the swiftshader software renderer).
+- Frame invariants ("body +X points along scene +Y") are immune to the ±q sign
+  ambiguity, whereas a raw quaternion comparison is not.
+- The hook must measure the scene graph, not report the value that was passed *in*.
+  A hook that echoes its input passes even when the geometry's own axis, the
+  rotation onto it, or a mesh's placement is wrong — the parts a rendering test
+  exists to cover.
+
+Register hooks behind `IS_DEV` and deregister on unmount: an *absent* hook is then
+usable evidence that a subtree was dropped (e.g. the attitude view has no Earth).
+Establish the hook exists before the action whose effect you assert, or its absence
+afterwards proves nothing.
+
+#### Inventorying the whole scene
+
+To count or measure *everything* drawn — is that mesh a cylinder or a line, how
+many sprites are there, what opacity did they get — reach the scene root through
+an existing hook's registry rather than the canvas. `canvas.__r3f` is not a
+documented API and reads back `null`; the registries hold the rendered object
+itself, so walk up its `.parent` chain:
+
+```javascript
+const group = window.__debug_sat_quat_registry?.get(id)?.();   // rendered object
+let root = group; while (root.parent != null) root = root.parent;
+root.traverse((o) => { /* o.isSprite, o.geometry?.type, o.material?.opacity */ });
+```
+
+The registry is keyed by the id the *scene* was given, which in the app is the
+entity path (`/world/sat/<id>`), not the config id — enumerate `registry.keys()`
+instead of assuming. This route is for a one-off probe while developing. What a
+committed test asserts should still go through a named hook, so the assertion
+survives a refactor of the scene's internals.
+
 ### Common Pitfalls
 
 1. **Cannot access uPlot data from DOM**: `chart._uplot`, `chart.__uplot` do not exist. uPlot stores instance internally in React ref via `useRef()`.
@@ -60,6 +107,12 @@ Key metrics to check:
    ```
 
 4. **Chart area vs axis area**: ~20% of canvas width is Y-axis labels (left side). Always skip `xStart=30` columns when analyzing data coverage.
+
+5. **`gl.readPixels` on the 3D canvas returns zeros** unless the context was created
+   with `preserveDrawingBuffer: true`: the drawing buffer is cleared at presentation.
+   `page.screenshot()` composites correctly and needs no flag. A bounding-box scan
+   ("does anything touch the viewport edge?") is a cheap way to check
+   framing/clipping without judging the image itself.
 
 ## Multi-Satellite NaN Alignment
 

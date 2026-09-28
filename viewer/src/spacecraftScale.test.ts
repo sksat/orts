@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { SatelliteModelConfig } from "./satelliteModels.js";
 import {
   arrowGeometryForSpan,
+  arrowLabelDistance,
+  arrowLabelHeight,
   axisLengthForSpan,
   cameraDistanceForSpan,
   DEFAULT_CAMERA_FOV_DEGREES,
@@ -270,6 +272,29 @@ describe("sizes derived from the span", () => {
     const arrow = arrowGeometryForSpan(span);
     expect(drawnExtentForSpan(span)).toBeGreaterThanOrEqual(frameAxisLengthForSpan(span));
     expect(drawnExtentForSpan(span)).toBeGreaterThanOrEqual(arrow.startOffset + arrow.length);
+  });
+
+  it("holds every corner of an arrow's name, not only the arrow", () => {
+    // A name faces the camera, so a corner can point straight out from the origin
+    // when the scene is viewed side-on, and then the farthest point drawn is the
+    // name's centre plus half its diagonal. The widths are the ones measured in a
+    // browser for the two names the scene draws, "Sun" 1.70 and "Nadir" 2.22
+    // times the height; the camera fit has to reach both corners.
+    for (const span of [0.01, 1, 250]) {
+      // Arrows start outside the widest marker, which is what the fit assumes.
+      const arrow = arrowGeometryForSpan(span, markerBoundingRadius("axes-cube", span));
+      const tip = arrow.startOffset + arrow.length;
+      const centre = arrowLabelDistance(arrow);
+      expect(centre, `span ${span}: the name sits past the tip`).toBeGreaterThan(tip);
+      const height = arrowLabelHeight(span);
+      for (const aspect of [1.7, 2.22]) {
+        const farthestCorner = centre + (height * Math.hypot(aspect, 1)) / 2;
+        expect(
+          drawnExtentForSpan(span),
+          `span ${span}: the extent reaches a name ${aspect} times as wide as it is tall`,
+        ).toBeGreaterThanOrEqual(farthestCorner);
+      }
+    }
   });
 
   it("starts an arrow outside the spacecraft and leaves room for the head", () => {

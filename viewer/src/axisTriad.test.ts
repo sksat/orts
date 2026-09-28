@@ -61,7 +61,13 @@ describe("axis label placement", () => {
   it("reports an extent that covers the sprite, not just its centre", () => {
     for (const length of [0.03, 0.75, 2]) {
       const [x] = axisLabelPositions(length);
-      expect(axisLabelExtent(length)).toBeCloseTo(x[0] + axisLabelScale(length) / 2, 12);
+      // Half the sprite's *diagonal*, not half its height: a sprite faces the
+      // camera, so a square letter reaches `sqrt(2)/2` of its side in whichever
+      // direction the view puts that. Half the height would leave the corners
+      // outside a camera fitted to this number.
+      const halfDiagonal = (axisLabelScale(length) * Math.SQRT2) / 2;
+      expect(axisLabelExtent(length)).toBeCloseTo(x[0] + halfDiagonal, 12);
+      expect(axisLabelExtent(length)).toBeGreaterThan(x[0] + axisLabelScale(length) / 2);
       expect(axisLabelExtent(length)).toBeGreaterThan(length);
     }
   });
