@@ -33,8 +33,11 @@
   --sl-color-blue: var(--sl-color-accent);
   --sl-color-blue-high: var(--sl-color-accent-high);
 
-  --orts-blue: oklch(0.58 0.12 240);
   --orts-focus: oklch(0.8 0.1 240);
+  /* Current sidebar entry: a solid fill, ink text 8.96:1 on it (Starlight's
+     default pair is 8.37:1). */
+  --orts-current-bg: oklch(0.8 0.1 240);
+  --orts-current-fg: #0e0e10;
   --orts-radius: 6px;
   --orts-hairline: color-mix(in oklab, var(--sl-color-gray-5) 70%, transparent);
 
@@ -53,19 +56,23 @@
   --sl-color-gray-7: oklch(0.935 0.006 86.8);
   --sl-color-black: #f5f1e8;
   --sl-color-accent-low: oklch(0.9 0.05 240);
-  /* Links on paper: Starlight's default link is 5.75:1 on white. */
-  --sl-color-accent: oklch(0.459 0.11 240);
+  /* Links on paper: Starlight's default link is 5.75:1 on white. C 0.105 is
+     the most sRGB allows at this L. */
+  --sl-color-accent: oklch(0.464 0.105 240);
   --sl-color-accent-high: oklch(0.4 0.09 240);
-  --sl-color-text-accent: oklch(0.459 0.11 240);
+  --sl-color-text-accent: oklch(0.464 0.105 240);
   --sl-color-orange-low: oklch(0.9 0.05 70);
   /* C 0.12 leaves sRGB at the L needed for 4.5:1 on paper. */
   --sl-color-orange: oklch(0.54 0.11 70);
-  --sl-color-orange-high: oklch(0.4 0.09 70);
+  --sl-color-orange-high: oklch(0.4 0.085 70);
   --sl-color-blue-low: var(--sl-color-accent-low);
   --sl-color-blue: var(--sl-color-accent);
   --sl-color-blue-high: var(--sl-color-accent-high);
 
-  --orts-focus: oklch(0.45 0.11 240);
+  --orts-focus: oklch(0.45 0.1 240);
+  /* White text 6.39:1 on the fill (Starlight's default pair is 5.64:1). */
+  --orts-current-bg: var(--sl-color-accent);
+  --orts-current-fg: #fff;
 }
 
 /* Header: translucent over the page, one hairline. */
@@ -113,16 +120,18 @@ h1#_top {
   border-radius: 2px;
 }
 
-/* Sidebar: the current page is a bar, a tint and a heavier weight. */
+/* Sidebar: the current page is a solid fill far from the ground in lightness,
+   so it reads in every colour vision, plus a heavier weight. */
 .sidebar-pane {
   background: var(--sl-color-black);
   border-inline-end: 1px solid var(--orts-hairline);
 }
-.sidebar-content a[aria-current="page"] {
-  background: color-mix(in oklab, var(--orts-blue) 16%, transparent);
-  color: var(--sl-color-white);
+.sidebar-content a[aria-current="page"],
+.sidebar-content a[aria-current="page"]:hover,
+.sidebar-content a[aria-current="page"]:focus {
+  background: var(--orts-current-bg);
+  color: var(--orts-current-fg);
   font-weight: 700;
-  box-shadow: inset 3px 0 0 var(--sl-color-text-accent);
 }
 
 .sl-markdown-content code:not(pre code) {

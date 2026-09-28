@@ -1912,9 +1912,9 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 
 #### Changed
 - ドキュメントサイトを orts のブランド色（ink / paper の地、ブランドの青の accent）にした。本文中の
-  リンクの下線を太くし、sidebar の現在ページは色に加えて左の bar と太字で示す。どの文字色も、通常の
-  見え方と P 型・D 型・T 型のシミュレーションで、Starlight の既定以上の contrast を保つ。bar と focus
-  の枠は 3:1 を保つ。
+  リンクの下線を太くし、sidebar の現在ページはブランドの青の塗りと太字で示す。現在ページの塗りの上の
+  文字も含めて、どの文字色も、通常の見え方と P 型・D 型・T 型のシミュレーションで、Starlight の既定
+  以上の contrast を保つ。focus の枠は 3:1 を保つ。
 - ドキュメントサイトのヘッダを 96px から 60px に低くし、背景を半透明にした。wordmark の図形は
   84×48px から 64×36px になる。サイト用に複製した SVG は、`viewBox` を図形の周りに切り直した。
 - ドキュメントサイトのページタイトルの下に軌道の弧を描き、link button をピル形から角丸 6px に、inline code

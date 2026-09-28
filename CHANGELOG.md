@@ -2366,11 +2366,11 @@ section is subdivided by package.
 
 #### Changed
 - The documentation site uses the orts brand colours (ink / paper grounds,
-  brand blue accent). Prose links get a thicker underline and the current
-  sidebar entry is marked by a bar and a heavier weight as well as by colour.
-  Every text colour keeps at least the contrast Starlight's default had, in
-  normal vision and in protanopia, deuteranopia and tritanopia simulations;
-  the bar and the focus outline keep 3:1.
+  brand blue accent). Prose links get a thicker underline, and the current
+  sidebar entry is a solid brand-blue fill in heavier weight. Every text
+  colour, including the current entry's text on its fill, keeps at least the
+  contrast Starlight's default had, in normal vision and in protanopia,
+  deuteranopia and tritanopia simulations; the focus outline keeps 3:1.
 - The documentation site's header is 60px tall instead of 96px and
   translucent. The wordmark's drawing shrinks from 84×48px to 64×36px: the
   site's copy of the SVG has its viewBox cut down to the drawing.
