@@ -2370,6 +2370,9 @@ section is subdivided by package.
   sidebar entry is marked by a bar and a heavier weight as well as by colour;
   text and these marks keep WCAG contrast (4.5:1 text, 3:1 marks) in
   protanopia, deuteranopia and tritanopia simulations.
+- The documentation site's header is 60px tall instead of 96px and
+  translucent. The wordmark's drawing shrinks from 84×48px to 64×36px: the
+  site's copy of the SVG has its viewBox cut down to the drawing.
 
 #### Fixed
 - Code blocks on the documentation site keep their syntax highlighting in the

@@ -99,8 +99,8 @@ export default defineConfig({
     starlight({
       title: "orts",
       logo: {
-        light: "./src/assets/orts-wordmark-on-light.svg",
-        dark: "./src/assets/orts-wordmark-on-dark.svg",
+        light: "./src/assets/orts-wordmark-tight-on-light.svg",
+        dark: "./src/assets/orts-wordmark-tight-on-dark.svg",
         alt: "orts",
         replacesTitle: true,
       },

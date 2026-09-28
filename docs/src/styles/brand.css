@@ -35,7 +35,7 @@
   --orts-radius: 6px;
   --orts-hairline: color-mix(in oklab, var(--sl-color-gray-5) 70%, transparent);
 
-  --sl-nav-height: 6rem;
+  --sl-nav-height: 3.75rem;
   --sl-content-width: 44rem;
   --sl-text-h1: 2.6rem;
   --sl-text-h2: 1.6rem;
@@ -69,14 +69,20 @@
   --orts-focus: oklch(0.45 0.11 240);
 }
 
-a.site-title img {
-  height: calc(var(--sl-nav-height) - 1rem);
-  max-height: none;
+/* Header: translucent over the page, one hairline. */
+header.header {
+  background: color-mix(in oklab, var(--sl-color-black) 78%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  backdrop-filter: blur(14px) saturate(1.2);
+  border-bottom: 1px solid var(--orts-hairline);
 }
 
-/* Pull the brand wordmark flush to the viewport edge */
-header.header {
-  padding-inline-start: 0;
+/* The logo is assets/orts-wordmark-on-*.svg with the viewBox cut down to the
+   drawing, so the height sets the drawn size. The crop leaves room on the
+   right because "orts" is <text> and an <img> draws it in a fallback font
+   whose width varies by platform. */
+a.site-title img {
+  height: 2.5rem;
 }
 
 h1#_top,
