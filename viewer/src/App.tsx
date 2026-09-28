@@ -546,13 +546,20 @@ export function App() {
   const handleViewChange = useCallback(
     (next: ViewMode) => {
       // Switching from a satellite-centred orbit view carries that satellite over:
-      // it is the one the reader was already looking at.
-      if (next === "attitude" && centredSatelliteId != null) {
+      // it is the one the reader was already looking at. A centred celestial body
+      // is no attitude subject, and writing it here would replace the spacecraft
+      // the reader had chosen in the attitude view with one the subject filter
+      // then discards — so only a spacecraft is carried.
+      if (
+        next === "attitude" &&
+        centredSatelliteId != null &&
+        spacecraft.some((s) => s.id === centredSatelliteId)
+      ) {
         setSelectedSatelliteId(centredSatelliteId);
       }
       setView(next);
     },
-    [centredSatelliteId],
+    [centredSatelliteId, spacecraft],
   );
 
   /**
