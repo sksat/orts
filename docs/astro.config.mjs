@@ -105,6 +105,16 @@ export default defineConfig({
         replacesTitle: true,
       },
       favicon: "/favicon.ico",
+      // Starlight's default light code theme paints commands and strings the
+      // same blue: 77 of the 88 tokens on Getting Started. Among the bundled
+      // themes that spread tokens across colours in both modes, this pair is
+      // one of two whose every token colour stays at or above 4.5:1 against
+      // the code background under protanopia, deuteranopia and tritanopia
+      // simulations (worst 4.74:1 light, 5.05:1 dark). Those are the colours
+      // as rendered: Expressive Code lifts every token to its default
+      // `minSyntaxHighlightingColorContrast`, so e.g. One Light's comment
+      // colour #A0A1A7 (2.5:1 in the theme file) is drawn at 5.6:1.
+      expressiveCode: { themes: ["one-dark-pro", "one-light"] },
       customCss: ["katex/dist/katex.min.css", "./src/styles/katex.css", "./src/styles/brand.css"],
       defaultLocale: "en",
       locales: {
