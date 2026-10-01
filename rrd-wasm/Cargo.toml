@@ -16,14 +16,14 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 # Minimal rerun subcrate dependencies for decoding only — no rerun umbrella
-re_log_encoding = { version = "0.33", features = ["decoder"] }
-re_chunk = "0.33"
-re_log_types = "0.33"
+re_log_encoding = { version = "0.38", features = ["decoder"] }
+re_chunk = "0.38"
+re_log_types = "0.38"
 # `default-features = false` drops the default `ecolor` feature. This crate
 # decodes scalars and text and never touches a colour type. It matters beyond
 # this crate: features unify per build, so leaving it on here would pull ecolor
 # back into every `--workspace` build even though `orts` opts out.
-re_sdk_types = { version = "0.33", default-features = false }
+re_sdk_types = { version = "0.38", default-features = false }
 # Required for wasm32 target (getrandom needs js feature for browser)
 getrandom = { version = "0.3", features = ["wasm_js"] }
 
@@ -42,6 +42,6 @@ wasm = ["wasm-bindgen", "serde-wasm-bindgen"]
 # itself is deliberately not a dev-dependency here: the decoder must stay
 # testable against the RRD format, not against one producer's conventions.
 [dev-dependencies]
-re_sdk = "0.33"
+re_sdk = "0.38"
 # A directory of its own per written .rrd, removed when the test returns.
 tempfile = "3"
