@@ -5075,6 +5075,12 @@ mass = 100.0
             .expect("start_simulation must parse");
         assert_eq!(unread_keys_of(start), Vec::<String>::new());
 
+        // `pacing` is an envelope key the message reads, not an unread one.
+        let paced = start.replacen('{', r#"{ "pacing": "realtime","#, 1);
+        serde_json::from_str::<crate::commands::serve::protocol::ClientMessage>(&paced)
+            .expect("a start naming its pacing must parse");
+        assert_eq!(unread_keys_of(&paced), Vec::<String>::new());
+
         // A struct-level key nothing reads, at two depths: the message still
         // starts a simulation, and both paths are named.
         let typo = start.replace("\"dt\"", "\"dtt\"").replace(

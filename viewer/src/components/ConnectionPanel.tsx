@@ -1,4 +1,5 @@
 import styles from "../App.module.css";
+import type { Pacing } from "../protocol/generated/Pacing.js";
 import type { SimConfig } from "../protocol/generated/SimConfig.js";
 import type { ServerState } from "../sources/eventDispatcher.js";
 import { SimConfigForm } from "./SimConfigForm.js";
@@ -11,7 +12,7 @@ interface ConnectionPanelProps {
   serverState: ServerState; // "unknown" | "idle" | "running" | "paused"
   onConnect: () => void;
   onDisconnect: () => void;
-  onStartSimulation: (config: SimConfig) => void;
+  onStartSimulation: (config: SimConfig, pacing?: Pacing) => void;
   onPause: () => void;
   onResume: () => void;
   onTerminate: () => void;

@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { OrbitPoint } from "../orbit.js";
 import { TrailBuffer } from "../utils/TrailBuffer.js";
-import { computeLiveSyncTime, computeTrailDrawStarts } from "./useRealtimePlayback.js";
+import {
+  computeLiveSyncTime,
+  computePlaybackTimeline,
+  computeTrailDrawStarts,
+} from "./useRealtimePlayback.js";
 
 function makePoint(t: number, entityPath?: string): OrbitPoint {
   return {
@@ -172,5 +176,64 @@ describe("computeTrailDrawStarts", () => {
     // currentTime=60, timeRange=30 → startT=30, which is before t=50
     const starts = computeTrailDrawStarts(buffers, 60, 30);
     expect(starts.get("sat-a")).toBe(0);
+  });
+});
+
+describe("computePlaybackTimeline", () => {
+  it("spans the whole received history while Live", () => {
+    // Live has no frozen end: the slider follows the newest state.
+    const tl = computePlaybackTimeline(0, 200, 200, null);
+    expect(tl).toEqual({ start: 0, end: 200, fraction: 1 });
+  });
+
+  it("keeps a paused thumb where it is while newer states arrive", () => {
+    // Paused at t = 100 out of [0, 100]. The server runs on to t = 200; the
+    // slider used to measure against that growing end, so the thumb slid
+    // back to the middle without anyone touching it.
+    const frozenEnd = 100;
+    for (const tMax of [100, 150, 200]) {
+      const tl = computePlaybackTimeline(0, tMax, 100, frozenEnd);
+      expect(tl.end).toBe(100);
+      expect(tl.fraction).toBe(1);
+    }
+  });
+
+  it("never moves a playing thumb backwards while the server outruns it", () => {
+    // dt = 0.1 s runs about 9 sim s per wall s; replay at 1x advances the
+    // view 1 sim s per wall s. Measured against the growing end, the thumb
+    // fell back on every step even though Play moves time forward.
+    let currentTime = 50;
+    let tMax = 100;
+    let frozenEnd = 100;
+    let previous = computePlaybackTimeline(0, tMax, currentTime, frozenEnd).fraction;
+    for (let step = 0; step < 100; step++) {
+      currentTime += 1;
+      tMax += 9;
+      frozenEnd = Math.max(frozenEnd, currentTime);
+      const { fraction } = computePlaybackTimeline(0, tMax, currentTime, frozenEnd);
+      expect(fraction).toBeGreaterThanOrEqual(previous);
+      previous = fraction;
+    }
+  });
+
+  it("stretches a frozen end that playback has passed, up to the newest state", () => {
+    expect(computePlaybackTimeline(0, 300, 250, 200).end).toBe(250);
+    // A frozen end beyond what the buffers still hold (rebuilt from a range
+    // response) is clamped to what is there.
+    expect(computePlaybackTimeline(0, 150, 120, 200).end).toBe(150);
+  });
+
+  it("lets go of a frozen end the trail buffer has dropped", () => {
+    // Paused at t = 100 while the buffer keeps filling: once it drops its old
+    // points, the oldest one kept (2500) is past the frozen end. Kept as it
+    // was, the span ran backwards (start 2500, end 100), and dragging the
+    // thumb right moved the view back into points no longer there.
+    const tl = computePlaybackTimeline(2500, 10000, 100, 100);
+    expect(tl.end).toBeGreaterThanOrEqual(tl.start);
+    expect(tl).toEqual({ start: 2500, end: 10000, fraction: 0 });
+  });
+
+  it("puts the thumb at the end of an empty span", () => {
+    expect(computePlaybackTimeline(10, 10, 10, null).fraction).toBe(1);
   });
 });

@@ -6,7 +6,7 @@
  * the appropriate event and routing it through `handleEvent`.
  */
 
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   type QueryRangeResponse,
   type SatelliteInfo,
@@ -15,6 +15,7 @@ import {
 } from "../hooks/useWebSocket.js";
 import type { OrbitPoint } from "../orbit.js";
 import type { ClientMessage } from "../protocol/generated/ClientMessage.js";
+import type { Pacing } from "../protocol/generated/Pacing.js";
 import type { SimConfig } from "../protocol/generated/SimConfig.js";
 import { mergeQueryRangePoints, pickTrailBufferForResponse } from "../utils/mergeQueryRange.js";
 import type { TrailBuffer } from "../utils/TrailBuffer.js";
@@ -39,7 +40,14 @@ export interface WebSocketSourceResult {
   disconnect: () => void;
   isConnected: boolean;
   send: (msg: ClientMessage) => void;
-  handleStartSimulation: (config: SimConfig) => void;
+  /** `pacing` left out runs at the server's default. */
+  handleStartSimulation: (config: SimConfig, pacing?: Pacing) => void;
+  /**
+   * The pacing a start naming none runs at, as the server's last idle status
+   * said, or null before one has. Kept across the running status changes,
+   * which do not carry it.
+   */
+  serverDefaultPacing: Pacing | null;
   handlePause: () => void;
   handleResume: () => void;
   handleTerminate: () => void;
@@ -68,8 +76,12 @@ export function useWebSocketSource(options: UseWebSocketSourceOptions): WebSocke
     (info: SimInfo) => handleEvent(WS_SOURCE_ID, { kind: "info", info }),
     [handleEvent],
   );
+  const [serverDefaultPacing, setServerDefaultPacing] = useState<Pacing | null>(null);
   const handleStatus = useCallback(
-    (state: string) => handleEvent(WS_SOURCE_ID, { kind: "server-state", state }),
+    (state: string, defaultPacing?: Pacing) => {
+      if (defaultPacing !== undefined) setServerDefaultPacing(defaultPacing);
+      handleEvent(WS_SOURCE_ID, { kind: "server-state", state });
+    },
     [handleEvent],
   );
   const handleError = useCallback(
@@ -140,7 +152,12 @@ export function useWebSocketSource(options: UseWebSocketSourceOptions): WebSocke
     [handleEvent],
   );
 
-  const { connect, disconnect, isConnected, send } = useWebSocket({
+  const {
+    connect: openSocket,
+    disconnect: closeSocket,
+    isConnected,
+    send,
+  } = useWebSocket({
     url: wsUrl,
     onState: handleState,
     onInfo: handleInfo,
@@ -153,11 +170,24 @@ export function useWebSocketSource(options: UseWebSocketSourceOptions): WebSocke
     onSatelliteAdded: handleSatelliteAdded,
   });
 
+  // The default pacing belongs to the server that said it. A connection may
+  // reach another server (or one restarted with other flags), and one already
+  // running sends no default until it goes idle, so a remembered one would
+  // label the config dialog with the wrong server's speed.
+  const connect = useCallback(() => {
+    setServerDefaultPacing(null);
+    openSocket();
+  }, [openSocket]);
+  const disconnect = useCallback(() => {
+    setServerDefaultPacing(null);
+    closeSocket();
+  }, [closeSocket]);
+
   // Sim control callbacks
 
   const handleStartSimulation = useCallback(
-    (config: SimConfig) => {
-      send({ type: "start_simulation", config });
+    (config: SimConfig, pacing?: Pacing) => {
+      send({ type: "start_simulation", config, ...(pacing !== undefined && { pacing }) });
     },
     [send],
   );
@@ -180,6 +210,7 @@ export function useWebSocketSource(options: UseWebSocketSourceOptions): WebSocke
     isConnected,
     send,
     handleStartSimulation,
+    serverDefaultPacing,
     handlePause,
     handleResume,
     handleTerminate,

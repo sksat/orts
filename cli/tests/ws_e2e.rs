@@ -35,12 +35,18 @@ impl Server {
     /// Spawn with custom satellite configurations and extra environment
     /// variables. With no `sats` the server starts idle.
     fn spawn_with_sats_and_env(port: u16, sats: &[&str], env: &[(&str, &str)]) -> Self {
+        Self::spawn_with(port, sats, env, &[])
+    }
+
+    /// `extra` goes on the `serve` command line after the satellites.
+    fn spawn_with(port: u16, sats: &[&str], env: &[(&str, &str)], extra: &[&str]) -> Self {
         let binary = env!("CARGO_BIN_EXE_orts");
         let mut args = vec!["serve".to_string(), "--port".to_string(), port.to_string()];
         for sat in sats {
             args.push("--sat".to_string());
             args.push(sat.to_string());
         }
+        args.extend(extra.iter().map(|a| a.to_string()));
         let mut child = Command::new(binary)
             .env("ORTS_DISABLE_TEXTURE_DOWNLOAD", "1")
             .envs(env.iter().copied())
@@ -1461,6 +1467,95 @@ async fn test_websocket_norad_start_the_server_cannot_fetch_is_refused() {
         send_json(&mut write, circular_start()).await;
         let (info, _) = read_until_type(&mut read, "info", 10).await;
         assert_eq!(info["satellites"].as_array().expect("satellites").len(), 1);
+    })
+    .await;
+
+    server.kill();
+    result.expect("test timed out after 30 seconds");
+}
+
+/// A `start_simulation` that asks for realtime runs in realtime on a server
+/// started without `--realtime`: the idle status says the server's default is
+/// accelerated, the `info` says realtime, and the states keep to the wall
+/// clock instead of running 100x ahead of it.
+#[tokio::test]
+async fn test_websocket_start_simulation_asks_for_realtime() {
+    let port = test_port() + 28;
+    let mut server = Server::spawn_idle(port);
+
+    let result = tokio::time::timeout(Duration::from_secs(30), async {
+        let url = format!("ws://localhost:{port}/ws");
+        let (ws, _) = connect_async(&url).await.expect("failed to connect");
+        let (mut write, mut read) = ws.split();
+
+        let status = next_json(&mut read).await;
+        assert_eq!(status["state"], "idle");
+        assert_eq!(status["default_pacing"], "accelerated");
+
+        let mut start = circular_start();
+        start["config"]["dt"] = 1.0.into();
+        start["pacing"] = "realtime".into();
+        send_json(&mut write, start).await;
+        let info = next_info_or_error(&mut read).await;
+        assert_eq!(info["type"], "info", "{info}");
+        assert_eq!(info["pacing"], "realtime");
+
+        // Accelerated, dt = 1 runs 100 sim s per wall s, so two wall seconds
+        // would reach t = 200. Realtime reaches about 2 (slack for start-up
+        // and scheduling).
+        let started = std::time::Instant::now();
+        let mut latest_t = 0.0_f64;
+        while started.elapsed() < Duration::from_secs(2) {
+            let msg = next_json(&mut read).await;
+            if msg["type"] == "state" {
+                latest_t = latest_t.max(msg["t"].as_f64().expect("t"));
+            }
+        }
+        assert!(
+            (1.0..=4.0).contains(&latest_t),
+            "t = {latest_t} after 2 wall seconds"
+        );
+    })
+    .await;
+
+    server.kill();
+    result.expect("test timed out after 30 seconds");
+}
+
+/// `orts serve --realtime` says so in its idle status, and a
+/// `start_simulation` that names no pacing runs at it; one that names
+/// accelerated runs accelerated.
+#[tokio::test]
+async fn test_websocket_realtime_server_default_and_override() {
+    let port = test_port() + 29;
+    let mut server = Server::spawn_with(port, &[], &[], &["--realtime"]);
+
+    let result = tokio::time::timeout(Duration::from_secs(30), async {
+        let url = format!("ws://localhost:{port}/ws");
+        let (ws, _) = connect_async(&url).await.expect("failed to connect");
+        let (mut write, mut read) = ws.split();
+
+        let status = next_json(&mut read).await;
+        assert_eq!(status["state"], "idle");
+        assert_eq!(status["default_pacing"], "realtime");
+
+        send_json(&mut write, circular_start()).await;
+        let info = next_info_or_error(&mut read).await;
+        assert_eq!(info["pacing"], "realtime", "{info}");
+
+        send_json(
+            &mut write,
+            serde_json::json!({ "type": "terminate_simulation" }),
+        )
+        .await;
+        let (idle, _) = read_until_type(&mut read, "status", 100).await;
+        assert_eq!(idle["state"], "idle");
+
+        let mut start = circular_start();
+        start["pacing"] = "accelerated".into();
+        send_json(&mut write, start).await;
+        let info = next_info_or_error(&mut read).await;
+        assert_eq!(info["pacing"], "accelerated", "{info}");
     })
     .await;
 

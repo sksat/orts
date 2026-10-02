@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSimConfig, PRESETS } from "./SimConfigForm.js";
+import { buildSimConfig, PRESETS, pacingChoices, pacingOfChoice } from "./SimConfigForm.js";
 
 describe("buildSimConfig", () => {
   it("builds config from ISS preset with NORAD orbit and attitude", () => {
@@ -156,5 +156,24 @@ describe("PRESETS", () => {
     expect(PRESETS[0].label).toBe("ISS");
     expect(PRESETS[1].label).toBe("SSO");
     expect(PRESETS[2].label).toBe("GEO");
+  });
+});
+
+describe("speed choices", () => {
+  it("names the server's default once the server has said it", () => {
+    expect(pacingChoices(null)[0]).toEqual({ value: "", label: "Server default" });
+    expect(pacingChoices("accelerated")[0].label).toBe("Server default (accelerated)");
+    expect(pacingChoices("realtime")[0].label).toBe("Server default (realtime)");
+  });
+
+  it("offers both pacings besides the default", () => {
+    expect(pacingChoices(null).map((c) => c.value)).toEqual(["", "realtime", "accelerated"]);
+  });
+
+  it("asks for a pacing only when one is chosen", () => {
+    // Leaving the key out is what lets `orts serve --realtime` decide.
+    expect(pacingOfChoice("")).toBeUndefined();
+    expect(pacingOfChoice("realtime")).toBe("realtime");
+    expect(pacingOfChoice("accelerated")).toBe("accelerated");
   });
 });

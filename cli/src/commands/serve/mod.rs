@@ -4,6 +4,7 @@ mod controller_upload;
 mod engine;
 mod history;
 mod manager;
+mod pacing;
 pub mod protocol;
 #[cfg(feature = "viewer")]
 pub(crate) mod spa;
@@ -44,6 +45,8 @@ struct AppState {
     /// `--allow-controller-upload`: whether a client may send controller
     /// components and name them by `sha256`.
     allow_controller_upload: bool,
+    /// `--realtime`: the pacing a `start_simulation` naming none runs at.
+    default_pacing: pacing::Pacing,
 }
 
 pub fn run_server(
@@ -51,6 +54,7 @@ pub fn run_server(
     port: u16,
     stream_stdio: Option<&str>,
     allow_controller_upload: bool,
+    realtime: bool,
 ) -> Result<(), CmdError> {
     // Parse + reject malformed flags before starting the runtime so a typo
     // fails fast instead of surfacing as a dead endpoint later.
@@ -65,6 +69,11 @@ pub fn run_server(
     // which flags conflict with `--config` and which need an orbit, and clap
     // refuses the command line before `run_server` is called.
     let plugin_overrides = manager::PluginBackendOverrides::from_sim_args(sim);
+    let pacing = if realtime {
+        pacing::Pacing::Realtime
+    } else {
+        pacing::Pacing::Accelerated
+    };
     let rt = tokio::runtime::Runtime::new()
         .map_err(|e| CmdError::failure(format!("creating the tokio runtime: {e}")))?;
     rt.block_on(async_server(
@@ -73,6 +82,7 @@ pub fn run_server(
         stdio_key,
         plugin_overrides,
         allow_controller_upload,
+        pacing,
     ))
 }
 
@@ -122,15 +132,22 @@ const MAX_WS_MESSAGE_BYTES: usize =
     };
 
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
+    // TODO: this subscribes before the connection asks for the history
+    // snapshot, so states broadcast in between arrive twice — in the history
+    // and again after it, with `t` going back by up to one chunk. Subscribing
+    // where the manager answers `GetStatus` would line the two up. (A realtime
+    // interval's held-back states are already kept out of that snapshot; see
+    // `manager::handle_command`.)
     let rx = state.tx.subscribe();
     let cmd_tx = state.cmd_tx.clone();
+    let default_pacing = state.default_pacing;
     let uploads = controller_upload::UploadedComponents::new(
         Arc::clone(&state.upload_budget),
         state.allow_controller_upload,
     );
     ws.max_message_size(MAX_WS_MESSAGE_BYTES)
         .on_upgrade(move |socket| async move {
-            connection::handle_connection(socket, rx, cmd_tx, uploads).await;
+            connection::handle_connection(socket, rx, cmd_tx, uploads, default_pacing).await;
             eprintln!("Client disconnected");
         })
 }
@@ -171,6 +188,7 @@ async fn async_server(
     stdio_key: Option<stream_bridge::StreamKey>,
     plugin_overrides: manager::PluginBackendOverrides,
     allow_controller_upload: bool,
+    pacing: pacing::Pacing,
 ) -> Result<(), CmdError> {
     let addr = format!("0.0.0.0:{port}");
     let listener = TcpListener::bind(&addr)
@@ -259,6 +277,7 @@ async fn async_server(
             tokio::spawn(manager::simulation_manager_with_params(
                 params,
                 plugin_overrides,
+                pacing,
                 cmd_rx,
                 mgr_tx,
                 texture_request_tx.clone(),
@@ -268,6 +287,7 @@ async fn async_server(
         None => {
             tokio::spawn(manager::simulation_manager(
                 plugin_overrides,
+                pacing,
                 cmd_rx,
                 mgr_tx,
                 texture_request_tx.clone(),
@@ -300,6 +320,7 @@ async fn async_server(
             controller_upload::MAX_UPLOADED_BYTES_PER_SERVER,
         ),
         allow_controller_upload,
+        default_pacing: pacing,
     };
 
     let app = Router::new()

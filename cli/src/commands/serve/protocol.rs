@@ -4,6 +4,7 @@ use orts::record::entity_path::EntityPath;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use super::pacing::Pacing;
 use crate::config::{SatelliteConfig, SimConfig};
 use crate::satellite::SatelliteInfo;
 use crate::sim::core::HistoryState;
@@ -30,8 +31,18 @@ pub enum ClientMessage {
         entity_path: Option<EntityPath>,
     },
     /// Start a simulation from idle state.
+    ///
+    /// `pacing` is how fast it runs against the wall clock; left out, the
+    /// server's own (`orts serve --realtime`, else accelerated). It is not a
+    /// `SimConfig` key: the config describes the simulation, which `orts run`
+    /// reads as well, while the pacing is how `orts serve` plays it out.
     #[serde(rename = "start_simulation")]
-    StartSimulation { config: Box<SimConfig> },
+    StartSimulation {
+        config: Box<SimConfig>,
+        #[serde(default)]
+        #[ts(optional)]
+        pacing: Option<Pacing>,
+    },
     /// Add a satellite to a running simulation.
     #[serde(rename = "add_satellite")]
     AddSatellite {
@@ -65,7 +76,7 @@ pub enum ClientMessage {
 pub fn variant_envelope_keys(kind: &str) -> Option<&'static [&'static str]> {
     match kind {
         "query_range" => Some(&["t_min", "t_max", "max_points", "entity_path"]),
-        "start_simulation" => Some(&["config"]),
+        "start_simulation" => Some(&["config", "pacing"]),
         "pause_simulation" | "resume_simulation" | "terminate_simulation" => Some(&[]),
         _ => None,
     }
@@ -94,6 +105,12 @@ pub enum WsMessage {
         #[ts(optional)]
         epoch_jd: Option<f64>,
         satellites: Vec<SatelliteInfo>,
+        /// The pacing the simulation runs at. `orts serve` always sends it;
+        /// `orts replay`, which plays a recording and runs no simulation,
+        /// leaves it out.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        pacing: Option<Pacing>,
     },
     /// A single simulation state snapshot.
     #[serde(rename = "state")]
@@ -162,7 +179,15 @@ pub enum WsMessage {
     },
     /// Server status (sent on connect when idle).
     #[serde(rename = "status")]
-    Status { state: String },
+    Status {
+        state: String,
+        /// The pacing a `start_simulation` that names none runs at. Sent with
+        /// the `idle` status a connection opens with; left out of the status
+        /// changes broadcast while a simulation runs.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        default_pacing: Option<Pacing>,
+    },
     /// Confirmation that a satellite was added.
     #[serde(rename = "satellite_added")]
     SatelliteAdded { satellite: SatelliteInfo, t: f64 },
@@ -327,6 +352,7 @@ mod tests {
                     shape: None,
                 },
             ],
+            pacing: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -359,6 +385,7 @@ mod tests {
                 perturbations: vec![],
                 shape: None,
             }],
+            pacing: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -378,6 +405,7 @@ mod tests {
             central_body_radius: 6378.137,
             epoch_jd: None,
             satellites: vec![],
+            pacing: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -403,11 +431,86 @@ mod tests {
                 perturbations: vec![],
                 shape: None,
             }],
+            pacing: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["satellites"][0]["name"], "ISS (ZARYA)");
         assert_eq!(v["satellites"][0]["id"], "iss");
+    }
+
+    /// A `start_simulation` may name a pacing; one that names none leaves it
+    /// to the server.
+    #[test]
+    fn start_simulation_carries_an_optional_pacing() {
+        let pacing_of = |json: &str| match serde_json::from_str::<ClientMessage>(json).unwrap() {
+            ClientMessage::StartSimulation { pacing, .. } => pacing,
+            other => panic!("not a start: {other:?}"),
+        };
+        let config = r#""config":{"satellites":[]}"#;
+        assert_eq!(
+            pacing_of(&format!(r#"{{"type":"start_simulation",{config}}}"#)),
+            None
+        );
+        assert_eq!(
+            pacing_of(&format!(
+                r#"{{"type":"start_simulation",{config},"pacing":"realtime"}}"#
+            )),
+            Some(Pacing::Realtime)
+        );
+        assert_eq!(
+            pacing_of(&format!(
+                r#"{{"type":"start_simulation",{config},"pacing":"accelerated"}}"#
+            )),
+            Some(Pacing::Accelerated)
+        );
+    }
+
+    /// A pacing the server does not know is refused rather than run at some
+    /// other speed than the one asked for.
+    #[test]
+    fn start_simulation_refuses_an_unknown_pacing() {
+        let json = r#"{"type":"start_simulation","config":{"satellites":[]},"pacing":"fast"}"#;
+        serde_json::from_str::<ClientMessage>(json).expect_err("unknown pacing");
+    }
+
+    /// `info` names the pacing when there is one (`serve`) and leaves the key
+    /// out when there is none (`replay`).
+    #[test]
+    fn info_names_its_pacing_only_when_it_has_one() {
+        let info = |pacing| WsMessage::Info {
+            mu: 398600.4418,
+            dt: 10.0,
+            output_interval: 10.0,
+            stream_interval: 10.0,
+            central_body: "earth".to_string(),
+            central_body_radius: 6378.137,
+            epoch_jd: None,
+            satellites: vec![],
+            pacing,
+        };
+        let v = serde_json::to_value(info(Some(Pacing::Realtime))).unwrap();
+        assert_eq!(v["pacing"], "realtime");
+        let v = serde_json::to_value(info(None)).unwrap();
+        assert!(v.get("pacing").is_none(), "{v}");
+    }
+
+    /// The idle status carries the server's default pacing; the status
+    /// changes broadcast while running leave the key out.
+    #[test]
+    fn status_carries_the_default_pacing_only_when_given() {
+        let idle = WsMessage::Status {
+            state: "idle".to_string(),
+            default_pacing: Some(Pacing::Accelerated),
+        };
+        let v = serde_json::to_value(idle).unwrap();
+        assert_eq!(v["default_pacing"], "accelerated");
+        let paused = WsMessage::Status {
+            state: "paused".to_string(),
+            default_pacing: None,
+        };
+        let v = serde_json::to_value(paused).unwrap();
+        assert!(v.get("default_pacing").is_none(), "{v}");
     }
 
     #[test]

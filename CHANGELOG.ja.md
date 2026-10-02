@@ -713,6 +713,26 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   ([#536](https://github.com/sksat/orts/issues/536))
 
 #### Added
+- `orts serve --realtime` で、server が走らせるすべての simulation (command line
+  で起動するもの、各 `start_simulation` のもの) を wall clock と同じ速さ (1 sim s
+  = 1 wall s) で、1 step = 1 `stream_interval` ずつ進める。指定しなければ従来どおり
+  実時間より速く走る (既定の `--dt` で 100 倍)。各 interval はその開始時刻が来たら
+  step し、その state と interval 中の衛星の終了 (terminate) の通知は終了時刻が
+  来たら送るので、client が wall clock より先の state や終了の通知を受け取ることは
+  ない。1 s を超えて遅れた simulation は連続で step して
+  追いつくのではなく、遅れを捨てて進み、頻度を抑えた warning を出す。resume した
+  run はその時点から 1:1 で進む。pause と terminate は待ちの途中で処理する。
+  待ちの途中に答える status と `query_range` は送信済みの state までを返し、
+  その間の `add_satellite` にはすぐ答えるが、衛星の追加の通知と最初の state は、
+  衛星が加わる時刻 (interval の終了時刻) が来てから送る。
+  もともと realtime で走る stream-io stream 付きの simulation もこの pacing を
+  使う。基準を tick ごとではなく開始時刻に置くので、loop 自身の処理時間の分だけ
+  tick ごとに遅れていくことがなくなり、state は tick の開始時ではなく終了時に送る。
+- `start_simulation` に省略可能な `pacing` (`"realtime"` / `"accelerated"`) を
+  追加した。省略すると server の `--realtime` に従う。`info` は simulation が走る
+  pacing を示し (`orts replay` は省く)、idle の server に接続したときの `status` は
+  server の既定を `default_pacing` として示す。pacing は `SimConfig` の key にしない。
+  config は simulation を記述するもので、`orts run` も読むため。
 - `frame` / `--frame {simple-eci|gcrs}` と `eop` / `--eop {auto|PATH|zero}`:
   `orts run` の軌道のみの経路を `Gcrs` (IAU 2006/2000A CIO chain + 観測 IERS
   EOP、極運動込み) で伝播できるようにした。従来の ERA のみの `SimpleEci` が既定。
@@ -1658,6 +1678,11 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `viewer`
 
 #### Added
+- simulation の設定 dialog に Speed の選択を追加した: server の既定 (server の
+  idle status が伝えた値を併記)、realtime、accelerated。playback bar の mode 表示は
+  Live 中に server の速さを示し (`Live · realtime`)、速度 menu は Replay と表記して
+  Live 中は無効にした。この menu は受信済みの履歴を Play で再生する速さで、Live の
+  速さや server が simulation する速さではない。
 - recording が伝播された frame を読み (CSV の `# frame`、`.rrd` の `meta/sim/frame`)、
   `simple-eci` 以外の frame の recording は描かずにメッセージ付きで reject する。
   viewer はすべての state に SimpleEci (ERA のみ) の地球回転を掛けるので、`gcrs` の
@@ -1752,6 +1777,12 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   wire 型を置き換え、`satellite_added` variant を追加。([#95](https://github.com/sksat/orts/pull/95))
 
 #### Fixed
+- pause 中や replay 中に time slider が勝手に左へ戻らないようにした。server が
+  送り続ける最新の state を基準に位置を測っていたため、pause 中のつまみが左へずれ、
+  replay 速度が server の速さより遅い (dt = 0.1 s では約 9 sim s/s) と Play 中も
+  左へ動いた。Live を抜けた時点で範囲を固定する。T+ と UTC 表示は、buffer の最古の
+  点からの経過ではなく sim 時刻そのものを示す。以前は trail buffer が古い点を捨てる
+  たびに、捨てた点の範囲 (25000 点、dt = 0.1 s で 2500 s) だけ巻き戻っていた。
 - CSV を開いたとき、ファイルが持つ header に従って列を読むようにした。これでモデルごとの
   トルクと姿勢が viewer に届く。従来は列を位置で読み `nu` で止めていて、`orts run` は
   角速度・トルク・quaternion をその後ろに書くため、すべて落としていた。空セル（列は fleet

@@ -148,6 +148,8 @@ fn load_replay_data(path: &str) -> ReplayData {
         central_body_radius: body_radius,
         epoch_jd: meta.epoch_jd,
         satellites,
+        // A recording plays back at the viewer's pace; no simulation runs.
+        pacing: None,
     };
     let info_json = serde_json::to_string(&info_msg).expect("failed to serialize info");
 

@@ -126,7 +126,8 @@ describe("dispatchServerMessage", () => {
     dispatchServerMessage(msg, callbacks);
 
     expect(onStatus).toHaveBeenCalledOnce();
-    expect(onStatus).toHaveBeenCalledWith("idle");
+    // No `default_pacing` on the wire, so none is passed on.
+    expect(onStatus).toHaveBeenCalledWith("idle", undefined);
   });
 
   it("dispatches status paused message", () => {
@@ -137,7 +138,8 @@ describe("dispatchServerMessage", () => {
     dispatchServerMessage(msg, callbacks);
 
     expect(onStatus).toHaveBeenCalledOnce();
-    expect(onStatus).toHaveBeenCalledWith("paused");
+    // No `default_pacing` on the wire, so none is passed on.
+    expect(onStatus).toHaveBeenCalledWith("paused", undefined);
   });
 
   it("dispatches status running message", () => {
@@ -148,7 +150,8 @@ describe("dispatchServerMessage", () => {
     dispatchServerMessage(msg, callbacks);
 
     expect(onStatus).toHaveBeenCalledOnce();
-    expect(onStatus).toHaveBeenCalledWith("running");
+    // No `default_pacing` on the wire, so none is passed on.
+    expect(onStatus).toHaveBeenCalledWith("running", undefined);
   });
 
   it("dispatches error message", () => {
@@ -249,6 +252,39 @@ describe("dispatchServerMessage", () => {
         central_body_radius: 3396.2,
       }),
     );
+  });
+
+  it("carries the server's pacing into the info, and leaves it out when absent", () => {
+    // A recording (`orts replay`) or an older server sends no pacing; the
+    // viewer must not invent one, since it labels how fast Live moves.
+    const infoWith = (extra: object) =>
+      ({
+        type: "info",
+        mu: 398600.4418,
+        dt: 1,
+        output_interval: 1,
+        stream_interval: 1,
+        central_body: "earth",
+        central_body_radius: 6378.137,
+        satellites: [],
+        ...extra,
+      }) as ServerMessage;
+
+    const onInfo = vi.fn();
+    dispatchServerMessage(infoWith({ pacing: "realtime" }), { onState: vi.fn(), onInfo });
+    expect(onInfo.mock.calls[0][0].pacing).toBe("realtime");
+
+    dispatchServerMessage(infoWith({}), { onState: vi.fn(), onInfo });
+    expect("pacing" in onInfo.mock.calls[1][0]).toBe(false);
+  });
+
+  it("passes the idle status's default pacing to onStatus", () => {
+    const onStatus = vi.fn();
+    dispatchServerMessage(
+      { type: "status", state: "idle", default_pacing: "realtime" },
+      { onState: vi.fn(), onStatus },
+    );
+    expect(onStatus).toHaveBeenCalledWith("idle", "realtime");
   });
 
   it("rejects the source when the server's info cannot be measured", () => {

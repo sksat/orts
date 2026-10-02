@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import type { Pacing } from "../protocol/generated/Pacing.js";
 import type { SatelliteConfig } from "../protocol/generated/SatelliteConfig.js";
 import type { SimConfig } from "../protocol/generated/SimConfig.js";
 import controlStyles from "../styles/controls.module.css";
@@ -86,11 +87,40 @@ export function buildSimConfig(state: FormState): FormSimConfig {
   };
 }
 
-export interface SimConfigFormProps {
-  onStart: (config: SimConfig) => void;
+/** The speed choice: a pacing to ask for, or "" to leave it to the server. */
+export type PacingChoice = Pacing | "";
+
+/**
+ * The speed choices the form offers, labelled. The server's default is named
+ * when the server has said what it is (its idle status), since "server
+ * default" alone does not say how fast the simulation will run.
+ */
+export function pacingChoices(
+  serverDefault: Pacing | null,
+): { value: PacingChoice; label: string }[] {
+  return [
+    {
+      value: "",
+      label: serverDefault === null ? "Server default" : `Server default (${serverDefault})`,
+    },
+    { value: "realtime", label: "Realtime (1 sim s = 1 s)" },
+    { value: "accelerated", label: "Accelerated (faster than real time)" },
+  ];
 }
 
-export function SimConfigForm({ onStart }: SimConfigFormProps) {
+/** The pacing a choice asks the server for; `undefined` leaves it out. */
+export function pacingOfChoice(choice: PacingChoice): Pacing | undefined {
+  return choice === "" ? undefined : choice;
+}
+
+export interface SimConfigFormProps {
+  /** `pacing` left out runs at the server's default. */
+  onStart: (config: SimConfig, pacing?: Pacing) => void;
+  /** The server's default pacing, or null while it is not known. */
+  serverDefaultPacing?: Pacing | null;
+}
+
+export function SimConfigForm({ onStart, serverDefaultPacing = null }: SimConfigFormProps) {
   const [orbitMode, setOrbitMode] = useState<OrbitMode>("preset");
   const [presetIndex, setPresetIndex] = useState(0);
   const [altitude, setAltitude] = useState(400);
@@ -102,6 +132,7 @@ export function SimConfigForm({ onStart }: SimConfigFormProps) {
   const [dt, setDt] = useState(1);
   const [outputInterval, setOutputInterval] = useState(10);
   const [atmosphere, setAtmosphere] = useState("exponential");
+  const [pacingChoice, setPacingChoice] = useState<PacingChoice>("");
 
   const handleStart = useCallback(() => {
     const config = buildSimConfig({
@@ -116,7 +147,7 @@ export function SimConfigForm({ onStart }: SimConfigFormProps) {
       outputInterval,
       atmosphere,
     });
-    onStart(config);
+    onStart(config, pacingOfChoice(pacingChoice));
   }, [
     orbitMode,
     presetIndex,
@@ -128,6 +159,7 @@ export function SimConfigForm({ onStart }: SimConfigFormProps) {
     dt,
     outputInterval,
     atmosphere,
+    pacingChoice,
     onStart,
   ]);
 
@@ -230,6 +262,24 @@ export function SimConfigForm({ onStart }: SimConfigFormProps) {
             </label>
           </div>
         )}
+      </div>
+
+      <div className={styles.inputs}>
+        <label className={styles.label}>
+          Speed
+          <select
+            className={styles.select}
+            data-testid="sim-config-pacing"
+            value={pacingChoice}
+            onChange={(e) => setPacingChoice(e.target.value as PacingChoice)}
+          >
+            {pacingChoices(serverDefaultPacing).map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
       <button className={styles.advancedToggle} onClick={() => setShowAdvanced(!showAdvanced)}>

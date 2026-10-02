@@ -44,6 +44,7 @@ use orts::setup::{build_orbital_system, default_third_bodies};
 
 use super::compute::state_message;
 use super::history::HistoryBuffer;
+use super::pacing::Pacing;
 use super::protocol::WsMessage;
 use super::stream_bridge::{OutboundPush, StreamKey};
 
@@ -465,9 +466,13 @@ pub(super) struct ServeEngine {
     /// wired so the bridge pumps (and the serve wall clock syncs) at tick
     /// granularity.
     stream_step: f64,
-    /// Whether any satellite declared stream-io streams. When `true` the
-    /// serve loop must pace in realtime (1 sim s = 1 wall s).
-    realtime: bool,
+    /// Whether any satellite declared stream-io streams. When `true` each
+    /// output interval is one controller tick, and [`Self::pacing`] is
+    /// realtime.
+    has_streams: bool,
+    /// The pacing the serve loop runs this simulation at, as announced in
+    /// `info`.
+    pacing: Pacing,
     /// Shared WASM plugin cache, kept alive for the whole engine lifetime so
     /// dynamic `add_satellite` calls can reuse the compiled guest components
     /// and (for the async backend) the shared runtime thread. `None` outside
@@ -489,9 +494,13 @@ impl ServeEngine {
     /// deliberate: when config assembly is unified (issue #98) this is the
     /// single line that changes to take a `SimulationPlan` — nothing leaks
     /// into the serve loop or the connection layer.
+    /// `pacing` is the one the simulation was asked to run at; it is carried
+    /// into `info` as [`Pacing::for_fleet`] resolves it, and kept for the
+    /// serve loop ([`Self::pacing`]). The engine itself never looks at a clock.
     pub(super) fn build(
         params: Arc<SimParams>,
         mut history: HistoryBuffer,
+        pacing: Pacing,
     ) -> Result<EngineInit, String> {
         let config = params.integrator_config();
 
@@ -670,7 +679,9 @@ impl ServeEngine {
 
         // Build the Info message (broadcast by the serve layer; also retained
         // for status replay to late-connecting clients).
-        let info_msg = build_info_message(&params)?;
+        let has_streams = metas.iter().any(|m| !m.spec.streams.is_empty());
+        let pacing = pacing.for_fleet(has_streams);
+        let info_msg = build_info_message(&params, pacing)?;
         let info_json = serde_json::to_string(&info_msg).expect("failed to serialize info");
         let mut initial_broadcasts = vec![info_json];
 
@@ -758,8 +769,7 @@ impl ServeEngine {
         // controller's own period would over-step it; require a uniform
         // sample period (resolving it here surfaces a mixed-rate fleet as a
         // construction error, handled uniformly with other startup errors).
-        let realtime = metas.iter().any(|m| !m.spec.streams.is_empty());
-        let stream_step = if realtime {
+        let stream_step = if has_streams {
             let SimGroup::Controlled(sats) = &group else {
                 // Unreachable: the stream-keys check above already rejected
                 // declared streams outside controlled mode.
@@ -785,7 +795,8 @@ impl ServeEngine {
             has_perturbations,
             sat_streams,
             stream_step,
-            realtime,
+            has_streams,
+            pacing,
             #[cfg(feature = "plugin-wasm")]
             wasm_cache,
             #[cfg(feature = "plugin-wasm")]
@@ -799,10 +810,16 @@ impl ServeEngine {
         })
     }
 
-    /// Whether the fleet declared stream-io streams — the serve loop must then
-    /// pace in realtime (1 sim s = 1 wall s) at the tick from [`Self::step`].
-    pub(super) fn is_realtime(&self) -> bool {
-        self.realtime
+    /// Whether the fleet declared stream-io streams, which step one
+    /// controller tick per output interval and always run in realtime.
+    pub(super) fn has_streams(&self) -> bool {
+        self.has_streams
+    }
+
+    /// The pacing to run at: the one asked for, or realtime when the fleet
+    /// has streams (see [`Pacing::for_fleet`]).
+    pub(super) fn pacing(&self) -> Pacing {
+        self.pacing
     }
 
     /// Sim-time advanced per output interval (the realtime tick when streams
@@ -1150,6 +1167,42 @@ impl ServeEngine {
             terminated_events: self.terminated_events.iter().cloned().collect(),
             history_states: self.history.overview(),
         }
+    }
+
+    /// The status as of `sent_until`: what a client has been sent while a
+    /// realtime interval holds back states the engine has already stepped.
+    ///
+    /// Terminations after `sent_until` are left out, and so are history
+    /// samples. The overview keeps its newest sample by overwriting its last
+    /// one once it thins out, so the newest sample sent may be gone from it;
+    /// `newest_sent` (the serve loop's own record, one per satellite) puts it
+    /// back. Taken from the history instead, it could mean reading the whole
+    /// recording back from disk on a reconnect.
+    pub(super) fn status_data_until<'a>(
+        &self,
+        sent_until: f64,
+        newest_sent: impl IntoIterator<Item = &'a HistoryState>,
+    ) -> StatusData {
+        let mut data = self.status_data();
+        data.terminated_events.retain(|json| {
+            serde_json::from_str::<serde_json::Value>(json)
+                .ok()
+                .and_then(|v| v["t"].as_f64())
+                .is_none_or(|t| t <= sent_until)
+        });
+        data.history_states.retain(|s| s.t <= sent_until);
+        for state in newest_sent {
+            let present = data
+                .history_states
+                .iter()
+                .any(|s| s.entity_path == state.entity_path && s.t >= state.t);
+            if state.t <= sent_until && !present {
+                data.history_states.push(state.clone());
+            }
+        }
+        data.history_states
+            .sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap());
+        data
     }
 
     /// Query a time range from history (filtered before downsampling so the
@@ -1523,7 +1576,7 @@ impl ServeEngine {
 /// Names the force models per satellite, which means building each satellite's
 /// system — so a central body whose solar models cannot be built is reported
 /// here too, rather than announced with an empty perturbation list.
-fn build_info_message(params: &SimParams) -> Result<WsMessage, String> {
+fn build_info_message(params: &SimParams, pacing: Pacing) -> Result<WsMessage, String> {
     let third_bodies = default_third_bodies(&params.body)
         .map_err(|e| format!("central body {}: {e}", params.body.properties().name))?;
     let satellites_info: Vec<SatelliteInfo> = params
@@ -1576,6 +1629,7 @@ fn build_info_message(params: &SimParams) -> Result<WsMessage, String> {
         central_body_radius: params.body.properties().radius,
         epoch_jd: params.epoch.map(|e| e.jd()),
         satellites: satellites_info,
+        pacing: Some(pacing),
     })
 }
 
@@ -1631,7 +1685,7 @@ mod tests {
         ));
         let body_radius = params.body.properties().radius;
         let history = HistoryBuffer::new(5000, data_dir, params.mu, body_radius);
-        ServeEngine::build(params, history)
+        ServeEngine::build(params, history, Pacing::Accelerated)
     }
 
     /// The cache a simulation shares is built in the mode its params carry.
@@ -1679,7 +1733,8 @@ orbit = { type = "circular", altitude = 500 }
         assert!(init.initial_broadcasts[0].contains("\"type\":\"info\""));
         assert_eq!(init.initial_broadcasts.len(), 2);
         assert!(init.initial_broadcasts[1].contains("\"type\":\"state\""));
-        assert!(!init.engine.is_realtime());
+        assert!(!init.engine.has_streams());
+        assert_eq!(init.engine.pacing(), Pacing::Accelerated);
         assert_eq!(init.engine.current_t(), 0.0);
         // No declared streams → empty layout entry for the one satellite.
         assert_eq!(init.stream_layout, vec![("sat-a".to_string(), vec![])]);
@@ -3164,7 +3219,7 @@ orbit = { type = "circular", altitude = 500 }
         let body = arika::body::KnownBody::Earth;
         let mu = body.properties().mu;
         let history = HistoryBuffer::new(5000, data_dir, mu, body.properties().radius);
-        let mut engine = ServeEngine::build(params, history)
+        let mut engine = ServeEngine::build(params, history, Pacing::Accelerated)
             .expect("engine builds")
             .engine;
 
@@ -3206,7 +3261,8 @@ orbit = { type = "circular", altitude = 500 }
         // What `ServeEngine::build` sets up for a fleet that declares streams:
         // realtime pacing, and one controller tick per interval.
         if !streams.is_empty() {
-            engine.realtime = true;
+            engine.has_streams = true;
+            engine.pacing = Pacing::Realtime;
             engine.stream_step = uniform_tick(&[period]).expect("a single positive period");
         }
         engine

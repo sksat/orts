@@ -931,6 +931,29 @@ section is subdivided by package.
   ([#536](https://github.com/sksat/orts/issues/536))
 
 #### Added
+- `orts serve --realtime` advances every simulation the server runs — the
+  one its command line starts and each `start_simulation` — at wall-clock
+  speed, 1 sim s per wall s, one `stream_interval` per step. Without it a
+  simulation runs faster than real time (100x at the default `--dt`). Each
+  interval is stepped when its start is due and its states — and the
+  terminations it produced — are sent when its end is, so no client sees a
+  state or a termination ahead of the wall clock. A simulation that
+  falls more than 1 s behind skips ahead instead of stepping back to back to
+  catch up, with a rate-limited warning; a resumed run carries on 1:1 from
+  where it resumed. A pause or a terminate is handled during the wait rather
+  than after it. A status or a `query_range` answered during the wait stops
+  at the states already sent, and a satellite added then is answered at once
+  but announced, with its first state, when the interval's end — the time it
+  joins at — is due. Simulations with stream-io streams, already realtime, share
+  this pacing: their pace is anchored to the start instead of to each tick,
+  so it no longer drifts behind by the loop's own time per tick, and their
+  states go out at the end of the tick instead of the start.
+- `start_simulation` takes an optional `pacing` (`"realtime"` /
+  `"accelerated"`); left out, the server's `--realtime` decides. `info` names
+  the pacing the simulation runs at (`orts replay` leaves it out), and the
+  `status` a connection opens with while idle names the server's default as
+  `default_pacing`. The pacing is not a `SimConfig` key: the config describes
+  the simulation, which `orts run` reads as well.
 - `frame` / `--frame {simple-eci|gcrs}` and `eop` / `--eop {auto|PATH|zero}`:
   propagate `orts run`'s orbit-only path in `Gcrs` — the IAU 2006/2000A CIO
   chain with observed IERS EOP (polar motion included) — instead of the
@@ -2067,6 +2090,12 @@ section is subdivided by package.
 ### `viewer`
 
 #### Added
+- The simulation config dialog has a Speed choice: the server's default
+  (named once the server's idle status says what it is), realtime, or
+  accelerated. The playback bar's mode label names the server's pace while
+  Live (`Live · realtime`), and its speed menu is labelled Replay and disabled
+  while Live, where it never applied: it sets how fast Play steps through the
+  history already received, not how fast the server simulates.
 - The frame a recording was propagated in is read (`# frame` in CSV,
   `meta/sim/frame` in `.rrd`), and a recording in any frame but `simple-eci`
   is refused with a message instead of being drawn: the viewer applies the
@@ -2176,6 +2205,14 @@ section is subdivided by package.
   replacing the hand-written wire types and adding the `satellite_added` variant. ([#95](https://github.com/sksat/orts/pull/95))
 
 #### Fixed
+- The time slider no longer slides back on its own while the view is paused
+  or replaying: it was measured against the newest state the server kept
+  sending, so a paused thumb drifted left, and at a replay speed below the
+  server's pace (dt = 0.1 s runs about 9 sim s per s) a playing one did too.
+  The span is now fixed when the view leaves Live. T+ and the UTC time show
+  the sim time itself instead of the time since the oldest buffered point,
+  which jumped back by the span of the points the trail buffer dropped
+  (25000 points, 2500 s at dt = 0.1 s).
 - Opening a CSV reads its columns by the header it carries, so the per-model
   torque and the attitude reach the viewer. The columns were read by position
   and stopped at `nu`, and `orts run` writes the angular velocity, the torques

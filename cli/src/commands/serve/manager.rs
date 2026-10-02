@@ -14,6 +14,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 
 use super::engine::{ChunkFailure, EngineInit, ServeEngine, StepOutput, StreamIo};
 use super::history::HistoryBuffer;
+use super::pacing::{LagWarnings, Pacing, RealtimeClock};
 use super::protocol::WsMessage;
 use super::stream_bridge::{OutboundPush, StreamBridge, StreamEndpoint, StreamKey};
 use crate::cli::{PluginAsyncModeChoice, PluginBackendChoice, SimArgs};
@@ -68,6 +69,8 @@ pub(super) enum SimCommand {
     /// not build, or the engine did not.
     Start {
         config: Box<SimConfig>,
+        /// The pacing asked for; `None` takes the server's.
+        pacing: Option<Pacing>,
         respond: oneshot::Sender<Result<(), String>>,
     },
     /// Add a satellite to a running simulation.
@@ -128,6 +131,7 @@ pub(super) enum SimStatusResponse {
 /// (see [`run_simulation_loop`]).
 struct PendingStart {
     params: SimParams,
+    pacing: Option<Pacing>,
     respond: oneshot::Sender<Result<(), String>>,
 }
 
@@ -200,6 +204,7 @@ fn body_names_for(body: &arika::body::KnownBody) -> Vec<String> {
 pub(super) async fn simulation_manager_with_params(
     params: Arc<SimParams>,
     cli_plugin_overrides: PluginBackendOverrides,
+    default_pacing: Pacing,
     cmd_rx: mpsc::Receiver<SimCommand>,
     tx: broadcast::Sender<String>,
     texture_tx: super::textures::TextureRequestSender,
@@ -214,6 +219,7 @@ pub(super) async fn simulation_manager_with_params(
     // No client asked for this simulation, so there is nobody to answer.
     match run_simulation_loop(
         params,
+        default_pacing,
         None,
         cmd_rx,
         tx.clone(),
@@ -230,6 +236,7 @@ pub(super) async fn simulation_manager_with_params(
             run_client_starts(
                 next,
                 cli_plugin_overrides,
+                default_pacing,
                 returned_rx,
                 tx,
                 texture_tx,
@@ -312,7 +319,11 @@ async fn idle_loop(cmd_rx: &mut mpsc::Receiver<SimCommand>) -> Option<PendingSta
             SimCommand::GetStatus { respond, .. } => {
                 let _ = respond.send(SimStatusResponse::Idle);
             }
-            SimCommand::Start { config, respond } => {
+            SimCommand::Start {
+                config,
+                pacing,
+                respond,
+            } => {
                 if let Err(e) = validate_sim_config(&config) {
                     let _ = respond.send(Err(e));
                     continue;
@@ -321,7 +332,13 @@ async fn idle_loop(cmd_rx: &mut mpsc::Receiver<SimCommand>) -> Option<PendingSta
                 // the failure goes back to the client and the loop keeps
                 // waiting for the next `start_simulation`.
                 match SimParams::from_config(&config) {
-                    Ok(params) => return Some(PendingStart { params, respond }),
+                    Ok(params) => {
+                        return Some(PendingStart {
+                            params,
+                            pacing,
+                            respond,
+                        });
+                    }
                     Err(e) => {
                         eprintln!("Simulation manager: cannot start simulation: {e}");
                         let _ = respond.send(Err(e));
@@ -351,6 +368,7 @@ async fn idle_loop(cmd_rx: &mut mpsc::Receiver<SimCommand>) -> Option<PendingSta
 /// Loops between idle and running states; after terminate it returns to idle.
 pub(super) async fn simulation_manager(
     cli_plugin_overrides: PluginBackendOverrides,
+    default_pacing: Pacing,
     mut cmd_rx: mpsc::Receiver<SimCommand>,
     tx: broadcast::Sender<String>,
     texture_tx: super::textures::TextureRequestSender,
@@ -358,7 +376,16 @@ pub(super) async fn simulation_manager(
 ) {
     eprintln!("Simulation manager: idle, waiting for start_simulation...");
     let first = idle_loop(&mut cmd_rx).await;
-    run_client_starts(first, cli_plugin_overrides, cmd_rx, tx, texture_tx, bridge).await;
+    run_client_starts(
+        first,
+        cli_plugin_overrides,
+        default_pacing,
+        cmd_rx,
+        tx,
+        texture_tx,
+        bridge,
+    )
+    .await;
 }
 
 /// Run each simulation a client's `start_simulation` asked for, from `next`
@@ -367,6 +394,7 @@ pub(super) async fn simulation_manager(
 async fn run_client_starts(
     mut next: Option<PendingStart>,
     cli_plugin_overrides: PluginBackendOverrides,
+    default_pacing: Pacing,
     mut cmd_rx: mpsc::Receiver<SimCommand>,
     tx: broadcast::Sender<String>,
     texture_tx: super::textures::TextureRequestSender,
@@ -374,6 +402,7 @@ async fn run_client_starts(
 ) {
     while let Some(PendingStart {
         mut params,
+        pacing: asked_pacing,
         respond,
     }) = next
     {
@@ -389,6 +418,7 @@ async fn run_client_starts(
         eprintln!("Simulation manager: starting simulation...");
         match run_simulation_loop(
             params,
+            asked_pacing.unwrap_or(default_pacing),
             Some(respond),
             cmd_rx,
             tx.clone(),
@@ -411,11 +441,18 @@ async fn run_client_starts(
 struct Delivery {
     /// State samples still to be sent, paced to the wall clock.
     to_pace: Vec<crate::sim::core::HistoryState>,
+    /// A finished chunk's other broadcasts (`simulation_terminated`), still to
+    /// be sent: at once when accelerated, with the interval's states when
+    /// realtime, so a termination is not announced before its time is due.
+    broadcasts: Vec<String>,
     /// Whether the chunk ended on a fault, so the run has to pause.
     halted: bool,
 }
 
-/// Send what a chunk produced, and say what is left to do.
+/// Send what a failed chunk produced, and say what is left to do.
+///
+/// A chunk that finished sends nothing from here: its samples and its
+/// terminations go back to the caller, which knows when they are due.
 ///
 /// A chunk that failed partway hands back the samples and broadcasts its
 /// finished intervals produced, and both reach the clients that are connected
@@ -445,12 +482,9 @@ fn deliver_chunk(
 ) -> Delivery {
     let (partial, error) = match chunk {
         Ok(output) => {
-            // Immediate (non-paced) broadcasts: `simulation_terminated` events.
-            for msg in &output.broadcasts {
-                let _ = tx.send(msg.clone());
-            }
             return Delivery {
                 to_pace: output.states,
+                broadcasts: output.broadcasts,
                 halted: false,
             };
         }
@@ -477,12 +511,14 @@ fn deliver_chunk(
     // they'd show a stale "running" after the halt.
     let status = serde_json::to_string(&WsMessage::Status {
         state: "paused".to_string(),
+        default_pacing: None,
     })
     .expect("failed to serialize status");
     let _ = tx.send(status);
 
     Delivery {
         to_pace: Vec::new(),
+        broadcasts: Vec::new(),
         halted: true,
     }
 }
@@ -521,15 +557,22 @@ fn state_json(out: &crate::sim::core::HistoryState) -> String {
 /// A run is paused because a client paused it, or because a chunk failed, in
 /// which case [`ServeEngine::halted`] holds the fault. Only a run paused by a
 /// client resumes.
+///
+/// `held` is `Some` while a realtime interval waits for its time (see
+/// [`HeldBack`]); `None` when everything stepped has gone out.
 fn handle_command(
     engine: &mut ServeEngine,
     paused: &mut bool,
     tx: &broadcast::Sender<String>,
     cmd: SimCommand,
+    held: Option<HeldBack<'_>>,
 ) -> ControlFlow<()> {
     match cmd {
         SimCommand::GetStatus { respond } => {
-            let data = engine.status_data();
+            let data = match &held {
+                Some(held) => engine.status_data_until(held.sent_until, held.newest_sent.values()),
+                None => engine.status_data(),
+            };
             let response = if *paused {
                 SimStatusResponse::Paused {
                     info_json: data.info_json,
@@ -556,6 +599,7 @@ fn handle_command(
                 eprintln!("Simulation paused at t={:.2}s", engine.current_t());
                 let status = serde_json::to_string(&WsMessage::Status {
                     state: "paused".to_string(),
+                    default_pacing: None,
                 })
                 .expect("failed to serialize status");
                 let _ = tx.send(status);
@@ -577,6 +621,7 @@ fn handle_command(
                 eprintln!("Simulation resumed at t={:.2}s", engine.current_t());
                 let status = serde_json::to_string(&WsMessage::Status {
                     state: "running".to_string(),
+                    default_pacing: None,
                 })
                 .expect("failed to serialize status");
                 let _ = tx.send(status);
@@ -587,6 +632,7 @@ fn handle_command(
             eprintln!("Simulation terminated at t={:.2}s", engine.current_t());
             let status = serde_json::to_string(&WsMessage::Status {
                 state: "idle".to_string(),
+                default_pacing: None,
             })
             .expect("failed to serialize status");
             let _ = tx.send(status);
@@ -602,8 +648,13 @@ fn handle_command(
                     .and_then(|()| engine.add_satellite(*satellite));
             match added {
                 Ok(out) => {
-                    for msg in &out.broadcasts {
-                        let _ = tx.send(msg.clone());
+                    match held {
+                        Some(held) => held.broadcasts.extend(out.broadcasts),
+                        None => {
+                            for msg in &out.broadcasts {
+                                let _ = tx.send(msg.clone());
+                            }
+                        }
                     }
                     let _ = respond.send(Ok((out.info, out.t)));
                 }
@@ -619,16 +670,97 @@ fn handle_command(
             entity_path,
             respond,
         } => {
-            let states = engine.query_range(t_min, t_max, max_points, entity_path.as_ref());
+            let t_max = held.map_or(t_max, |held| t_max.min(held.sent_until));
+            let states = if t_min <= t_max {
+                engine.query_range(t_min, t_max, max_points, entity_path.as_ref())
+            } else {
+                Vec::new()
+            };
             let _ = respond.send(states);
         }
     }
     ControlFlow::Continue(())
 }
 
+/// The newest state sent, per satellite (keyed by entity path).
+type NewestSent = std::collections::HashMap<String, crate::sim::core::HistoryState>;
+
+/// What a realtime interval holds back while it waits for its time.
+///
+/// The interval was stepped when its start was due, so the engine and the
+/// history already stand at its end while its states wait to go out. A status
+/// or a query answered meanwhile stops at `sent_until`, so a client does not
+/// see what the broadcast is holding back. A satellite added meanwhile joins
+/// at the interval's end; it is added at once — the reply would otherwise
+/// hold up the client's connection, which reads nothing else until it comes —
+/// and its broadcasts go into `broadcasts`, sent with the interval's states.
+struct HeldBack<'a> {
+    sent_until: f64,
+    /// The newest state sent per satellite, which a status ends on (see
+    /// [`ServeEngine::status_data_until`]).
+    newest_sent: &'a NewestSent,
+    broadcasts: &'a mut Vec<String>,
+}
+
+/// How [`wait_until_due`] ended.
+enum Waited {
+    /// The instant waited for came.
+    Due,
+    /// A command paused the run first.
+    Paused,
+    /// A command ended the run, or every sender is gone.
+    Exit(LoopExit),
+}
+
+/// Wait until `due`, handling commands as they come: a realtime interval can
+/// be a whole `stream_interval` of wall time, and a pause or a terminate must
+/// not wait that out.
+///
+/// `sent_until`, `newest_sent` and `held_broadcasts` make up the [`HeldBack`]
+/// the commands are handled against.
+#[allow(clippy::too_many_arguments)]
+async fn wait_until_due(
+    due: tokio::time::Instant,
+    sent_until: f64,
+    newest_sent: &NewestSent,
+    engine: &mut ServeEngine,
+    paused: &mut bool,
+    tx: &broadcast::Sender<String>,
+    cmd_rx: &mut mpsc::Receiver<SimCommand>,
+    held_broadcasts: &mut Vec<String>,
+) -> Waited {
+    let sleep = tokio::time::sleep_until(due);
+    tokio::pin!(sleep);
+    loop {
+        tokio::select! {
+            () = &mut sleep => return Waited::Due,
+            cmd = cmd_rx.recv() => {
+                let Some(cmd) = cmd else {
+                    return Waited::Exit(LoopExit::Disconnected);
+                };
+                let held = HeldBack {
+                    sent_until,
+                    newest_sent,
+                    broadcasts: held_broadcasts,
+                };
+                if handle_command(engine, paused, tx, cmd, Some(held)).is_break() {
+                    return Waited::Exit(LoopExit::Terminated);
+                }
+                if *paused {
+                    return Waited::Paused;
+                }
+            }
+        }
+    }
+}
+
 /// Core simulation loop: builds the engine, drives propagation, dispatches
 /// commands, and paces output to the wall clock. Returns the exit reason and
 /// gives back the command receiver for reuse.
+///
+/// `pacing` is the one the simulation was asked to run at — its
+/// `start_simulation`'s, else the server's `--realtime`; a fleet with stream-io
+/// streams runs in realtime whatever it says (see [`Pacing::for_fleet`]).
 ///
 /// `requester` is the reply channel of the `start_simulation` that asked for
 /// this simulation. It is answered once the engine is built: `Err` if the
@@ -638,6 +770,7 @@ fn handle_command(
 /// its build failure is broadcast to whoever is connected.
 async fn run_simulation_loop(
     params: Arc<SimParams>,
+    pacing: Pacing,
     requester: Option<oneshot::Sender<Result<(), String>>>,
     mut cmd_rx: mpsc::Receiver<SimCommand>,
     tx: broadcast::Sender<String>,
@@ -653,7 +786,7 @@ async fn run_simulation_loop(
         mut engine,
         initial_broadcasts,
         stream_layout,
-    } = match ServeEngine::build(params, history) {
+    } = match ServeEngine::build(params, history, pacing) {
         Ok(init) => init,
         Err(e) => {
             eprintln!("Simulation startup error: {e}");
@@ -702,21 +835,34 @@ async fn run_simulation_loop(
             .collect(),
     };
 
-    // With stream-io streams wired, the loop runs in **realtime**: interactive
-    // byte protocols on the other side of kble assume wall-clock time, so the
-    // default compute-a-chunk-ahead-then-sleep pacing (which also runs much
-    // faster than 1:1) would break them. Step one controller tick at a time,
-    // pumping the bridge at each boundary, syncing each tick to the wall clock.
-    let realtime = engine.is_realtime();
+    // In **realtime** the loop steps one interval at a time: with stream-io
+    // streams wired that is one controller tick, pumping the bridge at each
+    // boundary — interactive byte protocols on the other side of kble assume
+    // wall-clock time, so the default compute-a-chunk-ahead pacing (which also
+    // runs much faster than 1:1) would break them. `--realtime` asks for the
+    // same pacing with one `stream_interval` per step.
+    let realtime = engine.pacing() == Pacing::Realtime;
     let (outputs_per_chunk, chunk_wall_time) = if realtime {
         let tick = engine.effective_step();
-        eprintln!("stream-io bridge active: realtime pacing (1 sim s = 1 wall s), tick = {tick} s");
+        if engine.has_streams() {
+            eprintln!(
+                "stream-io bridge active: realtime pacing (1 sim s = 1 wall s), tick = {tick} s"
+            );
+        } else {
+            eprintln!("realtime pacing (1 sim s = 1 wall s), step = {tick} s");
+        }
         (1, Duration::from_secs_f64(tick))
     } else {
         (OUTPUTS_PER_CHUNK, default_chunk_wall_time)
     };
 
     let mut paused = false;
+    // Realtime only: when each sim time is due on the wall clock. Cleared
+    // while paused, so a resumed run is anchored where it resumes instead of
+    // stepping back to back to make up the pause.
+    let mut clock: Option<RealtimeClock> = None;
+    let mut lag_warnings = LagWarnings::default();
+    let mut newest_sent = NewestSent::new();
 
     loop {
         let chunk_start = tokio::time::Instant::now();
@@ -725,7 +871,7 @@ async fn run_simulation_loop(
         loop {
             match cmd_rx.try_recv() {
                 Ok(cmd) => {
-                    if handle_command(&mut engine, &mut paused, &tx, cmd).is_break() {
+                    if handle_command(&mut engine, &mut paused, &tx, cmd, None).is_break() {
                         // Tear down the bridge endpoints with the loop — while
                         // the manager is idle there is nothing to drain them
                         // (lingering peers see `defunct`).
@@ -743,8 +889,15 @@ async fn run_simulation_loop(
 
         // Skip propagation while paused
         if paused {
+            clock = None;
             tokio::time::sleep(Duration::from_millis(100)).await;
             continue;
+        }
+        if realtime && clock.is_none() {
+            clock = Some(RealtimeClock::anchor(
+                tokio::time::Instant::now(),
+                engine.current_t(),
+            ));
         }
 
         // Offload the blocking propagation work to a dedicated blocking thread
@@ -753,6 +906,9 @@ async fn run_simulation_loop(
         // `Handle::block_on` inside WASM async backends from starving the
         // serve runtime. The engine + stream adapter are moved in and handed
         // back so the loop retains ownership.
+        // Every state up to here has been sent: a realtime interval's states
+        // go out at the end of its wait, before the loop comes back here.
+        let sent_until = engine.current_t();
         let (chunk_result, engine_back, streams_back) = tokio::task::spawn_blocking(move || {
             let outputs = engine.step_chunk(outputs_per_chunk, &mut streams);
             (outputs, engine, streams)
@@ -768,16 +924,60 @@ async fn run_simulation_loop(
             continue;
         }
         let all_outputs = delivery.to_pace;
-
-        if realtime {
-            // Realtime: ship states immediately, then sync this tick to the
-            // wall clock (anchored to chunk_start so compute time is not
-            // added on top — the controller never runs more than one tick
-            // ahead of the peers).
-            for out in &all_outputs {
-                let _ = tx.send(state_json(out));
+        let mut held_broadcasts = delivery.broadcasts;
+        if clock.is_none() {
+            // Accelerated: a termination goes out at once, ahead of the paced
+            // states.
+            for msg in held_broadcasts.drain(..) {
+                let _ = tx.send(msg);
             }
-            tokio::time::sleep_until(chunk_start + chunk_wall_time).await;
+        }
+
+        if let Some(clock) = clock.as_mut() {
+            // Realtime: the interval was stepped when its start was due, so
+            // the controller ran each tick on time and never more than one
+            // tick ahead of the peers. Its states are held until the time
+            // they belong to, so a client never sees the future.
+            let reached = engine.current_t();
+            let now = tokio::time::Instant::now();
+            if let Some(dropped) = clock.drop_excess_lag(now, reached)
+                && let Some(report) = lag_warnings.record(now, dropped)
+            {
+                log::warn!(
+                    "realtime pacing fell behind the wall clock {} time(s), {:.1} s in \
+                     total; skipped ahead instead of catching up",
+                    report.times,
+                    report.dropped.as_secs_f64()
+                );
+            }
+            let waited = wait_until_due(
+                clock.due(reached),
+                sent_until,
+                &newest_sent,
+                &mut engine,
+                &mut paused,
+                &tx,
+                &mut cmd_rx,
+                &mut held_broadcasts,
+            )
+            .await;
+            match waited {
+                // Paused while waiting: the held states are in the history
+                // already, so they go out now rather than after the resume.
+                Waited::Due | Waited::Paused => {
+                    for out in all_outputs {
+                        let _ = tx.send(state_json(&out));
+                        newest_sent.insert(out.entity_path.to_string(), out);
+                    }
+                    for msg in held_broadcasts {
+                        let _ = tx.send(msg);
+                    }
+                }
+                Waited::Exit(exit) => {
+                    bridge.reset(Vec::new());
+                    return (exit, cmd_rx);
+                }
+            }
         } else if !all_outputs.is_empty() {
             let send_interval = chunk_wall_time / all_outputs.len() as u32;
             for out in &all_outputs {
@@ -795,6 +995,13 @@ async fn run_simulation_loop(
                 tokio::time::sleep(chunk_wall_time - elapsed).await;
             }
         }
+
+        // A pause during the wait lets go of the anchor here, not at the
+        // paused check above: a resume queued behind the pause is handled
+        // before that check, which would then never see the run paused.
+        if paused {
+            clock = None;
+        }
     }
 }
 
@@ -806,6 +1013,381 @@ mod tests {
     use super::*;
     use arika::body::KnownBody;
 
+    /// A running serve loop on a paused tokio clock, and what it broadcasts.
+    struct LoopUnderTest {
+        cmd_tx: mpsc::Sender<SimCommand>,
+        rx: broadcast::Receiver<String>,
+        /// The instant the loop was spawned at.
+        started: tokio::time::Instant,
+        _data_dir: tempfile::TempDir,
+    }
+
+    impl LoopUnderTest {
+        fn spawn(toml: &str, pacing: Pacing) -> Self {
+            let config: SimConfig = toml::from_str(toml).expect("valid test toml");
+            let params = Arc::new(SimParams::from_config(&config).expect("valid test config"));
+            let data_dir = tempfile::tempdir().expect("temp dir");
+            let body_radius = params.body.properties().radius;
+            let history =
+                HistoryBuffer::new(5000, data_dir.path().to_path_buf(), params.mu, body_radius);
+            let (tx, rx) = broadcast::channel(256);
+            let (cmd_tx, cmd_rx) = mpsc::channel(16);
+            let started = tokio::time::Instant::now();
+            tokio::spawn(run_simulation_loop(
+                params,
+                pacing,
+                None,
+                cmd_rx,
+                tx,
+                history,
+                Arc::new(StreamBridge::new()),
+            ));
+            Self {
+                cmd_tx,
+                rx,
+                started,
+                _data_dir: data_dir,
+            }
+        }
+
+        /// The next state past t = 0, and the wall time since the spawn at
+        /// which it was broadcast.
+        async fn next_state(&mut self) -> (f64, Duration) {
+            loop {
+                let msg = self.rx.recv().await.expect("the loop is broadcasting");
+                let v: serde_json::Value = serde_json::from_str(&msg).expect("JSON message");
+                if v["type"] == "state" {
+                    let t = v["t"].as_f64().expect("a state carries t");
+                    if t > 0.0 {
+                        return (t, self.started.elapsed());
+                    }
+                }
+            }
+        }
+
+        async fn send(
+            &self,
+            command: fn(oneshot::Sender<Result<(), String>>) -> SimCommand,
+        ) -> Result<(), String> {
+            let (respond, reply) = oneshot::channel();
+            assert!(self.cmd_tx.send(command(respond)).await.is_ok());
+            reply.await.expect("the loop answers")
+        }
+    }
+
+    /// Ten-second output intervals on one stable orbit.
+    const TEN_SECOND_INTERVALS: &str = r#"
+dt = 1
+output_interval = 10
+
+[[satellites]]
+id = "sat-a"
+orbit = { type = "circular", altitude = 500 }
+"#;
+
+    /// Sim time and wall time agree to within this. The clock is paused, so
+    /// the only slack is the loop's own polling.
+    const WALL_TOLERANCE: Duration = Duration::from_millis(1);
+
+    fn assert_wall_time(at: Duration, expected_secs: f64) {
+        let expected = Duration::from_secs_f64(expected_secs);
+        assert!(
+            at.abs_diff(expected) <= WALL_TOLERANCE,
+            "broadcast at {at:?}, expected {expected:?}"
+        );
+    }
+
+    /// `--realtime`: each state goes out when its sim time is due on the wall
+    /// clock, 1 sim s per wall s from the start, not ahead of it.
+    #[tokio::test(start_paused = true)]
+    async fn realtime_states_go_out_when_their_sim_time_is_due() {
+        let mut sim = LoopUnderTest::spawn(TEN_SECOND_INTERVALS, Pacing::Realtime);
+        for expected_t in [10.0, 20.0, 30.0] {
+            let (t, at) = sim.next_state().await;
+            assert_eq!(t, expected_t);
+            assert_wall_time(at, t);
+        }
+    }
+
+    /// Without `--realtime` the same simulation runs far ahead of the wall
+    /// clock — the contrast that makes the realtime test above mean something.
+    #[tokio::test(start_paused = true)]
+    async fn accelerated_states_run_ahead_of_the_wall_clock() {
+        let mut sim = LoopUnderTest::spawn(TEN_SECOND_INTERVALS, Pacing::Accelerated);
+        let mut last = (0.0, Duration::ZERO);
+        while last.0 < 30.0 {
+            last = sim.next_state().await;
+        }
+        assert!(
+            last.1 < Duration::from_secs(1),
+            "t = {} went out at {:?}",
+            last.0,
+            last.1
+        );
+    }
+
+    /// A client connecting or querying in the middle of a realtime interval
+    /// sees the history only up to the states already sent. The interval was
+    /// stepped when its start was due, so its state is in the history while it
+    /// waits for its own time; handing it out early would show a reconnecting
+    /// client the future the broadcast is holding back.
+    #[tokio::test(start_paused = true)]
+    async fn realtime_history_stops_at_what_has_been_sent() {
+        const SIXTY_SECOND_INTERVALS: &str = r#"
+dt = 10
+output_interval = 60
+
+[[satellites]]
+id = "sat-a"
+orbit = { type = "circular", altitude = 500 }
+"#;
+        let mut sim = LoopUnderTest::spawn(SIXTY_SECOND_INTERVALS, Pacing::Realtime);
+        tokio::time::sleep(Duration::from_secs(5)).await;
+
+        let latest_t = |states: &[crate::sim::core::HistoryState]| {
+            states.iter().map(|s| s.t).fold(f64::NEG_INFINITY, f64::max)
+        };
+        let (respond, reply) = oneshot::channel();
+        assert!(
+            sim.cmd_tx
+                .send(SimCommand::GetStatus { respond })
+                .await
+                .is_ok()
+        );
+        let SimStatusResponse::Running { history_states, .. } = reply.await.unwrap() else {
+            panic!("the simulation is running");
+        };
+        assert_eq!(latest_t(&history_states), 0.0, "status at 5 s");
+
+        let (respond, reply) = oneshot::channel();
+        let query = SimCommand::QueryRange {
+            t_min: 0.0,
+            t_max: 1000.0,
+            max_points: None,
+            entity_path: None,
+            respond,
+        };
+        assert!(sim.cmd_tx.send(query).await.is_ok());
+        assert_eq!(latest_t(&reply.await.unwrap()), 0.0, "query at 5 s");
+
+        // Once t = 60 has gone out, it is history like any other.
+        let (t, _) = sim.next_state().await;
+        assert_eq!(t, 60.0);
+        let (respond, reply) = oneshot::channel();
+        let query = SimCommand::QueryRange {
+            t_min: 0.0,
+            t_max: 1000.0,
+            max_points: None,
+            entity_path: None,
+            respond,
+        };
+        assert!(sim.cmd_tx.send(query).await.is_ok());
+        assert_eq!(
+            latest_t(&reply.await.unwrap()),
+            60.0,
+            "query after the send"
+        );
+    }
+
+    /// A satellite added in the middle of a realtime interval is added at
+    /// once — the client's connection reads nothing else until the reply —
+    /// and joins at the interval's end, where the engine already stands. Its
+    /// broadcasts wait for that time with the fleet's: sent at once, its
+    /// first state at t = 60 went out at 5 s.
+    #[tokio::test(start_paused = true)]
+    async fn realtime_add_satellite_answers_at_once_and_its_states_wait() {
+        const SIXTY_SECOND_INTERVALS: &str = r#"
+dt = 10
+output_interval = 60
+
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+"#;
+        let mut sim = LoopUnderTest::spawn(SIXTY_SECOND_INTERVALS, Pacing::Realtime);
+        tokio::time::sleep(Duration::from_secs(5)).await;
+
+        let satellite: SatelliteConfig = serde_json::from_value(serde_json::json!({
+            "id": "b",
+            "orbit": { "type": "circular", "altitude": 600.0 },
+        }))
+        .expect("a valid satellite");
+        let (respond, reply) = oneshot::channel();
+        let add = SimCommand::AddSatellite {
+            satellite: Box::new(satellite),
+            respond,
+        };
+        assert!(sim.cmd_tx.send(add).await.is_ok());
+        let (_, t) = reply.await.expect("answered").expect("added");
+        assert_eq!(t, 60.0, "joins at the interval's end");
+        assert_wall_time(sim.started.elapsed(), 5.0);
+
+        // Nothing past t = 0 goes out before 60 s: not the fleet's state, not
+        // the new satellite's announcement or its first state.
+        let mut seen_added = false;
+        let mut seen_b_state = false;
+        while !(seen_added && seen_b_state) {
+            let msg = sim.rx.recv().await.expect("broadcasting");
+            let v: serde_json::Value = serde_json::from_str(&msg).unwrap();
+            let after_start = v["type"] == "satellite_added"
+                || (v["type"] == "state" && v["t"].as_f64().unwrap() > 0.0);
+            if after_start {
+                assert_wall_time(sim.started.elapsed(), 60.0);
+            }
+            seen_added |= v["type"] == "satellite_added";
+            seen_b_state |=
+                v["type"] == "state" && v["entity_path"].as_str().unwrap().ends_with("/b");
+        }
+    }
+
+    /// The status a client gets during a realtime wait.
+    async fn status_now(sim: &LoopUnderTest) -> (Vec<String>, Vec<crate::sim::core::HistoryState>) {
+        let (respond, reply) = oneshot::channel();
+        assert!(
+            sim.cmd_tx
+                .send(SimCommand::GetStatus { respond })
+                .await
+                .is_ok()
+        );
+        match reply.await.unwrap() {
+            SimStatusResponse::Running {
+                terminated_events,
+                history_states,
+                ..
+            } => (terminated_events, history_states),
+            _ => panic!("the simulation is running"),
+        }
+    }
+
+    /// A satellite that comes down inside a realtime interval is announced
+    /// with the interval's states, when its end is due, and a status taken
+    /// before then does not list it. Sent at once, the viewer marked it
+    /// terminated minutes of sim time early.
+    #[tokio::test(start_paused = true)]
+    async fn realtime_termination_waits_for_its_interval() {
+        const DECAYING: &str = r#"
+dt = 1
+output_interval = 600
+
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 100.1 }
+"#;
+        let mut sim = LoopUnderTest::spawn(DECAYING, Pacing::Realtime);
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        let (terminated, _) = status_now(&sim).await;
+        assert!(terminated.is_empty(), "listed early: {terminated:?}");
+
+        loop {
+            let msg = sim.rx.recv().await.expect("broadcasting");
+            let v: serde_json::Value = serde_json::from_str(&msg).unwrap();
+            if v["type"] == "simulation_terminated" {
+                assert!(v["t"].as_f64().unwrap() < 600.0, "{v}");
+                assert_wall_time(sim.started.elapsed(), 600.0);
+                break;
+            }
+        }
+    }
+
+    /// A status taken during a realtime wait ends at the newest state sent,
+    /// once the overview has started thinning out. The overview keeps its
+    /// newest sample by overwriting its last one, so the not-yet-sent state
+    /// had replaced the newest sent one, and cutting it off left the status
+    /// ending an interval or more early.
+    #[tokio::test(start_paused = true)]
+    async fn realtime_status_ends_at_the_newest_state_sent() {
+        let mut sim = LoopUnderTest::spawn(TEN_SECOND_INTERVALS, Pacing::Realtime);
+        // Past `OVERVIEW_MAX_POINTS_PER_ENTITY` samples, where thinning starts.
+        let intervals = 2 * super::super::history::OVERVIEW_MAX_POINTS_PER_ENTITY;
+        let mut newest_sent = 0.0;
+        for _ in 0..intervals {
+            newest_sent = sim.next_state().await.0;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        let (_, history) = status_now(&sim).await;
+        let newest = history
+            .iter()
+            .map(|s| s.t)
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert_eq!(newest, newest_sent);
+    }
+
+    /// A pause and a resume that arrive together in the middle of an interval
+    /// still re-anchor the clock: the run carries on 1:1 from the resume. The
+    /// resume used to be handled before the loop looked for the pause, which
+    /// kept the old anchor, so the next state waited out its old due time.
+    #[tokio::test(start_paused = true)]
+    async fn realtime_pause_and_resume_together_re_anchor() {
+        let mut sim = LoopUnderTest::spawn(TEN_SECOND_INTERVALS, Pacing::Realtime);
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        let (pause, paused) = oneshot::channel();
+        let (resume, resumed) = oneshot::channel();
+        assert!(
+            sim.cmd_tx
+                .send(SimCommand::Pause { respond: pause })
+                .await
+                .is_ok()
+        );
+        assert!(
+            sim.cmd_tx
+                .send(SimCommand::Resume { respond: resume })
+                .await
+                .is_ok()
+        );
+        paused.await.unwrap().expect("pauses");
+        resumed.await.unwrap().expect("resumes");
+
+        let (t, at) = sim.next_state().await;
+        assert_eq!(t, 10.0);
+        assert_wall_time(at, 2.0);
+        let (t, at) = sim.next_state().await;
+        assert_eq!(t, 20.0);
+        assert_wall_time(at, 12.0);
+    }
+
+    /// A pause in the middle of a long realtime interval is answered at once,
+    /// and the state that interval produced goes out with it. A resume then
+    /// carries on at 1:1 from where it resumed, without stepping back to back
+    /// to make up the time spent paused.
+    #[tokio::test(start_paused = true)]
+    async fn realtime_pause_is_immediate_and_resume_does_not_catch_up() {
+        const SIXTY_SECOND_INTERVALS: &str = r#"
+dt = 10
+output_interval = 60
+
+[[satellites]]
+id = "sat-a"
+orbit = { type = "circular", altitude = 500 }
+"#;
+        let mut sim = LoopUnderTest::spawn(SIXTY_SECOND_INTERVALS, Pacing::Realtime);
+        tokio::time::sleep(Duration::from_secs(5)).await;
+
+        sim.send(|respond| SimCommand::Pause { respond })
+            .await
+            .expect("a running simulation pauses");
+        assert_wall_time(sim.started.elapsed(), 5.0);
+        let (t, at) = sim.next_state().await;
+        assert_eq!(t, 60.0, "the interval stepped before the pause");
+        assert_wall_time(at, 5.0);
+
+        tokio::time::sleep(Duration::from_secs(100)).await;
+        sim.send(|respond| SimCommand::Resume { respond })
+            .await
+            .expect("a paused simulation resumes");
+        // The paused loop looks at its commands every 100 ms.
+        let resumed = sim.started.elapsed();
+        assert!(resumed.abs_diff(Duration::from_secs(105)) <= Duration::from_millis(100));
+
+        let (t, at) = sim.next_state().await;
+        assert_eq!(t, 120.0);
+        assert!(
+            at.abs_diff(resumed + Duration::from_secs(60)) <= WALL_TOLERANCE,
+            "t = 120 went out at {at:?}, 60 s after the resume at {resumed:?}"
+        );
+    }
+
     /// What `handle_command` replied to a pause or a resume, and what it
     /// broadcast.
     fn pause_or_resume(
@@ -815,7 +1397,7 @@ mod tests {
     ) -> (Result<(), String>, Vec<String>) {
         let (tx, mut rx) = broadcast::channel(16);
         let (respond, mut reply) = oneshot::channel();
-        let flow = handle_command(engine, paused, &tx, command(respond));
+        let flow = handle_command(engine, paused, &tx, command(respond), None);
         assert!(flow.is_continue(), "neither command ends the run");
         let reply = reply.try_recv().expect("the command is answered at once");
         let sent = std::iter::from_fn(|| rx.try_recv().ok()).collect();
@@ -1102,10 +1684,11 @@ altitude = 400.0
         );
     }
 
-    /// A chunk that finished sends its broadcasts and leaves its samples to be
-    /// paced against the wall clock.
+    /// A chunk that finished leaves its samples and its terminations to the
+    /// caller, which paces them against the wall clock: a realtime interval
+    /// holds its terminations back with its states.
     #[test]
-    fn a_finished_chunk_leaves_its_samples_to_be_paced() {
+    fn a_finished_chunk_leaves_its_samples_and_terminations_to_the_caller() {
         let (tx, mut rx) = broadcast::channel(16);
         let delivery = deliver_chunk(
             &tx,
@@ -1117,13 +1700,9 @@ altitude = 400.0
 
         assert!(!delivery.halted, "a termination is not a fault");
         assert_eq!(delivery.to_pace.len(), 2, "the samples are the caller's");
-        let sent: Vec<String> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
-        assert_eq!(
-            sent.len(),
-            1,
-            "only the broadcast goes out from here: {sent:?}"
-        );
-        assert!(sent[0].contains("simulation_terminated"));
+        assert_eq!(delivery.broadcasts.len(), 1, "so is the termination");
+        assert!(delivery.broadcasts[0].contains("simulation_terminated"));
+        assert!(rx.try_recv().is_err(), "nothing goes out from here");
     }
 
     /// A WebSocket `start_simulation` goes through the same config gate as
@@ -1229,7 +1808,7 @@ orbit = { type = "circular", altitude = 500 }
         ));
         let body_radius = params.body.properties().radius;
         let history = HistoryBuffer::new(5000, data_dir, params.mu, body_radius);
-        let mut engine = ServeEngine::build(params, history)
+        let mut engine = ServeEngine::build(params, history, Pacing::Accelerated)
             .expect("an orbit-only engine builds")
             .engine;
         let satellite: SatelliteConfig = serde_json::from_value(serde_json::json!({
@@ -1251,6 +1830,7 @@ orbit = { type = "circular", altitude = 500 }
                 satellite: Box::new(satellite),
                 respond,
             },
+            None,
         );
         assert!(
             flow.is_continue(),

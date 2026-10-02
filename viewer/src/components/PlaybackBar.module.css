@@ -78,6 +78,19 @@
   cursor: pointer;
 }
 
+.speedLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--orts-space-xs);
+  color: var(--orts-text-secondary);
+  font-size: var(--orts-font-size-sm);
+}
+
+.speedSelect:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .timeDisplay {
   color: var(--orts-text-data);
   font-family: var(--orts-font-mono);
