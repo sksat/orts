@@ -113,6 +113,54 @@ export function pacingOfChoice(choice: PacingChoice): Pacing | undefined {
   return choice === "" ? undefined : choice;
 }
 
+/** The integration step and the output interval, in seconds. */
+export interface Steps {
+  dt: number;
+  outputInterval: number;
+}
+
+/**
+ * The step defaults for a pacing. Realtime sends a state per output interval
+ * of wall time, so it gets 0.1 s steps (10 states a second); accelerated keeps
+ * the 1 s / 10 s it has always had, which the server plays out 100x faster.
+ */
+export function defaultStepsFor(pacing: Pacing): Steps {
+  return pacing === "realtime" ? { dt: 0.1, outputInterval: 0.1 } : { dt: 1, outputInterval: 10 };
+}
+
+/**
+ * The steps a start sends: each one the user typed (non-null in `typed`),
+ * else the default for the pacing the start will run at. "Server default"
+ * runs at what the server's idle status said, and accelerated before it has
+ * said anything — the pacing a server without `--realtime` runs at.
+ *
+ * A default filled in next to a typed value is fitted around it, since the
+ * server refuses an output interval below dt: a typed dt raises the output
+ * interval to at least itself, a typed output interval caps dt. Two typed
+ * values are sent as typed, and the server says what is wrong with them.
+ */
+export function resolveSteps(
+  typed: { dt: number | null; outputInterval: number | null },
+  choice: PacingChoice,
+  serverDefault: Pacing | null,
+): Steps {
+  const pacing = pacingOfChoice(choice) ?? serverDefault ?? "accelerated";
+  const defaults = defaultStepsFor(pacing);
+  if (typed.dt !== null && typed.outputInterval !== null) {
+    return { dt: typed.dt, outputInterval: typed.outputInterval };
+  }
+  if (typed.dt !== null) {
+    return { dt: typed.dt, outputInterval: Math.max(defaults.outputInterval, typed.dt) };
+  }
+  if (typed.outputInterval !== null) {
+    return {
+      dt: Math.min(defaults.dt, typed.outputInterval),
+      outputInterval: typed.outputInterval,
+    };
+  }
+  return defaults;
+}
+
 export interface SimConfigFormProps {
   /** `pacing` left out runs at the server's default. */
   onStart: (config: SimConfig, pacing?: Pacing) => void;
@@ -129,10 +177,17 @@ export function SimConfigForm({ onStart, serverDefaultPacing = null }: SimConfig
   const [tleLine1, setTleLine1] = useState("");
   const [tleLine2, setTleLine2] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [dt, setDt] = useState(1);
-  const [outputInterval, setOutputInterval] = useState(10);
+  // null until the user types one: the speed's default shows meanwhile, and
+  // follows the speed when it changes.
+  const [typedDt, setTypedDt] = useState<number | null>(null);
+  const [typedOutputInterval, setTypedOutputInterval] = useState<number | null>(null);
   const [atmosphere, setAtmosphere] = useState("exponential");
   const [pacingChoice, setPacingChoice] = useState<PacingChoice>("");
+  const { dt, outputInterval } = resolveSteps(
+    { dt: typedDt, outputInterval: typedOutputInterval },
+    pacingChoice,
+    serverDefaultPacing,
+  );
 
   const handleStart = useCallback(() => {
     const config = buildSimConfig({
@@ -294,9 +349,9 @@ export function SimConfigForm({ onStart, serverDefaultPacing = null }: SimConfig
               type="number"
               className={styles.input}
               value={dt}
-              onChange={(e) => setDt(Number(e.target.value))}
+              onChange={(e) => setTypedDt(Number(e.target.value))}
               min={0.1}
-              step={0.5}
+              step="any"
             />
           </label>
           <label className={styles.label}>
@@ -305,9 +360,9 @@ export function SimConfigForm({ onStart, serverDefaultPacing = null }: SimConfig
               type="number"
               className={styles.input}
               value={outputInterval}
-              onChange={(e) => setOutputInterval(Number(e.target.value))}
-              min={1}
-              step={5}
+              onChange={(e) => setTypedOutputInterval(Number(e.target.value))}
+              min={0.1}
+              step="any"
             />
           </label>
           <label className={styles.label}>

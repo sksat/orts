@@ -2092,7 +2092,12 @@ section is subdivided by package.
 #### Added
 - The simulation config dialog has a Speed choice: the server's default
   (named once the server's idle status says what it is), realtime, or
-  accelerated. The playback bar's mode label names the server's pace while
+  accelerated. The dt and output interval follow it until the user types
+  one: 0.1 s / 0.1 s for realtime, which sends a state per output interval of
+  wall time, and the 1 s / 10 s they had for accelerated. A default next to a
+  typed value is fitted around it, so the output interval stays at least dt
+  as the server requires. The output interval
+  now accepts values below 1 s. The playback bar's mode label names the server's pace while
   Live (`Live · realtime`), and its speed menu is labelled Replay and disabled
   while Live, where it never applied: it sets how fast Play steps through the
   history already received, not how fast the server simulates.

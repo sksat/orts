@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildSimConfig, PRESETS, pacingChoices, pacingOfChoice } from "./SimConfigForm.js";
+import {
+  buildSimConfig,
+  defaultStepsFor,
+  PRESETS,
+  pacingChoices,
+  pacingOfChoice,
+  resolveSteps,
+} from "./SimConfigForm.js";
 
 describe("buildSimConfig", () => {
   it("builds config from ISS preset with NORAD orbit and attitude", () => {
@@ -175,5 +182,45 @@ describe("speed choices", () => {
     expect(pacingOfChoice("")).toBeUndefined();
     expect(pacingOfChoice("realtime")).toBe("realtime");
     expect(pacingOfChoice("accelerated")).toBe("accelerated");
+  });
+});
+
+describe("dt and output interval follow the speed", () => {
+  it("defaults realtime to 0.1 s steps and accelerated to 1 s / 10 s", () => {
+    // Realtime sends a state per output interval of wall time, so the
+    // accelerated default (one every 10 s) would leave the view still.
+    expect(defaultStepsFor("realtime")).toEqual({ dt: 0.1, outputInterval: 0.1 });
+    expect(defaultStepsFor("accelerated")).toEqual({ dt: 1, outputInterval: 10 });
+  });
+
+  it("takes the defaults of the pacing the start will run at", () => {
+    const none = { dt: null, outputInterval: null };
+    expect(resolveSteps(none, "realtime", null)).toEqual({ dt: 0.1, outputInterval: 0.1 });
+    // "Server default" follows what the server said its default is…
+    expect(resolveSteps(none, "", "realtime")).toEqual({ dt: 0.1, outputInterval: 0.1 });
+    expect(resolveSteps(none, "", "accelerated")).toEqual({ dt: 1, outputInterval: 10 });
+    // …and, before the server has said, the accelerated one it has always had.
+    expect(resolveSteps(none, "", null)).toEqual({ dt: 1, outputInterval: 10 });
+  });
+
+  it("keeps a value the user typed whichever speed is chosen", () => {
+    const typedDt = { dt: 5, outputInterval: null };
+    expect(resolveSteps(typedDt, "accelerated", null)).toEqual({ dt: 5, outputInterval: 10 });
+    const typedBoth = { dt: 2, outputInterval: 4 };
+    expect(resolveSteps(typedBoth, "realtime", null)).toEqual({ dt: 2, outputInterval: 4 });
+  });
+
+  it("fits the default it fills in around the value the user typed", () => {
+    // The server refuses an output interval below dt. A typed dt of 5 s with
+    // realtime's 0.1 s output, or a typed 0.5 s output with accelerated's
+    // 1 s dt, would make the start fail on a field the user never touched.
+    const typedDt = { dt: 5, outputInterval: null };
+    expect(resolveSteps(typedDt, "realtime", null)).toEqual({ dt: 5, outputInterval: 5 });
+    const typedOutput = { dt: null, outputInterval: 0.5 };
+    expect(resolveSteps(typedOutput, "accelerated", null)).toEqual({
+      dt: 0.5,
+      outputInterval: 0.5,
+    });
+    expect(resolveSteps(typedOutput, "realtime", null)).toEqual({ dt: 0.1, outputInterval: 0.5 });
   });
 });

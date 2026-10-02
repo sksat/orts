@@ -1679,7 +1679,11 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 
 #### Added
 - simulation の設定 dialog に Speed の選択を追加した: server の既定 (server の
-  idle status が伝えた値を併記)、realtime、accelerated。playback bar の mode 表示は
+  idle status が伝えた値を併記)、realtime、accelerated。dt と output interval は、
+  ユーザーが入力するまでこの選択に合わせて切り替わる: realtime は 0.1 s / 0.1 s
+  (wall time の output interval ごとに state を送るため)、accelerated は従来の
+  1 s / 10 s。片方だけ入力したときは、server の要件 (output interval ≥ dt) を満たす
+  ように、もう片方の既定値を合わせる。output interval に 1 s 未満も入力できるようにした。playback bar の mode 表示は
   Live 中に server の速さを示し (`Live · realtime`)、速度 menu は Replay と表記して
   Live 中は無効にした。この menu は受信済みの履歴を Play で再生する速さで、Live の
   速さや server が simulation する速さではない。
