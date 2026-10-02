@@ -5,6 +5,8 @@ dist/
 dist-lib/
 test-results/
 .playwright-mcp/
+# vlmkit run ledger and default snapshot output
+.vlmkit/
 
 # Prevent debug screenshots from accumulating in repo root
 /*.png
