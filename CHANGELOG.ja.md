@@ -1910,6 +1910,17 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   — 例: <https://sksat.github.io/orts/llms.txt> を agent に渡す。`llms-full.txt`
   は全文、`llms-small.txt` は自動生成 API リファレンスを除いた要約版。([#225](https://github.com/sksat/orts/pull/225))
 
+#### Changed
+- ドキュメントサイトを orts のブランド色（ink / paper の地、ブランドの青の accent）にした。本文中の
+  リンクの下線を太くし、sidebar の現在ページはブランドの青の塗りと太字で示す。現在ページの塗りの上の
+  文字も含めて、どの文字色も、通常の見え方と P 型・D 型・T 型のシミュレーションで、Starlight の既定
+  以上の contrast を保つ。focus の枠は 3:1 を保つ。
+- ドキュメントサイトのヘッダを 96px から 72px に低くし、背景を半透明にした。wordmark の大きさ（描かれる
+  部分が約 84×48px）は変えていない。サイト用に複製した SVG の `viewBox` を図形の周りに切り直し、高い
+  ヘッダが要る原因だった余白をなくした。
+- ドキュメントサイトのページタイトルの下に軌道の弧を描き、link button をピル形から角丸 6px に、inline code
+  を角丸 4px にした。
+
 #### Fixed
 - ドキュメントサイトのコードブロックが light テーマでもシンタックスハイライトされるようにした。Starlight
   既定の light 用コードテーマはコマンドと文字列を同じ青で塗っていた。One Dark Pro / One Light に替え、

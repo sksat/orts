@@ -1,13 +1,143 @@
+/*
+ * orts brand for the docs site. Colours come from assets/README.md; grays keep
+ * a slight hue (250 on ink, the paper's own 86.8 on paper) instead of neutral.
+ *
+ * Every text colour is at least as far from its ground as Starlight's default
+ * is from Starlight's ground, in normal vision and in protanopia,
+ * deuteranopia and tritanopia simulations. On ink that is Starlight's own
+ * lightness; paper is darker than white, so the light-mode text is darker.
+ *
+ * Nothing here relies on colour alone: links are underlined, the current
+ * sidebar entry has a bar and a heavier weight, focus is a thick outline.
+ */
+
 :root {
-  --sl-nav-height: 6rem;
+  --sl-color-white: #fff;
+  --sl-color-gray-1: oklch(0.95 0.016 250);
+  --sl-color-gray-2: oklch(0.816 0.016 250);
+  --sl-color-gray-3: oklch(0.639 0.016 250);
+  --sl-color-gray-4: oklch(0.464 0.016 250);
+  --sl-color-gray-5: oklch(0.341 0.016 250);
+  --sl-color-gray-6: oklch(0.27 0.016 250);
+  --sl-color-black: #0e0e10;
+  --sl-color-accent-low: oklch(0.28 0.06 240);
+  --sl-color-accent: oklch(0.58 0.12 240);
+  --sl-color-accent-high: oklch(0.8 0.1 240);
+  /* Links on ink: Starlight's default link is 10.5:1; C 0.08 is the most
+     chroma sRGB allows at the L that matches it. */
+  --sl-color-text-accent: oklch(0.84 0.08 240);
+  --sl-color-orange-low: oklch(0.3 0.06 70);
+  --sl-color-orange: oklch(0.72 0.12 70);
+  --sl-color-orange-high: oklch(0.86 0.09 70);
+  --sl-color-blue-low: var(--sl-color-accent-low);
+  --sl-color-blue: var(--sl-color-accent);
+  --sl-color-blue-high: var(--sl-color-accent-high);
+
+  --orts-focus: oklch(0.8 0.1 240);
+  /* Current sidebar entry: a solid fill, ink text 8.96:1 on it (Starlight's
+     default pair is 8.37:1). */
+  --orts-current-bg: oklch(0.8 0.1 240);
+  --orts-current-fg: #0e0e10;
+  --orts-radius: 6px;
+  --orts-hairline: color-mix(in oklab, var(--sl-color-gray-5) 70%, transparent);
+
+  --sl-nav-height: 4.5rem;
 }
 
-a.site-title img {
-  height: calc(var(--sl-nav-height) - 1rem);
-  max-height: none;
+:root[data-theme="light"] {
+  --sl-color-white: oklch(0.135 0.016 86.8);
+  --sl-color-gray-1: oklch(0.226 0.016 86.8);
+  --sl-color-gray-2: oklch(0.308 0.016 86.8);
+  --sl-color-gray-3: oklch(0.435 0.016 86.8);
+  --sl-color-gray-4: oklch(0.608 0.016 86.8);
+  /* Surfaces keep their step from paper, as Starlight's do from white. */
+  --sl-color-gray-5: oklch(0.814 0.011 86.8);
+  --sl-color-gray-6: oklch(0.905 0.008 86.8);
+  --sl-color-gray-7: oklch(0.935 0.006 86.8);
+  --sl-color-black: #f5f1e8;
+  --sl-color-accent-low: oklch(0.9 0.05 240);
+  /* Links on paper: Starlight's default link is 5.75:1 on white. C 0.105 is
+     the most sRGB allows at this L. */
+  --sl-color-accent: oklch(0.464 0.105 240);
+  --sl-color-accent-high: oklch(0.4 0.09 240);
+  --sl-color-text-accent: oklch(0.464 0.105 240);
+  --sl-color-orange-low: oklch(0.9 0.05 70);
+  /* C 0.12 leaves sRGB at the L needed for 4.5:1 on paper. */
+  --sl-color-orange: oklch(0.54 0.11 70);
+  --sl-color-orange-high: oklch(0.4 0.085 70);
+  --sl-color-blue-low: var(--sl-color-accent-low);
+  --sl-color-blue: var(--sl-color-accent);
+  --sl-color-blue-high: var(--sl-color-accent-high);
+
+  --orts-focus: oklch(0.45 0.1 240);
+  /* White text 6.39:1 on the fill (Starlight's default pair is 5.64:1). */
+  --orts-current-bg: var(--sl-color-accent);
+  --orts-current-fg: #fff;
 }
 
-/* Pull the brand wordmark flush to the viewport edge */
+/* Header: translucent over the page, one hairline. */
 header.header {
-  padding-inline-start: 0;
+  background: color-mix(in oklab, var(--sl-color-black) 78%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  backdrop-filter: blur(14px) saturate(1.2);
+  border-bottom: 1px solid var(--orts-hairline);
+}
+
+/* The logo is assets/orts-wordmark-on-*.svg with the viewBox cut down to the
+   drawing, so the height sets the drawn size. The crop leaves room on the
+   right because "orts" is <text> and an <img> draws it in a fallback font
+   whose width varies by platform. */
+a.site-title img {
+  height: 3.35rem;
+}
+
+h1#_top,
+.sl-markdown-content :is(h2, h3, h4),
+.hero h1 {
+  text-wrap: balance;
+}
+h1#_top {
+  padding-bottom: 1.3rem;
+  /* An orbit arc under the page title: brand blue #2382ba, amber #d49648. */
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='22' viewBox='0 0 260 22'%3E%3Cpath d='M2 20 Q130 -6 258 20' fill='none' stroke='%232382ba' stroke-width='1.25' stroke-opacity='.75'/%3E%3Ccircle cx='186' cy='9.3' r='3.2' fill='%23d49648'/%3E%3C/svg%3E")
+    left bottom / 260px 22px no-repeat;
+}
+
+/* Links in prose: underlined, so they read without their colour. */
+.sl-markdown-content a:not(:where(.not-content *)) {
+  text-decoration-line: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 0.22em;
+}
+.sl-markdown-content a:not(:where(.not-content *)):hover {
+  text-decoration-thickness: 2.5px;
+}
+
+:where(a, button, summary, input, select):focus-visible {
+  outline: 3px solid var(--orts-focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Sidebar: the current page is a solid fill far from the ground in lightness,
+   so it reads in every colour vision, plus a heavier weight. */
+.sidebar-pane {
+  background: var(--sl-color-black);
+  border-inline-end: 1px solid var(--orts-hairline);
+}
+.sidebar-content a[aria-current="page"],
+.sidebar-content a[aria-current="page"]:hover,
+.sidebar-content a[aria-current="page"]:focus {
+  background: var(--orts-current-bg);
+  color: var(--orts-current-fg);
+  font-weight: 700;
+}
+
+.sl-markdown-content code:not(pre code) {
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+.sl-link-button {
+  border-radius: var(--orts-radius);
 }
