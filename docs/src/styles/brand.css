@@ -41,7 +41,7 @@
   --orts-radius: 6px;
   --orts-hairline: color-mix(in oklab, var(--sl-color-gray-5) 70%, transparent);
 
-  --sl-nav-height: 3.75rem;
+  --sl-nav-height: 4.5rem;
 }
 
 :root[data-theme="light"] {
@@ -88,7 +88,7 @@ header.header {
    right because "orts" is <text> and an <img> draws it in a fallback font
    whose width varies by platform. */
 a.site-title img {
-  height: 2.5rem;
+  height: 3.35rem;
 }
 
 h1#_top,

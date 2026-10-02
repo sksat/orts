@@ -2371,9 +2371,10 @@ section is subdivided by package.
   colour, including the current entry's text on its fill, keeps at least the
   contrast Starlight's default had, in normal vision and in protanopia,
   deuteranopia and tritanopia simulations; the focus outline keeps 3:1.
-- The documentation site's header is 60px tall instead of 96px and
-  translucent. The wordmark's drawing shrinks from 84×48px to 64×36px: the
-  site's copy of the SVG has its viewBox cut down to the drawing.
+- The documentation site's header is 72px tall instead of 96px and
+  translucent. The wordmark keeps its size (about 84×48px drawn): the site's
+  copy of the SVG has its viewBox cut down to the drawing, so the margin that
+  needed the taller header is gone.
 - On the documentation site, the page title has an orbit arc drawn under it,
   link buttons have 6px corners instead of a pill shape, and inline code has
   4px corners.
