@@ -46,7 +46,7 @@
   },
   "devDependencies": {
     "@duckdb/duckdb-wasm": "1.32.0",
-    "@mizchi/vlmkit": "^0.22.0",
+    "@mizchi/vlmkit": "^0.23.2",
     "@playwright/test": "^1.58.2",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.5.0",

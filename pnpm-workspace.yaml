@@ -33,3 +33,6 @@ minimumReleaseAgeExclude:
   - astro@7.1.0 || 7.2.8
   # Renovate security update: mermaid@11.16.1
   - mermaid@11.16.1
+  # 0.23 is the first release that skips aria-disabled controls in
+  # `check interactions`; drop this once it is older than the policy.
+  - "@mizchi/vlmkit@0.23.2"
