@@ -5,6 +5,7 @@ import type { AttitudePayload } from "../protocol/generated/AttitudePayload.js";
 import type { ClientMessage } from "../protocol/generated/ClientMessage.js";
 import type { HistoryState } from "../protocol/generated/HistoryState.js";
 import type { ModelTorque } from "../protocol/generated/ModelTorque.js";
+import type { Pacing } from "../protocol/generated/Pacing.js";
 import type { SatelliteInfo as WireSatelliteInfo } from "../protocol/generated/SatelliteInfo.js";
 import type { WsMessage } from "../protocol/generated/WsMessage.js";
 import type { MarkerShape } from "../satelliteShapes.js";
@@ -40,6 +41,11 @@ export interface SimInfo {
   epoch_jd: number | null;
   /** List of satellites in the simulation. */
   satellites: SatelliteInfo[];
+  /**
+   * How fast the server runs the simulation against the wall clock. Absent
+   * when nothing runs one (a recording) or the server predates the field.
+   */
+  pacing?: Pacing;
   /**
    * Models whose torque this source carries, per satellite id.
    *
@@ -81,8 +87,11 @@ export interface UseWebSocketOptions {
   onQueryRangeResponse?: (response: QueryRangeResponse) => void;
   /** Called when a satellite's simulation terminates (collision, atmospheric entry, etc.). */
   onSimulationTerminated?: (entityPath: string, t: number, reason: string) => void;
-  /** Called when the server sends its status (e.g. "idle"). */
-  onStatus?: (state: string) => void;
+  /**
+   * Called when the server sends its status (e.g. "idle"). An idle status
+   * also says which pacing a `start_simulation` naming none would run at.
+   */
+  onStatus?: (state: string, defaultPacing?: Pacing) => void;
   /** Called when the server sends an error message. */
   onError?: (message: string) => void;
   /** Called when the server notifies that high-res textures are available for a body. */
@@ -98,7 +107,7 @@ export interface DispatchCallbacks {
   onHistory?: (points: OrbitPoint[]) => void;
   onQueryRangeResponse?: (response: QueryRangeResponse) => void;
   onSimulationTerminated?: (entityPath: string, t: number, reason: string) => void;
-  onStatus?: (state: string) => void;
+  onStatus?: (state: string, defaultPacing?: Pacing) => void;
   onError?: (message: string) => void;
   onTexturesReady?: (body: string) => void;
   onSatelliteAdded?: (satellite: SatelliteInfo, t: number) => void;
@@ -247,6 +256,7 @@ export function dispatchServerMessage(
       central_body_radius: resolved.body.bodyRadius,
       epoch_jd: msg.epoch_jd ?? null,
       satellites,
+      ...(msg.pacing !== undefined && { pacing: msg.pacing }),
     });
   } else if (msg.type === "history") {
     callbacks.onHistory?.(parseHistoryPoints(msg.states));
@@ -259,7 +269,7 @@ export function dispatchServerMessage(
   } else if (msg.type === "simulation_terminated") {
     callbacks.onSimulationTerminated?.(msg.entity_path, msg.t, msg.reason);
   } else if (msg.type === "status") {
-    callbacks.onStatus?.(msg.state);
+    callbacks.onStatus?.(msg.state, msg.default_pacing);
   } else if (msg.type === "error") {
     callbacks.onError?.(msg.message);
   } else if (msg.type === "textures_ready") {

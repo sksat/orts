@@ -46,13 +46,45 @@ export function computeTrailDrawStarts(
   return starts;
 }
 
+/** The span of sim time the slider covers, and where on it the view is. */
+export interface PlaybackTimeline {
+  start: number;
+  end: number;
+  fraction: number;
+}
+
+/**
+ * The slider's span and the view's place on it.
+ *
+ * `frozenEnd` is null while Live: the span then runs to the newest state.
+ * Outside Live it is the newest state's time when the view left Live, so the
+ * thumb is measured against a fixed span: the server keeps sending states
+ * while the view is paused or replaying, and measured against those the thumb
+ * slid back on its own. Playback past the frozen end stretches it, never
+ * beyond what the buffers hold. A frozen end the buffers have dropped (older
+ * than their oldest point) is let go of, so the span never runs backwards.
+ */
+export function computePlaybackTimeline(
+  tMin: number,
+  tMax: number,
+  currentTime: number,
+  frozenEnd: number | null,
+): PlaybackTimeline {
+  const frozen = frozenEnd !== null && frozenEnd >= tMin ? frozenEnd : null;
+  const end = frozen === null ? tMax : Math.min(tMax, Math.max(frozen, currentTime));
+  const span = end - tMin;
+  const fraction = span > 0 ? Math.min(1, Math.max(0, (currentTime - tMin) / span)) : 1;
+  return { start: tMin, end, fraction };
+}
+
 export interface RealtimePlaybackSnapshot {
   isLive: boolean;
   isPlaying: boolean;
+  /** Sim time the view shows, in seconds since the epoch. */
   currentTime: number;
   fraction: number;
-  elapsedTime: number;
-  totalDuration: number;
+  /** Sim time at the slider's right end, in seconds since the epoch. */
+  timelineEnd: number;
   speed: number;
   /** Per-satellite positions (multi-satellite mode). */
   satellitePositions: Map<string, OrbitPoint | null>;
@@ -89,6 +121,8 @@ export function useRealtimePlayback(
   const defaultMode = options?.defaultMode ?? "live";
   const modeRef = useRef<RealtimeMode>(defaultMode);
   const currentTimeRef = useRef(0);
+  // The slider's end while the view is out of Live; see computePlaybackTimeline.
+  const frozenEndRef = useRef<number | null>(null);
   const speedRef = useRef(1);
   const rafRef = useRef(0);
   const prevTimeRef = useRef(0);
@@ -98,8 +132,7 @@ export function useRealtimePlayback(
     isPlaying: false,
     currentTime: 0,
     fraction: 1,
-    elapsedTime: 0,
-    totalDuration: 0,
+    timelineEnd: 0,
     speed: 1,
     satellitePositions: new Map(),
     trailVisibleCounts: new Map(),
@@ -130,7 +163,6 @@ export function useRealtimePlayback(
     if (tMin === Infinity) tMin = 0;
     if (tMax === -Infinity) tMax = 0;
 
-    const duration = tMax - tMin;
     const mode = modeRef.current;
 
     let currentTime: number;
@@ -143,7 +175,12 @@ export function useRealtimePlayback(
       currentTime = currentTimeRef.current;
     }
 
-    const fraction = duration > 0 ? Math.min(1, Math.max(0, (currentTime - tMin) / duration)) : 1;
+    const timeline = computePlaybackTimeline(
+      tMin,
+      tMax,
+      currentTime,
+      mode === "live" ? null : frozenEndRef.current,
+    );
 
     // Compute per-satellite positions and visible counts
     const positions = new Map<string, OrbitPoint | null>();
@@ -171,9 +208,8 @@ export function useRealtimePlayback(
       isLive: mode === "live",
       isPlaying: mode === "playing",
       currentTime,
-      fraction,
-      elapsedTime: currentTime - tMin,
-      totalDuration: duration,
+      fraction: timeline.fraction,
+      timelineEnd: timeline.end,
       speed: speedRef.current,
       satellitePositions: positions,
       trailVisibleCounts: visibleCounts,
@@ -210,6 +246,10 @@ export function useRealtimePlayback(
         if (currentTimeRef.current >= tMax) {
           currentTimeRef.current = tMax;
           modeRef.current = "live";
+          frozenEndRef.current = null;
+        } else if (frozenEndRef.current !== null && currentTimeRef.current > frozenEndRef.current) {
+          // Ratchet, so seeking back after this keeps the span it showed.
+          frozenEndRef.current = currentTimeRef.current;
         }
       }
 
@@ -244,6 +284,7 @@ export function useRealtimePlayback(
         if (buf.latest) tMax = Math.max(tMax, buf.latest.t);
       }
       currentTimeRef.current = tMax;
+      frozenEndRef.current = tMax;
       modeRef.current = "paused";
     } else if (mode === "paused") {
       modeRef.current = "playing";
@@ -255,6 +296,7 @@ export function useRealtimePlayback(
 
   const goLive = useCallback(() => {
     modeRef.current = "live";
+    frozenEndRef.current = null;
     syncState();
   }, [syncState]);
 
@@ -269,9 +311,20 @@ export function useRealtimePlayback(
       }
       if (tMin === Infinity) tMin = 0;
       if (tMax === -Infinity) tMax = 0;
-      const duration = tMax - tMin;
 
-      currentTimeRef.current = tMin + fraction * duration;
+      // A seek from Live freezes the span it was made on; one made outside
+      // Live maps onto the span the slider is showing.
+      if (modeRef.current === "live") frozenEndRef.current = tMax;
+      const { start, end } = computePlaybackTimeline(
+        tMin,
+        tMax,
+        currentTimeRef.current,
+        frozenEndRef.current,
+      );
+      currentTimeRef.current = start + fraction * (end - start);
+      // Freeze the span the seek was made on, which replaces a frozen end the
+      // buffers have dropped since.
+      frozenEndRef.current = end;
 
       if (modeRef.current === "live" || modeRef.current === "playing") {
         modeRef.current = "paused";

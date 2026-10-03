@@ -1,14 +1,20 @@
 import { useCallback, useState } from "react";
+import type { Pacing } from "../protocol/generated/Pacing.js";
 import { jd_to_utc_string } from "../wasm/arikaInit.js";
 import styles from "./PlaybackBar.module.css";
+import { playbackModeLabel } from "./playbackModeLabel.js";
 
 interface PlaybackBarProps {
   isPlaying: boolean;
   fraction: number;
-  elapsedTime: number;
-  totalDuration: number;
+  /** Sim time the view shows, in seconds since the epoch. */
+  currentTime: number;
+  /** Sim time at the slider's right end, in seconds since the epoch. */
+  timelineEnd: number;
   onTogglePlayPause: () => void;
   onSeekFraction: (fraction: number) => void;
+  /** Replay speed: how fast Play steps through the history already received. */
+  speed: number;
   onSpeedChange: (speed: number) => void;
   /** Whether the viewer is following live data (realtime mode only). */
   isLive?: boolean;
@@ -16,6 +22,8 @@ interface PlaybackBarProps {
   onGoLive?: () => void;
   /** Julian Date of the simulation epoch for absolute time display. */
   epochJd?: number | null;
+  /** How fast the server runs the simulation, when it says (`info.pacing`). */
+  serverPacing?: Pacing;
 }
 
 const SPEED_OPTIONS = [1, 2, 5, 10, 100];
@@ -43,14 +51,16 @@ function formatTime(seconds: number): string {
 export function PlaybackBar({
   isPlaying,
   fraction,
-  elapsedTime,
-  totalDuration,
+  currentTime,
+  timelineEnd,
   onTogglePlayPause,
   onSeekFraction,
+  speed,
   onSpeedChange,
   isLive,
   onGoLive,
   epochJd,
+  serverPacing,
 }: PlaybackBarProps) {
   const [isScrubbing, setIsScrubbing] = useState(false);
 
@@ -81,13 +91,10 @@ export function PlaybackBar({
   const sliderValue = isScrubbing ? undefined : Math.round(fraction * 1000);
 
   const isRealtimeMode = onGoLive != null;
-  const modeLabel = isRealtimeMode
-    ? isLive
-      ? "Live"
-      : isPlaying
-        ? "Playing"
-        : "Paused"
-    : "Replay";
+  const modeLabel = playbackModeLabel(isRealtimeMode, isLive, isPlaying, serverPacing);
+  // Live shows the newest state as it arrives; nothing is replayed, so the
+  // replay speed has nothing to apply to.
+  const replaySpeedInactive = isRealtimeMode && isLive === true;
 
   return (
     <div className={styles.playbackBar}>
@@ -110,19 +117,36 @@ export function PlaybackBar({
           className={styles.playPauseBtn}
           data-testid="play-pause-btn"
           onClick={handlePlayPause}
+          title="Pauses or plays this view only; the server keeps simulating"
         >
           {isPlaying || isLive ? "Pause" : "Play"}
         </button>
-        <select className={styles.speedSelect} defaultValue="1" onChange={handleSpeedChange}>
-          {SPEED_OPTIONS.map((s) => (
-            <option key={s} value={s}>
-              {s}x
-            </option>
-          ))}
-        </select>
+        <label
+          className={styles.speedLabel}
+          title={
+            replaySpeedInactive
+              ? "Replay speed applies after leaving Live (Pause, or drag the slider)"
+              : "How fast Play steps through the history already received (1x = 1 sim s per s)"
+          }
+        >
+          Replay
+          <select
+            className={styles.speedSelect}
+            data-testid="replay-speed-select"
+            value={speed}
+            onChange={handleSpeedChange}
+            disabled={replaySpeedInactive}
+          >
+            {SPEED_OPTIONS.map((s) => (
+              <option key={s} value={s}>
+                {s}x
+              </option>
+            ))}
+          </select>
+        </label>
         <span className={styles.timeDisplay}>
-          {epochJd != null && <>{jd_to_utc_string(epochJd, elapsedTime)} | </>}
-          T+{formatTime(elapsedTime)} / {formatTime(totalDuration)}
+          {epochJd != null && <>{jd_to_utc_string(epochJd, currentTime)} | </>}
+          T+{formatTime(currentTime)} / {formatTime(timelineEnd)}
         </span>
         {isRealtimeMode && (
           <button

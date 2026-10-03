@@ -7,6 +7,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use super::MAX_CONTROL_MESSAGE_BYTES;
 use super::controller_upload::{Uploaded, UploadedComponents};
 use super::manager::{SimCommand, SimStatusResponse};
+use super::pacing::Pacing;
 use super::protocol::{ClientMessage, WsMessage};
 
 type WsSender = futures_util::stream::SplitSink<WebSocket, Message>;
@@ -17,6 +18,7 @@ pub(super) async fn handle_connection(
     mut rx: broadcast::Receiver<String>,
     cmd_tx: mpsc::Sender<SimCommand>,
     uploads: UploadedComponents,
+    default_pacing: Pacing,
 ) {
     let (mut ws_sender, mut ws_receiver): (WsSender, WsReceiver) = socket.split();
 
@@ -41,8 +43,11 @@ pub(super) async fn handle_connection(
 
     match status {
         SimStatusResponse::Idle => {
+            // The pacing goes with the idle status, so the client can say what
+            // a `start_simulation` naming none would run at.
             let idle_msg = serde_json::to_string(&WsMessage::Status {
                 state: "idle".to_string(),
+                default_pacing: Some(default_pacing),
             })
             .expect("failed to serialize status");
             if ws_sender
@@ -76,6 +81,7 @@ pub(super) async fn handle_connection(
             if is_paused {
                 let paused_msg = serde_json::to_string(&WsMessage::Status {
                     state: "paused".to_string(),
+                    default_pacing: None,
                 })
                 .expect("failed to serialize status");
                 if ws_sender
@@ -314,10 +320,10 @@ async fn main_loop(
                                     }
                                     ControlFlow::Continue(())
                                 }
-                                ClientMessage::StartSimulation { mut config } => {
+                                ClientMessage::StartSimulation { mut config, pacing } => {
                                     match uploads.resolve_config(&mut config) {
                                         Ok(()) => dispatch_command(cmd_tx, ws_sender, |respond| {
-                                            SimCommand::Start { config, respond }
+                                            SimCommand::Start { config, pacing, respond }
                                         }).await,
                                         Err(message) => {
                                             send_message(ws_sender, &WsMessage::Error { message }).await

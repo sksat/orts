@@ -2,12 +2,19 @@
 import type { AttitudePayload } from "./AttitudePayload";
 import type { HistoryState } from "./HistoryState";
 import type { ModelTorque } from "./ModelTorque";
+import type { Pacing } from "./Pacing";
 import type { SatelliteInfo } from "./SatelliteInfo";
 
 /**
  * Server-to-client WebSocket message.
  */
-export type WsMessage = { "type": "info", mu: number, dt: number, output_interval: number, stream_interval: number, central_body: string, central_body_radius: number, epoch_jd?: number, satellites: Array<SatelliteInfo>, } | { "type": "state", entity_path: string, t: number, position: [number, number, number], velocity: [number, number, number], semi_major_axis: number, eccentricity: number, inclination: number, raan: number, argument_of_periapsis: number, true_anomaly: number, 
+export type WsMessage = { "type": "info", mu: number, dt: number, output_interval: number, stream_interval: number, central_body: string, central_body_radius: number, epoch_jd?: number, satellites: Array<SatelliteInfo>, 
+/**
+ * The pacing the simulation runs at. `orts serve` always sends it;
+ * `orts replay`, which plays a recording and runs no simulation,
+ * leaves it out.
+ */
+pacing?: Pacing, } | { "type": "state", entity_path: string, t: number, position: [number, number, number], velocity: [number, number, number], semi_major_axis: number, eccentricity: number, inclination: number, raan: number, argument_of_periapsis: number, true_anomaly: number, 
 /**
  * Pre-computed derived values for chart display (avoids client-side recomputation).
  */
@@ -28,7 +35,13 @@ torques?: Array<ModelTorque>,
 /**
  * Attitude telemetry (present only when SpacecraftDynamics is used).
  */
-attitude?: AttitudePayload, } | { "type": "history", states: Array<HistoryState>, } | { "type": "query_range_response", t_min: number, t_max: number, states: Array<HistoryState>, } | { "type": "simulation_terminated", entity_path: string, t: number, reason: string, } | { "type": "status", state: string, } | { "type": "satellite_added", satellite: SatelliteInfo, t: number, } | { "type": "textures_ready", body: string, } | { "type": "controller_uploaded", 
+attitude?: AttitudePayload, } | { "type": "history", states: Array<HistoryState>, } | { "type": "query_range_response", t_min: number, t_max: number, states: Array<HistoryState>, } | { "type": "simulation_terminated", entity_path: string, t: number, reason: string, } | { "type": "status", state: string, 
+/**
+ * The pacing a `start_simulation` that names none runs at. Sent with
+ * the `idle` status a connection opens with; left out of the status
+ * changes broadcast while a simulation runs.
+ */
+default_pacing?: Pacing, } | { "type": "satellite_added", satellite: SatelliteInfo, t: number, } | { "type": "textures_ready", body: string, } | { "type": "controller_uploaded", 
 /**
  * SHA-256 of the bytes, 64 lowercase hexadecimal digits.
  */

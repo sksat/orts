@@ -121,6 +121,13 @@ pub enum Commands {
         /// no flag.
         #[arg(long)]
         allow_controller_upload: bool,
+
+        /// Advance every simulation at wall-clock speed (1 sim s = 1 wall s),
+        /// one `stream_interval` at a time. Without it a simulation runs
+        /// faster than real time (100x at the default `--dt`), unless it
+        /// declares stream-io streams, which always run in real time.
+        #[arg(long)]
+        realtime: bool,
     },
     /// Replay a recorded simulation file through the WebSocket viewer
     Replay {

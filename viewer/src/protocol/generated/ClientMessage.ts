@@ -5,6 +5,7 @@ import type { DisturbancesConfig } from "./DisturbancesConfig";
 import type { MarkerShape } from "./MarkerShape";
 import type { MtqConfig } from "./MtqConfig";
 import type { OrbitConfig } from "./OrbitConfig";
+import type { Pacing } from "./Pacing";
 import type { PanelConfig } from "./PanelConfig";
 import type { ReactionWheelConfig } from "./ReactionWheelConfig";
 import type { SensorChoice } from "./SensorChoice";
@@ -21,7 +22,7 @@ import type { ThrusterConfig } from "./ThrusterConfig";
  * generates the TypeScript wire types consumed by the viewer; see
  * `viewer/src/protocol/generated/`. Regenerate with `cargo test -p orts-cli`.
  */
-export type ClientMessage = { "type": "query_range", t_min: number, t_max: number, max_points?: number, entity_path?: string, } | { "type": "start_simulation", config: SimConfig, } | { "type": "add_satellite", id?: string, name?: string, 
+export type ClientMessage = { "type": "query_range", t_min: number, t_max: number, max_points?: number, entity_path?: string, } | { "type": "start_simulation", config: SimConfig, pacing?: Pacing, } | { "type": "add_satellite", id?: string, name?: string, 
 /**
  * Viewer marker shape when this satellite has no 3D model (sphere / axes-cube).
  * Display hint only; the viewer can override it. Defaults to automatic.

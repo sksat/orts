@@ -78,6 +78,9 @@ toml-span = "0.7"
 codespan-reporting = "0.13"
 
 [dev-dependencies]
+# `test-util` pauses the clock, so the serve loop's realtime pacing is tested
+# in sim seconds without waiting them out.
+tokio = { workspace = true, features = ["test-util"] }
 tokio-tungstenite.workspace = true
 tempfile = "3"
 # Drives the filter with synthetic targets in the logging unit tests.

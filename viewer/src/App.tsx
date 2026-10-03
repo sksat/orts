@@ -981,14 +981,16 @@ export function App() {
         <PlaybackBar
           isPlaying={realtimePlayback.snapshot.isPlaying}
           fraction={realtimePlayback.snapshot.fraction}
-          elapsedTime={realtimePlayback.snapshot.elapsedTime}
-          totalDuration={realtimePlayback.snapshot.totalDuration}
+          currentTime={realtimePlayback.snapshot.currentTime}
+          timelineEnd={realtimePlayback.snapshot.timelineEnd}
           onTogglePlayPause={realtimePlayback.togglePlayPause}
           onSeekFraction={realtimePlayback.seekToFraction}
+          speed={realtimePlayback.snapshot.speed}
           onSpeedChange={realtimePlayback.setSpeed}
           isLive={realtimePlayback.snapshot.isLive}
           onGoLive={realtimePlayback.goLive}
           epochJd={epoch}
+          serverPacing={simInfo?.pacing}
         />
       )}
 
@@ -996,6 +998,7 @@ export function App() {
       <SimConfigModal
         isOpen={simConfigOpen && wsSource.isConnected && serverState === "idle"}
         onStart={wsSource.handleStartSimulation}
+        serverDefaultPacing={wsSource.serverDefaultPacing}
         onClose={handleCloseSimConfig}
       />
 
