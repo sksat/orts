@@ -145,7 +145,7 @@ jobs:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
       - name: Install cargo-deny
-        uses: taiki-e/install-action@c3ec0de9ae7f1019cea21aa96aa0a895b9552063 # v2.87.9
+        uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2.87.17
         with:
           tool: cargo-deny@0.20.2
 
@@ -399,7 +399,7 @@ jobs:
           save-if: false
 
       - name: Install cargo-component
-        uses: taiki-e/install-action@c3ec0de9ae7f1019cea21aa96aa0a895b9552063 # v2.87.9
+        uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2.87.17
         with:
           tool: cargo-component@0.21.1
 
@@ -451,7 +451,7 @@ jobs:
           save-if: false
 
       - name: Install cargo-component
-        uses: taiki-e/install-action@c3ec0de9ae7f1019cea21aa96aa0a895b9552063 # v2.87.9
+        uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2.87.17
         with:
           tool: cargo-component@0.21.1
 
@@ -536,7 +536,7 @@ jobs:
           save-if: false
 
       - name: Install cargo-component
-        uses: taiki-e/install-action@c3ec0de9ae7f1019cea21aa96aa0a895b9552063 # v2.87.9
+        uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2.87.17
         with:
           tool: cargo-component@0.21.1
 
@@ -549,7 +549,7 @@ jobs:
       # Renovate bumps KBLE_VERSION via the custom regex manager in
       # renovate.json (crates datasource).
       - name: Install cargo-binstall
-        uses: taiki-e/install-action@c3ec0de9ae7f1019cea21aa96aa0a895b9552063 # v2.87.9
+        uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2.87.17
         with:
           tool: cargo-binstall
       - name: Install kble
@@ -800,7 +800,7 @@ jobs:
       # stays a native static build.
       - name: Install cross (gnu target)
         if: endsWith(matrix.target, '-unknown-linux-gnu')
-        uses: taiki-e/install-action@c3ec0de9ae7f1019cea21aa96aa0a895b9552063 # v2.87.9
+        uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2.87.17
         with:
           # Pinned: this PR's point is a reproducible, host-independent gnu
           # build, so the cross CLI version is fixed alongside the pinned
@@ -957,7 +957,7 @@ jobs:
           targets: wasm32-wasip1
 
       - name: Install cargo-component
-        uses: taiki-e/install-action@c3ec0de9ae7f1019cea21aa96aa0a895b9552063 # v2.87.9
+        uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2.87.17
         with:
           tool: cargo-component@0.21.1
 
