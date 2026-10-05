@@ -106,6 +106,8 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
             if (!gateOpened && event.points.length > 0) {
               gateOpened = true;
               onBeforeEmit?.();
+              // The new file replaces the shown one here, and so does its warning.
+              setSizeWarning(null);
               if (pendingInfo) handleEvent(sourceId, pendingInfo);
               setFileSourceActive(true);
             }
@@ -156,6 +158,7 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
     (file: File, onBeforeEmit?: () => void) => {
       // RRD validation happens in the worker, so switch sources eagerly
       onBeforeEmit?.();
+      setSizeWarning(null);
       let totalPoints = 0;
       const wrapped: typeof handleEvent = (sourceId, event) => {
         if (fileAdapterRef.current !== adapter) return;
@@ -193,7 +196,6 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
       // Stop any in-flight load first so two adapters never stream into
       // the same buffers concurrently.
       stopFileAdapter();
-      setSizeWarning(null);
       if (file.name.endsWith(".rrd")) {
         loadRrdFile(file, onBeforeEmit);
       } else {

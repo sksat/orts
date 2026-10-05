@@ -8,9 +8,22 @@
  */
 export const LARGE_FILE_POINTS = 1_000_000;
 
+/**
+ * The threshold in force: {@link LARGE_FILE_POINTS}, or in a dev build the
+ * number an E2E test put on `window.__debug_large_file_points`, so a small
+ * file can stand in for a large one.
+ */
+function largeFilePoints(): number {
+  if (import.meta.env.DEV && typeof window !== "undefined") {
+    const override = (window as unknown as Record<string, unknown>).__debug_large_file_points;
+    if (typeof override === "number") return override;
+  }
+  return LARGE_FILE_POINTS;
+}
+
 /** What to tell the user about a file of `points` points, or null when it is not large. */
-export function largeFileWarning(points: number): string | null {
-  if (points < LARGE_FILE_POINTS) return null;
+export function largeFileWarning(points: number, threshold = largeFilePoints()): string | null {
+  if (points < threshold) return null;
   return (
     `Warning: ${points.toLocaleString("en-US")} points. The viewer keeps every point ` +
     "of a file in memory, so it may be slow or run out of memory."
