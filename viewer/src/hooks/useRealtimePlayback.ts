@@ -125,25 +125,51 @@ export function stepPlayback(
   return { mode: "playing", currentTime, frozenEnd };
 }
 
+/** What the buffers hold, as far as a frame's sync is concerned. */
+export interface BufferRevision {
+  /** Points across every buffer. */
+  totalLength: number;
+  /** `generation` summed across every buffer: bumped by a clear or a trim, so
+   * a buffer replaced by one of the same length still counts as a change. */
+  totalGeneration: number;
+}
+
+/** The revision of the buffers as they are now. */
+export function bufferRevision(trailBuffers: Map<string, TrailBuffer>): BufferRevision {
+  let totalLength = 0;
+  let totalGeneration = 0;
+  for (const buf of trailBuffers.values()) {
+    totalLength += buf.length;
+    totalGeneration += buf.generation;
+  }
+  return { totalLength, totalGeneration };
+}
+
 /**
  * Whether an animation frame recomputes the playback snapshot.
  *
  * A playing view's time moves, so it syncs every frame, and so does the frame
  * that changed the mode (`modeBefore` → `mode`: playback reaching the end pauses
  * a file and makes a stream live, with no new point). A live or paused view
- * otherwise changes only when the buffers do (`totalLength` differs from the
- * length the last frame synced at); a seek, a play/pause or a speed change
- * syncs on its own. A loaded file rests paused, and syncing it every frame
- * re-rendered the app at the display's refresh rate.
+ * otherwise changes only when the buffers do (`buffers` differs from the
+ * revision the last sync saw, or there was none); a seek, a play/pause or a
+ * speed change syncs on its own. A loaded file rests paused, and syncing it
+ * every frame re-rendered the app at the display's refresh rate.
  */
 export function shouldSyncFrame(
   modeBefore: RealtimeMode,
   mode: RealtimeMode,
-  totalLength: number,
-  lastSyncedLength: number,
+  buffers: BufferRevision,
+  lastSynced: BufferRevision | null,
 ): boolean {
-  if (totalLength === 0) return false;
-  return mode === "playing" || mode !== modeBefore || totalLength !== lastSyncedLength;
+  if (buffers.totalLength === 0) return false;
+  return (
+    mode === "playing" ||
+    mode !== modeBefore ||
+    lastSynced === null ||
+    buffers.totalLength !== lastSynced.totalLength ||
+    buffers.totalGeneration !== lastSynced.totalGeneration
+  );
 }
 
 export interface RealtimePlaybackSnapshot {
@@ -296,12 +322,12 @@ export function useRealtimePlayback(
     });
   }, [trailBuffers, terminatedSatellites, timeRange]);
 
-  // Track last synced tMax to skip redundant syncState in live mode.
-  // Reset when inputs (timeRange, terminatedSatellites) change so that
+  // The buffers as the last frame sync saw them, to skip a sync nothing calls
+  // for. Reset when inputs (timeRange, terminatedSatellites) change so that
   // stale snapshot values are refreshed even without new data arriving.
-  const lastSyncTMaxRef = useRef(-Infinity);
+  const lastSyncedRef = useRef<BufferRevision | null>(null);
   useEffect(() => {
-    lastSyncTMaxRef.current = -Infinity;
+    lastSyncedRef.current = null;
   }, [timeRange, terminatedSatellites]);
 
   // Animation loop
@@ -311,12 +337,11 @@ export function useRealtimePlayback(
       prevTimeRef.current = time;
 
       let tMax = -Infinity;
-      let totalLength = 0;
       for (const buf of trailBuffers.values()) {
         if (buf.latest) tMax = Math.max(tMax, buf.latest.t);
-        totalLength += buf.length;
       }
       if (tMax === -Infinity) tMax = 0;
+      const buffers = bufferRevision(trailBuffers);
 
       const modeBefore = modeRef.current;
       const next = stepPlayback(
@@ -334,10 +359,10 @@ export function useRealtimePlayback(
       currentTimeRef.current = next.currentTime;
       frozenEndRef.current = next.frozenEnd;
 
-      // Using totalLength instead of tMax catches multi-satellite updates where
-      // a lagging satellite advances without changing the global tMax.
-      if (shouldSyncFrame(modeBefore, modeRef.current, totalLength, lastSyncTMaxRef.current)) {
-        lastSyncTMaxRef.current = totalLength;
+      // The point count catches multi-satellite updates where a lagging
+      // satellite advances without changing the global tMax.
+      if (shouldSyncFrame(modeBefore, modeRef.current, buffers, lastSyncedRef.current)) {
+        lastSyncedRef.current = buffers;
         syncState();
       }
 
