@@ -500,7 +500,7 @@ viewer への入力 (WebSocket ストリーム、CSV / RRD ファイル) は、�
 
 - **DuckDB-WASM はローカルキャッシュ**: サーバーへのクエリを減らすための履歴ストア。リアルタイム表示のクリティカルパスには置かない
 - **live 表示は JS バッファが正**: 3D (TrailBuffer) もチャート (ChartBuffer) もストリーミングデータを直接表示し、DuckDB を経由しない
-- **ファイル source は全体を持つ**: ファイルは有限で、読み込みを終えれば中身が決まる。そこでファイルを読み込むときは、TrailBuffer を切り詰めず、DuckDB も compaction しない。再生の範囲・3D の位置・点数・チャートは、どれもファイル全体を対象にする。TrailBuffer と ChartBuffer の上限 (5 万点) と DuckDB の compaction は、終わりの無いストリーム (WebSocket) で、メモリと描画の量を抑えるためにある
+- **ファイル source は全体を持つ**: ファイルは有限で、読み込みを終えれば中身が決まる。そこでファイルを読み込むときは、TrailBuffer を切り詰めず、DuckDB も compaction しない。再生の範囲・3D の位置・点数・チャートは、どれもファイル全体を対象にする。TrailBuffer の上限 (75,000 点を超えると 50,000 点に切り詰める)、ChartBuffer の上限 (50,000 点) と DuckDB の compaction は、終わりの無いストリーム (WebSocket) で、メモリと描画の量を抑えるためにある
 - **derived 値はサーバーで事前計算**: altitude, energy 等のチャート用 derived 値はサーバーが計算して state メッセージに含め、viewer 側での再計算を排除する
 
 ### チャートデータソースの切り替えポリシー

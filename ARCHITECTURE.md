@@ -242,9 +242,10 @@ sequenceDiagram
   the ring buffer.
 - **A file source keeps every point:** a CSV/RRD load fills a `TrailBuffer`
   that is never trimmed and a DuckDB table that is never compacted. Once the
-  file is loaded the view pauses at its end and charts from DuckDB. The
-  50,000-point bounds on `TrailBuffer` / `ChartBuffer` and DuckDB compaction
-  are there for streams. See [DESIGN.md](DESIGN.md).
+  file is loaded the view pauses at its end and charts from DuckDB.
+  `TrailBuffer`'s trim (past 75,000 points, back to 50,000), `ChartBuffer`'s
+  50,000-point bound and DuckDB compaction are there for streams. See
+  [DESIGN.md](DESIGN.md).
 - **A chart column is declared per path:** the live ring buffer copies only
   its registered columns, and the DuckDB path needs the column, a `derived`
   pass-through for the query to select, and a value per insert. A column
