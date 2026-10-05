@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { type AttitudeState, resolveAttitude } from "../attitude.js";
 import { getBodyRadius, resolveBodyDefinitions } from "../bodies.js";
 import { OrbitSceneContents } from "../components/OrbitSceneContents.js";
@@ -180,6 +180,10 @@ export function OrbitScene({
   // Dev/E2E-only: expose per-satellite trail buffer state so E2E can prove that
   // advancing `time` (or appending points) does not rebuild the trail — a stable
   // `generation` means no full GPU re-upload. See tests/orbit-viewer-lib.spec.ts.
+  // `satellite` is the point a marker is drawn at, read through a ref so the
+  // hook is not re-installed every frame.
+  const satellitePositionsRef = useRef(satellitePositions);
+  satellitePositionsRef.current = satellitePositions;
   useEffect(() => {
     if (!IS_DEV) return;
     const w = window as unknown as Record<string, unknown>;
@@ -187,6 +191,10 @@ export function OrbitScene({
       trail: (id: string) => {
         const b = trailBuffers.get(id);
         return b ? { length: b.length, generation: b.generation } : null;
+      },
+      satellite: (id: string) => {
+        const p = satellitePositionsRef.current.get(id);
+        return p ? { t: p.t, x: p.x, y: p.y, z: p.z } : null;
       },
     };
     return () => {

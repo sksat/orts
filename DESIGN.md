@@ -518,7 +518,7 @@ viewer への入力 (WebSocket ストリーム、CSV / RRD ファイル) は、�
 
 ### ファイル source のメモリ
 
-TrailBuffer の点は JS の object で、1 点あたり 0.3〜0.8 KB になる (node で測った。必須の 14 項目で約 340 B、CSV の行が持てる 30 項目で約 750 B)。DuckDB の行と GPU の頂点 buffer も点数に比例する。ファイルの全体を持つので、メモリには上限を置かない。その代わり、1 衛星あたりの点数が多いファイルでは、メモリを多く使うことを画面に出す (閾値は `viewer/src/sources/fileSize.ts`)。`orts run` の既定 (出力の間隔 10 s で 1 周) では 1 衛星あたり数百点で、閾値に届くのは、細かい間隔か長い期間で回した出力である。
+読み込んだ点は、TrailBuffer の JS の object と DuckDB の行と GPU の頂点 buffer になり、どれも点数に比例する。Chromium で衛星 1 機の CSV を読み込むと、page の JS heap は 30 万点で 237 MB、100 万点で 582 MB 増えた (1 点あたり約 0.5 KB。DuckDB の Worker の memory は含まない)。ファイルの全体を持つので、メモリには上限を置かない。その代わり、点数が多いファイルでは、メモリを多く使うことを画面に出す (閾値と測定は `viewer/src/sources/fileSize.ts`)。`orts run` の既定 (出力の間隔 10 s で 1 周) では 1 衛星あたり数百点で、閾値に届くのは、細かい間隔か長い期間で回した出力である。
 
 ### 一貫性の定義
 

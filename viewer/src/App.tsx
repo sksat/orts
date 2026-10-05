@@ -851,6 +851,7 @@ export function App() {
               centralBody={centralBody}
               epochJd={epoch ?? undefined}
               orbitInfo={fileSource.orbitInfo}
+              fileSizeWarning={fileSource.sizeWarning}
               simInfo={simInfo}
               totalPoints={totalPoints}
               activePerturbations={activePerturbations}

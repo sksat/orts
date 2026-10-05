@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CSVFileAdapter } from "../sources/CSVFileAdapter.js";
+import { largeFileWarning } from "../sources/fileSize.js";
 import { RrdFileAdapter } from "../sources/RrdFileAdapter.js";
 import type { SourceAdapter, SourceEvent } from "../sources/types.js";
 
@@ -28,6 +29,8 @@ interface UseFileSourceOptions {
 interface FileSourceResult {
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   orbitInfo: string;
+  /** Set once a loaded file is large enough to say so (see `fileSize.ts`). */
+  sizeWarning: string | null;
   fileSourceActive: boolean;
   /**
    * Load a file. The optional `onBeforeEmit` callback is called after validation
@@ -44,6 +47,7 @@ interface FileSourceResult {
 
 export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSourceResult {
   const [orbitInfo, setOrbitInfo] = useState<string>("");
+  const [sizeWarning, setSizeWarning] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [fileSourceActive, setFileSourceActive] = useState(false);
   const fileAdapterRef = useRef<SourceAdapter | null>(null);
@@ -123,6 +127,7 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
             setOrbitInfo(
               `Loaded: ${file.name} | ${pointCount} points | Duration: ${(tMax - tMin).toFixed(1)} s`,
             );
+            setSizeWarning(largeFileWarning(pointCount));
             retireAdapter(adapter);
             return;
           case "error":
@@ -160,6 +165,7 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
         }
         if (event.kind === "complete") {
           setOrbitInfo(`Loaded: ${file.name} | ${totalPoints} points`);
+          setSizeWarning(largeFileWarning(totalPoints));
           retireAdapter(adapter);
         }
         if (event.kind === "error") {
@@ -187,6 +193,7 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
       // Stop any in-flight load first so two adapters never stream into
       // the same buffers concurrently.
       stopFileAdapter();
+      setSizeWarning(null);
       if (file.name.endsWith(".rrd")) {
         loadRrdFile(file, onBeforeEmit);
       } else {
@@ -202,11 +209,13 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
 
   const clearFileSourceActive = useCallback(() => {
     setFileSourceActive(false);
+    setSizeWarning(null);
   }, []);
 
   return {
     fileInputRef,
     orbitInfo,
+    sizeWarning,
     fileSourceActive,
     loadFile,
     handleLoadClick,
