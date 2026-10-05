@@ -34,11 +34,13 @@ IngestBuffer は以下の投入パターンを全てサポートする:
 | パターン | API | 例 |
 |---|---|---|
 | ストリーミング | `push()` 逐次 | WS からの state メッセージ |
-| 一括投入 | `markRebuild(points)` | ファイル読み込み、接続時の history |
+| 一括投入 | `markRebuild(points)` | 接続時の history |
 | 一括 + ストリーミング | `markRebuild()` → `push()` | 過去データ表示しつつリアルタイム追加 |
-| チャンク投入 | `push()` を繰り返し | Worker からのチャンクパース結果 |
+| チャンク投入 | `markRebuild([])` → `push()` を繰り返し | ファイル読み込み (Worker からのチャンクパース結果) |
 
 `markRebuild(data)` 後の `push(point)` は `point.t > max(data.t)` でなければならない（時刻単調増加契約）。
+
+チャンク投入は、最初の点を push する前に `markRebuild([])` を呼ぶ。テーブルは読み込みをまたいで残るので、前の読み込みの行をこれで置き換える。その後の `push()` は、Worker が rebuild を受け取る前なら rebuild の行に、受け取った後なら追記の行になり、どちらでも全点がテーブルに入る。
 
 ### チャートデータソースの選択
 
@@ -138,6 +140,8 @@ cold (downsampled, ~2000 点) + hot (full-res, ~数十点)
 - `maxRows` 超過で発火
 - `keepRecentRows` 件は full-resolution で保持
 - 残りを `targetOldRows` 件に downsampling
+
+compaction は終わりの無いストリームのためにある。ファイルのように終わりのあるデータでは、hook の `compaction: false` で止め、全行を保持する。Worker は読み込みをまたいで生きるので、この設定は Worker の生存中に切り替えられる。
 
 ## 契約
 
