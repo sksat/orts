@@ -5,6 +5,7 @@ import {
   computeLiveSyncTime,
   computePlaybackTimeline,
   computeTrailDrawStarts,
+  shouldSyncFrame,
   stepPlayback,
 } from "./useRealtimePlayback.js";
 
@@ -291,5 +292,30 @@ describe("stepPlayback", () => {
     const live = { mode: "live", currentTime: 100, frozenEnd: null } as const;
     expect(stepPlayback(paused, 1, 10, 1000, false)).toEqual(paused);
     expect(stepPlayback(live, 1, 10, 1000, true)).toEqual(live);
+  });
+});
+
+describe("shouldSyncFrame", () => {
+  // A loaded file rests paused, so a paused view that recomputed its snapshot
+  // on every frame re-rendered the app at the display's refresh rate.
+  it("leaves a paused view alone while the buffers do not change", () => {
+    expect(shouldSyncFrame("paused", 100, 100)).toBe(false);
+  });
+
+  it("resyncs a paused or live view when points arrive", () => {
+    expect(shouldSyncFrame("paused", 101, 100)).toBe(true);
+    expect(shouldSyncFrame("live", 101, 100)).toBe(true);
+  });
+
+  it("leaves a live view alone while no points arrive", () => {
+    expect(shouldSyncFrame("live", 100, 100)).toBe(false);
+  });
+
+  it("resyncs a playing view on every frame, since its time moves", () => {
+    expect(shouldSyncFrame("playing", 100, 100)).toBe(true);
+  });
+
+  it("has nothing to sync while the buffers are empty", () => {
+    expect(shouldSyncFrame("playing", 0, -1)).toBe(false);
   });
 });

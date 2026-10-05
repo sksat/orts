@@ -113,6 +113,23 @@ export function stepPlayback(
   return { mode: "playing", currentTime, frozenEnd };
 }
 
+/**
+ * Whether an animation frame recomputes the playback snapshot.
+ *
+ * A playing view's time moves, so it syncs every frame. A live or paused view
+ * changes only when the buffers do (`totalLength` differs from the length the
+ * last frame synced at); a seek, a play/pause or a speed change syncs on its
+ * own. A loaded file rests paused, and syncing it every frame re-rendered the
+ * app at the display's refresh rate.
+ */
+export function shouldSyncFrame(
+  mode: RealtimeMode,
+  totalLength: number,
+  lastSyncedLength: number,
+): boolean {
+  return totalLength > 0 && (mode === "playing" || totalLength !== lastSyncedLength);
+}
+
 export interface RealtimePlaybackSnapshot {
   isLive: boolean;
   isPlaying: boolean;
@@ -300,17 +317,9 @@ export function useRealtimePlayback(
       currentTimeRef.current = next.currentTime;
       frozenEndRef.current = next.frozenEnd;
 
-      // Only sync when data has changed (live) or time is advancing (playing).
-      // In live mode, skip sync if total point count hasn't changed — no new data arrived.
       // Using totalLength instead of tMax catches multi-satellite updates where
       // a lagging satellite advances without changing the global tMax.
-      const shouldSync =
-        totalLength > 0 &&
-        (modeRef.current === "playing" ||
-          modeRef.current === "paused" ||
-          totalLength !== lastSyncTMaxRef.current);
-
-      if (shouldSync) {
+      if (shouldSyncFrame(modeRef.current, totalLength, lastSyncTMaxRef.current)) {
         lastSyncTMaxRef.current = totalLength;
         syncState();
       }
