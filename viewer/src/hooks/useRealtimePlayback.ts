@@ -77,6 +77,18 @@ export function computePlaybackTimeline(
   return { start: tMin, end, fraction };
 }
 
+/**
+ * The newest time any buffer holds, or 0 when none holds a point. Starts below
+ * every time, so a recording whose times are all negative ends where it does.
+ */
+export function newestTime(trailBuffers: Map<string, TrailBuffer>): number {
+  let tMax = Number.NEGATIVE_INFINITY;
+  for (const buf of trailBuffers.values()) {
+    if (buf.latest) tMax = Math.max(tMax, buf.latest.t);
+  }
+  return tMax === Number.NEGATIVE_INFINITY ? 0 : tMax;
+}
+
 /** The part of the playback state one animation frame can change. */
 export interface PlaybackStep {
   mode: RealtimeMode;
@@ -338,10 +350,7 @@ export function useRealtimePlayback(
 
   /** Pause at the newest point the buffers hold, with the span frozen there. */
   const holdAtEnd = useCallback(() => {
-    let tMax = 0;
-    for (const buf of trailBuffers.values()) {
-      if (buf.latest) tMax = Math.max(tMax, buf.latest.t);
-    }
+    const tMax = newestTime(trailBuffers);
     currentTimeRef.current = tMax;
     frozenEndRef.current = tMax;
     modeRef.current = "paused";

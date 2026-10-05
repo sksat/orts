@@ -5,6 +5,7 @@ import {
   computeLiveSyncTime,
   computePlaybackTimeline,
   computeTrailDrawStarts,
+  newestTime,
   shouldSyncFrame,
   stepPlayback,
 } from "./useRealtimePlayback.js";
@@ -324,5 +325,35 @@ describe("shouldSyncFrame", () => {
 
   it("has nothing to sync while the buffers are empty", () => {
     expect(shouldSyncFrame("playing", "playing", 0, -1)).toBe(false);
+  });
+});
+
+describe("newestTime", () => {
+  it("is the newest point any buffer holds", () => {
+    const a = new TrailBuffer(1000);
+    const b = new TrailBuffer(1000);
+    a.push(makePoint(10));
+    b.push(makePoint(30));
+    expect(
+      newestTime(
+        new Map([
+          ["a", a],
+          ["b", b],
+        ]),
+      ),
+    ).toBe(30);
+  });
+
+  // A recording whose times are all negative ends below zero; pausing at 0
+  // would put the view past its end.
+  it("ends a recording of negative times where it ends", () => {
+    const buf = new TrailBuffer(1000);
+    buf.push(makePoint(-20));
+    buf.push(makePoint(-10));
+    expect(newestTime(new Map([["a", buf]]))).toBe(-10);
+  });
+
+  it("is 0 while no buffer holds a point", () => {
+    expect(newestTime(new Map([["a", new TrailBuffer(1000)]]))).toBe(0);
   });
 });
