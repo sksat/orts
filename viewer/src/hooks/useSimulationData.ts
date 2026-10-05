@@ -410,8 +410,13 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
       clearTimeout(chartZoomTimerRef.current);
       chartZoomTimerRef.current = null;
     }
-    // Reset single-satellite ingest buffer to avoid stale chart data after reconnect
-    singleIngestBufferRef.current = new IngestBuffer<OrbitPoint>();
+    // A new source replaces what the single-satellite table holds. The worker
+    // and its table outlive the switch, and a source that brings no points (an
+    // empty .rrd) never points this ref at a buffer of its own, so the empty
+    // rebuild here is what clears the previous source's rows.
+    const fresh = new IngestBuffer<OrbitPoint>();
+    fresh.markRebuild([]);
+    singleIngestBufferRef.current = fresh;
   }, []);
 
   return {
