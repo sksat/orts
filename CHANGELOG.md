@@ -1347,11 +1347,14 @@ section is subdivided by package.
   covers one orbit of each satellite, and a controlled run still takes the
   first satellite's period for the whole fleet.
   ([#368](https://github.com/sksat/orts/pull/368))
-- A satellite added to a running `orts serve` re-anchors its orbit on its own
-  period. `serve` restarts an unperturbed orbit-only satellite's orbit at every
-  period boundary, and the boundary for a newly added satellite was read from
-  the *previous* entry in the fleet (or a hardcoded 5554 s when it was the
-  first). ([#368](https://github.com/sksat/orts/pull/368))
+- `orts serve` integrates an orbit-only satellite on past its period, as
+  `orts run` does. When the central body had no J2, `serve` put the satellite
+  back on its initial state at the first output boundary past each period. On
+  Mercury and Venus, whose runs carry the Sun's third-body pull, that discarded
+  what the pull had done. Because the boundary falls after the period, the
+  satellite was also rewound by the time between the two, even around the Sun,
+  where the orbit is two-body: 42.5 s of motion every period for an orbit at
+  twice the Sun's radius sampled every 90 s. ([#606](https://github.com/sksat/orts/pull/606))
 - Each controller runs on its own `sample_period`. Two loops moved it: the
   non-realtime `orts serve` cut the timeline at `stream_interval` and called the
   controller once per cut, so the README quick start's config — which leaves
