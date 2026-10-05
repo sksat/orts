@@ -258,6 +258,20 @@ describe("TrailBuffer.indexBefore", () => {
   });
 });
 
+describe("TrailBuffer with an infinite capacity", () => {
+  // A file's trail: 1000 points is far past the 1.5x trim of any finite
+  // capacity this small a test could use, so a trim would show.
+  it("keeps every point and never bumps the generation", () => {
+    const buf = new TrailBuffer(Number.POSITIVE_INFINITY);
+    for (let i = 0; i < 1000; i++) buf.push(makePoint(i * 10));
+    buf.pushMany([makePoint(10000), makePoint(10010)]);
+
+    expect(buf.length).toBe(1002);
+    expect(buf.getAll()[0].t).toBe(0);
+    expect(buf.generation).toBe(0);
+  });
+});
+
 describe("TrailBuffer history replay sequence", () => {
   // Simulates the full handleHistory → handleHistoryDetailComplete flow
   // to verify TrailBuffer correctly holds historical data after replay.

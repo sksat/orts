@@ -46,7 +46,14 @@ const CHART_COLUMNS = [
 
 // Initialize factories for eventDispatcher
 
-setTrailBufferFactory(() => new TrailBuffer(50000));
+/** How many recent points a stream's trail keeps: a stream has no end, and the
+ * renderer uploads every point a trail holds. A file's trail keeps them all. */
+const STREAM_TRAIL_CAPACITY = 50000;
+
+setTrailBufferFactory(
+  (_id, retention) =>
+    new TrailBuffer(retention === "whole" ? Number.POSITIVE_INFINITY : STREAM_TRAIL_CAPACITY),
+);
 setIngestBufferFactory(() => new IngestBuffer<OrbitPoint>());
 
 export function useSourceRuntime() {
