@@ -1887,6 +1887,12 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `options.bundles` で opt-in。([#171](https://github.com/sksat/orts/pull/171))
 
 #### Fixed
+- 単一衛星のチャートの worker が、uneri を使う page で読み込めるようになった。build は
+  出力した worker のファイルを `/assets/chartDataWorker-….js` で参照していて、これは
+  使う側の site のパスなので、そこに uneri のファイルは無い。worker は起動せず、orts の
+  viewer の単一衛星のチャートは、一時停止したときと live の buffer の外をズームしたときに
+  空になっていた。参照を uneri 自身の module からの相対パスにしたので、使う側の bundler が
+  ファイルを自分の build に copy する。([#607](https://github.com/sksat/orts/pull/607))
 - chart data Worker が init 時の schema で derived 列を計算し続けるため、後から
   中心天体が変わっても反映されなかった (地球→月で `altitude` が 4,640.737 km
   ずれる)。drain 処理が、変更後の schema をその schema で作った行より先に送る。([#341](https://github.com/sksat/orts/pull/341))

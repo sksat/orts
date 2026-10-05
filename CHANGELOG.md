@@ -2335,6 +2335,13 @@ section is subdivided by package.
   opt-in via `options.bundles`. ([#171](https://github.com/sksat/orts/pull/171))
 
 #### Fixed
+- The single-satellite chart worker loads in the page that uses uneri. The
+  build referred to the worker file it emits as `/assets/chartDataWorker-….js`,
+  a path on the consumer's site where nothing of uneri's is, so the worker
+  never started and the orts viewer's single-satellite chart was empty while
+  paused or zoomed outside its live buffer. The reference is now relative to
+  uneri's own module, and a consumer's bundler copies the file into its
+  build. ([#607](https://github.com/sksat/orts/pull/607))
 - The chart data Worker computed derived columns with the schema it was
   initialized with, so a later central-body change was ignored: switching from
   Earth to the Moon left `altitude` off by 4,640.737 km. The drain step now
