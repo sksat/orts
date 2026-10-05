@@ -116,18 +116,22 @@ export function stepPlayback(
 /**
  * Whether an animation frame recomputes the playback snapshot.
  *
- * A playing view's time moves, so it syncs every frame. A live or paused view
- * changes only when the buffers do (`totalLength` differs from the length the
- * last frame synced at); a seek, a play/pause or a speed change syncs on its
- * own. A loaded file rests paused, and syncing it every frame re-rendered the
- * app at the display's refresh rate.
+ * A playing view's time moves, so it syncs every frame, and so does the frame
+ * that changed the mode (`modeBefore` → `mode`: playback reaching the end pauses
+ * a file and makes a stream live, with no new point). A live or paused view
+ * otherwise changes only when the buffers do (`totalLength` differs from the
+ * length the last frame synced at); a seek, a play/pause or a speed change
+ * syncs on its own. A loaded file rests paused, and syncing it every frame
+ * re-rendered the app at the display's refresh rate.
  */
 export function shouldSyncFrame(
+  modeBefore: RealtimeMode,
   mode: RealtimeMode,
   totalLength: number,
   lastSyncedLength: number,
 ): boolean {
-  return totalLength > 0 && (mode === "playing" || totalLength !== lastSyncedLength);
+  if (totalLength === 0) return false;
+  return mode === "playing" || mode !== modeBefore || totalLength !== lastSyncedLength;
 }
 
 export interface RealtimePlaybackSnapshot {
@@ -302,6 +306,7 @@ export function useRealtimePlayback(
       }
       if (tMax === -Infinity) tMax = 0;
 
+      const modeBefore = modeRef.current;
       const next = stepPlayback(
         {
           mode: modeRef.current,
@@ -319,7 +324,7 @@ export function useRealtimePlayback(
 
       // Using totalLength instead of tMax catches multi-satellite updates where
       // a lagging satellite advances without changing the global tMax.
-      if (shouldSyncFrame(modeRef.current, totalLength, lastSyncTMaxRef.current)) {
+      if (shouldSyncFrame(modeBefore, modeRef.current, totalLength, lastSyncTMaxRef.current)) {
         lastSyncTMaxRef.current = totalLength;
         syncState();
       }

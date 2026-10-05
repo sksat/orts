@@ -299,23 +299,30 @@ describe("shouldSyncFrame", () => {
   // A loaded file rests paused, so a paused view that recomputed its snapshot
   // on every frame re-rendered the app at the display's refresh rate.
   it("leaves a paused view alone while the buffers do not change", () => {
-    expect(shouldSyncFrame("paused", 100, 100)).toBe(false);
+    expect(shouldSyncFrame("paused", "paused", 100, 100)).toBe(false);
   });
 
   it("resyncs a paused or live view when points arrive", () => {
-    expect(shouldSyncFrame("paused", 101, 100)).toBe(true);
-    expect(shouldSyncFrame("live", 101, 100)).toBe(true);
+    expect(shouldSyncFrame("paused", "paused", 101, 100)).toBe(true);
+    expect(shouldSyncFrame("live", "live", 101, 100)).toBe(true);
   });
 
   it("leaves a live view alone while no points arrive", () => {
-    expect(shouldSyncFrame("live", 100, 100)).toBe(false);
+    expect(shouldSyncFrame("live", "live", 100, 100)).toBe(false);
   });
 
   it("resyncs a playing view on every frame, since its time moves", () => {
-    expect(shouldSyncFrame("playing", 100, 100)).toBe(true);
+    expect(shouldSyncFrame("playing", "playing", 100, 100)).toBe(true);
+  });
+
+  // The frame on which playback reaches the end changes the mode with no new
+  // point: a file pauses there and a stream goes live, and the bar has to say so.
+  it("resyncs on the frame that changes the mode", () => {
+    expect(shouldSyncFrame("playing", "paused", 100, 100)).toBe(true);
+    expect(shouldSyncFrame("playing", "live", 100, 100)).toBe(true);
   });
 
   it("has nothing to sync while the buffers are empty", () => {
-    expect(shouldSyncFrame("playing", 0, -1)).toBe(false);
+    expect(shouldSyncFrame("playing", "playing", 0, -1)).toBe(false);
   });
 });
