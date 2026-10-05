@@ -180,8 +180,9 @@ export function OrbitScene({
   // Dev/E2E-only: expose per-satellite trail buffer state so E2E can prove that
   // advancing `time` (or appending points) does not rebuild the trail — a stable
   // `generation` means no full GPU re-upload. See tests/orbit-viewer-lib.spec.ts.
-  // `satellite` is the point a marker is drawn at, read through a ref so the
-  // hook is not re-installed every frame.
+  // `satellite` is the point the scene is given for a satellite (what playback
+  // chose, before the scene places it), read through a ref so the hook is not
+  // re-installed every frame.
   const satellitePositionsRef = useRef(satellitePositions);
   satellitePositionsRef.current = satellitePositions;
   useEffect(() => {

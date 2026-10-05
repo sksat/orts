@@ -7,7 +7,9 @@
  * - the point count is the file's,
  * - playback rests at the end, replaying rather than following live,
  * - the chart (drawn from DuckDB) starts at the file's first sample,
- * - seeking to the start puts the satellite on the file's first sample.
+ * - seeking to the start hands the scene the file's first sample for the
+ *   satellite (playback takes it from the trail; placing a given point in the
+ *   scene is what the scene-graph tests, e.g. lvlh-orientation, cover).
  */
 
 import { writeFileSync } from "node:fs";
@@ -86,7 +88,7 @@ test("a CSV longer than a stream's trail is loaded, charted and replayed whole",
     )
     .toEqual([0, LAST_T]);
 
-  // Seek to the start: the satellite is on the file's first sample.
+  // Seek to the start: the scene is given the file's first sample.
   await page.locator('[data-testid="time-slider"]').fill("0");
   await expect
     .poll(() =>
