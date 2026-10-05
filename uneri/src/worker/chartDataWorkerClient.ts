@@ -79,6 +79,11 @@ export class ChartDataWorkerClient {
     this.send({ type: "configure", timeRange, maxPoints });
   }
 
+  /** Turn compaction of the table on (the default) or off. */
+  setCompaction(enabled: boolean): void {
+    this.send({ type: "set-compaction", enabled });
+  }
+
   /** Register callback for receiving chart data from the Worker. */
   onData(callback: (data: ChartDataMap) => void): void {
     this.onDataCallback = callback;

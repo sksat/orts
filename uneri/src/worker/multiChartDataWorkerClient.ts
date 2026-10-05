@@ -83,6 +83,11 @@ export class MultiChartDataWorkerClient {
     this.send({ type: "multi-configure", timeRange, maxPoints });
   }
 
+  /** Turn compaction of every satellite's table on (the default) or off. */
+  setCompaction(enabled: boolean): void {
+    this.send({ type: "multi-set-compaction", enabled });
+  }
+
   /**
    * Replace the base schema the Worker derives chart columns with.
    *
