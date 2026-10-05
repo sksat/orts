@@ -20,7 +20,7 @@ import {
   setIngestBufferFactory,
   setTrailBufferFactory,
 } from "./eventDispatcher.js";
-import type { SimInfo, SourceConnectionState, SourceEvent, SourceId } from "./types.js";
+import type { SimInfo, SourceConnectionState, SourceEvent, SourceId, SourceKind } from "./types.js";
 
 // Re-export for convenience
 export type { ServerState } from "./eventDispatcher.js";
@@ -78,9 +78,12 @@ export function useSourceRuntime() {
   const [chartBufferVersion, setChartBufferVersion] = useState(0);
 
   const activeSourceIdRef = useRef<SourceId | null>(null);
+  const [sourceKind, setSourceKind] = useState<SourceKind | null>(null);
 
-  const setActiveSourceId = useCallback((id: SourceId | null) => {
+  /** Make `id` the source whose events are taken, and say what kind it is. */
+  const setActiveSourceId = useCallback((id: SourceId | null, kind: SourceKind | null) => {
     activeSourceIdRef.current = id;
+    setSourceKind(id ? kind : null);
     if (id) {
       setConnectionState("connecting");
     } else {
@@ -190,6 +193,7 @@ export function useSourceRuntime() {
     setTerminatedSatellites(new Set());
     setConnectionState("disconnected");
     activeSourceIdRef.current = null;
+    setSourceKind(null);
   }, []);
 
   return {
@@ -200,6 +204,8 @@ export function useSourceRuntime() {
     serverState,
     terminatedSatellites,
     connectionState,
+    /** The active source's kind, or null while there is none. */
+    sourceKind,
     textureRevision,
     chartBufferVersion,
     isLive:

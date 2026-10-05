@@ -159,6 +159,8 @@ export function App() {
     simInfo,
     serverState,
     terminatedSatellites,
+    connectionState,
+    sourceKind,
     textureRevision,
     chartBufferVersion,
     handleEvent,
@@ -166,15 +168,30 @@ export function App() {
     resetBuffers,
   } = runtime;
 
+  // A loaded file is a finished recording: it rests at its end and is replayed,
+  // never followed live (DESIGN.md, the file source policy).
+  const fileLoaded = sourceKind === "file" && connectionState === "complete";
+
   // File source
   const fileSource = useFileSource({ handleEvent });
 
   // Realtime playback (history scrubbing)
-  const realtimePlayback = useRealtimePlayback(trailBuffersMap, terminatedSatellites, timeRange);
+  const realtimePlayback = useRealtimePlayback(trailBuffersMap, terminatedSatellites, timeRange, {
+    canFollowLive: !fileLoaded,
+  });
 
   // Use ref for goLive to avoid including it in handleConnect deps.
   const goLiveRef = useRef(realtimePlayback.goLive);
   goLiveRef.current = realtimePlayback.goLive;
+
+  // Pause at the end once, when the file finishes loading. Through a ref: the
+  // callback changes with the time range, and re-running on that would throw
+  // away where the user had moved the view.
+  const pauseAtEndRef = useRef(realtimePlayback.pauseAtEnd);
+  pauseAtEndRef.current = realtimePlayback.pauseAtEnd;
+  useEffect(() => {
+    if (fileLoaded) pauseAtEndRef.current();
+  }, [fileLoaded]);
 
   // queryRange callback for useSimulationData fallback
   const sendRef = useRef<(msg: ClientMessage) => void>(() => {});
@@ -199,6 +216,7 @@ export function App() {
       currentTime: realtimePlayback.snapshot.currentTime,
     },
     timeRange,
+    sourceKind,
     queryRange,
   });
 
@@ -279,7 +297,7 @@ export function App() {
     fileSource.stopFileAdapter();
     fileSource.clearFileSourceActive();
     resetBuffers();
-    setActiveSourceId(WS_SOURCE_ID);
+    setActiveSourceId(WS_SOURCE_ID, "websocket");
     simData.resetZoomState();
     goLiveRef.current();
     wsSource.connect();
@@ -314,7 +332,7 @@ export function App() {
         if (wsSource.isConnected) wsSource.disconnect();
         resetBuffers();
         simData.resetZoomState();
-        setActiveSourceId(file.name.endsWith(".rrd") ? RRD_SOURCE_ID : CSV_SOURCE_ID);
+        setActiveSourceId(file.name.endsWith(".rrd") ? RRD_SOURCE_ID : CSV_SOURCE_ID, "file");
         goLiveRef.current();
         // NOTE: manualDisconnectRef stays true here. It is cleared by handleConnect
         // when the user explicitly clicks Connect. Auto-connect is gated by
@@ -987,8 +1005,8 @@ export function App() {
           onSeekFraction={realtimePlayback.seekToFraction}
           speed={realtimePlayback.snapshot.speed}
           onSpeedChange={realtimePlayback.setSpeed}
-          isLive={realtimePlayback.snapshot.isLive}
-          onGoLive={realtimePlayback.goLive}
+          isLive={fileLoaded ? undefined : realtimePlayback.snapshot.isLive}
+          onGoLive={fileLoaded ? undefined : realtimePlayback.goLive}
           epochJd={epoch}
           serverPacing={simInfo?.pacing}
         />

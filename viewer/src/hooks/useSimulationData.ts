@@ -17,6 +17,7 @@ import { METRIC_NAMES, TORQUE_CHART_METRICS } from "../chartMetrics.js";
 import { createOrbitSchema } from "../db/orbitSchema.js";
 import { duckdbBundles } from "../duckdbBundles.js";
 import type { OrbitPoint } from "../orbit.js";
+import type { SourceKind } from "../sources/types.js";
 import type { MultiChartDataMap } from "./buildMultiChartData.js";
 import type { SatelliteConfig } from "./useMultiSatelliteStore.js";
 import { useMultiSatelliteStoreWorker } from "./useMultiSatelliteStoreWorker.js";
@@ -35,6 +36,8 @@ export interface UseSimulationDataOptions {
     currentTime: number;
   };
   timeRange: TimeRange;
+  /** The active source's kind: a file's DuckDB tables are never compacted. */
+  sourceKind: SourceKind | null;
   /** Fallback for DuckDB query failure — sends query_range to server */
   queryRange: (satId: string, tMin: number, tMax: number, maxPoints: number) => void;
 }
@@ -74,8 +77,11 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
     chartBufferVersion,
     playback,
     timeRange,
+    sourceKind,
     queryRange,
   } = options;
+  // A file keeps every row it loads (DESIGN.md, the file source policy).
+  const compaction = sourceKind !== "file";
 
   // Orbit schema (shared by single & multi-satellite Workers). A `SimInfo` has
   // been resolved against a body already, so its `mu` and radius are taken as
@@ -267,6 +273,7 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
     enabled: !isMultiSatellite,
     clientRef: workerClientRef,
     duckDB: { bundles: duckdbBundles },
+    compaction,
   });
 
   // Charts: multi-satellite mode (Worker-based)
@@ -279,6 +286,7 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
     enabled: isMultiSatellite,
     clientRef: multiWorkerClientRef,
     duckDB: { bundles: duckdbBundles },
+    compaction,
   });
 
   // When the user zooms, the one-shot multi-zoom-query result takes

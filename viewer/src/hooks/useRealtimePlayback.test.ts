@@ -5,6 +5,7 @@ import {
   computeLiveSyncTime,
   computePlaybackTimeline,
   computeTrailDrawStarts,
+  stepPlayback,
 } from "./useRealtimePlayback.js";
 
 function makePoint(t: number, entityPath?: string): OrbitPoint {
@@ -235,5 +236,60 @@ describe("computePlaybackTimeline", () => {
 
   it("puts the thumb at the end of an empty span", () => {
     expect(computePlaybackTimeline(10, 10, 10, null).fraction).toBe(1);
+  });
+});
+
+describe("stepPlayback", () => {
+  it("advances a playing view by the elapsed time times the speed", () => {
+    const next = stepPlayback(
+      { mode: "playing", currentTime: 100, frozenEnd: 500 },
+      2,
+      5,
+      1000,
+      true,
+    );
+    expect(next).toEqual({ mode: "playing", currentTime: 110, frozenEnd: 500 });
+  });
+
+  it("ratchets the frozen end that playback passes", () => {
+    const next = stepPlayback(
+      { mode: "playing", currentTime: 495, frozenEnd: 500 },
+      1,
+      10,
+      1000,
+      true,
+    );
+    expect(next).toEqual({ mode: "playing", currentTime: 505, frozenEnd: 505 });
+  });
+
+  it("goes live when playback reaches the newest point of a stream", () => {
+    const next = stepPlayback(
+      { mode: "playing", currentTime: 995, frozenEnd: 1000 },
+      1,
+      10,
+      1000,
+      true,
+    );
+    expect(next).toEqual({ mode: "live", currentTime: 1000, frozenEnd: null });
+  });
+
+  // A loaded file has nothing newer to follow: playback stops at its end,
+  // with the span frozen there.
+  it("pauses at the end of a recording it cannot follow live", () => {
+    const next = stepPlayback(
+      { mode: "playing", currentTime: 995, frozenEnd: 1000 },
+      1,
+      10,
+      1000,
+      false,
+    );
+    expect(next).toEqual({ mode: "paused", currentTime: 1000, frozenEnd: 1000 });
+  });
+
+  it("leaves a paused or live view where it is", () => {
+    const paused = { mode: "paused", currentTime: 100, frozenEnd: 500 } as const;
+    const live = { mode: "live", currentTime: 100, frozenEnd: null } as const;
+    expect(stepPlayback(paused, 1, 10, 1000, false)).toEqual(paused);
+    expect(stepPlayback(live, 1, 10, 1000, true)).toEqual(live);
   });
 });
