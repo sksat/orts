@@ -46,11 +46,15 @@ pub(crate) mod keyed {
         parts.iter().fold(0, |h, &p| mix(h ^ p))
     }
 
-    /// A uniform number in the open interval (0, 1), from the top 53 bits.
-    fn uniform_open(x: u64) -> f64 {
-        // 2^-53: one step of the 53-bit grid; the half step keeps 0 out.
-        const STEP: f64 = 1.0 / (1u64 << 53) as f64;
-        ((x >> 11) as f64 + 0.5) * STEP
+    /// A uniform number in the open interval (0, 1), from the top 52 bits.
+    ///
+    /// The midpoints of a 52-bit grid: with 53 bits the top midpoint,
+    /// `1 - 2^-54`, is not representable and rounds to `1.0`, which would give
+    /// Box–Muller a zero radius.
+    pub(crate) fn uniform_open(x: u64) -> f64 {
+        // 2^-52: one step of the 52-bit grid; the half step keeps 0 and 1 out.
+        const STEP: f64 = 1.0 / (1u64 << 52) as f64;
+        ((x >> 12) as f64 + 0.5) * STEP
     }
 
     /// Refuse a sample time a noise model could not be keyed on, for the
@@ -275,6 +279,15 @@ mod tests {
     use super::*;
 
     const V: Vector3<f64> = Vector3::new(1.0, 2.0, 3.0);
+
+    /// The uniform stays inside (0, 1) at both ends of the hash's range, so
+    /// Box–Muller never takes `ln` of 0 or a zero radius from 1.
+    #[test]
+    fn keyed_uniform_is_strictly_inside_the_unit_interval() {
+        let (low, high) = (keyed::uniform_open(0), keyed::uniform_open(u64::MAX));
+        assert!(low > 0.0, "{low}");
+        assert!(high < 1.0, "{high}");
+    }
 
     #[test]
     fn gaussian_noise_is_a_function_of_the_time() {

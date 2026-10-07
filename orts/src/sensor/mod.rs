@@ -75,7 +75,8 @@ impl SensorBundle {
 
     /// Evaluate all configured sensors at the given `SimpleEci` state and epoch.
     ///
-    /// `&mut self` because noise models mutate their internal RNG.
+    /// `&mut self` because a noise model may keep a cache; the readings do not
+    /// depend on it.
     ///
     /// `t` is the sim time of the sample [s], which the noise models are keyed
     /// on: evaluating again at the same `t` gives the same readings.

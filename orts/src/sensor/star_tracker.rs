@@ -339,8 +339,9 @@ mod tests {
         let epoch = Epoch::j2000();
         let n_samples = 1000;
         let mut max_angle = 0.0_f64;
-        for _ in 0..n_samples {
-            let q_meas = components(&stt.measure(0.0, &state, &epoch));
+        // One draw per sample time: the noise is keyed on the time.
+        for i in 0..n_samples {
+            let q_meas = components(&stt.measure(i as f64, &state, &epoch));
             let q_true = &state.attitude.quaternion;
             // Angular distance: 2 * arccos(|q_true · q_meas|)
             let dot = (q_true[0] * q_meas[0]
