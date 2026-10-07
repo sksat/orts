@@ -7,9 +7,6 @@
 use arika::epoch::Epoch;
 use arika::frame::{Body, Rotation};
 use nalgebra::{UnitQuaternion, Vector3};
-use rand::rngs::StdRng;
-use rand::{RngExt, SeedableRng};
-use rand_distr::Normal;
 
 use crate::SpacecraftState;
 use crate::plugin::tick_input::AttitudeBodyToInertial;
@@ -27,9 +24,15 @@ use crate::plugin::tick_input::AttitudeBodyToInertial;
 /// where `δq` is a unit quaternion constructed from Gaussian-distributed
 /// small-angle body-frame rotations with per-axis standard deviation `σ`
 /// \[rad\]. Typical star tracker accuracy is 1–30 arcsec (5e-6 to 1.5e-4 rad).
+///
+/// The rotation is drawn from the seed and the sim time of the sample, like
+/// the [`noise`](super::noise) models: the same time gives the same reading.
 pub struct StarTracker {
-    sigma: Option<(Vector3<f64>, StdRng)>,
+    sigma: Option<(Vector3<f64>, u64)>,
 }
+
+/// Keeps the star tracker's keys apart from the noise models'.
+const STAR_TRACKER_TAG: u64 = 0x7374_6172_7472_6B72; // "startrkr"
 
 impl StarTracker {
     /// Create an ideal star tracker (zero noise).
@@ -38,9 +41,16 @@ impl StarTracker {
     }
 
     /// Add pointing noise with per-axis standard deviation \[rad\].
+    ///
+    /// # Panics
+    /// Panics if a component of `sigma` is negative or non-finite.
     pub fn with_pointing_noise(self, sigma: Vector3<f64>, seed: u64) -> Self {
+        assert!(
+            sigma.iter().all(|s| s.is_finite() && *s >= 0.0),
+            "sigma must be non-negative and finite, got {sigma:?}"
+        );
         Self {
-            sigma: Some((sigma, StdRng::seed_from_u64(seed))),
+            sigma: Some((sigma, seed)),
         }
     }
 
@@ -50,8 +60,15 @@ impl StarTracker {
     }
 
     /// Measure the attitude quaternion (body→inertial), for a `SimpleEci` state.
-    pub fn measure(&mut self, state: &SpacecraftState, epoch: &Epoch) -> AttitudeBodyToInertial {
-        self.measure_in_frame::<arika::frame::SimpleEci>(state, epoch)
+    ///
+    /// `t` is the sim time of the sample [s], which the noise models are keyed on.
+    pub fn measure(
+        &mut self,
+        t: f64,
+        state: &SpacecraftState,
+        epoch: &Epoch,
+    ) -> AttitudeBodyToInertial {
+        self.measure_in_frame::<arika::frame::SimpleEci>(t, state, epoch)
     }
 
     /// Measure the attitude quaternion (body→inertial) for a state propagated in
@@ -69,21 +86,27 @@ impl StarTracker {
     /// the value: the numbers alone do not say which frame they belong to.
     pub fn measure_in_frame<F: arika::frame::Eci>(
         &mut self,
+        t: f64,
         state: &SpacecraftState<F>,
         _epoch: &Epoch,
     ) -> AttitudeBodyToInertial<F> {
+        super::noise::keyed::check_sample_time(t);
         let q_true = UnitQuaternion::from_quaternion(state.attitude.orientation().into_inner());
 
-        let q_measured = match &mut self.sigma {
-            Some((sigma, rng)) => {
-                let dx = rng.sample(Normal::new(0.0, sigma.x).unwrap());
-                let dy = rng.sample(Normal::new(0.0, sigma.y).unwrap());
-                let dz = rng.sample(Normal::new(0.0, sigma.z).unwrap());
-                let delta = UnitQuaternion::from_scaled_axis(Vector3::new(dx, dy, dz));
-                q_true * delta
-            }
-            None => q_true,
-        };
+        let q_measured =
+            match &self.sigma {
+                Some((sigma, seed)) => {
+                    let bits = super::noise::keyed::time_bits(t);
+                    let n = |axis: u64| {
+                        super::noise::keyed::standard_normal(&[STAR_TRACKER_TAG, *seed, bits, axis])
+                    };
+                    let delta = UnitQuaternion::from_scaled_axis(
+                        sigma.component_mul(&Vector3::new(n(0), n(1), n(2))),
+                    );
+                    q_true * delta
+                }
+                None => q_true,
+            };
 
         AttitudeBodyToInertial::new(Rotation::<Body, F>::from_raw(q_measured))
     }
@@ -127,7 +150,7 @@ mod tests {
         let mut stt = StarTracker::new();
         let state = make_state();
         let epoch = Epoch::j2000();
-        let q = stt.measure(&state, &epoch);
+        let q = stt.measure(0.0, &state, &epoch);
         assert_eq!(components(&q), state.attitude.quaternion);
     }
 
@@ -137,7 +160,7 @@ mod tests {
         let mut stt = StarTracker::new().with_pointing_noise_isotropic(5e-5, 42);
         let state = make_state();
         let epoch = Epoch::j2000();
-        let q = stt.measure(&state, &epoch);
+        let q = stt.measure(0.0, &state, &epoch);
         assert_ne!(components(&q), state.attitude.quaternion);
         // Should still be close to unit quaternion.
         let q = components(&q);
@@ -151,7 +174,10 @@ mod tests {
         let epoch = Epoch::j2000();
         let mut s1 = StarTracker::new().with_pointing_noise_isotropic(5e-5, 42);
         let mut s2 = StarTracker::new().with_pointing_noise_isotropic(5e-5, 42);
-        assert_eq!(s1.measure(&state, &epoch), s2.measure(&state, &epoch));
+        assert_eq!(
+            s1.measure(0.0, &state, &epoch),
+            s2.measure(0.0, &state, &epoch)
+        );
     }
 
     // Characterization for the frame-typed attitude reading (#332)
@@ -188,7 +214,7 @@ mod tests {
     fn ideal_measurement_components_snapshot() {
         let mut stt = StarTracker::new();
         let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
-        let got = components(&stt.measure(&nontrivial_state(), &epoch));
+        let got = components(&stt.measure(0.0, &nontrivial_state(), &epoch));
         assert_close(
             got,
             Vector4::new(
@@ -201,21 +227,24 @@ mod tests {
         );
     }
 
-    /// Characterization: the noise draw itself — RNG stream, per-axis σ order,
-    /// and the `q_true * δq` composition order — is pinned numerically, for
-    /// both the isotropic and the anisotropic constructor.
+    /// Characterization: the noise draw itself — the keyed stream, per-axis σ
+    /// order, and the `q_true * δq` composition order — is pinned numerically,
+    /// for both the isotropic and the anisotropic constructor, at a non-zero
+    /// time so the time reaches the key.
     #[test]
     fn noisy_measurement_components_snapshot() {
+        // Sim time of the snapshot sample [s]; any non-zero time.
+        const SNAPSHOT_T: f64 = 12.5;
         let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
 
         let mut isotropic = StarTracker::new().with_pointing_noise_isotropic(5e-5, 42);
         assert_close(
-            components(&isotropic.measure(&nontrivial_state(), &epoch)),
+            components(&isotropic.measure(SNAPSHOT_T, &nontrivial_state(), &epoch)),
             Vector4::new(
-                0.9393712890258086,
-                0.10391330045435347,
-                -0.17318662555980863,
-                0.277110086553847,
+                0.9393708833879069,
+                0.10391646793688934,
+                -0.17321062277629007,
+                0.2770952747558041,
             ),
             "isotropic noisy star tracker reading",
         );
@@ -223,12 +252,12 @@ mod tests {
         let mut anisotropic =
             StarTracker::new().with_pointing_noise(Vector3::new(1e-5, 5e-5, 2e-4), 7);
         assert_close(
-            components(&anisotropic.measure(&nontrivial_state(), &epoch)),
+            components(&anisotropic.measure(SNAPSHOT_T, &nontrivial_state(), &epoch)),
             Vector4::new(
-                0.939390464493437,
-                0.10392513965336554,
-                -0.1731971454146844,
-                0.2770340581716219,
+                0.939378541143406,
+                0.10389512183740018,
+                -0.17315379305965323,
+                0.2771128363081233,
             ),
             "anisotropic noisy star tracker reading",
         );
@@ -244,7 +273,7 @@ mod tests {
         let state = nontrivial_state();
 
         let simple = components(
-            &StarTracker::new().measure_in_frame::<arika::frame::SimpleEci>(&state, &epoch),
+            &StarTracker::new().measure_in_frame::<arika::frame::SimpleEci>(0.0, &state, &epoch),
         );
         let gcrs_state = SpacecraftState::<arika::frame::Gcrs> {
             orbit: OrbitalState::<arika::frame::Gcrs>::new_in_frame(
@@ -254,9 +283,11 @@ mod tests {
             attitude: state.attitude.clone(),
             mass: state.mass,
         };
-        let gcrs = components(
-            &StarTracker::new().measure_in_frame::<arika::frame::Gcrs>(&gcrs_state, &epoch),
-        );
+        let gcrs = components(&StarTracker::new().measure_in_frame::<arika::frame::Gcrs>(
+            0.0,
+            &gcrs_state,
+            &epoch,
+        ));
         assert_eq!(simple, gcrs);
     }
 
@@ -283,7 +314,7 @@ mod tests {
             // `UnitQuaternion::from_quaternion` normalizes, so pinning
             // all-NaN would be a claim about nalgebra's internals, not about
             // this sensor.
-            let ideal = components(&StarTracker::new().measure(&state, &epoch));
+            let ideal = components(&StarTracker::new().measure(0.0, &state, &epoch));
             assert!(
                 ideal.iter().any(|c| !c.is_finite()),
                 "expected a non-finite ideal reading for {bad}, got {ideal:?}"
@@ -291,7 +322,7 @@ mod tests {
             let noisy = components(
                 &StarTracker::new()
                     .with_pointing_noise_isotropic(5e-5, 42)
-                    .measure(&state, &epoch),
+                    .measure(0.0, &state, &epoch),
             );
             assert!(
                 noisy.iter().any(|c| !c.is_finite()),
@@ -308,8 +339,9 @@ mod tests {
         let epoch = Epoch::j2000();
         let n_samples = 1000;
         let mut max_angle = 0.0_f64;
-        for _ in 0..n_samples {
-            let q_meas = components(&stt.measure(&state, &epoch));
+        // One draw per sample time: the noise is keyed on the time.
+        for i in 0..n_samples {
+            let q_meas = components(&stt.measure(i as f64, &state, &epoch));
             let q_true = &state.attitude.quaternion;
             // Angular distance: 2 * arccos(|q_true · q_meas|)
             let dot = (q_true[0] * q_meas[0]

@@ -229,7 +229,7 @@ fn drive_wasm(
             attitude: state.plant.clone(),
             mass: MASS,
         };
-        let sensors = sensor_bundle.evaluate(&snapshot, &current_epoch);
+        let sensors = sensor_bundle.evaluate(t, &snapshot, &current_epoch);
         let actuator_state = ActuatorTelemetry {
             rw: Some(RwTelemetry {
                 speeds: state.aux.iter().map(|h| h / RW_INERTIA).collect(),

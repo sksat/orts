@@ -170,8 +170,10 @@ impl SunSensor {
     ///   non-finite vector
     /// - `illumination` in \[0, 1\]: actual eclipse-aware illumination fraction,
     ///   reported whether or not a direction came out
-    pub fn measure(&mut self, state: &SpacecraftState, epoch: &Epoch) -> SunSensorOutput {
-        self.measure_in_frame::<frame::SimpleEci>(state, epoch)
+    ///
+    /// `t` is the sim time of the sample [s], which the noise models are keyed on.
+    pub fn measure(&mut self, t: f64, state: &SpacecraftState, epoch: &Epoch) -> SunSensorOutput {
+        self.measure_in_frame::<frame::SimpleEci>(t, state, epoch)
     }
 
     /// Measure the sun direction in the body frame for a state propagated in an
@@ -185,9 +187,11 @@ impl SunSensor {
     /// error rather than a silent GCRS-alignment assumption.
     pub fn measure_in_frame<F: EphemerisFrameBridge>(
         &mut self,
+        t: f64,
         state: &SpacecraftState<F>,
         epoch: &Epoch,
     ) -> SunSensorOutput {
+        super::noise::keyed::check_sample_time(t);
         // Satellite-to-Sun vector in the propagation frame `F`
         let sun_gcrs = (self.sun_position_fn)(&epoch.to_tdb());
         let sun_eci = *F::ephemeris_rotation(epoch).transform(&sun_gcrs).inner();
@@ -231,7 +235,7 @@ impl SunSensor {
         let mut d = dir_body.into_inner();
 
         for n in &mut self.noise {
-            d = n.apply(d);
+            d = n.apply(t, d);
         }
 
         // `new` normalizes, and answers `None` when the noise left a vector with
@@ -273,7 +277,7 @@ mod tests {
         let mut sensor = SunSensor::new();
         let state = leo_state();
         let epoch = Epoch::j2000();
-        let output = sensor.measure(&state, &epoch);
+        let output = sensor.measure(0.0, &state, &epoch);
         match output {
             SunSensorOutput::Fine {
                 direction,
@@ -295,7 +299,7 @@ mod tests {
     struct ScaleNoise(f64);
 
     impl NoiseModel for ScaleNoise {
-        fn apply(&mut self, true_value: Vector3<f64>) -> Vector3<f64> {
+        fn apply(&mut self, _t: f64, true_value: Vector3<f64>) -> Vector3<f64> {
             true_value * self.0
         }
     }
@@ -305,7 +309,7 @@ mod tests {
     struct ReplaceNoise(Vector3<f64>);
 
     impl NoiseModel for ReplaceNoise {
-        fn apply(&mut self, _true_value: Vector3<f64>) -> Vector3<f64> {
+        fn apply(&mut self, _t: f64, _true_value: Vector3<f64>) -> Vector3<f64> {
             self.0
         }
     }
@@ -313,7 +317,7 @@ mod tests {
     #[test]
     fn noise_does_not_change_the_length_of_the_measured_direction() {
         let mut sensor = SunSensor::new().with_noise(ScaleNoise(1.1));
-        let output = sensor.measure(&leo_state(), &Epoch::j2000());
+        let output = sensor.measure(0.0, &leo_state(), &Epoch::j2000());
         match output {
             SunSensorOutput::Fine { direction, .. } => {
                 let mag = direction
@@ -331,7 +335,7 @@ mod tests {
 
     #[test]
     fn noise_moves_the_direction_it_reports() {
-        let clean = match SunSensor::new().measure(&leo_state(), &Epoch::j2000()) {
+        let clean = match SunSensor::new().measure(0.0, &leo_state(), &Epoch::j2000()) {
             SunSensorOutput::Fine { direction, .. } => {
                 direction.expect("sunlit").into_inner().into_inner()
             }
@@ -341,7 +345,7 @@ mod tests {
         // an angle, so offset perpendicular: the expected angle is then atan(0.02).
         let perp = clean.cross(&Vector3::new(0.0, 0.0, 1.0)).normalize() * 0.02;
         let mut sensor = SunSensor::new().with_noise(ReplaceNoise(clean + perp));
-        let noisy = match sensor.measure(&leo_state(), &Epoch::j2000()) {
+        let noisy = match sensor.measure(0.0, &leo_state(), &Epoch::j2000()) {
             SunSensorOutput::Fine { direction, .. } => {
                 direction.expect("sunlit").into_inner().into_inner()
             }
@@ -358,7 +362,7 @@ mod tests {
     #[test]
     fn a_cancelled_measurement_reports_no_direction_and_keeps_illumination() {
         let mut sensor = SunSensor::new().with_noise(ReplaceNoise(Vector3::zeros()));
-        match sensor.measure(&leo_state(), &Epoch::j2000()) {
+        match sensor.measure(0.0, &leo_state(), &Epoch::j2000()) {
             SunSensorOutput::Fine {
                 direction,
                 illumination,
@@ -384,7 +388,7 @@ mod tests {
             Vector3::new(0.0, f64::NEG_INFINITY, 0.0),
         ] {
             let mut sensor = SunSensor::new().with_noise(ReplaceNoise(bad));
-            match sensor.measure(&leo_state(), &Epoch::j2000()) {
+            match sensor.measure(0.0, &leo_state(), &Epoch::j2000()) {
                 SunSensorOutput::Fine { direction, .. } => assert!(
                     direction.is_none(),
                     "{bad:?} cannot be normalized, so none should be reported"
@@ -400,7 +404,7 @@ mod tests {
         // `magnitude()` alone would return NaN.
         let mut sensor =
             SunSensor::new().with_noise(ReplaceNoise(Vector3::new(1e200, -2e200, 3e200)));
-        match sensor.measure(&leo_state(), &Epoch::j2000()) {
+        match sensor.measure(0.0, &leo_state(), &Epoch::j2000()) {
             SunSensorOutput::Fine { direction, .. } => {
                 let v = direction
                     .expect("a finite non-zero vector has a direction")
@@ -425,7 +429,7 @@ mod tests {
             Vector3::new(1e-320, 1e200, 0.0),
         ] {
             let mut sensor = SunSensor::new().with_noise(ReplaceNoise(v));
-            match sensor.measure(&leo_state(), &Epoch::j2000()) {
+            match sensor.measure(0.0, &leo_state(), &Epoch::j2000()) {
                 SunSensorOutput::Fine { direction, .. } => {
                     let mag = direction
                         .unwrap_or_else(|| panic!("{v:?} has a direction"))
@@ -447,7 +451,7 @@ mod tests {
         state.orbit = OrbitalState::new(sun, Vector3::new(0.0, 0.0, 0.0));
 
         let mut sensor = SunSensor::new().without_shadow();
-        match sensor.measure(&state, &epoch) {
+        match sensor.measure(0.0, &state, &epoch) {
             SunSensorOutput::Fine {
                 direction,
                 illumination,
@@ -496,7 +500,7 @@ mod tests {
         let mut sensor = SunSensor::new();
         let state = leo_state();
         let epoch = Epoch::j2000();
-        let output = sensor.measure(&state, &epoch);
+        let output = sensor.measure(0.0, &state, &epoch);
         let dir_body = match output {
             SunSensorOutput::Fine { direction, .. } => direction
                 .expect("should have direction")
@@ -549,7 +553,7 @@ mod tests {
     fn simple_eci_direction_snapshot() {
         let mut sensor = SunSensor::for_earth();
         let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
-        let output = sensor.measure(&snapshot_state(), &epoch);
+        let output = sensor.measure(0.0, &snapshot_state(), &epoch);
         let SunSensorOutput::Fine {
             direction,
             illumination,
@@ -590,7 +594,7 @@ mod tests {
 
         let mut sensor = SunSensor::for_earth();
         let SunSensorOutput::Fine { direction, .. } =
-            sensor.measure_in_frame::<Cirs>(&state, &epoch)
+            sensor.measure_in_frame::<Cirs>(0.0, &state, &epoch)
         else {
             panic!("expected Fine output");
         };
@@ -634,7 +638,7 @@ mod tests {
             mass: 50.0,
         };
 
-        let output = sensor.measure(&state, &epoch);
+        let output = sensor.measure(0.0, &state, &epoch);
         match output {
             SunSensorOutput::Fine {
                 direction,
@@ -658,7 +662,7 @@ mod tests {
         let mut sensor = SunSensor::for_earth();
         let state = leo_state(); // Sun-side
         let epoch = Epoch::j2000();
-        let output = sensor.measure(&state, &epoch);
+        let output = sensor.measure(0.0, &state, &epoch);
         match output {
             SunSensorOutput::Fine {
                 direction,
@@ -691,7 +695,7 @@ mod tests {
             mass: 50.0,
         };
 
-        let output = sensor.measure(&state, &epoch);
+        let output = sensor.measure(0.0, &state, &epoch);
         match output {
             SunSensorOutput::Fine {
                 direction,
@@ -737,7 +741,7 @@ mod tests {
             mass: 50.0,
         };
 
-        let SunSensorOutput::Fine { direction, .. } = sensor.measure(&state, &epoch) else {
+        let SunSensorOutput::Fine { direction, .. } = sensor.measure(0.0, &state, &epoch) else {
             panic!("a sunlit sensor reports Fine");
         };
         let measured = direction
@@ -773,8 +777,8 @@ mod tests {
 
         let mut for_body = SunSensor::for_body(KnownBody::Earth).expect("Earth has a Sun vector");
         let mut for_earth = SunSensor::for_earth();
-        let a = for_body.measure(&state, &epoch);
-        let b = for_earth.measure(&state, &epoch);
+        let a = for_body.measure(0.0, &state, &epoch);
+        let b = for_earth.measure(0.0, &state, &epoch);
         match (a, b) {
             (
                 SunSensorOutput::Fine {
@@ -798,7 +802,7 @@ mod tests {
         let SunSensorOutput::Fine {
             direction,
             illumination,
-        } = at_sun.measure(&state, &epoch)
+        } = at_sun.measure(0.0, &state, &epoch)
         else {
             panic!("nothing eclipses a spacecraft at the Sun");
         };
@@ -858,7 +862,7 @@ mod tests {
         let mut shadowed = SunSensor::for_body(mars).expect("Mars has a Sun ephemeris");
         assert!(
             matches!(
-                shadowed.measure(&state, &epoch),
+                shadowed.measure(0.0, &state, &epoch),
                 SunSensorOutput::Fine {
                     direction: None,
                     ..
@@ -870,7 +874,7 @@ mod tests {
         let mut ideal = SunSensor::for_body(mars)
             .expect("Mars has a Sun ephemeris")
             .without_shadow();
-        let direction = match ideal.measure(&state, &epoch) {
+        let direction = match ideal.measure(0.0, &state, &epoch) {
             SunSensorOutput::Fine { direction, .. } => direction
                 .expect("no shadow, so the reading is lit")
                 .into_inner()
@@ -917,7 +921,7 @@ mod tests {
             mass: 100.0,
         };
 
-        let illumination_of = |sensor: &mut SunSensor| match sensor.measure(&state, &epoch) {
+        let illumination_of = |sensor: &mut SunSensor| match sensor.measure(0.0, &state, &epoch) {
             SunSensorOutput::Fine { illumination, .. } => illumination,
             other => panic!("expected a fine reading, got {other:?}"),
         };
@@ -964,7 +968,7 @@ mod tests {
         };
 
         let mut sensor = SunSensor::for_body(KnownBody::Moon).expect("the Moon is supported");
-        match sensor.measure(&state, &epoch) {
+        match sensor.measure(0.0, &state, &epoch) {
             SunSensorOutput::Fine {
                 direction,
                 illumination,
@@ -981,7 +985,7 @@ mod tests {
         let mut lit = SunSensor::for_body(KnownBody::Moon)
             .expect("the Moon is supported")
             .without_shadow();
-        match lit.measure(&state, &epoch) {
+        match lit.measure(0.0, &state, &epoch) {
             SunSensorOutput::Fine {
                 direction,
                 illumination,

@@ -59,8 +59,10 @@ impl Magnetometer {
     ///
     /// Thin wrapper over [`Self::measure_in_frame`] (which needs no EOP for
     /// `SimpleEci`).
-    pub fn measure(&mut self, state: &SpacecraftState, epoch: &Epoch) -> MagneticFieldBody {
-        self.measure_in_frame::<frame::SimpleEci>(state, &EarthOrientation::simple(*epoch))
+    ///
+    /// `t` is the sim time of the sample [s], which the noise models are keyed on.
+    pub fn measure(&mut self, t: f64, state: &SpacecraftState, epoch: &Epoch) -> MagneticFieldBody {
+        self.measure_in_frame::<frame::SimpleEci>(t, state, &EarthOrientation::simple(*epoch))
     }
 
     /// Measure the magnetic field in the body frame for a state propagated in
@@ -72,9 +74,11 @@ impl Magnetometer {
     /// body frame.
     pub fn measure_in_frame<F: EarthFixedTransform>(
         &mut self,
+        t: f64,
         state: &SpacecraftState<F>,
         orientation: &EarthOrientation<'_, F>,
     ) -> MagneticFieldBody {
+        super::noise::keyed::check_sample_time(t);
         let b_inertial = magnetic::field_inertial::<F>(
             self.field_model.as_ref(),
             &state.orbit.position_vec(),
@@ -83,7 +87,7 @@ impl Magnetometer {
         let b_body_typed = state.attitude_from_inertial().transform(&b_inertial);
         let mut b_body = b_body_typed.into_inner();
         for n in &mut self.noise {
-            b_body = n.apply(b_body);
+            b_body = n.apply(t, b_body);
         }
         MagneticFieldBody::new(arika::frame::Vec3::from_raw(b_body))
     }
@@ -114,7 +118,7 @@ mod tests {
         let mut mag = Magnetometer::new(Arc::new(TiltedDipole::earth()));
         let state = leo_state();
         let epoch = Epoch::j2000();
-        let b_body = mag.measure(&state, &epoch).into_inner();
+        let b_body = mag.measure(0.0, &state, &epoch).into_inner();
         assert!(b_body.is_finite());
         let magnitude = b_body.magnitude();
         assert!(
@@ -129,7 +133,7 @@ mod tests {
         let mut mag = Magnetometer::new(Arc::clone(&field_model) as Arc<dyn MagneticFieldModel>);
         let state = leo_state();
         let epoch = Epoch::j2000();
-        let b_body = mag.measure(&state, &epoch).into_inner();
+        let b_body = mag.measure(0.0, &state, &epoch).into_inner();
         let b_eci = magnetic::field_eci(field_model.as_ref(), &state.orbit.position_eci(), &epoch);
         assert!((b_body.into_inner() - b_eci.into_inner()).magnitude() < 1e-15);
     }
@@ -159,7 +163,7 @@ mod tests {
     fn simple_eci_measurement_snapshot() {
         let mut mag = Magnetometer::new(Arc::new(TiltedDipole::earth()));
         let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
-        let got = mag.measure(&snapshot_state(), &epoch).into_inner();
+        let got = mag.measure(0.0, &snapshot_state(), &epoch).into_inner();
         let expected = nalgebra::Vector3::new(
             4.382433684690031e-6,
             3.059072261218701e-5,
@@ -190,7 +194,11 @@ mod tests {
 
         let mut mag = Magnetometer::new(Arc::new(TiltedDipole::earth()));
         let got = mag
-            .measure_in_frame::<frame::Gcrs>(&state, &EarthOrientation::new(epoch, &zero_eop()))
+            .measure_in_frame::<frame::Gcrs>(
+                0.0,
+                &state,
+                &EarthOrientation::new(epoch, &zero_eop()),
+            )
             .into_inner()
             .into_inner();
 
@@ -208,7 +216,7 @@ mod tests {
             "Gcrs magnetometer must use the Gcrs field: {got:?} vs {expected:?}"
         );
 
-        let simple_eci = mag.measure(&simple, &epoch).into_inner().into_inner();
+        let simple_eci = mag.measure(0.0, &simple, &epoch).into_inner().into_inner();
         assert!(
             (got - simple_eci).magnitude() > simple_eci.magnitude() * 1e-4,
             "Gcrs reading should differ from the SimpleEci reading"
@@ -223,8 +231,8 @@ mod tests {
             .with_noise(GaussianNoise::isotropic(1e-6, 42));
         let state = leo_state();
         let epoch = Epoch::j2000();
-        let b_ideal = ideal.measure(&state, &epoch).into_inner();
-        let b_noisy = noisy.measure(&state, &epoch).into_inner();
+        let b_ideal = ideal.measure(0.0, &state, &epoch).into_inner();
+        let b_noisy = noisy.measure(0.0, &state, &epoch).into_inner();
         assert!(
             (b_ideal - b_noisy).magnitude() > 0.0,
             "noisy and ideal should differ"
@@ -241,6 +249,9 @@ mod tests {
             .with_noise(GaussianNoise::isotropic(1e-6, 42));
         let state = leo_state();
         let epoch = Epoch::j2000();
-        assert_eq!(m1.measure(&state, &epoch), m2.measure(&state, &epoch));
+        assert_eq!(
+            m1.measure(0.0, &state, &epoch),
+            m2.measure(0.0, &state, &epoch)
+        );
     }
 }

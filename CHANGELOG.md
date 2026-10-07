@@ -151,6 +151,21 @@ section is subdivided by package.
   ([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
+- **BREAKING**: sensor noise is a function of its seed and the sim time it is
+  asked about. `NoiseModel::apply`, every sensor's `measure` /
+  `measure_in_frame` and `SensorBundle::evaluate` / `evaluate_in_frame` take the
+  sim time `t` [s] first, and evaluating again at the same `t` gives the same
+  reading whatever was read in between; before, the value depended on how many
+  times the model had been called, so reading a past instant again gave a
+  different value and shifted every later one. `GaussianNoise` and the star
+  tracker's pointing noise draw from a SplitMix64 keyed on (seed, `t`, axis),
+  with Box–Muller of their own, so the values no longer depend on the `rand`
+  release; `rand` and `rand_distr` are dropped. `BiasRandomWalk` is piecewise
+  constant on its own grid `k·dt` from `t = 0`, zero before the first point, and
+  no longer assumes it is called once per `dt`: the value at a grid point is
+  drawn directly by Lévy's midpoint construction, 48 levels deep, so any time
+  costs the same and a time beyond `2^48` steps is refused. A non-finite `t` panics, and
+  negative or non-finite sigmas are refused at construction.
 - **BREAKING**: every WASM controller runs under limits, whichever way its
   component arrived, and a guest past one fails the call with an error naming
   the limit. A *turn* — from the host handing the guest control

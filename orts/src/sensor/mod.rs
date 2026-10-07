@@ -75,9 +75,13 @@ impl SensorBundle {
 
     /// Evaluate all configured sensors at the given `SimpleEci` state and epoch.
     ///
-    /// `&mut self` because noise models mutate their internal RNG.
-    pub fn evaluate(&mut self, state: &SpacecraftState, epoch: &Epoch) -> Sensors {
-        self.evaluate_in_frame::<frame::SimpleEci>(state, &EarthOrientation::simple(*epoch))
+    /// `&mut self` because a noise model may keep a cache; the readings do not
+    /// depend on it.
+    ///
+    /// `t` is the sim time of the sample [s], which the noise models are keyed
+    /// on: evaluating again at the same `t` gives the same readings.
+    pub fn evaluate(&mut self, t: f64, state: &SpacecraftState, epoch: &Epoch) -> Sensors {
+        self.evaluate_in_frame::<frame::SimpleEci>(t, state, &EarthOrientation::simple(*epoch))
     }
 
     /// Evaluate all configured sensors for a state propagated in an arbitrary
@@ -101,31 +105,34 @@ impl SensorBundle {
     /// plugin, whose v0 contract is simple-ECI.
     pub fn evaluate_in_frame<F: EarthFixedTransform + EphemerisFrameBridge>(
         &mut self,
+        t: f64,
         state: &SpacecraftState<F>,
         orientation: &EarthOrientation<'_, F>,
     ) -> Sensors<F> {
+        // Here as well as in each sensor, so an empty bundle refuses it too.
+        noise::keyed::check_sample_time(t);
         // The non-magnetometer sensors need only the instant.
         let epoch = orientation.utc();
         Sensors {
             magnetometers: self
                 .magnetometers
                 .iter_mut()
-                .map(|m| m.measure_in_frame::<F>(state, orientation))
+                .map(|m| m.measure_in_frame::<F>(t, state, orientation))
                 .collect(),
             gyroscopes: self
                 .gyroscopes
                 .iter_mut()
-                .map(|g| g.measure_in_frame::<F>(state, epoch))
+                .map(|g| g.measure_in_frame::<F>(t, state, epoch))
                 .collect(),
             star_trackers: self
                 .star_trackers
                 .iter_mut()
-                .map(|s| s.measure_in_frame::<F>(state, epoch))
+                .map(|s| s.measure_in_frame::<F>(t, state, epoch))
                 .collect(),
             sun_sensors: self
                 .sun_sensors
                 .iter_mut()
-                .map(|s| s.measure_in_frame::<F>(state, epoch))
+                .map(|s| s.measure_in_frame::<F>(t, state, epoch))
                 .collect(),
         }
     }
@@ -162,7 +169,7 @@ mod tests {
         let mut bundle = SensorBundle::new();
         let epoch = Epoch::j2000();
         let state = make_state();
-        let readings = bundle.evaluate(&state, &epoch);
+        let readings = bundle.evaluate(0.0, &state, &epoch);
         assert!(readings.magnetometers.is_empty());
         assert!(readings.gyroscopes.is_empty());
         assert!(readings.star_trackers.is_empty());
@@ -178,7 +185,7 @@ mod tests {
         };
         let epoch = Epoch::j2000();
         let state = make_state();
-        let readings = bundle.evaluate(&state, &epoch);
+        let readings = bundle.evaluate(0.0, &state, &epoch);
         assert_eq!(readings.magnetometers.len(), 1);
         assert_eq!(readings.gyroscopes.len(), 1);
         assert!(readings.star_trackers.is_empty());
@@ -210,8 +217,11 @@ mod tests {
             star_trackers: vec![StarTracker::new()],
             sun_sensors: Vec::new(),
         };
-        let readings: Sensors<frame::Gcrs> = bundle
-            .evaluate_in_frame::<frame::Gcrs>(&state, &EarthOrientation::new(epoch, &zero_eop()));
+        let readings: Sensors<frame::Gcrs> = bundle.evaluate_in_frame::<frame::Gcrs>(
+            0.0,
+            &state,
+            &EarthOrientation::new(epoch, &zero_eop()),
+        );
 
         assert_eq!(readings.star_trackers.len(), 1);
         let q = readings.star_trackers[0].inner().inner();
@@ -220,6 +230,105 @@ mod tests {
             state.attitude.quaternion,
             "the reading is the state quaternion, re-tagged as Gcrs"
         );
+    }
+
+    /// The readings of a bundle without sun sensors, in a comparable form.
+    fn readings(
+        s: &Sensors,
+    ) -> (
+        Vec<crate::plugin::tick_input::MagneticFieldBody>,
+        Vec<crate::plugin::tick_input::AngularVelocityBody>,
+        Vec<crate::plugin::tick_input::AttitudeBodyToInertial>,
+    ) {
+        (
+            s.magnetometers.clone(),
+            s.gyroscopes.clone(),
+            s.star_trackers.clone(),
+        )
+    }
+
+    fn noisy_bundle() -> SensorBundle {
+        use noise::{BiasRandomWalk, GaussianNoise};
+        SensorBundle {
+            magnetometers: vec![
+                Magnetometer::new(Arc::new(TiltedDipole::earth()))
+                    .with_noise(GaussianNoise::isotropic(1e-7, 1))
+                    .with_noise(BiasRandomWalk::isotropic(1e-8, 1.0, 2)),
+            ],
+            gyroscopes: vec![
+                Gyroscope::new()
+                    .with_noise(GaussianNoise::isotropic(1e-4, 3))
+                    .with_noise(BiasRandomWalk::isotropic(1e-5, 0.5, 4)),
+            ],
+            star_trackers: vec![StarTracker::new().with_pointing_noise_isotropic(5e-5, 5)],
+            sun_sensors: Vec::new(),
+        }
+    }
+
+    /// Evaluating the bundle again at a time it already read gives the same
+    /// readings, after reading other times in between, earlier ones included.
+    #[test]
+    fn readings_are_a_function_of_the_sample_time() {
+        let epoch = Epoch::j2000();
+        let state = make_state();
+        let mut bundle = noisy_bundle();
+        let at_2 = readings(&bundle.evaluate(2.0, &state, &epoch));
+        let at_1 = readings(&bundle.evaluate(1.0, &state, &epoch));
+        assert_ne!(at_1, at_2, "two times draw different noise");
+        assert_eq!(readings(&bundle.evaluate(2.0, &state, &epoch)), at_2);
+        assert_eq!(
+            readings(&noisy_bundle().evaluate(1.0, &state, &epoch)),
+            at_1
+        );
+    }
+
+    /// The readings a controller gets at its ticks do not depend on what else
+    /// read the sensors in between, such as telemetry at its own interval.
+    #[test]
+    fn extra_reads_between_ticks_do_not_change_the_tick_readings() {
+        let epoch = Epoch::j2000();
+        let state = make_state();
+        let ticks: Vec<f64> = (1..=20).map(|k| k as f64).collect();
+
+        let mut alone = noisy_bundle();
+        let only_ticks: Vec<_> = ticks
+            .iter()
+            .map(|&t| readings(&alone.evaluate(t, &state, &epoch)))
+            .collect();
+
+        let mut shared = noisy_bundle();
+        let with_telemetry: Vec<_> = ticks
+            .iter()
+            .map(|&t| {
+                let _ = shared.evaluate(t - 0.3, &state, &epoch);
+                let reading = readings(&shared.evaluate(t, &state, &epoch));
+                let _ = shared.evaluate(t, &state, &epoch);
+                reading
+            })
+            .collect();
+        assert_eq!(only_ticks, with_telemetry);
+    }
+
+    /// A non-finite sample time is refused whatever the bundle holds, ideal
+    /// sensors and no sensors included.
+    #[test]
+    fn a_non_finite_sample_time_is_refused_by_any_bundle() {
+        let epoch = Epoch::j2000();
+        let state = make_state();
+        let ideal = || SensorBundle {
+            magnetometers: vec![Magnetometer::new(Arc::new(TiltedDipole::earth()))],
+            gyroscopes: vec![Gyroscope::new()],
+            star_trackers: vec![StarTracker::new()],
+            sun_sensors: Vec::new(),
+        };
+        for t in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            for mut bundle in [SensorBundle::new(), ideal(), noisy_bundle()] {
+                let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    bundle.evaluate(t, &state, &epoch);
+                }));
+                assert!(refused.is_err(), "t = {t} was read");
+            }
+        }
     }
 
     #[test]
@@ -232,7 +341,7 @@ mod tests {
         };
         let epoch = Epoch::j2000();
         let state = make_state();
-        let readings = bundle.evaluate(&state, &epoch);
+        let readings = bundle.evaluate(0.0, &state, &epoch);
         assert_eq!(readings.gyroscopes.len(), 2);
         // Both ideal gyros should produce the same reading
         assert_eq!(readings.gyroscopes[0], readings.gyroscopes[1]);
