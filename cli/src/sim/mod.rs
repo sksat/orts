@@ -4,3 +4,4 @@ pub mod core;
 pub mod frame;
 pub mod mode;
 pub mod params;
+pub mod telemetry;

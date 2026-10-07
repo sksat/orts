@@ -119,7 +119,15 @@ pub fn unhonored_config_warnings(satellites: &[SatelliteSpec], mode: SimMode) ->
     let mut warnings = Vec::new();
     for spec in satellites {
         let mut keys: Vec<&str> = Vec::new();
-        if spec.sensor_choices.is_some() {
+        // An attitude run records the magnetometers' readings; any other
+        // sensor, and every sensor in an orbit-only run, goes unread.
+        let unread_sensor = spec.sensor_choices.as_ref().is_some_and(|sensors| {
+            mode != SimMode::Spacecraft
+                || sensors
+                    .iter()
+                    .any(|s| *s != crate::config::SensorChoice::Magnetometer)
+        });
+        if unread_sensor {
             keys.push("sensors");
         }
         if spec.rw_config.is_some() {
@@ -545,6 +553,36 @@ reaction_wheels = { type = "three_axis", inertia = 0.01, max_momentum = 1.0, max
             "got: {}",
             warnings[0]
         );
+    }
+
+    /// An attitude run records the magnetometers, so declaring only those is
+    /// not a dead key; another sensor beside them, or a magnetometer on an
+    /// orbit-only run, still is.
+    #[test]
+    fn magnetometers_without_controller_are_read_only_on_an_attitude_run() {
+        let with = |sensors: &str, attitude: bool| {
+            let attitude = if attitude {
+                "attitude = { inertia_diag = [10, 10, 10], mass = 500 }\n"
+            } else {
+                ""
+            };
+            specs(&format!(
+                "body = \"earth\"\n[[satellites]]\nid = \"a\"\n\
+                 orbit = {{ type = \"circular\", altitude = 400 }}\nsensors = {sensors}\n{attitude}"
+            ))
+        };
+        assert!(
+            unhonored_config_warnings(&with(r#"["magnetometer"]"#, true), SimMode::Spacecraft)
+                .is_empty()
+        );
+        let mixed = unhonored_config_warnings(
+            &with(r#"["magnetometer", "gyroscope"]"#, true),
+            SimMode::Spacecraft,
+        );
+        assert!(mixed[0].contains("`sensors`"), "got: {mixed:?}");
+        let orbit_only =
+            unhonored_config_warnings(&with(r#"["magnetometer"]"#, false), SimMode::OrbitOnly);
+        assert!(orbit_only[0].contains("`sensors`"), "got: {orbit_only:?}");
     }
 
     #[test]

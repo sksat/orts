@@ -950,11 +950,13 @@ section is subdivided by package.
   ([#536](https://github.com/sksat/orts/issues/536))
 
 #### Added
-- `orts run` records the magnetometer readings of a controlled satellite at
-  every output sample: each magnetometer's reading [T, body frame] and the
-  geomagnetic field at the same instant with no sensor in between. The sensors
-  are evaluated again at the output time, which at a controller tick gives what
-  the controller received, since the noise is a function of the sample time.
+- `orts run` records the magnetometer readings of a satellite with attitude at
+  every output sample, with a controller or without one: each magnetometer's
+  reading [T, body frame] and the geomagnetic field at the same instant with no
+  sensor in between. The sensors are evaluated again at the output time, which
+  at a controller tick gives what the controller received, since the noise is a
+  function of the sample time. Declaring only magnetometers on a run without a
+  controller no longer warns that the sensors go unread.
 - `orts serve --realtime` advances every simulation the server runs — the
   one its command line starts and each `start_simulation` — at wall-clock
   speed, 1 sim s per wall s, one `stream_interval` per step. Without it a

@@ -35,6 +35,7 @@ use crate::satellite::SatelliteSpec;
 #[cfg(feature = "plugin-wasm")]
 use crate::sim::params::ResolvedPluginBackend;
 use crate::sim::params::SimParams;
+use crate::sim::telemetry::{MagnetometerTelemetry, read_magnetometers, sample_epoch};
 
 #[cfg(feature = "plugin-wasm")]
 use orts::plugin::wasm::WasmPluginCache;
@@ -67,28 +68,6 @@ pub struct ControlledBuildContext<'a> {
 pub struct Termination {
     pub t: f64,
     pub reason: String,
-}
-
-/// The magnetometers' readings at one sim time and the geomagnetic field
-/// there, for telemetry.
-///
-/// The sensors evaluated again rather than a reading kept from a tick: the
-/// noise is a function of the sample time, so at a tick this is what the
-/// controller received, and between ticks it is the reading the sensors would
-/// have given (DESIGN.md "センサの読み値も出力サンプル時刻で評価し直す").
-#[derive(Debug, Clone, PartialEq)]
-pub struct MagnetometerTelemetry {
-    /// Each magnetometer's reading [T, body frame], in bundle order.
-    pub readings: Vec<Vector3<f64>>,
-    /// The geomagnetic field at the spacecraft [T, body frame], with no sensor
-    /// in between.
-    pub geomagnetic_field_body: Vector3<f64>,
-}
-
-/// The epoch the sensors are evaluated at for sim time `t`: the run's epoch
-/// moved on by `t`, or J2000 for a run without one.
-fn sample_epoch(epoch: Option<&Epoch>, t: f64) -> Epoch {
-    epoch.map(|e| e.add_si_seconds(t)).unwrap_or(Epoch::j2000())
 }
 
 /// 制御付き衛星の状態。
@@ -161,19 +140,13 @@ impl ControlledSatellite {
         epoch: Option<&Epoch>,
     ) -> Option<MagnetometerTelemetry> {
         let truth = self.geomagnetic_truth.as_mut()?;
-        let epoch = sample_epoch(epoch, t);
-        let plant = &self.state.plant;
-        let geomagnetic_field_body = truth.measure(t, plant, &epoch).into_inner().into_inner();
-        let readings = self
-            .sensors
-            .magnetometers
-            .iter_mut()
-            .map(|m| m.measure(t, plant, &epoch).into_inner().into_inner())
-            .collect();
-        Some(MagnetometerTelemetry {
-            readings,
-            geomagnetic_field_body,
-        })
+        Some(read_magnetometers(
+            &mut self.sensors.magnetometers,
+            truth,
+            t,
+            &self.state.plant,
+            epoch,
+        ))
     }
 
     /// Assemble one for a test in another module of this crate, with no
@@ -1060,7 +1033,7 @@ fn mtq_for_body(
 ///
 /// The sun sensor's reading is a direction to the Sun, so it depends on the
 /// central body the same way the solar force models do.
-fn build_sensor_bundle(
+pub(crate) fn build_sensor_bundle(
     choices: Option<&[SensorChoice]>,
     body: arika::body::KnownBody,
     sat_id: &str,
