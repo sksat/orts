@@ -191,6 +191,7 @@ impl SunSensor {
         state: &SpacecraftState<F>,
         epoch: &Epoch,
     ) -> SunSensorOutput {
+        super::noise::keyed::check_sample_time(t);
         // Satellite-to-Sun vector in the propagation frame `F`
         let sun_gcrs = (self.sun_position_fn)(&epoch.to_tdb());
         let sun_eci = *F::ephemeris_rotation(epoch).transform(&sun_gcrs).inner();

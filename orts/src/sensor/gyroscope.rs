@@ -63,6 +63,7 @@ impl Gyroscope {
         state: &SpacecraftState<F>,
         _epoch: &Epoch,
     ) -> AngularVelocityBody {
+        super::noise::keyed::check_sample_time(t);
         let mut omega = state.attitude.angular_velocity;
         for n in &mut self.noise {
             omega = n.apply(t, omega);

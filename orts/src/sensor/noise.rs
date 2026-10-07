@@ -53,6 +53,15 @@ pub(crate) mod keyed {
         ((x >> 11) as f64 + 0.5) * STEP
     }
 
+    /// Refuse a sample time a noise model could not be keyed on, for the
+    /// sensors that have no noise model to refuse it themselves.
+    ///
+    /// # Panics
+    /// Panics on a non-finite `t`.
+    pub(crate) fn check_sample_time(t: f64) {
+        time_bits(t);
+    }
+
     /// The bit pattern of a sim time used as a key, with `-0.0` read as `0.0`.
     ///
     /// # Panics
@@ -141,13 +150,17 @@ pub struct BiasRandomWalk {
     step_sigma: Vector3<f64>,
     dt: f64,
     seed: u64,
-    /// The bias after the latest grid point asked about: `(k, bias(t_k))`.
-    /// Moving forward adds the steps in between; an earlier time starts again
-    /// from zero.
-    // TODO: keep sparse checkpoints if backward queries far from the latest
-    // one turn out to be common; each one sums from the start.
-    cache: (u64, Vector3<f64>),
+    /// The bias at the furthest grid point reached: `(k, bias(t_k))`. A later
+    /// time adds the steps beyond it; an earlier one leaves it in place.
+    furthest: (u64, Vector3<f64>),
+    /// `checkpoints[j]` is the bias at grid point `j · CHECKPOINT_STRIDE`, up to
+    /// `furthest`, so an earlier time sums fewer than `CHECKPOINT_STRIDE` steps.
+    checkpoints: Vec<Vector3<f64>>,
 }
+
+/// Grid points between two random-walk checkpoints: an earlier time costs at
+/// most this many steps, and the checkpoints take one vector per this many.
+const CHECKPOINT_STRIDE: u64 = 1024;
 
 impl BiasRandomWalk {
     /// Create a bias random walk model.
@@ -172,7 +185,8 @@ impl BiasRandomWalk {
             step_sigma: sigma_drift * dt.sqrt(),
             dt,
             seed,
-            cache: (0, Vector3::zeros()),
+            furthest: (0, Vector3::zeros()),
+            checkpoints: vec![Vector3::zeros()],
         }
     }
 
@@ -211,15 +225,25 @@ impl BiasRandomWalk {
     fn bias_at(&mut self, t: f64) -> Vector3<f64> {
         keyed::time_bits(t);
         let k = self.grid_index(t);
-        let (mut at, mut bias) = self.cache;
-        if k < at {
-            (at, bias) = (0, Vector3::zeros());
+        let (furthest, furthest_bias) = self.furthest;
+        if k >= furthest {
+            let mut bias = furthest_bias;
+            for at in furthest + 1..=k {
+                bias += self.step(at);
+                if at % CHECKPOINT_STRIDE == 0 {
+                    self.checkpoints.push(bias);
+                }
+            }
+            self.furthest = (k, bias);
+            return bias;
         }
-        while at < k {
-            at += 1;
+        // An earlier time: from the checkpoint at or before it, leaving the
+        // furthest point in place for the next later time.
+        let j = k / CHECKPOINT_STRIDE;
+        let mut bias = self.checkpoints[j as usize];
+        for at in j * CHECKPOINT_STRIDE + 1..=k {
             bias += self.step(at);
         }
-        self.cache = (at, bias);
         bias
     }
 }
@@ -366,6 +390,31 @@ mod tests {
             jumping.apply(3.05, Vector3::zeros()),
             at[29],
             "between grid points"
+        );
+    }
+
+    /// Reading an earlier time keeps the furthest point and the checkpoints:
+    /// after it, the walk carries on from where it was, and the earlier time
+    /// costs fewer than one checkpoint stride of steps.
+    #[test]
+    fn bias_random_walk_reads_an_earlier_time_from_a_checkpoint() {
+        let dt = 1.0;
+        let far = 5.0 * CHECKPOINT_STRIDE as f64 + 7.0;
+        let mut b = BiasRandomWalk::isotropic(1e-3, dt, 42);
+        let at_far = b.apply(far, Vector3::zeros());
+        assert_eq!(b.checkpoints.len(), 6, "checkpoints at 0 and 1..=5 strides");
+
+        let early = 2.0 * CHECKPOINT_STRIDE as f64 + 3.0;
+        let at_early = b.apply(early, Vector3::zeros());
+        assert_eq!(b.furthest.0, far as u64, "the furthest point stays");
+        assert_eq!(
+            at_early,
+            BiasRandomWalk::isotropic(1e-3, dt, 42).apply(early, Vector3::zeros())
+        );
+        assert_eq!(b.apply(far, Vector3::zeros()), at_far);
+        assert_eq!(
+            b.apply(far + 1.0, Vector3::zeros()),
+            BiasRandomWalk::isotropic(1e-3, dt, 42).apply(far + 1.0, Vector3::zeros())
         );
     }
 

@@ -108,6 +108,8 @@ impl SensorBundle {
         state: &SpacecraftState<F>,
         orientation: &EarthOrientation<'_, F>,
     ) -> Sensors<F> {
+        // Here as well as in each sensor, so an empty bundle refuses it too.
+        noise::keyed::check_sample_time(t);
         // The non-magnetometer sensors need only the instant.
         let epoch = orientation.utc();
         Sensors {
@@ -304,6 +306,28 @@ mod tests {
             })
             .collect();
         assert_eq!(only_ticks, with_telemetry);
+    }
+
+    /// A non-finite sample time is refused whatever the bundle holds, ideal
+    /// sensors and no sensors included.
+    #[test]
+    fn a_non_finite_sample_time_is_refused_by_any_bundle() {
+        let epoch = Epoch::j2000();
+        let state = make_state();
+        let ideal = || SensorBundle {
+            magnetometers: vec![Magnetometer::new(Arc::new(TiltedDipole::earth()))],
+            gyroscopes: vec![Gyroscope::new()],
+            star_trackers: vec![StarTracker::new()],
+            sun_sensors: Vec::new(),
+        };
+        for t in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            for mut bundle in [SensorBundle::new(), ideal(), noisy_bundle()] {
+                let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    bundle.evaluate(t, &state, &epoch);
+                }));
+                assert!(refused.is_err(), "t = {t} was read");
+            }
+        }
     }
 
     #[test]

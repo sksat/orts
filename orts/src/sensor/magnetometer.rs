@@ -78,6 +78,7 @@ impl Magnetometer {
         state: &SpacecraftState<F>,
         orientation: &EarthOrientation<'_, F>,
     ) -> MagneticFieldBody {
+        super::noise::keyed::check_sample_time(t);
         let b_inertial = magnetic::field_inertial::<F>(
             self.field_model.as_ref(),
             &state.orbit.position_vec(),

@@ -90,6 +90,7 @@ impl StarTracker {
         state: &SpacecraftState<F>,
         _epoch: &Epoch,
     ) -> AttitudeBodyToInertial<F> {
+        super::noise::keyed::check_sample_time(t);
         let q_true = UnitQuaternion::from_quaternion(state.attitude.orientation().into_inner());
 
         let q_measured =
