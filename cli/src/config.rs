@@ -1303,10 +1303,9 @@ fn validate_sensors(sensors: &[SensorConfig], mtq: Option<&MtqConfig>) -> Result
         .collect();
     // Compared by what they configure, so the shorthand and a table with the
     // same settings agree.
-    if magnetometers
-        .windows(2)
-        .any(|w| w[0].mtq_coupling() != w[1].mtq_coupling())
-    {
+    if magnetometers.windows(2).any(|w| {
+        w[0].mtq_coupling() != w[1].mtq_coupling() || w[0].residual_field() != w[1].residual_field()
+    }) {
         return Err(
             "magnetometer entries differ, but one magnetometer is built per satellite".into(),
         );
@@ -4579,6 +4578,18 @@ disturbances = { residual_dipole = [0.0, inf, 0.0] }
         let config: SimConfig = toml::from_str(toml).expect("parses");
         let err = config.satellites[0].validate().unwrap_err();
         assert!(err.contains("residual_dipole"), "got: {err}");
+    }
+
+    /// One magnetometer is built, so two entries whose residual fields differ
+    /// are refused like two whose couplings differ.
+    #[test]
+    fn magnetometer_entries_must_agree_on_the_residual_field() {
+        let err = sensors_config(
+            r#"["magnetometer", { type = "magnetometer", residual_field = [1e-7, 0, 0] }]"#,
+            false,
+        )
+        .expect_err("they differ");
+        assert!(err.contains("magnetometer entries differ"), "msg: {err}");
     }
 
     #[test]
