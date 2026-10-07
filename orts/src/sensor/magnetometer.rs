@@ -9,6 +9,7 @@ use std::sync::Arc;
 use arika::earth::{EarthFixedTransform, EarthOrientation};
 use arika::epoch::Epoch;
 use arika::frame;
+use nalgebra::Vector3;
 use tobari::magnetic::MagneticFieldModel;
 
 use super::noise::NoiseModel;
@@ -22,21 +23,23 @@ use crate::plugin::tick_input::MagneticFieldBody;
 ///
 /// Evaluates the host's geomagnetic field model at the spacecraft's
 /// current ECI position and epoch, rotates the result into the
-/// body frame via the attitude quaternion, and adds the field the MTQ rods
-/// produce at the sensor:
+/// body frame via the attitude quaternion, and adds the spacecraft's own fields
+/// at the sensor:
 ///
 /// ```text
-/// B_body = noise(R_bi · B_eci(r, epoch) + K · u)
+/// B_body = noise(R_bi · B_eci(r, epoch) + K · u + b_res)
 /// ```
 ///
 /// `K` is the sensor's [`MtqCoupling`] (none by default, i.e. zero) and `u` the
-/// rods' realized moments from [`OnboardMagneticSources`].
+/// rods' realized moments from [`OnboardMagneticSources`]. `b_res` is the
+/// sensor's residual field ([`Self::with_residual_field`], zero by default).
 ///
 /// Noise models are added via the builder-style [`Self::with_noise`]
 /// method and applied in the order they were added.
 pub struct Magnetometer {
     field_model: Arc<dyn MagneticFieldModel>,
     mtq_coupling: Option<MtqCoupling>,
+    residual_field: Option<Vector3<f64>>,
     noise: Vec<Box<dyn NoiseModel>>,
 }
 
@@ -46,6 +49,7 @@ impl Magnetometer {
         Self {
             field_model,
             mtq_coupling: None,
+            residual_field: None,
             noise: Vec::new(),
         }
     }
@@ -55,6 +59,31 @@ impl Magnetometer {
     pub fn with_mtq_coupling(mut self, coupling: MtqCoupling) -> Self {
         self.mtq_coupling = Some(coupling);
         self
+    }
+
+    /// Add a constant field [T, body frame] at the sensor: the field the
+    /// spacecraft's own magnetization makes there (the hard-iron offset a
+    /// calibration measures).
+    ///
+    /// It is given apart from the residual dipole of the torque model
+    /// ([`ResidualDipoleTorque`](crate::attitude::ResidualDipoleTorque)): the
+    /// magnetization is spread over the spacecraft, so the field at one point
+    /// does not follow from its dipole moment.
+    ///
+    /// # Panics
+    /// Panics if a component is non-finite.
+    pub fn with_residual_field(mut self, field: Vector3<f64>) -> Self {
+        assert!(
+            field.iter().all(|v| v.is_finite()),
+            "residual field must be finite, got {field:?}"
+        );
+        self.residual_field = Some(field);
+        self
+    }
+
+    /// The sensor's residual field [T, body frame], if any.
+    pub fn residual_field(&self) -> Option<&Vector3<f64>> {
+        self.residual_field.as_ref()
     }
 
     /// The sensor's coupling to the MTQ rods, if any.
@@ -126,6 +155,9 @@ impl Magnetometer {
                 .mtq_rod_moments()
                 .expect("magnetometer is coupled to MTQs, but the sources carry no MTQ state");
             b_body += coupling.field(rods);
+        }
+        if let Some(residual) = &self.residual_field {
+            b_body += residual;
         }
         for n in &mut self.noise {
             b_body = n.apply(t, b_body);
@@ -335,6 +367,32 @@ mod tests {
             .into_inner()
             .into_inner();
         assert_eq!(got, coupling().field(&[0.5, -1.0, 0.2]));
+    }
+
+    /// The residual field is added to the reading as it is, alongside the rods'
+    /// field.
+    #[test]
+    fn residual_field_adds_to_the_reading() {
+        let state = snapshot_state();
+        let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        let b_res = Vector3::new(3e-7, -1e-7, 2e-7);
+        let mut coupled =
+            Magnetometer::new(Arc::new(TiltedDipole::earth())).with_mtq_coupling(coupling());
+        let mut with_residual = Magnetometer::new(Arc::new(TiltedDipole::earth()))
+            .with_mtq_coupling(coupling())
+            .with_residual_field(b_res);
+        let without = coupled.measure(&state, &epoch, &mtq_on()).into_inner();
+        let got = with_residual
+            .measure(&state, &epoch, &mtq_on())
+            .into_inner();
+        assert_eq!(got.into_inner(), without.into_inner() + b_res);
+    }
+
+    #[test]
+    #[should_panic(expected = "residual field must be finite")]
+    fn a_non_finite_residual_field_is_rejected() {
+        let _ = Magnetometer::new(Arc::new(TiltedDipole::earth()))
+            .with_residual_field(Vector3::new(0.0, f64::INFINITY, 0.0));
     }
 
     /// A coupled sensor refuses a sample without MTQ state rather than

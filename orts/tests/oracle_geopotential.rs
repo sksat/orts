@@ -146,6 +146,7 @@ fn build_system_through_setup(fixtures: &FixtureFile, sc: &Scenario) -> OrbitalS
         srp_area_to_mass: None,
         srp_cr: None,
         disturbances: orts::setup::DisturbanceTorques {
+            residual_dipole: None,
             gravity_gradient: false,
         },
         shape: None,

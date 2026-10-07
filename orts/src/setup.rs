@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use nalgebra::Matrix3;
+use nalgebra::{Matrix3, Vector3};
 use tobari::gravity::SphericalHarmonicField;
 
 use crate::orbital::gravity::{self, GravityField};
@@ -12,7 +12,7 @@ use arika::epoch::Epoch;
 use arika::frame;
 use arika::sun::SunPositionError;
 
-use crate::attitude::CoupledGravityGradient;
+use crate::attitude::{CoupledGravityGradient, ResidualDipoleTorque};
 use crate::orbital::OrbitalSystem;
 use crate::perturbations::{
     AtmosphericDrag, SolarRadiationPressure, SphericalHarmonicGravity, ThirdBodyGravity,
@@ -28,13 +28,19 @@ use crate::spacecraft::{PanelDrag, PanelSrp, SpacecraftShape};
 pub struct DisturbanceTorques {
     /// Gravity-gradient torque from the central body's field.
     pub gravity_gradient: bool,
+    /// The spacecraft's residual magnetic dipole [A·m², body frame], whose
+    /// torque in the geomagnetic field is modelled when present. See
+    /// [`ResidualDipoleTorque`].
+    pub residual_dipole: Option<Vector3<f64>>,
 }
 
 impl Default for DisturbanceTorques {
-    /// Gravity gradient on, which is what attitude propagation has always used.
+    /// Gravity gradient on, which is what attitude propagation has always used,
+    /// and no residual dipole.
     fn default() -> Self {
         Self {
             gravity_gradient: true,
+            residual_dipole: None,
         }
     }
 }
@@ -415,6 +421,12 @@ pub fn build_spacecraft_dynamics(
     if sat.disturbances.gravity_gradient {
         system = system.with_model(CoupledGravityGradient::new(mu, inertia));
     }
+    if let Some(dipole) = sat.disturbances.residual_dipole {
+        system = system.with_model(ResidualDipoleTorque::new(
+            dipole,
+            crate::magnetic::igrf_field_for_body(*body),
+        ));
+    }
 
     Ok(system)
 }
@@ -727,8 +739,29 @@ mod tests {
     fn spacecraft_dynamics_omits_a_disabled_gravity_gradient() {
         let system = earth_dynamics(DisturbanceTorques {
             gravity_gradient: false,
+            residual_dipole: None,
         });
         assert!(!system.model_names().contains(&"gravity_gradient"));
+    }
+
+    #[test]
+    fn spacecraft_dynamics_installs_a_residual_dipole_once_when_given() {
+        assert!(
+            !earth_dynamics(DisturbanceTorques::default())
+                .model_names()
+                .contains(&"residual_dipole"),
+            "no residual dipole by default"
+        );
+        let system = earth_dynamics(DisturbanceTorques {
+            residual_dipole: Some(Vector3::new(0.1, 0.0, 0.0)),
+            ..DisturbanceTorques::default()
+        });
+        let count = system
+            .model_names()
+            .iter()
+            .filter(|n| **n == "residual_dipole")
+            .count();
+        assert_eq!(count, 1, "models: {:?}", system.model_names());
     }
 
     /// An orbit-only system has no orientation, so a torque there would be

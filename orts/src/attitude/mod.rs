@@ -2,6 +2,7 @@ pub mod augmented;
 pub mod control;
 pub mod decoupled;
 pub mod gravity_gradient;
+pub mod residual_dipole;
 pub mod state;
 pub mod system;
 
@@ -9,5 +10,6 @@ pub use augmented::AugmentedAttitudeSystem;
 pub use control::*;
 pub use decoupled::{DecoupledAttitudeSystem, DecoupledContext};
 pub use gravity_gradient::{CoupledGravityGradient, GravityGradientTorque};
+pub use residual_dipole::ResidualDipoleTorque;
 pub use state::AttitudeState;
 pub use system::AttitudeSystem;
