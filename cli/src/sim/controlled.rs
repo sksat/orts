@@ -2007,11 +2007,6 @@ mod tests {
         );
     }
 
-    /// The rebuild after a command goes through the same factory.
-    ///
-    /// Measured: a satellite whose body has no field model keeps zero torque
-    /// after `apply_held_commands` installs the command. Pointing the rebuild
-    /// at Earth's field fails this.
     /// A controller that records the first magnetometer's reading at every
     /// tick.
     struct MagnetometerRecorder {
@@ -2075,6 +2070,11 @@ mod tests {
         assert_eq!(sat.magnetometer_telemetry(0.0, None), None);
     }
 
+    /// The rebuild after a command goes through the same factory.
+    ///
+    /// Measured: a satellite whose body has no field model keeps zero torque
+    /// after `apply_held_commands` installs the command. Pointing the rebuild
+    /// at Earth's field fails this.
     #[test]
     fn a_commanded_magnetorquer_keeps_the_field_of_its_body() {
         let (mut sat, _ticks) = satellite_with(1.0, 0.0);
