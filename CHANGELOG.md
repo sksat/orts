@@ -20,9 +20,8 @@ section is subdivided by package.
   (`m_res × B`, model name `residual_dipole`) when it is set.
   `Magnetometer::with_residual_field` adds the constant field the
   magnetization makes at the sensor (the hard-iron offset), given apart from
-  the dipole. `magnetic::igrf_field_for_body` picks the field model — IGRF on
-  Earth, `NoField` elsewhere — that the residual-dipole torque and the CLI's
-  magnetometer use.
+  the dipole. The torque takes its field from `magnetic::igrf_field_for_body`,
+  as the CLI's magnetometer does: IGRF on Earth, `NoField` elsewhere.
 - A magnetometer reads the field the MTQ rods produce at it. `sensor::MtqCoupling`
   holds, per rod, the field [T, body frame] one A·m² of that rod makes at the
   sensor — given column by column (`from_columns`, e.g. measured in a ground
