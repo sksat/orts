@@ -2193,6 +2193,57 @@ mod tests {
         );
     }
 
+    /// Telemetry at a tick reads the rods' field from the command held up to
+    /// it, as the controller did, though the tick has already applied the
+    /// next one; between ticks it reads the command held then.
+    ///
+    /// On Mars, so the reading is the rods' field alone.
+    #[test]
+    fn telemetry_at_a_tick_reads_the_command_held_up_to_it() {
+        let readings = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (mut sat, _ticks) = satellite_with(1.0, 0.0);
+        sat.controller = Box::new(MagnetometerRecorder {
+            script: [
+                Command::mtq_normalized(vec![1.0, 0.0, 0.0]),
+                Command::mtq_normalized(vec![0.0, -0.5, 0.0]),
+                Command::mtq_normalized(vec![0.0, 0.0, 1.0]),
+            ]
+            .into(),
+            readings: Arc::clone(&readings),
+        });
+        sat.body = KnownBody::Mars;
+        let core = orts::spacecraft::MtqAssemblyCore::three_axis(10.0);
+        sat.dynamics = sat.dynamics.with_model(mtq_for_body(sat.body, &core, None));
+        sat.mtq = Some(core);
+        let k = MtqCoupling::from_columns(vec![
+            Vector3::new(1e-6, 0.0, 0.0),
+            Vector3::new(0.0, 2e-6, 0.0),
+            Vector3::new(0.0, 0.0, 3e-6),
+        ]);
+        let field = orts::magnetic::igrf_field_for_body(sat.body);
+        sat.sensors.magnetometers =
+            vec![Magnetometer::new(Arc::clone(&field)).with_mtq_coupling(k)];
+        sat.geomagnetic_truth = Some(Magnetometer::new(field));
+
+        advance(&mut sat, 0.0, 3.0, 0.1);
+        let seen = readings.lock().unwrap().clone();
+        let at_tick = sat
+            .magnetometer_telemetry(3.0, None)
+            .expect("a magnetometer");
+        assert_eq!(at_tick.readings, vec![seen[2]], "what tick 3 read");
+        assert_eq!(seen[2], Vector3::new(0.0, 2e-6 * -5.0, 0.0));
+
+        advance(&mut sat, 3.0, 3.5, 0.1);
+        let between = sat
+            .magnetometer_telemetry(3.5, None)
+            .expect("a magnetometer");
+        assert_eq!(
+            between.readings,
+            vec![Vector3::new(0.0, 0.0, 3e-6 * 10.0)],
+            "after tick 3, the command it returned"
+        );
+    }
+
     /// The rebuild after a command goes through the same factory.
     ///
     /// Measured: a satellite whose body has no field model keeps zero torque
