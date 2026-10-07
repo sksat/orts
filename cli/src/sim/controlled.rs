@@ -91,10 +91,12 @@ pub struct ControlledSatellite {
     pub actuators: ActuatorBundle,
     /// RW effector が登録されているかどうか。
     pub has_rw: bool,
-    /// MTQ model が登録されているかどうか。
-    pub has_mtq: bool,
-    /// MTQ per-axis max moment [A·m²] (for rebuilding the model).
-    pub mtq_max_moment: f64,
+    /// The MTQ rods' geometry and limits, or `None` without an MTQ.
+    ///
+    /// Built once with the satellite: rebuilding the model on a command and
+    /// resolving the rods' moments for the magnetometer both read it, and its
+    /// constructor computes the allocation pseudo-inverse.
+    pub mtq: Option<orts::spacecraft::MtqAssemblyCore>,
     /// Central body this satellite orbits.
     ///
     /// A commanded MTQ is rebuilt on every tick that carries a command, and the
@@ -166,20 +168,11 @@ impl ControlledSatellite {
         ))
     }
 
-    /// The MTQ rods' geometry and limits, or `None` without an MTQ.
-    ///
-    /// Rebuilt from the config value rather than stored: `three_axis` is the
-    /// only layout the config can describe.
-    fn mtq_core(&self) -> Option<orts::spacecraft::MtqAssemblyCore> {
-        self.has_mtq
-            .then(|| orts::spacecraft::MtqAssemblyCore::three_axis(self.mtq_max_moment))
-    }
-
     /// The onboard magnetic sources as the sensors see them at a tick: the MTQ
     /// command held over the interval that ends there, before the controller
     /// returns a new one. An MTQ that has had no command yet is off.
     fn onboard_magnetic_sources(&self) -> Result<OnboardMagneticSources, String> {
-        let Some(core) = self.mtq_core() else {
+        let Some(core) = &self.mtq else {
             return Ok(OnboardMagneticSources::none());
         };
         let rods = match self.actuators.mtq_command() {
@@ -215,8 +208,7 @@ impl ControlledSatellite {
             sensors: SensorBundle::default(),
             actuators: ActuatorBundle::new(),
             has_rw: false,
-            has_mtq: false,
-            mtq_max_moment: 0.0,
+            mtq: None,
             body,
             thruster_specs: Vec::new(),
             discards_messages: false,
@@ -373,14 +365,14 @@ pub fn build_controlled_satellite(
     }
 
     // MTQ を追加。
-    let has_mtq = spec.mtq_config.is_some();
-    let mtq_max_moment = match &spec.mtq_config {
+    let mtq = match &spec.mtq_config {
         Some(MtqConfig::ThreeAxis { max_moment }) => {
             warn_no_field_model(params.body, "magnetorquer", "its torque is zero", &spec.id);
-            dynamics = dynamics.with_model(mtq_for_body(params.body, *max_moment, None));
-            *max_moment
+            let core = orts::spacecraft::MtqAssemblyCore::three_axis(*max_moment);
+            dynamics = dynamics.with_model(mtq_for_body(params.body, &core, None));
+            Some(core)
         }
-        None => 0.0,
+        None => None,
     };
 
     // Thruster を追加。
@@ -440,8 +432,7 @@ pub fn build_controlled_satellite(
         sensors,
         actuators,
         has_rw,
-        has_mtq,
-        mtq_max_moment,
+        mtq,
         body: params.body,
         thruster_specs,
         discards_messages: false,
@@ -496,15 +487,14 @@ fn apply_held_commands(sat: &mut ControlledSatellite) -> Result<(), String> {
     }
 
     // 前 tick のコマンドで MTQ を設定（モデルを差し替え）。
-    if sat.has_mtq
+    if let Some(core) = &sat.mtq
         && sat.actuators.has_mtq_command()
         && let Some(mtq_cmd) = sat.actuators.mtq_command()
     {
-        let num_mtqs = sat.mtq_core().map_or(0, |core| core.num_mtqs());
-        check_mtq_command_len(mtq_cmd, num_mtqs)?;
+        check_mtq_command_len(mtq_cmd, core.num_mtqs())?;
         // Same factory as the initial build, so the field model stays the one
         // this body has.
-        let rebuilt = mtq_for_body(sat.body, sat.mtq_max_moment, Some(&mtq_cmd.clone()));
+        let rebuilt = mtq_for_body(sat.body, core, Some(&mtq_cmd.clone()));
         sat.dynamics.replace_model("mtq_assembly", rebuilt);
     }
 
@@ -1069,17 +1059,17 @@ fn warn_no_field_model(body: arika::body::KnownBody, device: &str, effect: &str,
 /// is built.
 fn mtq_for_body(
     body: arika::body::KnownBody,
-    max_moment: f64,
+    core: &orts::spacecraft::MtqAssemblyCore,
     command: Option<&MtqCommand>,
 ) -> Box<dyn orts::model::Model<orts::spacecraft::SpacecraftState>> {
     if body_field_is_modelled(body) {
-        let mut mtq = MtqAssembly::three_axis(max_moment, Igrf::earth());
+        let mut mtq = MtqAssembly::new(core.clone(), Igrf::earth());
         if let Some(cmd) = command {
             mtq.command = cmd.clone();
         }
         Box::new(mtq)
     } else {
-        let mut mtq = MtqAssembly::three_axis(max_moment, tobari::magnetic::NoField);
+        let mut mtq = MtqAssembly::new(core.clone(), tobari::magnetic::NoField);
         if let Some(cmd) = command {
             mtq.command = cmd.clone();
         }
@@ -1247,8 +1237,7 @@ mod tests {
             sensors: SensorBundle::default(),
             actuators: ActuatorBundle::new(),
             has_rw: false,
-            has_mtq: false,
-            mtq_max_moment: 0.0,
+            mtq: None,
             body: arika::body::KnownBody::Earth,
             thruster_specs: Vec::new(),
             discards_messages: false,
@@ -2021,12 +2010,20 @@ mod tests {
         };
 
         assert_eq!(
-            torque_with(mtq_for_body(KnownBody::Mars, 10.0, Some(&command))),
+            torque_with(mtq_for_body(
+                KnownBody::Mars,
+                &orts::spacecraft::MtqAssemblyCore::three_axis(10.0),
+                Some(&command)
+            )),
             0.0,
             "Mars has no field model, so a commanded magnetorquer makes no torque"
         );
         assert!(
-            torque_with(mtq_for_body(KnownBody::Earth, 10.0, Some(&command))) > 0.0,
+            torque_with(mtq_for_body(
+                KnownBody::Earth,
+                &orts::spacecraft::MtqAssemblyCore::three_axis(10.0),
+                Some(&command)
+            )) > 0.0,
             "Earth's field is modelled, so the same command makes torque"
         );
     }
@@ -2041,12 +2038,15 @@ mod tests {
     fn rebuilding_a_commanded_magnetorquer_does_not_warn_again() {
         let (mut sat, _ticks) = satellite_with(1.0, 0.0);
         sat.body = KnownBody::Mars;
-        sat.has_mtq = true;
-        sat.mtq_max_moment = 10.0;
+        sat.mtq = Some(orts::spacecraft::MtqAssemblyCore::three_axis(10.0));
         sat.dynamics = sat
             .dynamics
             .with_epoch(Epoch::from_gregorian(2026, 3, 20, 12, 0, 0.0))
-            .with_model(mtq_for_body(sat.body, 10.0, None));
+            .with_model(mtq_for_body(
+                sat.body,
+                &orts::spacecraft::MtqAssemblyCore::three_axis(10.0),
+                None,
+            ));
         sat.actuators
             .apply(&Command::mtq_normalized(vec![1.0, 0.0, 0.0]))
             .expect("three moments for three MTQs");
@@ -2161,9 +2161,12 @@ mod tests {
             readings: Arc::clone(&readings),
         });
         sat.body = KnownBody::Mars;
-        sat.has_mtq = true;
-        sat.mtq_max_moment = 10.0;
-        sat.dynamics = sat.dynamics.with_model(mtq_for_body(sat.body, 10.0, None));
+        sat.mtq = Some(orts::spacecraft::MtqAssemblyCore::three_axis(10.0));
+        sat.dynamics = sat.dynamics.with_model(mtq_for_body(
+            sat.body,
+            &orts::spacecraft::MtqAssemblyCore::three_axis(10.0),
+            None,
+        ));
         let rows = [[1e-6, 0.0, 0.0], [0.0, 2e-6, 0.0], [0.0, 0.0, 3e-6]];
         sat.sensors = build_sensor_bundle(
             Some(&[SensorConfig::Detailed(
@@ -2199,12 +2202,15 @@ mod tests {
     fn a_commanded_magnetorquer_keeps_the_field_of_its_body() {
         let (mut sat, _ticks) = satellite_with(1.0, 0.0);
         sat.body = KnownBody::Mars;
-        sat.has_mtq = true;
-        sat.mtq_max_moment = 10.0;
+        sat.mtq = Some(orts::spacecraft::MtqAssemblyCore::three_axis(10.0));
         sat.dynamics = sat
             .dynamics
             .with_epoch(Epoch::from_gregorian(2026, 3, 20, 12, 0, 0.0))
-            .with_model(mtq_for_body(sat.body, 10.0, None));
+            .with_model(mtq_for_body(
+                sat.body,
+                &orts::spacecraft::MtqAssemblyCore::three_axis(10.0),
+                None,
+            ));
 
         sat.actuators
             .apply(&Command::mtq_normalized(vec![1.0, 0.0, 0.0]))

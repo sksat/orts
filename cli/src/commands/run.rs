@@ -1727,7 +1727,7 @@ fn log_controlled_state(
     // TODO: distinguish Moments vs NormalizedMoments — currently both are
     // recorded as MtqCommand3D with A·m² labels. NormalizedMoments values
     // are [-1, 1] and should be scaled or use a separate component.
-    if sat.has_mtq {
+    if sat.mtq.is_some() {
         let mtq_vec = sat
             .actuators
             .mtq_command()
