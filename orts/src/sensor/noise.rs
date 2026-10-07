@@ -135,13 +135,20 @@ impl NoiseModel for GaussianNoise {
 ///
 /// Models a slowly drifting bias, piecewise constant on a grid `t_k = k·dt`
 /// anchored at `t = 0`: the bias steps at each grid point and holds until the
-/// next, so it is right-continuous. Step `k` is drawn from the seed and `k`,
-/// which makes the bias at any time the same however it is queried:
+/// next, so it is right-continuous.
 ///
 /// ```text
-/// bias(t) = Σ_{k=1}^{floor(t/dt)} N(0, sigma_drift · sqrt(dt))
+/// bias(t) = W(floor(t / dt)),  W(k) - W(k-1) ~ N(0, sigma_drift² · dt) independent
 /// noisy = true_value + bias(t)
 /// ```
+///
+/// `W` at a grid point is drawn directly, by Lévy's midpoint construction of
+/// Brownian motion: the end of `[0, 2^LEVELS]` is drawn first, then the
+/// midpoint of each interval given its ends (a Brownian bridge), descending
+/// to the point asked for. Each draw is keyed on the seed and its interval, so
+/// the value at any time is the same however the walk is queried, and costs
+/// `LEVELS` draws per axis wherever the time lies. The values are those of a
+/// Wiener process at the grid points, not an approximation of one.
 ///
 /// The bias is zero before the first grid point after `t = 0`, negative times
 /// included. This is a standard gyroscope bias instability model. The drift
@@ -150,17 +157,18 @@ pub struct BiasRandomWalk {
     step_sigma: Vector3<f64>,
     dt: f64,
     seed: u64,
-    /// The bias at the furthest grid point reached: `(k, bias(t_k))`. A later
-    /// time adds the steps beyond it; an earlier one leaves it in place.
-    furthest: (u64, Vector3<f64>),
-    /// `checkpoints[j]` is the bias at grid point `j · CHECKPOINT_STRIDE`, up to
-    /// `furthest`, so an earlier time sums fewer than `CHECKPOINT_STRIDE` steps.
-    checkpoints: Vec<Vector3<f64>>,
 }
 
-/// Grid points between two random-walk checkpoints: an earlier time costs at
-/// most this many steps, and the checkpoints take one vector per this many.
-const CHECKPOINT_STRIDE: u64 = 1024;
+/// Depth of the random walk's midpoint construction: the grid covers
+/// `2^LEVELS` steps, 8900 years at a 1 ms step. Rounding grows with the root
+/// value, `2^(LEVELS/2)` steps' standard deviation, so the error at a grid
+/// point stays near `2^(LEVELS/2) · ε ≈ 2e-9` of one step's.
+const LEVELS: u32 = 48;
+
+/// Kinds of draw in the random walk's construction, so the root interval's end
+/// and its midpoint, keyed on the same interval, are independent.
+const ROOT_END: u64 = 0;
+const MIDPOINT: u64 = 1;
 
 impl BiasRandomWalk {
     /// Create a bias random walk model.
@@ -185,8 +193,6 @@ impl BiasRandomWalk {
             step_sigma: sigma_drift * dt.sqrt(),
             dt,
             seed,
-            furthest: (0, Vector3::zeros()),
-            checkpoints: vec![Vector3::zeros()],
         }
     }
 
@@ -203,11 +209,20 @@ impl BiasRandomWalk {
     ///
     /// `floor(t / dt)`, corrected by one either way where the division rounds
     /// across an integer, so a time computed as `k · dt` lands on `k`.
+    ///
+    /// # Panics
+    /// Panics if `t` lies beyond the `2^LEVELS` steps the grid covers.
     fn grid_index(&self, t: f64) -> u64 {
         if t < self.dt {
             return 0;
         }
+        let end = (1u64 << LEVELS) as f64;
         let mut k = (t / self.dt).floor();
+        assert!(
+            k < end,
+            "t = {t} s is beyond the random walk's 2^{LEVELS} steps of {} s",
+            self.dt
+        );
         if (k + 1.0) * self.dt <= t {
             k += 1.0;
         } else if k * self.dt > t {
@@ -216,41 +231,42 @@ impl BiasRandomWalk {
         k as u64
     }
 
-    fn step(&self, k: u64) -> Vector3<f64> {
-        let n = |axis: u64| keyed::standard_normal(&[RANDOM_WALK_TAG, self.seed, k, axis]);
-        self.step_sigma
-            .component_mul(&Vector3::new(n(0), n(1), n(2)))
+    /// A standard normal vector for one draw of the construction: the end of
+    /// the root interval (`ROOT_END`) or the midpoint of `[a, b]` (`MIDPOINT`).
+    fn draw(&self, kind: u64, a: u64, b: u64) -> Vector3<f64> {
+        let n = |axis: u64| keyed::standard_normal(&[RANDOM_WALK_TAG, self.seed, kind, a, b, axis]);
+        Vector3::new(n(0), n(1), n(2))
     }
 
-    fn bias_at(&mut self, t: f64) -> Vector3<f64> {
-        keyed::time_bits(t);
-        let k = self.grid_index(t);
-        let (furthest, furthest_bias) = self.furthest;
-        if k >= furthest {
-            let mut bias = furthest_bias;
-            for at in furthest + 1..=k {
-                bias += self.step(at);
-                if at % CHECKPOINT_STRIDE == 0 {
-                    self.checkpoints.push(bias);
-                }
+    /// `W(k)`, by descending from `[0, 2^LEVELS]` to `k`.
+    fn walk_at(&self, k: u64) -> Vector3<f64> {
+        let (mut a, mut b) = (0u64, 1u64 << LEVELS);
+        let (mut wa, mut wb) = (
+            Vector3::zeros(),
+            self.step_sigma.component_mul(&self.draw(ROOT_END, a, b)) * (b as f64).sqrt(),
+        );
+        while k != a && k != b {
+            let m = a + (b - a) / 2;
+            // The midpoint of a Brownian bridge over `b - a` steps: the mean of
+            // its ends, with variance `(b - a) / 4` steps.
+            let wm = (wa + wb) / 2.0
+                + self.step_sigma.component_mul(&self.draw(MIDPOINT, a, b))
+                    * ((b - a) as f64).sqrt()
+                    / 2.0;
+            if k < m {
+                (b, wb) = (m, wm);
+            } else {
+                (a, wa) = (m, wm);
             }
-            self.furthest = (k, bias);
-            return bias;
         }
-        // An earlier time: from the checkpoint at or before it, leaving the
-        // furthest point in place for the next later time.
-        let j = k / CHECKPOINT_STRIDE;
-        let mut bias = self.checkpoints[j as usize];
-        for at in j * CHECKPOINT_STRIDE + 1..=k {
-            bias += self.step(at);
-        }
-        bias
+        if k == a { wa } else { wb }
     }
 }
 
 impl NoiseModel for BiasRandomWalk {
     fn apply(&mut self, t: f64, true_value: Vector3<f64>) -> Vector3<f64> {
-        true_value + self.bias_at(t)
+        keyed::time_bits(t);
+        true_value + self.walk_at(self.grid_index(t))
     }
 }
 
@@ -393,29 +409,61 @@ mod tests {
         );
     }
 
-    /// Reading an earlier time keeps the furthest point and the checkpoints:
-    /// after it, the walk carries on from where it was, and the earlier time
-    /// costs fewer than one checkpoint stride of steps.
+    /// A time far along the grid costs no more than a near one and reads the
+    /// same whatever was read before it.
     #[test]
-    fn bias_random_walk_reads_an_earlier_time_from_a_checkpoint() {
-        let dt = 1.0;
-        let far = 5.0 * CHECKPOINT_STRIDE as f64 + 7.0;
-        let mut b = BiasRandomWalk::isotropic(1e-3, dt, 42);
+    fn bias_random_walk_reads_a_far_time_directly() {
+        let far = (1u64 << 47) as f64 + 3.0;
+        let mut b = BiasRandomWalk::isotropic(1e-3, 1.0, 42);
         let at_far = b.apply(far, Vector3::zeros());
-        assert_eq!(b.checkpoints.len(), 6, "checkpoints at 0 and 1..=5 strides");
-
-        let early = 2.0 * CHECKPOINT_STRIDE as f64 + 3.0;
-        let at_early = b.apply(early, Vector3::zeros());
-        assert_eq!(b.furthest.0, far as u64, "the furthest point stays");
-        assert_eq!(
-            at_early,
-            BiasRandomWalk::isotropic(1e-3, dt, 42).apply(early, Vector3::zeros())
-        );
+        let _ = b.apply(5.0, Vector3::zeros());
         assert_eq!(b.apply(far, Vector3::zeros()), at_far);
-        assert_eq!(
-            b.apply(far + 1.0, Vector3::zeros()),
-            BiasRandomWalk::isotropic(1e-3, dt, 42).apply(far + 1.0, Vector3::zeros())
-        );
+        assert!(at_far.iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    #[should_panic(expected = "beyond the random walk")]
+    fn bias_random_walk_refuses_a_time_beyond_its_grid() {
+        let _ =
+            BiasRandomWalk::isotropic(1.0, 1.0, 42).apply((1u64 << 48) as f64, Vector3::zeros());
+    }
+
+    /// A step so small that `t / dt` overflows is refused rather than walked.
+    #[test]
+    #[should_panic(expected = "beyond the random walk")]
+    fn bias_random_walk_refuses_an_unrepresentable_grid_index() {
+        let _ = BiasRandomWalk::isotropic(1.0, f64::MIN_POSITIVE, 42).apply(1.0, Vector3::zeros());
+    }
+
+    /// The increments are N(0, sigma_drift² · dt) and independent of their
+    /// neighbours, checked across many seeds at a point inside a dyadic
+    /// interval and at one on each side of a boundary of the construction.
+    #[test]
+    fn bias_random_walk_increments_are_independent_steps() {
+        let (sigma, dt) = (0.3, 0.25);
+        let step_var = sigma * sigma * dt;
+        let seeds = 4_000u64;
+        for k in [7u64, 1 << 20] {
+            let (mut sum_sq, mut sum_cross) = (0.0, 0.0);
+            for seed in 0..seeds {
+                let b = BiasRandomWalk::isotropic(sigma, dt, seed);
+                let w = |i: u64| b.walk_at(i).x;
+                let (d0, d1) = (w(k) - w(k - 1), w(k + 1) - w(k));
+                sum_sq += d0 * d0;
+                sum_cross += d0 * d1;
+            }
+            let n = seeds as f64;
+            let var = sum_sq / n;
+            let corr = sum_cross / n / step_var;
+            assert!(
+                (var / step_var - 1.0).abs() < 4.0 * (2.0 / n).sqrt(),
+                "k = {k}: increment variance {var} vs {step_var}"
+            );
+            assert!(
+                corr.abs() < 4.0 / n.sqrt(),
+                "k = {k}: neighbour correlation {corr}"
+            );
+        }
     }
 
     /// Times computed as `k · dt` land on grid point `k`, where the division
@@ -433,22 +481,22 @@ mod tests {
     /// variance n · sigma_drift² · dt; checked across many seeds.
     #[test]
     fn bias_random_walk_has_the_configured_drift() {
-        let (sigma, dt, steps) = (0.2, 0.5, 40u64);
-        let finals: Vec<f64> = (0..4_000)
-            .map(|seed| {
-                BiasRandomWalk::isotropic(sigma, dt, seed)
-                    .apply(steps as f64 * dt, Vector3::zeros())
-                    .x
-            })
-            .collect();
-        let count = finals.len() as f64;
-        let var = finals.iter().map(|x| x * x).sum::<f64>() / count;
-        let expected = steps as f64 * sigma * sigma * dt;
-        // The sample variance of a normal has relative standard error sqrt(2/n).
-        assert!(
-            (var / expected - 1.0).abs() < 4.0 * (2.0 / count).sqrt(),
-            "variance {var} vs {expected}"
-        );
+        let (sigma, dt) = (0.2, 0.5);
+        // A short walk, and one half way along the construction's grid, where
+        // the root interval's end and its first midpoint meet.
+        for steps in [40u64, 1 << 47] {
+            let finals: Vec<f64> = (0..4_000)
+                .map(|seed| BiasRandomWalk::isotropic(sigma, dt, seed).walk_at(steps).x)
+                .collect();
+            let count = finals.len() as f64;
+            let var = finals.iter().map(|x| x * x).sum::<f64>() / count;
+            let expected = steps as f64 * sigma * sigma * dt;
+            // The sample variance of a normal has relative standard error sqrt(2/n).
+            assert!(
+                (var / expected - 1.0).abs() < 4.0 * (2.0 / count).sqrt(),
+                "{steps} steps: variance {var} vs {expected}"
+            );
+        }
     }
 
     #[test]

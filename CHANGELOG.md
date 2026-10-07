@@ -162,7 +162,9 @@ section is subdivided by package.
   with Box–Muller of their own, so the values no longer depend on the `rand`
   release; `rand` and `rand_distr` are dropped. `BiasRandomWalk` is piecewise
   constant on its own grid `k·dt` from `t = 0`, zero before the first point, and
-  no longer assumes it is called once per `dt`. A non-finite `t` panics, and
+  no longer assumes it is called once per `dt`: the value at a grid point is
+  drawn directly by Lévy's midpoint construction, 48 levels deep, so any time
+  costs the same and a time beyond `2^48` steps is refused. A non-finite `t` panics, and
   negative or non-finite sigmas are refused at construction.
 - **BREAKING**: every WASM controller runs under limits, whichever way its
   component arrived, and a guest past one fails the call with an error naming
