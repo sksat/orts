@@ -348,6 +348,90 @@ pub fn torque_columns<'a>(
         .collect()
 }
 
+/// The field one magnetometer read [T, body frame].
+///
+/// Noise, the MTQs' field and any residual field included: this is the
+/// observation, not the geomagnetic field ([`GeomagneticFieldBody3D`]). One per
+/// magnetometer, under the names [`magnetometer_columns`] builds.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MagnetometerReading3D(pub Vector3<f64>);
+
+impl Component for MagnetometerReading3D {
+    fn component_name() -> ComponentName {
+        "orts.MagnetometerReading3D".into()
+    }
+    fn num_scalars() -> usize {
+        3
+    }
+    fn to_scalars(&self) -> Vec<f64> {
+        vec![self.0.x, self.0.y, self.0.z]
+    }
+    fn from_scalars(data: &[f64]) -> Option<Self> {
+        if data.len() == 3 {
+            Some(MagnetometerReading3D(Vector3::new(
+                data[0], data[1], data[2],
+            )))
+        } else {
+            None
+        }
+    }
+    fn field_names() -> Vec<&'static str> {
+        vec!["reading_body_x_T", "reading_body_y_T", "reading_body_z_T"]
+    }
+}
+
+/// The component name and column names for each of `count` magnetometers, in
+/// the order of the sensor bundle: `magnetometer`, then `magnetometer.2`,
+/// `magnetometer.3`, … — the repeat mark [`torque_columns`] uses.
+pub fn magnetometer_columns(count: usize) -> Vec<(ComponentName, Vec<String>)> {
+    (1..=count)
+        .map(|i| {
+            let key = if i == 1 {
+                "magnetometer".to_string()
+            } else {
+                format!("magnetometer.{i}")
+            };
+            let name: ComponentName =
+                format!("{}:{key}", MagnetometerReading3D::component_name()).into();
+            let fields = MagnetometerReading3D::field_names()
+                .into_iter()
+                .map(|field| format!("{key}.{field}"))
+                .collect();
+            (name, fields)
+        })
+        .collect()
+}
+
+/// The geomagnetic field at the spacecraft [T, body frame], with no sensor in
+/// between: no noise, no onboard field. Recorded beside the magnetometer
+/// readings, for the same instant, so the difference is what the sensor added.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GeomagneticFieldBody3D(pub Vector3<f64>);
+
+impl Component for GeomagneticFieldBody3D {
+    fn component_name() -> ComponentName {
+        "orts.GeomagneticFieldBody3D".into()
+    }
+    fn num_scalars() -> usize {
+        3
+    }
+    fn to_scalars(&self) -> Vec<f64> {
+        vec![self.0.x, self.0.y, self.0.z]
+    }
+    fn from_scalars(data: &[f64]) -> Option<Self> {
+        if data.len() == 3 {
+            Some(GeomagneticFieldBody3D(Vector3::new(
+                data[0], data[1], data[2],
+            )))
+        } else {
+            None
+        }
+    }
+    fn field_names() -> Vec<&'static str> {
+        vec!["geomag_body_x_T", "geomag_body_y_T", "geomag_body_z_T"]
+    }
+}
+
 /// RW command (motor torque) per wheel [N·m], 3-axis orthogonal.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RwTorqueCommand3D(pub Vector3<f64>);
@@ -439,6 +523,47 @@ mod tests {
         assert_eq!(scalars.len(), C::num_scalars());
         let recovered = C::from_scalars(&scalars).expect("from_scalars should succeed");
         assert_eq!(original, &recovered);
+    }
+
+    #[test]
+    fn sensor_components_roundtrip() {
+        assert_roundtrip(&MagnetometerReading3D(Vector3::new(2e-5, -3e-5, 4e-6)));
+        assert_roundtrip(&GeomagneticFieldBody3D(Vector3::new(1e-5, 0.0, -2e-5)));
+    }
+
+    /// One column set per magnetometer, the second and later marked `.2`, `.3`
+    /// so two sensors never share a column, and only from characters that
+    /// return from an `.rrd`.
+    #[test]
+    fn magnetometer_columns_are_distinct_per_sensor() {
+        let columns = magnetometer_columns(3);
+        let names: Vec<String> = columns.iter().map(|(n, _)| n.to_string()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "orts.MagnetometerReading3D:magnetometer",
+                "orts.MagnetometerReading3D:magnetometer.2",
+                "orts.MagnetometerReading3D:magnetometer.3",
+            ]
+        );
+        assert_eq!(
+            columns[1].1,
+            vec![
+                "magnetometer.2.reading_body_x_T",
+                "magnetometer.2.reading_body_y_T",
+                "magnetometer.2.reading_body_z_T",
+            ]
+        );
+        for (_, fields) in &columns {
+            for f in fields {
+                assert!(
+                    f.chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.'),
+                    "{f}"
+                );
+            }
+        }
+        assert!(magnetometer_columns(0).is_empty());
     }
 
     #[test]

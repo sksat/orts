@@ -27,6 +27,20 @@ pub fn field_is_modelled(body: arika::body::KnownBody) -> bool {
     body == arika::body::KnownBody::Earth
 }
 
+/// The field model the dynamics and the sensors use for `body`.
+///
+/// [`Igrf`](tobari::magnetic::Igrf) on Earth and
+/// [`NoField`](tobari::magnetic::NoField) where [`field_is_modelled`] says
+/// there is none. The WASM host's import keeps its own choice,
+/// [`field_for_body`].
+pub fn igrf_field_for_body(body: arika::body::KnownBody) -> std::sync::Arc<dyn MagneticFieldModel> {
+    if field_is_modelled(body) {
+        std::sync::Arc::new(tobari::magnetic::Igrf::earth())
+    } else {
+        std::sync::Arc::new(tobari::magnetic::NoField)
+    }
+}
+
 /// The field model to serve for `body`.
 ///
 /// [`TiltedDipole`](tobari::magnetic::TiltedDipole) on Earth — what the WASM
