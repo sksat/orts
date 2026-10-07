@@ -12,7 +12,9 @@ use orts::orbital::gravity::GravityField;
 use orts::plugin::{
     ActuatorBundle, ActuatorTelemetry, MtqCommand, PluginController, RwTelemetry, TickInput,
 };
-use orts::sensor::{Gyroscope, Magnetometer, SensorBundle, StarTracker};
+use orts::sensor::{
+    Gyroscope, Magnetometer, MtqCoupling, OnboardMagneticSources, SensorBundle, StarTracker,
+};
 use orts::setup::default_third_bodies;
 
 use crate::sim::core::spacecraft_dynamics_for;
@@ -30,7 +32,7 @@ use utsuroi::{
     Segments,
 };
 
-use crate::config::{ControllerConfig, MtqConfig, ReactionWheelConfig, SensorChoice};
+use crate::config::{ControllerConfig, MtqConfig, ReactionWheelConfig, SensorChoice, SensorConfig};
 use crate::satellite::SatelliteSpec;
 #[cfg(feature = "plugin-wasm")]
 use crate::sim::params::ResolvedPluginBackend;
@@ -108,6 +110,10 @@ pub struct ControlledSatellite {
     /// the controller they would reach its backlog limit and halt the run.
     /// `orts run` leaves this off and logs them.
     pub discards_messages: bool,
+    /// The onboard sources the sensors read at the latest tick, with its time:
+    /// the left limit there. The command the tick returned is held from then
+    /// on, so telemetry at that same instant takes these instead.
+    pub tick_boundary_sources: Option<(f64, OnboardMagneticSources)>,
     /// An ideal, uncoupled magnetometer on the geomagnetic field model the
     /// sensors use: the field the recorder records, and compares the readings
     /// with. `None` about a body with no field model.
@@ -142,13 +148,48 @@ impl ControlledSatellite {
         if self.sensors.magnetometers.is_empty() && self.geomagnetic_truth.is_none() {
             return None;
         }
+        // At a tick, the command that was on up to it; anywhere else, the one
+        // held now (DESIGN.md "tick 境界の左右").
+        let sources = match &self.tick_boundary_sources {
+            Some((at, sources)) if *at == t => sources.clone(),
+            _ => self
+                .onboard_magnetic_sources()
+                .expect("the held MTQ command was checked when it was applied"),
+        };
         Some(read_magnetometers(
             &mut self.sensors.magnetometers,
             self.geomagnetic_truth.as_mut(),
             t,
             &self.state.plant,
             epoch,
+            &sources,
         ))
+    }
+
+    /// The MTQ rods' geometry and limits, or `None` without an MTQ.
+    ///
+    /// Rebuilt from the config value rather than stored: `three_axis` is the
+    /// only layout the config can describe.
+    fn mtq_core(&self) -> Option<orts::spacecraft::MtqAssemblyCore> {
+        self.has_mtq
+            .then(|| orts::spacecraft::MtqAssemblyCore::three_axis(self.mtq_max_moment))
+    }
+
+    /// The onboard magnetic sources as the sensors see them at a tick: the MTQ
+    /// command held over the interval that ends there, before the controller
+    /// returns a new one. An MTQ that has had no command yet is off.
+    fn onboard_magnetic_sources(&self) -> Result<OnboardMagneticSources, String> {
+        let Some(core) = self.mtq_core() else {
+            return Ok(OnboardMagneticSources::none());
+        };
+        let rods = match self.actuators.mtq_command() {
+            Some(cmd) => {
+                check_mtq_command_len(cmd, core.num_mtqs())?;
+                core.realized_rod_moments(cmd)
+            }
+            None => vec![0.0; core.num_mtqs()],
+        };
+        Ok(OnboardMagneticSources::none().with_mtq_rod_moments(rods))
     }
 
     /// Assemble one for a test in another module of this crate, with no
@@ -179,6 +220,7 @@ impl ControlledSatellite {
             body,
             thruster_specs: Vec::new(),
             discards_messages: false,
+            tick_boundary_sources: None,
             geomagnetic_truth: None,
             tick_base_t: 0.0,
             ticks_done: 0,
@@ -381,7 +423,7 @@ pub fn build_controlled_satellite(
     let controller = build_controller(ctrl_config, &spec.id, &spec.streams, ctx)?;
 
     // センサを構築。
-    let sensors = build_sensor_bundle(spec.sensor_choices.as_deref(), params.body, &spec.id)?;
+    let sensors = build_sensor_bundle(spec.sensors.as_deref(), params.body, &spec.id)?;
     let geomagnetic_truth = crate::sim::telemetry::geomagnetic_truth_for(params.body);
 
     let actuators = ActuatorBundle::new();
@@ -403,10 +445,24 @@ pub fn build_controlled_satellite(
         body: params.body,
         thruster_specs,
         discards_messages: false,
+        tick_boundary_sources: None,
         geomagnetic_truth,
         tick_base_t: start_t,
         ticks_done: 0,
     })
+}
+
+/// Refuse an MTQ command whose length does not match the rods.
+fn check_mtq_command_len(cmd: &MtqCommand, num_mtqs: usize) -> Result<(), String> {
+    let cmd_len = match cmd {
+        MtqCommand::Moments(v) | MtqCommand::NormalizedMoments(v) => v.len(),
+    };
+    if cmd_len != num_mtqs {
+        return Err(format!(
+            "mtq command length ({cmd_len}) != MTQ count ({num_mtqs})"
+        ));
+    }
+    Ok(())
 }
 
 /// Push the commands the actuator bundle currently holds into the dynamics.
@@ -444,15 +500,8 @@ fn apply_held_commands(sat: &mut ControlledSatellite) -> Result<(), String> {
         && sat.actuators.has_mtq_command()
         && let Some(mtq_cmd) = sat.actuators.mtq_command()
     {
-        let cmd_len = match mtq_cmd {
-            MtqCommand::Moments(v) | MtqCommand::NormalizedMoments(v) => v.len(),
-        };
-        let num_mtqs = orts::spacecraft::MtqAssemblyCore::three_axis(sat.mtq_max_moment).num_mtqs();
-        if cmd_len != num_mtqs {
-            return Err(format!(
-                "mtq command length ({cmd_len}) != MTQ count ({num_mtqs})"
-            ));
-        }
+        let num_mtqs = sat.mtq_core().map_or(0, |core| core.num_mtqs());
+        check_mtq_command_len(mtq_cmd, num_mtqs)?;
         // Same factory as the initial build, so the field model stays the one
         // this body has.
         let rebuilt = mtq_for_body(sat.body, sat.mtq_max_moment, Some(&mtq_cmd.clone()));
@@ -767,9 +816,17 @@ pub fn tick_controller(
 
     // センサ評価 + プラグイン呼び出し。
     let current_epoch = epoch.map(|e| e.add_si_seconds(t_next));
-    let sensors = sat
-        .sensors
-        .evaluate(t_next, &sat.state.plant, &sample_epoch(epoch, t_next));
+    // Before the controller runs: the field the magnetometer reads is the one
+    // the rods made over the interval ending here (DESIGN.md "tick 境界の左右").
+    // Kept with the tick's time, so telemetry at this instant reads the same.
+    let sources = sat.onboard_magnetic_sources()?;
+    sat.tick_boundary_sources = Some((t_next, sources.clone()));
+    let sensors = sat.sensors.evaluate(
+        t_next,
+        &sat.state.plant,
+        &sample_epoch(epoch, t_next),
+        &sources,
+    );
     let actuator_telemetry = ActuatorTelemetry {
         rw: if sat.has_rw {
             sat.dynamics
@@ -1034,24 +1091,44 @@ fn mtq_for_body(
 ///
 /// The sun sensor's reading is a direction to the Sun, so it depends on the
 /// central body the same way the solar force models do.
+///
+/// One instance per kind; `SatelliteConfig::validate` refuses magnetometer
+/// entries that disagree, so the first one speaks for all.
 pub(crate) fn build_sensor_bundle(
-    choices: Option<&[SensorChoice]>,
+    sensors: Option<&[SensorConfig]>,
     body: arika::body::KnownBody,
     sat_id: &str,
 ) -> Result<SensorBundle, String> {
-    let choices = match choices {
-        Some(c) => c,
+    let sensors = match sensors {
+        Some(s) => s,
         None => return Ok(SensorBundle::new()),
     };
+    let kinds: Vec<SensorChoice> = sensors.iter().map(SensorConfig::kind).collect();
+    let choices = kinds.as_slice();
 
-    let magnetometers = if choices.contains(&SensorChoice::Magnetometer) {
-        warn_no_field_model(body, "magnetometer", "its reading is zero", sat_id);
+    let magnetometers = if let Some(entry) = sensors
+        .iter()
+        .find(|s| s.kind() == SensorChoice::Magnetometer)
+    {
+        warn_no_field_model(
+            body,
+            "magnetometer",
+            "its reading has no ambient field in it",
+            sat_id,
+        );
         let field: Arc<dyn tobari::magnetic::MagneticFieldModel> = if body_field_is_modelled(body) {
             Arc::new(Igrf::earth())
         } else {
             Arc::new(tobari::magnetic::NoField)
         };
-        vec![Magnetometer::new(field)]
+        let mut mag = Magnetometer::new(field);
+        if let Some(rows) = entry.mtq_coupling() {
+            // Validated finite, and one row per rod, by `SatelliteConfig::validate`.
+            mag = mag.with_mtq_coupling(MtqCoupling::from_columns(
+                rows.iter().map(|r| Vector3::from_row_slice(r)).collect(),
+            ));
+        }
+        vec![mag]
     } else {
         vec![]
     };
@@ -1175,6 +1252,7 @@ mod tests {
             body: arika::body::KnownBody::Earth,
             thruster_specs: Vec::new(),
             discards_messages: false,
+            tick_boundary_sources: None,
             geomagnetic_truth: None,
             tick_base_t: start_t,
             ticks_done: 0,
@@ -1823,7 +1901,7 @@ mod tests {
         // direction to Mars' Sun is parallel to `mars_sun`.
         let sunward_of_mars = state_at(mars_sun.normalize() * 20_000.0);
         let mut on_mars = build_sensor_bundle(
-            Some(&[SensorChoice::SunSensor]),
+            Some(&[SensorConfig::Kind(SensorChoice::SunSensor)]),
             KnownBody::Mars,
             "sat-test",
         )
@@ -1846,7 +1924,7 @@ mod tests {
         // satellite directly behind the Earth reads no direction at all.
         let behind_earth = state_at(-earth_sun.normalize() * 7000.0);
         let mut on_earth = build_sensor_bundle(
-            Some(&[SensorChoice::SunSensor]),
+            Some(&[SensorConfig::Kind(SensorChoice::SunSensor)]),
             KnownBody::Earth,
             "sat-test",
         )
@@ -1869,11 +1947,14 @@ mod tests {
         let state = state_at(nalgebra::Vector3::new(7000.0, 0.0, 0.0));
 
         for body in [KnownBody::Mars, KnownBody::Moon, KnownBody::Sun] {
-            let mut bundle =
-                build_sensor_bundle(Some(&[SensorChoice::Magnetometer]), body, "sat-test")
-                    .unwrap_or_else(|e| panic!("{body:?} builds a magnetometer: {e}"));
+            let mut bundle = build_sensor_bundle(
+                Some(&[SensorConfig::Kind(SensorChoice::Magnetometer)]),
+                body,
+                "sat-test",
+            )
+            .unwrap_or_else(|e| panic!("{body:?} builds a magnetometer: {e}"));
             let reading = bundle.magnetometers[0]
-                .measure(0.0, &state, &epoch)
+                .measure(0.0, &state, &epoch, &OnboardMagneticSources::none())
                 .into_inner()
                 .into_inner();
             assert_eq!(
@@ -1884,13 +1965,13 @@ mod tests {
         }
 
         let mut on_earth = build_sensor_bundle(
-            Some(&[SensorChoice::Magnetometer]),
+            Some(&[SensorConfig::Kind(SensorChoice::Magnetometer)]),
             KnownBody::Earth,
             "sat-test",
         )
         .expect("Earth's field is modelled");
         let earth_reading = on_earth.magnetometers[0]
-            .measure(0.0, &state, &epoch)
+            .measure(0.0, &state, &epoch, &OnboardMagneticSources::none())
             .into_inner()
             .into_inner();
         assert!(
@@ -1901,7 +1982,7 @@ mod tests {
         // A sensor that needs no field is unaffected whatever the body is.
         assert!(
             build_sensor_bundle(
-                Some(&[SensorChoice::Gyroscope]),
+                Some(&[SensorConfig::Kind(SensorChoice::Gyroscope)]),
                 KnownBody::Mars,
                 "sat-test"
             )
@@ -1981,28 +2062,6 @@ mod tests {
         );
     }
 
-    /// A controller that records the first magnetometer's reading at every
-    /// tick.
-    struct MagnetometerRecorder {
-        readings: Arc<std::sync::Mutex<Vec<Vector3<f64>>>>,
-    }
-
-    impl PluginController for MagnetometerRecorder {
-        fn name(&self) -> &str {
-            "magnetometer-recorder"
-        }
-        fn sample_period(&self) -> f64 {
-            1.0
-        }
-        fn update(&mut self, input: &TickInput<'_>) -> Result<Option<Command>, PluginError> {
-            self.readings
-                .lock()
-                .expect("no panics in these tests")
-                .push(input.sensors.magnetometers[0].into_inner().into_inner());
-            Ok(None)
-        }
-    }
-
     /// The telemetry at a tick is what the controller received there: the
     /// sensors evaluated again give the same noisy reading. Between ticks it is
     /// a reading the controller never got, and the geomagnetic field beside it
@@ -2014,6 +2073,7 @@ mod tests {
         let readings = Arc::new(std::sync::Mutex::new(Vec::new()));
         let (mut sat, _ticks) = satellite_with(1.0, 0.0);
         sat.controller = Box::new(MagnetometerRecorder {
+            script: Default::default(),
             readings: Arc::clone(&readings),
         });
         let field = orts::magnetic::igrf_field_for_body(sat.body);
@@ -2057,6 +2117,77 @@ mod tests {
         sat.geomagnetic_truth = crate::sim::telemetry::geomagnetic_truth_for(KnownBody::Mars);
         assert!(sat.geomagnetic_truth.is_none(), "Mars has no field model");
         assert_eq!(sat.magnetometer_telemetry(0.0, None), None);
+    }
+
+    /// A controller that records the first magnetometer's reading at every
+    /// tick and returns the next MTQ command from a script.
+    struct MagnetometerRecorder {
+        script: std::collections::VecDeque<Command>,
+        readings: Arc<std::sync::Mutex<Vec<Vector3<f64>>>>,
+    }
+
+    impl PluginController for MagnetometerRecorder {
+        fn name(&self) -> &str {
+            "magnetometer-recorder"
+        }
+        fn sample_period(&self) -> f64 {
+            1.0
+        }
+        fn update(&mut self, input: &TickInput<'_>) -> Result<Option<Command>, PluginError> {
+            self.readings
+                .lock()
+                .expect("no panics in these tests")
+                .push(input.sensors.magnetometers[0].into_inner().into_inner());
+            Ok(self.script.pop_front())
+        }
+    }
+
+    /// The magnetometer reads the rods' field from the command held over the
+    /// interval that ends at the tick: the command a tick returns shows up at
+    /// the next one, and before any command the rods are off.
+    ///
+    /// On Mars, where no ambient field is modelled, so the reading is the
+    /// rods' field alone.
+    #[test]
+    fn the_magnetometer_reads_the_mtq_command_held_up_to_the_tick() {
+        let readings = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (mut sat, _ticks) = satellite_with(1.0, 0.0);
+        sat.controller = Box::new(MagnetometerRecorder {
+            script: [
+                Command::mtq_normalized(vec![1.0, 0.0, 0.0]),
+                Command::mtq_normalized(vec![0.0, -0.5, 0.0]),
+            ]
+            .into(),
+            readings: Arc::clone(&readings),
+        });
+        sat.body = KnownBody::Mars;
+        sat.has_mtq = true;
+        sat.mtq_max_moment = 10.0;
+        sat.dynamics = sat.dynamics.with_model(mtq_for_body(sat.body, 10.0, None));
+        let rows = [[1e-6, 0.0, 0.0], [0.0, 2e-6, 0.0], [0.0, 0.0, 3e-6]];
+        sat.sensors = build_sensor_bundle(
+            Some(&[SensorConfig::Detailed(
+                crate::config::DetailedSensorConfig::Magnetometer {
+                    mtq_coupling: Some(rows.to_vec()),
+                },
+            )]),
+            sat.body,
+            "sat-test",
+        )
+        .expect("a magnetometer builds on Mars");
+
+        advance(&mut sat, 0.0, 3.0, 0.1);
+
+        let seen = readings.lock().unwrap().clone();
+        assert_eq!(
+            seen,
+            vec![
+                Vector3::zeros(),
+                Vector3::new(1e-6 * 10.0, 0.0, 0.0),
+                Vector3::new(0.0, 2e-6 * -5.0, 0.0),
+            ],
+            "tick 1 has no command yet; ticks 2 and 3 read the previous tick's"
+        );
     }
 
     /// The rebuild after a command goes through the same factory.

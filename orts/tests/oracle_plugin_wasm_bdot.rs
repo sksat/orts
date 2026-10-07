@@ -36,7 +36,7 @@ use orts::attitude::{
 use orts::control::DiscreteController;
 use orts::plugin::wasm::{WasmController, WasmEngine, WasmPluginCache};
 use orts::plugin::{ActuatorBundle, ActuatorTelemetry, MtqCommand, PluginController, TickInput};
-use orts::sensor::{Gyroscope, Magnetometer, SensorBundle};
+use orts::sensor::{Gyroscope, Magnetometer, OnboardMagneticSources, SensorBundle};
 
 const MASS: f64 = 50.0;
 const ALT_KM: f64 = 500.0;
@@ -209,7 +209,13 @@ fn drive_wasm(
             attitude: state.clone(),
             mass: MASS,
         };
-        let sensors = sensor_bundle.evaluate(t, &snapshot, &current_epoch);
+        // The magnetometer is uncoupled from the MTQs, so it ignores their state.
+        let sensors = sensor_bundle.evaluate(
+            t,
+            &snapshot,
+            &current_epoch,
+            &OnboardMagneticSources::none(),
+        );
         let actuator_state = ActuatorTelemetry::default();
         let input = TickInput {
             t,

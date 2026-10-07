@@ -69,7 +69,7 @@ pub struct SatelliteSpec {
     pub controller_config: Option<crate::config::ControllerConfig>,
     /// Enabled sensors (used in Step 3: controlled.rs).
     #[allow(dead_code)]
-    pub sensor_choices: Option<Vec<crate::config::SensorChoice>>,
+    pub sensors: Option<Vec<crate::config::SensorConfig>>,
     /// Reaction wheel configuration (used in Step 3: controlled.rs).
     #[allow(dead_code)]
     pub rw_config: Option<crate::config::ReactionWheelConfig>,
@@ -380,7 +380,7 @@ pub fn parse_sat_spec(s: &str, body: KnownBody, mu: f64) -> Result<SatelliteSpec
         attitude_config: None, // CLI --sat does not yet support attitude; use config file
         shape: None,
         controller_config: None,
-        sensor_choices: None,
+        sensors: None,
         rw_config: None,
         mtq_config: None,
         thruster_config: None,

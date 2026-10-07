@@ -29,7 +29,7 @@ use orts::attitude::{AttitudeState, AugmentedAttitudeSystem, GravityGradientTorq
 use orts::effector::AugmentedState;
 use orts::plugin::wasm::{WasmController, WasmEngine};
 use orts::plugin::{ActuatorBundle, ActuatorTelemetry, PluginController, RwTelemetry, TickInput};
-use orts::sensor::{Gyroscope, SensorBundle, StarTracker};
+use orts::sensor::{Gyroscope, OnboardMagneticSources, SensorBundle, StarTracker};
 use orts::spacecraft::ReactionWheelAssembly;
 
 const MASS: f64 = 500.0;
@@ -127,7 +127,12 @@ fn main() {
             attitude: state.plant.clone(),
             mass: MASS,
         };
-        let sensors = sensor_bundle.evaluate(t, &snapshot, &current_epoch);
+        let sensors = sensor_bundle.evaluate(
+            t,
+            &snapshot,
+            &current_epoch,
+            &OnboardMagneticSources::none(),
+        );
         let rw_inertia = 0.01;
         let actuator_state = ActuatorTelemetry {
             rw: Some(RwTelemetry {

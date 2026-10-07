@@ -3,7 +3,7 @@
 
 use arika::epoch::Epoch;
 use nalgebra::Vector3;
-use orts::sensor::Magnetometer;
+use orts::sensor::{Magnetometer, OnboardMagneticSources};
 use orts::spacecraft::SpacecraftState;
 
 use crate::satellite::SatelliteSpec;
@@ -39,20 +39,29 @@ pub fn geomagnetic_truth_for(body: arika::body::KnownBody) -> Option<Magnetomete
 }
 
 /// Read `magnetometers` and `truth` (from [`geomagnetic_truth_for`]) at sim
-/// time `t`, for a state at `t`.
+/// time `t`, for a state at `t`, with the onboard sources as they are at `t`.
 pub fn read_magnetometers(
     magnetometers: &mut [Magnetometer],
     truth: Option<&mut Magnetometer>,
     t: f64,
     state: &SpacecraftState,
     epoch: Option<&Epoch>,
+    sources: &OnboardMagneticSources,
 ) -> MagnetometerTelemetry {
     let epoch = sample_epoch(epoch, t);
-    let geomagnetic_field_body =
-        truth.map(|truth| truth.measure(t, state, &epoch).into_inner().into_inner());
+    let geomagnetic_field_body = truth.map(|truth| {
+        truth
+            .measure(t, state, &epoch, &OnboardMagneticSources::none())
+            .into_inner()
+            .into_inner()
+    });
     let readings = magnetometers
         .iter_mut()
-        .map(|m| m.measure(t, state, &epoch).into_inner().into_inner())
+        .map(|m| {
+            m.measure(t, state, &epoch, sources)
+                .into_inner()
+                .into_inner()
+        })
         .collect();
     MagnetometerTelemetry {
         readings,
@@ -70,6 +79,9 @@ pub fn read_magnetometers(
 pub struct MagnetometerProbe {
     magnetometers: Vec<Magnetometer>,
     truth: Option<Magnetometer>,
+    /// The onboard sources throughout the run: an MTQ without a controller is
+    /// never commanded, so its rods stay off.
+    sources: OnboardMagneticSources,
 }
 
 impl MagnetometerProbe {
@@ -79,18 +91,23 @@ impl MagnetometerProbe {
         spec: &SatelliteSpec,
         body: arika::body::KnownBody,
     ) -> Result<Option<Self>, String> {
-        let bundle = crate::sim::controlled::build_sensor_bundle(
-            spec.sensor_choices.as_deref(),
-            body,
-            &spec.id,
-        )?;
+        let bundle =
+            crate::sim::controlled::build_sensor_bundle(spec.sensors.as_deref(), body, &spec.id)?;
         let truth = geomagnetic_truth_for(body);
         if bundle.magnetometers.is_empty() && truth.is_none() {
             return Ok(None);
         }
+        let sources = match &spec.mtq_config {
+            Some(crate::config::MtqConfig::ThreeAxis { max_moment }) => {
+                let rods = orts::spacecraft::MtqAssemblyCore::three_axis(*max_moment).num_mtqs();
+                OnboardMagneticSources::none().with_mtq_rod_moments(vec![0.0; rods])
+            }
+            None => OnboardMagneticSources::none(),
+        };
         Ok(Some(Self {
             magnetometers: bundle.magnetometers,
             truth,
+            sources,
         }))
     }
 
@@ -107,6 +124,7 @@ impl MagnetometerProbe {
             t,
             state,
             epoch,
+            &self.sources,
         )
     }
 }

@@ -129,12 +129,13 @@ pub fn unhonored_config_warnings(
         let mut keys: Vec<&str> = Vec::new();
         // An attitude run records the magnetometers' readings. With one among
         // the sensors, the key is read, so name the others instead of the key.
-        let sensors = spec.sensor_choices.as_deref().unwrap_or_default();
+        let kinds: Vec<crate::config::SensorChoice> =
+            spec.sensors.iter().flatten().map(|s| s.kind()).collect();
         let reads_magnetometers = records_magnetometers
             && mode == SimMode::Spacecraft
-            && sensors.contains(&crate::config::SensorChoice::Magnetometer);
+            && kinds.contains(&crate::config::SensorChoice::Magnetometer);
         if reads_magnetometers {
-            let unread: Vec<String> = sensors
+            let unread: Vec<String> = kinds
                 .iter()
                 .filter(|s| **s != crate::config::SensorChoice::Magnetometer)
                 .map(|s| format!("`{}`", s.config_name()))
@@ -149,7 +150,7 @@ pub fn unhonored_config_warnings(
                     mode.as_str(),
                 ));
             }
-        } else if spec.sensor_choices.is_some() {
+        } else if spec.sensors.is_some() {
             keys.push("sensors");
         }
         if spec.rw_config.is_some() {

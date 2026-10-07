@@ -34,7 +34,7 @@ use orts::SpacecraftState;
 use orts::attitude::{AttitudeState, CommandedMagnetorquer, DecoupledAttitudeSystem};
 use orts::plugin::wasm::{WasmController, WasmEngine};
 use orts::plugin::{ActuatorBundle, ActuatorTelemetry, MtqCommand, PluginController, TickInput};
-use orts::sensor::{Gyroscope, Magnetometer, SensorBundle};
+use orts::sensor::{Gyroscope, Magnetometer, OnboardMagneticSources, SensorBundle};
 
 /// Convert per-MTQ moments from ActuatorBundle to a Vector3 for
 /// CommandedMagnetorquer (3-axis orthogonal layout assumed).
@@ -179,7 +179,13 @@ fn run_case<F: MagneticFieldModel + 'static>(
             attitude: state.clone(),
             mass: MASS,
         };
-        let sensors = sensor_bundle.evaluate(t, &snapshot, &current_epoch);
+        // The magnetometer is uncoupled from the MTQs, so it ignores their state.
+        let sensors = sensor_bundle.evaluate(
+            t,
+            &snapshot,
+            &current_epoch,
+            &OnboardMagneticSources::none(),
+        );
         let actuator_state = ActuatorTelemetry::default();
         let obs = TickInput {
             t,

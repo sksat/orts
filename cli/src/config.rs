@@ -1216,6 +1216,124 @@ impl SensorChoice {
     }
 }
 
+/// `sensors` の一要素。種類名だけの短縮形 (`"magnetometer"`) と、パラメータを
+/// 持つ table 形 (`{ type = "magnetometer", mtq_coupling = [...] }`) を受ける。
+///
+/// Deserialize は手書きにしている。`#[serde(untagged)]` は table 側の誤り
+/// (未知のキーなど) を「どの variant にも合わない」という一文に潰すため。
+#[derive(Serialize, Clone, Debug, PartialEq, TS)]
+#[serde(untagged)]
+#[ts(export)]
+pub enum SensorConfig {
+    Kind(SensorChoice),
+    Detailed(DetailedSensorConfig),
+}
+
+/// パラメータを持つセンサ設定。
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, TS)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+#[ts(export)]
+pub enum DetailedSensorConfig {
+    Magnetometer {
+        /// MTQ の rod ごとに、1 A·m² がこの磁気センサの位置に作る磁場
+        /// [T, body frame]。外側の並びは rod の順 (`three_axis` なら x, y, z)。
+        /// 地上試験で測った値をそのまま書く。省略すると MTQ の磁場を読まない。
+        #[serde(default)]
+        #[ts(optional)]
+        mtq_coupling: Option<Vec<[f64; 3]>>,
+    },
+}
+
+impl SensorConfig {
+    /// The kind of sensor this entry builds.
+    pub fn kind(&self) -> SensorChoice {
+        match self {
+            SensorConfig::Kind(kind) => kind.clone(),
+            SensorConfig::Detailed(DetailedSensorConfig::Magnetometer { .. }) => {
+                SensorChoice::Magnetometer
+            }
+        }
+    }
+
+    /// The magnetometer's MTQ coupling rows, if this entry gives one.
+    pub fn mtq_coupling(&self) -> Option<&[[f64; 3]]> {
+        match self {
+            SensorConfig::Detailed(DetailedSensorConfig::Magnetometer { mtq_coupling }) => {
+                mtq_coupling.as_deref()
+            }
+            SensorConfig::Kind(_) => None,
+        }
+    }
+}
+
+/// Refuse sensor entries the controlled build could not honour.
+///
+/// The build makes one instance per sensor kind, so two magnetometer entries
+/// that say different things would leave one of them unread.
+// TODO: build one instance per entry, as `SensorBundle` already allows, and
+// drop the single-magnetometer rule.
+fn validate_sensors(sensors: &[SensorConfig], mtq: Option<&MtqConfig>) -> Result<(), String> {
+    let magnetometers: Vec<&SensorConfig> = sensors
+        .iter()
+        .filter(|s| s.kind() == SensorChoice::Magnetometer)
+        .collect();
+    if magnetometers.windows(2).any(|w| w[0] != w[1]) {
+        return Err(
+            "magnetometer entries differ, but one magnetometer is built per satellite".into(),
+        );
+    }
+    let Some(coupling) = magnetometers.first().and_then(|m| m.mtq_coupling()) else {
+        return Ok(());
+    };
+    let num_mtqs = match mtq {
+        Some(MtqConfig::ThreeAxis { .. }) => 3,
+        None => {
+            return Err(
+                "magnetometer.mtq_coupling requires magnetorquers: it is the field the \
+                 MTQ rods produce at the magnetometer"
+                    .into(),
+            );
+        }
+    };
+    if coupling.len() != num_mtqs {
+        return Err(format!(
+            "magnetometer.mtq_coupling has {} rows, but magnetorquers has {num_mtqs} rods",
+            coupling.len()
+        ));
+    }
+    if !coupling.iter().flatten().all(|v| v.is_finite()) {
+        return Err("magnetometer.mtq_coupling components must be finite".into());
+    }
+    Ok(())
+}
+
+impl<'de> Deserialize<'de> for SensorConfig {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::{self, IntoDeserializer, MapAccess, Visitor};
+
+        struct SensorConfigVisitor;
+
+        impl<'de> Visitor<'de> for SensorConfigVisitor {
+            type Value = SensorConfig;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a sensor name or a table with a `type` key")
+            }
+
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<SensorConfig, E> {
+                SensorChoice::deserialize(v.into_deserializer()).map(SensorConfig::Kind)
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<SensorConfig, A::Error> {
+                DetailedSensorConfig::deserialize(de::value::MapAccessDeserializer::new(map))
+                    .map(SensorConfig::Detailed)
+            }
+        }
+
+        deserializer.deserialize_any(SensorConfigVisitor)
+    }
+}
+
 /// リアクションホイール設定。
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
 #[serde(tag = "type", deny_unknown_fields)]
@@ -1320,7 +1438,7 @@ pub struct SatelliteConfig {
     pub controller: Option<ControllerConfig>,
     /// 有効にするセンサ一覧。
     #[ts(optional)]
-    pub sensors: Option<Vec<SensorChoice>>,
+    pub sensors: Option<Vec<SensorConfig>>,
     /// リアクションホイール設定。
     #[ts(optional)]
     pub reaction_wheels: Option<ReactionWheelConfig>,
@@ -1786,7 +1904,7 @@ impl SatelliteConfig {
             }),
             shape: self.shape,
             controller_config: self.controller.clone(),
-            sensor_choices: self.sensors.clone(),
+            sensors: self.sensors.clone(),
             rw_config: self.reaction_wheels.clone(),
             mtq_config: self.mtq.clone(),
             thruster_config: self.thruster.clone(),
@@ -1860,6 +1978,9 @@ impl SatelliteConfig {
         }
         if let Some(attitude) = &self.attitude {
             attitude.validate().map_err(|e| format!("attitude: {e}"))?;
+        }
+        if let Some(sensors) = &self.sensors {
+            validate_sensors(sensors, self.mtq.as_ref()).map_err(|e| format!("sensors: {e}"))?;
         }
         // A spacecraft lighter than its own dry mass is not a state the
         // propagation can reach or return to: the floor is the mass with no
@@ -2872,8 +2993,8 @@ satellites:
         // Sensors
         let sensors = sat.sensors.as_ref().unwrap();
         assert_eq!(sensors.len(), 2);
-        assert!(sensors.contains(&SensorChoice::Gyroscope));
-        assert!(sensors.contains(&SensorChoice::StarTracker));
+        assert!(sensors.contains(&SensorConfig::Kind(SensorChoice::Gyroscope)));
+        assert!(sensors.contains(&SensorConfig::Kind(SensorChoice::StarTracker)));
 
         // Reaction wheels
         let rw = sat.reaction_wheels.as_ref().unwrap();
@@ -3508,6 +3629,96 @@ satellites:
         assert_eq!(config.satellites.len(), 1);
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A satellite with the given `sensors` value and, if `with_mtq`, a 3-axis
+    /// MTQ, validated the way a loaded config is.
+    fn sensors_config(sensors: &str, with_mtq: bool) -> Result<SatelliteConfig, String> {
+        let mtq = if with_mtq {
+            "[satellites.magnetorquers]\ntype = \"three_axis\"\nmax_moment = 10.0\n"
+        } else {
+            ""
+        };
+        let toml = format!(
+            "[[satellites]]\nsensors = {sensors}\n[satellites.orbit]\ntype = \"circular\"\n\
+             altitude = 500\n{mtq}"
+        );
+        let config: SimConfig = toml::from_str(&toml).map_err(|e| e.to_string())?;
+        let sat = config.satellites.into_iter().next().expect("one satellite");
+        sat.validate()?;
+        Ok(sat)
+    }
+
+    #[test]
+    fn a_sensor_entry_is_a_name_or_a_table() {
+        let sat = sensors_config(
+            r#"["gyroscope", { type = "magnetometer", mtq_coupling = [[1e-6, 0, 0], [0, 2e-6, 0], [0, 0, 3e-6]] }]"#,
+            true,
+        )
+        .expect("both forms parse");
+        let sensors = sat.sensors.expect("sensors");
+        assert_eq!(sensors[0], SensorConfig::Kind(SensorChoice::Gyroscope));
+        assert_eq!(sensors[1].kind(), SensorChoice::Magnetometer);
+        assert_eq!(
+            sensors[1].mtq_coupling(),
+            Some(&[[1e-6, 0.0, 0.0], [0.0, 2e-6, 0.0], [0.0, 0.0, 3e-6]][..])
+        );
+    }
+
+    /// A misspelt key in the table form is named, rather than lost in an
+    /// "untagged enum" message.
+    #[test]
+    fn a_sensor_table_names_an_unknown_key() {
+        let err = sensors_config(r#"[{ type = "magnetometer", mtq_couplng = [] }]"#, true)
+            .expect_err("unknown key");
+        assert!(err.contains("mtq_couplng"), "msg: {err}");
+    }
+
+    #[test]
+    fn an_mtq_coupling_requires_magnetorquers() {
+        let err = sensors_config(
+            r#"[{ type = "magnetometer", mtq_coupling = [[0, 0, 0], [0, 0, 0], [0, 0, 0]] }]"#,
+            false,
+        )
+        .expect_err("no MTQ");
+        assert!(err.contains("requires magnetorquers"), "msg: {err}");
+    }
+
+    #[test]
+    fn an_mtq_coupling_has_one_row_per_rod() {
+        let err = sensors_config(
+            r#"[{ type = "magnetometer", mtq_coupling = [[0, 0, 0], [0, 0, 0]] }]"#,
+            true,
+        )
+        .expect_err("two rows for three rods");
+        assert!(
+            err.contains("2 rows") && err.contains("3 rods"),
+            "msg: {err}"
+        );
+    }
+
+    #[test]
+    fn an_mtq_coupling_must_be_finite() {
+        let err = sensors_config(
+            r#"[{ type = "magnetometer", mtq_coupling = [[nan, 0, 0], [0, 0, 0], [0, 0, 0]] }]"#,
+            true,
+        )
+        .expect_err("NaN");
+        assert!(err.contains("finite"), "msg: {err}");
+    }
+
+    /// One magnetometer is built, so two entries that disagree are refused
+    /// rather than one of them going unread. Repeating the same entry stays
+    /// accepted, as it was.
+    #[test]
+    fn magnetometer_entries_must_agree() {
+        let err = sensors_config(
+            r#"["magnetometer", { type = "magnetometer", mtq_coupling = [[0, 0, 0], [0, 0, 0], [0, 0, 0]] }]"#,
+            true,
+        )
+        .expect_err("they differ");
+        assert!(err.contains("magnetometer entries differ"), "msg: {err}");
+        sensors_config(r#"["magnetometer", "magnetometer"]"#, false).expect("same entry twice");
     }
 
     #[test]
