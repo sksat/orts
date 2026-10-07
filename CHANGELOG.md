@@ -14,6 +14,10 @@ section is subdivided by package.
 ### `orts` (Rust, crates.io)
 
 #### Added
+- `record::components` has `MagnetometerReading3D` (one per magnetometer,
+  named by `magnetometer_columns`: `magnetometer`, `magnetometer.2`, …) and
+  `GeomagneticFieldBody3D`, for recording magnetometer readings beside the field
+  they measure.
 - `plugin::wasm::ComponentBytes` holds a WASM component as bytes together with
   their SHA-256, and `WasmPluginCache::build_sync_controller_from_bytes_with_streams`
   / `build_async_controller_from_bytes_with_streams` build a controller from one
@@ -946,6 +950,15 @@ section is subdivided by package.
   ([#536](https://github.com/sksat/orts/issues/536))
 
 #### Added
+- `orts run` records the magnetometer readings of a satellite with attitude at
+  every output sample, with a controller or without one: each magnetometer's
+  reading [T, body frame] and the geomagnetic field at the same instant with no
+  sensor in between. The sensors are evaluated again at the output time, which
+  at a controller tick gives what the controller received, since the noise is a
+  function of the sample time. The geomagnetic field is recorded for every
+  satellite with attitude about a body with a field model, magnetometer or not.
+  Declaring only magnetometers on a run without a controller no longer warns
+  that the sensors go unread.
 - `orts serve --realtime` advances every simulation the server runs — the
   one its command line starts and each `start_simulation` — at wall-clock
   speed, 1 sim s per wall s, one `stream_interval` per step. Without it a

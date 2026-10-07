@@ -126,7 +126,7 @@ pub fn run_simulation_cmd(
     ensure_commands_deliverable(mode, params.commands.len()).map_err(CmdError::usage)?;
     ensure_streams_unused(&params.satellites).map_err(CmdError::usage)?;
     // 選択したモードで効かない設定は、無視する前に知らせる。
-    let warnings = unhonored_config_warnings(&params.satellites, mode);
+    let warnings = unhonored_config_warnings(&params.satellites, mode, true);
     for w in &warnings {
         eprintln!("Warning: {w}");
     }
@@ -633,6 +633,12 @@ pub fn run_spacecraft_simulation(params: &SimParams) -> Result<Recording, CmdErr
             params.body.properties().name
         ))
     })?;
+    // Each satellite's configured magnetometers, read only for the recording:
+    // no controller reads them. Behind a `RefCell` because the logger is `Fn`.
+    let mut probes: std::collections::HashMap<
+        EntityPath,
+        crate::sim::telemetry::MagnetometerProbe,
+    > = std::collections::HashMap::new();
     for sat in &params.satellites {
         // `run_simulation_cmd` validated every satellite before dispatching
         // here, so `build_spacecraft_dynamics` cannot be reached with an
@@ -658,7 +664,13 @@ pub fn run_spacecraft_simulation(params: &SimParams) -> Result<Recording, CmdErr
         let initial = dynamics.initial_augmented_state(plant);
         group =
             group.add_satellite_until(sat.id.as_str(), initial, end_time_of(params, sat), dynamics);
+        if let Some(probe) = crate::sim::telemetry::MagnetometerProbe::for_spec(sat, params.body)
+            .map_err(|e| CmdError::failure(format!("satellite '{}': {e}", sat.id)))?
+        {
+            probes.insert(sat.entity_path(), probe);
+        }
     }
+    let probes = std::cell::RefCell::new(probes);
 
     propagate_and_record::<SimpleEci, _>(params, group, |rec, entity, tp, t, state, dynamics| {
         let sc = &state.plant;
@@ -667,6 +679,11 @@ pub fn run_spacecraft_simulation(params: &SimParams) -> Result<Recording, CmdErr
         let w = AngularVelocity3D(sc.attitude.angular_velocity);
         rec.log_orbital_state_with_attitude(entity, tp, &os, Some(&q), Some(&w));
         log_disturbance_torques(rec, entity, tp, t, state, dynamics);
+        let mut probes = probes.borrow_mut();
+        if let Some(probe) = probes.get_mut(entity) {
+            let m = probe.read(t, sc, params.epoch.as_ref());
+            log_magnetometer_telemetry(rec, entity, tp, &m);
+        }
     })
 }
 
@@ -1156,6 +1173,7 @@ fn lookup_field_names(component_name: &str, n: usize) -> Vec<String> {
     try_component!(RwTorqueCommand3D);
     try_component!(RwMomentum3D);
     try_component!(ThrusterThrottle3D);
+    try_component!(orts::record::components::GeomagneticFieldBody3D);
 
     // Fallback: generate numbered names
     let short = component_name
@@ -1394,9 +1412,16 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Result<Record
     };
 
     // 初期状態を記録。
-    for (i, sat) in satellites.iter().enumerate() {
+    for (i, sat) in satellites.iter_mut().enumerate() {
         let tp = TimePoint::new().with_sim_time(0.0).with_step(0);
-        log_controlled_state(&mut rec, &sat_paths[i], &tp, 0.0, sat);
+        log_controlled_state(
+            &mut rec,
+            &sat_paths[i],
+            &tp,
+            0.0,
+            sat,
+            params.epoch.as_ref(),
+        );
     }
 
     // 地上局可視性 monitor（制御 tick ごとにサンプリング）。
@@ -1534,9 +1559,16 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Result<Record
                 term.t, params.satellites[*i].id, term.reason
             );
             if term.t > last_output_t {
-                let sat = &satellites[*i];
+                let sat = &mut satellites[*i];
                 let tp = TimePoint::new().with_sim_time(term.t).with_step(step);
-                log_controlled_state(&mut rec, &sat_paths[*i], &tp, term.t, sat);
+                log_controlled_state(
+                    &mut rec,
+                    &sat_paths[*i],
+                    &tp,
+                    term.t,
+                    sat,
+                    params.epoch.as_ref(),
+                );
             }
         }
 
@@ -1575,12 +1607,12 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Result<Record
 
         if output.due(t) {
             for (i, sat) in satellites
-                .iter()
+                .iter_mut()
                 .enumerate()
                 .filter(|(_, sat)| sat.terminated.is_none())
             {
                 let tp = TimePoint::new().with_sim_time(t).with_step(step);
-                log_controlled_state(&mut rec, &sat_paths[i], &tp, t, sat);
+                log_controlled_state(&mut rec, &sat_paths[i], &tp, t, sat, params.epoch.as_ref());
             }
             step += 1;
             last_output_t = t;
@@ -1599,12 +1631,12 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Result<Record
     // duration の 1 ns 内に来たときに最終状態が落ちる。
     if t != last_output_t {
         for (i, sat) in satellites
-            .iter()
+            .iter_mut()
             .enumerate()
             .filter(|(_, sat)| sat.terminated.is_none())
         {
             let tp = TimePoint::new().with_sim_time(t).with_step(step);
-            log_controlled_state(&mut rec, &sat_paths[i], &tp, t, sat);
+            log_controlled_state(&mut rec, &sat_paths[i], &tp, t, sat, params.epoch.as_ref());
         }
     }
 
@@ -1648,13 +1680,34 @@ fn log_disturbance_torques<G, F>(
     }
 }
 
+/// Log the magnetometers' readings and the geomagnetic field beside them, one
+/// column set per magnetometer (DESIGN.md "センサの読み値も出力サンプル時刻で
+/// 評価し直す").
+fn log_magnetometer_telemetry(
+    rec: &mut Recording,
+    entity: &EntityPath,
+    tp: &TimePoint,
+    m: &crate::sim::telemetry::MagnetometerTelemetry,
+) {
+    use orts::record::components::{GeomagneticFieldBody3D, magnetometer_columns};
+    if let Some(b) = m.geomagnetic_field_body {
+        rec.log_temporal(entity, tp, &GeomagneticFieldBody3D(b));
+    }
+    let columns = magnetometer_columns(m.readings.len());
+    for ((name, fields), b) in columns.into_iter().zip(&m.readings) {
+        let fields: Vec<&str> = fields.iter().map(String::as_str).collect();
+        rec.log_temporal_scalars(entity, tp, name, &fields, &[b.x, b.y, b.z]);
+    }
+}
+
 /// Log controlled satellite state: orbit + attitude + commands + actuator telemetry.
 fn log_controlled_state(
     rec: &mut Recording,
     entity: &EntityPath,
     tp: &TimePoint,
     t: f64,
-    sat: &crate::sim::controlled::ControlledSatellite,
+    sat: &mut crate::sim::controlled::ControlledSatellite,
+    epoch: Option<&arika::epoch::Epoch>,
 ) {
     use orts::plugin::{
         MtqCommand as PluginMtqCommand, RwCommand as PluginRwCommand,
@@ -1686,6 +1739,10 @@ fn log_controlled_state(
             })
             .unwrap_or(nalgebra::Vector3::zeros());
         rec.log_temporal(entity, tp, &MtqCommand3D(mtq_vec));
+    }
+
+    if let Some(m) = sat.magnetometer_telemetry(t, epoch) {
+        log_magnetometer_telemetry(rec, entity, tp, &m);
     }
 
     // RW command (always log to keep row count aligned).
@@ -2647,14 +2704,14 @@ mod tests {
             mass: 500.0,
         };
         let state = dynamics.initial_augmented_state(plant);
-        let sat = ControlledSatellite::for_test(dynamics, state, Box::new(Idle), body);
+        let mut sat = ControlledSatellite::for_test(dynamics, state, Box::new(Idle), body);
 
         let mut rec = Recording::new();
         let entity = EntityPath::parse("/world/sat/controlled");
         let tp = orts::record::timeline::TimePoint::new()
             .with_sim_time(0.0)
             .with_step(0);
-        log_controlled_state(&mut rec, &entity, &tp, 0.0, &sat);
+        log_controlled_state(&mut rec, &entity, &tp, 0.0, &mut sat, None);
 
         let columns = csv_columns(&rec, &[&entity]);
         let header = build_csv_header(&columns, false);
@@ -2683,6 +2740,210 @@ mod tests {
             value.abs() > 1e-9,
             "the gravity-gradient torque should reach the row, got {value:e}: {row}"
         );
+    }
+
+    /// The controlled path records each magnetometer's reading under its own
+    /// column and the geomagnetic field beside them, at every output sample,
+    /// the first included. Through an `.rrd`, since the magnetometer columns
+    /// are named at run time.
+    /// A satellite with attitude records the geomagnetic field even without a
+    /// magnetometer, about a body with a field model; about one without, there
+    /// is no field column.
+    #[test]
+    fn the_attitude_path_records_the_field_without_a_magnetometer() {
+        let header_for = |body: &str| {
+            let toml = format!(
+                r#"
+body = "{body}"
+dt = 1.0
+output_interval = 1.0
+duration = 2.0
+epoch = "2024-03-20T12:00:00Z"
+
+[[satellites]]
+id = "a"
+orbit = {{ type = "circular", altitude = 500 }}
+attitude = {{ inertia_diag = [10, 10, 10], mass = 50 }}
+"#
+            );
+            let config: crate::config::SimConfig = toml::from_str(&toml).expect("parses");
+            let params = SimParams::from_config(&config).expect("builds params");
+            let rec = run_spacecraft_simulation(&params).expect("runs");
+            let entity = params.satellites[0].entity_path();
+            build_csv_header(&csv_columns(&rec, &[&entity]), false)
+        };
+        let earth = header_for("earth");
+        assert!(earth.contains("geomag_body_x_T"), "{earth}");
+        assert!(!earth.contains("magnetometer."), "{earth}");
+        let mars = header_for("mars");
+        assert!(!mars.contains("geomag_body"), "{mars}");
+    }
+
+    /// A satellite with attitude but no controller records its magnetometer
+    /// too, from the first sample on. With no noise and no onboard field, the
+    /// reading is the geomagnetic field it is recorded beside.
+    #[test]
+    fn the_attitude_path_records_the_magnetometer_readings() {
+        let toml = r#"
+body = "earth"
+dt = 1.0
+output_interval = 1.0
+duration = 3.0
+epoch = "2024-03-20T12:00:00Z"
+
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+attitude = { inertia_diag = [10, 10, 10], mass = 50, initial_angular_velocity = [0.01, 0.02, -0.01] }
+sensors = ["magnetometer"]
+"#;
+        let config: crate::config::SimConfig = toml::from_str(toml).expect("parses");
+        let params = SimParams::from_config(&config).expect("builds params");
+        let rec = run_spacecraft_simulation(&params).expect("runs");
+
+        let entity = params.satellites[0].entity_path();
+        let columns = csv_columns(&rec, &[&entity]);
+        let header = build_csv_header(&columns, false);
+        let cols: Vec<&str> = header.trim_start_matches("# ").split(',').collect();
+        let idx = |name: &str| {
+            cols.iter()
+                .position(|c| *c == name)
+                .unwrap_or_else(|| panic!("column '{name}' missing: {header}"))
+        };
+        let mut out = Vec::new();
+        write_satellite_csv(&mut out, &rec, &entity, params.mu, false, &columns).expect("csv");
+        let text = String::from_utf8(out).expect("utf-8");
+        let rows: Vec<Vec<f64>> = text
+            .lines()
+            .filter(|l| !l.starts_with('#'))
+            .map(|l| l.split(',').map(|v| v.trim().parse().expect(v)).collect())
+            .collect();
+        assert_eq!(rows.len(), 4, "t = 0, 1, 2, 3");
+        for row in &rows {
+            for axis in ["x", "y", "z"] {
+                let read = row[idx(&format!("magnetometer.reading_body_{axis}_T"))];
+                let geo = row[idx(&format!("geomag_body_{axis}_T"))];
+                assert_eq!(read, geo, "an ideal magnetometer reads the field");
+            }
+            let b = row[idx("geomag_body_z_T")].abs() + row[idx("geomag_body_x_T")].abs();
+            assert!(b > 1e-6, "a LEO field: {row:?}");
+        }
+    }
+
+    #[test]
+    fn the_controlled_path_records_the_magnetometer_readings() {
+        use crate::sim::controlled::ControlledSatellite;
+        use orts::plugin::{Command, PluginController, PluginError, TickInput};
+        use orts::record::rerun_export::{load_as_recording, save_as_rrd};
+        use orts::record::timeline::TimePoint;
+        use orts::sensor::Magnetometer;
+        use orts::spacecraft::SpacecraftState;
+
+        struct Idle;
+        impl PluginController for Idle {
+            fn name(&self) -> &str {
+                "idle"
+            }
+            fn sample_period(&self) -> f64 {
+                1.0
+            }
+            fn update(&mut self, _input: &TickInput<'_>) -> Result<Option<Command>, PluginError> {
+                Ok(None)
+            }
+        }
+
+        let body = arika::body::KnownBody::Earth;
+        let mu = body.properties().mu;
+        let dynamics = orts::setup::build_spacecraft_dynamics(
+            &body,
+            orts::setup::CentralGravity::Zonal { mu },
+            None,
+            &orts::setup::SatelliteParams {
+                has_drag: false,
+                ballistic_coeff: None,
+                srp_area_to_mass: None,
+                srp_cr: None,
+                disturbances: orts::setup::DisturbanceTorques::default(),
+                shape: None,
+            },
+            &[],
+            nalgebra::Matrix3::identity(),
+            None,
+        )
+        .expect("Earth has a Sun ephemeris");
+        let r = body.properties().radius + 400.0;
+        let plant = SpacecraftState {
+            orbit: orts::orbital::OrbitalState::new(
+                nalgebra::Vector3::new(r, 0.0, 0.0),
+                nalgebra::Vector3::new(0.0, (mu / r).sqrt(), 0.0),
+            ),
+            attitude: orts::attitude::AttitudeState::identity(),
+            mass: 50.0,
+        };
+        let state = dynamics.initial_augmented_state(plant);
+        let mut sat = ControlledSatellite::for_test(dynamics, state, Box::new(Idle), body);
+        let field = orts::magnetic::igrf_field_for_body(body);
+        sat.sensors.magnetometers = vec![
+            Magnetometer::new(std::sync::Arc::clone(&field)),
+            Magnetometer::new(std::sync::Arc::clone(&field)),
+        ];
+        sat.geomagnetic_truth = Some(Magnetometer::new(field));
+        let expected = sat
+            .magnetometer_telemetry(0.0, None)
+            .expect("magnetometers are mounted");
+
+        let mut rec = Recording::new();
+        let entity = EntityPath::parse("/world/sat/sensed");
+        let tp = TimePoint::new().with_sim_time(0.0).with_step(0);
+        log_controlled_state(&mut rec, &entity, &tp, 0.0, &mut sat, None);
+
+        let path = std::env::temp_dir().join(format!(
+            "orts_magnetometer_{}_{:?}.rrd",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let path_str = path.to_str().unwrap().to_string();
+        save_as_rrd(&rec, "orts-magnetometer-test", &path_str).expect("save");
+        let loaded = load_as_recording(&path_str).expect("load");
+        let _ = std::fs::remove_file(&path);
+
+        let columns = csv_columns(&loaded, &[&entity]);
+        let header = build_csv_header(&columns, false);
+        let cols: Vec<&str> = header.trim_start_matches("# ").split(',').collect();
+        let idx = |name: &str| {
+            cols.iter()
+                .position(|c| *c == name)
+                .unwrap_or_else(|| panic!("column '{name}' missing: {header}"))
+        };
+        let mut out = Vec::new();
+        write_satellite_csv(&mut out, &loaded, &entity, mu, false, &columns).expect("csv");
+        let text = String::from_utf8(out).expect("utf-8");
+        let row: Vec<&str> = text
+            .lines()
+            .find(|l| !l.starts_with('#'))
+            .expect("a data row")
+            .split(',')
+            .map(str::trim)
+            .collect();
+        let field_at = |name: &str| -> f64 { row[idx(name)].parse().expect(name) };
+
+        // The CSV writes ten decimals, so compare to 1e-10 T.
+        let b = expected
+            .geomagnetic_field_body
+            .expect("Earth's field is modelled");
+        for (name, value) in [
+            ("geomag_body_x_T", b.x),
+            ("geomag_body_z_T", b.z),
+            ("magnetometer.reading_body_y_T", expected.readings[0].y),
+            ("magnetometer.2.reading_body_x_T", expected.readings[1].x),
+        ] {
+            assert!(
+                (field_at(name) - value).abs() <= 1e-10,
+                "{name}: {} vs {value}",
+                field_at(name)
+            );
+        }
+        assert!(b.norm() > 1e-5, "a LEO field: {b:?}");
     }
 
     /// The config path rejects a tolerance the search cannot narrow to, and a

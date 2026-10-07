@@ -112,14 +112,44 @@ pub fn ensure_fleet_declares_uniformly(
 ///
 /// センサ・アクチュエータは制御ループが読み書きして初めて効く。コントローラ
 /// なしで宣言してもシミュレーションに影響しないので、黙って捨てずに知らせる。
-pub fn unhonored_config_warnings(satellites: &[SatelliteSpec], mode: SimMode) -> Vec<String> {
+///
+/// `records_magnetometers` says whether the entry point records a
+/// controller-less attitude satellite's magnetometers (`orts run` does,
+/// `orts serve` does not); only then are they read without a controller.
+pub fn unhonored_config_warnings(
+    satellites: &[SatelliteSpec],
+    mode: SimMode,
+    records_magnetometers: bool,
+) -> Vec<String> {
     if mode == SimMode::Controlled {
         return Vec::new();
     }
     let mut warnings = Vec::new();
     for spec in satellites {
         let mut keys: Vec<&str> = Vec::new();
-        if spec.sensor_choices.is_some() {
+        // An attitude run records the magnetometers' readings. With one among
+        // the sensors, the key is read, so name the others instead of the key.
+        let sensors = spec.sensor_choices.as_deref().unwrap_or_default();
+        let reads_magnetometers = records_magnetometers
+            && mode == SimMode::Spacecraft
+            && sensors.contains(&crate::config::SensorChoice::Magnetometer);
+        if reads_magnetometers {
+            let unread: Vec<String> = sensors
+                .iter()
+                .filter(|s| **s != crate::config::SensorChoice::Magnetometer)
+                .map(|s| format!("`{}`", s.config_name()))
+                .collect();
+            if !unread.is_empty() {
+                warnings.push(format!(
+                    "satellite '{}': without `[satellites.controller]` only the magnetometers are read, \
+                     for the recording; {} {} not read in {} mode",
+                    spec.id,
+                    unread.join(", "),
+                    if unread.len() == 1 { "is" } else { "are" },
+                    mode.as_str(),
+                ));
+            }
+        } else if spec.sensor_choices.is_some() {
             keys.push("sensors");
         }
         if spec.rw_config.is_some() {
@@ -537,7 +567,7 @@ attitude = { inertia_diag = [10, 10, 10], mass = 500 }
 reaction_wheels = { type = "three_axis", inertia = 0.01, max_momentum = 1.0, max_torque = 0.5 }
 "#;
         let specs = specs(toml);
-        let warnings = unhonored_config_warnings(&specs, SimMode::Spacecraft);
+        let warnings = unhonored_config_warnings(&specs, SimMode::Spacecraft, true);
         assert_eq!(warnings.len(), 1, "got: {warnings:?}");
         assert!(warnings[0].contains("`sensors`"), "got: {}", warnings[0]);
         assert!(
@@ -545,6 +575,57 @@ reaction_wheels = { type = "three_axis", inertia = 0.01, max_momentum = 1.0, max
             "got: {}",
             warnings[0]
         );
+    }
+
+    /// An attitude run records the magnetometers, so declaring only those is
+    /// not a dead key; another sensor beside them is named as unread, and a
+    /// magnetometer on an orbit-only run leaves the whole key unread.
+    #[test]
+    fn magnetometers_without_controller_are_read_only_on_an_attitude_run() {
+        let with = |sensors: &str, attitude: bool| {
+            let attitude = if attitude {
+                "attitude = { inertia_diag = [10, 10, 10], mass = 500 }\n"
+            } else {
+                ""
+            };
+            specs(&format!(
+                "body = \"earth\"\n[[satellites]]\nid = \"a\"\n\
+                 orbit = {{ type = \"circular\", altitude = 400 }}\nsensors = {sensors}\n{attitude}"
+            ))
+        };
+        assert!(
+            unhonored_config_warnings(
+                &with(r#"["magnetometer"]"#, true),
+                SimMode::Spacecraft,
+                true
+            )
+            .is_empty()
+        );
+        let mixed = unhonored_config_warnings(
+            &with(r#"["magnetometer", "gyroscope"]"#, true),
+            SimMode::Spacecraft,
+            true,
+        );
+        assert_eq!(mixed.len(), 1, "got: {mixed:?}");
+        assert!(
+            mixed[0].contains("only the magnetometers are read")
+                && mixed[0].contains("`gyroscope`")
+                && !mixed[0].contains("`sensors`"),
+            "got: {mixed:?}"
+        );
+        let orbit_only = unhonored_config_warnings(
+            &with(r#"["magnetometer"]"#, false),
+            SimMode::OrbitOnly,
+            true,
+        );
+        assert!(orbit_only[0].contains("`sensors`"), "got: {orbit_only:?}");
+        // `orts serve` records no magnetometer, so there the key goes unread.
+        let served = unhonored_config_warnings(
+            &with(r#"["magnetometer"]"#, true),
+            SimMode::Spacecraft,
+            false,
+        );
+        assert!(served[0].contains("`sensors`"), "got: {served:?}");
     }
 
     #[test]
@@ -558,7 +639,7 @@ sensors = ["gyroscope"]
 attitude = { inertia_diag = [10, 10, 10], mass = 500 }
 controller = { type = "wasm", path = "ctrl.wasm" }
 "#;
-        assert!(unhonored_config_warnings(&specs(toml), SimMode::Controlled).is_empty());
+        assert!(unhonored_config_warnings(&specs(toml), SimMode::Controlled, true).is_empty());
     }
 
     #[test]

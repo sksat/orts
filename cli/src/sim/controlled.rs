@@ -35,6 +35,7 @@ use crate::satellite::SatelliteSpec;
 #[cfg(feature = "plugin-wasm")]
 use crate::sim::params::ResolvedPluginBackend;
 use crate::sim::params::SimParams;
+use crate::sim::telemetry::{MagnetometerTelemetry, read_magnetometers, sample_epoch};
 
 #[cfg(feature = "plugin-wasm")]
 use orts::plugin::wasm::WasmPluginCache;
@@ -107,6 +108,10 @@ pub struct ControlledSatellite {
     /// the controller they would reach its backlog limit and halt the run.
     /// `orts run` leaves this off and logs them.
     pub discards_messages: bool,
+    /// An ideal, uncoupled magnetometer on the geomagnetic field model the
+    /// sensors use: the field the recorder records, and compares the readings
+    /// with. `None` about a body with no field model.
+    pub geomagnetic_truth: Option<Magnetometer>,
     /// Sim time this satellite's controller schedule is anchored at [s]: where
     /// the satellite entered the simulation.
     tick_base_t: f64,
@@ -126,6 +131,26 @@ pub struct ControlledSatellite {
 }
 
 impl ControlledSatellite {
+    /// The magnetometers' readings and the geomagnetic field at sim time `t`,
+    /// evaluated again from the state, which must be at `t`. `None` with
+    /// neither a magnetometer nor a field model.
+    pub fn magnetometer_telemetry(
+        &mut self,
+        t: f64,
+        epoch: Option<&Epoch>,
+    ) -> Option<MagnetometerTelemetry> {
+        if self.sensors.magnetometers.is_empty() && self.geomagnetic_truth.is_none() {
+            return None;
+        }
+        Some(read_magnetometers(
+            &mut self.sensors.magnetometers,
+            self.geomagnetic_truth.as_mut(),
+            t,
+            &self.state.plant,
+            epoch,
+        ))
+    }
+
     /// Assemble one for a test in another module of this crate, with no
     /// actuators and the tick schedule at its start.
     ///
@@ -154,6 +179,7 @@ impl ControlledSatellite {
             body,
             thruster_specs: Vec::new(),
             discards_messages: false,
+            geomagnetic_truth: None,
             tick_base_t: 0.0,
             ticks_done: 0,
         }
@@ -356,6 +382,7 @@ pub fn build_controlled_satellite(
 
     // センサを構築。
     let sensors = build_sensor_bundle(spec.sensor_choices.as_deref(), params.body, &spec.id)?;
+    let geomagnetic_truth = crate::sim::telemetry::geomagnetic_truth_for(params.body);
 
     let actuators = ActuatorBundle::new();
     let sample_period = controller.sample_period();
@@ -376,6 +403,7 @@ pub fn build_controlled_satellite(
         body: params.body,
         thruster_specs,
         discards_messages: false,
+        geomagnetic_truth,
         tick_base_t: start_t,
         ticks_done: 0,
     })
@@ -739,11 +767,9 @@ pub fn tick_controller(
 
     // センサ評価 + プラグイン呼び出し。
     let current_epoch = epoch.map(|e| e.add_si_seconds(t_next));
-    let sensors = sat.sensors.evaluate(
-        t_next,
-        &sat.state.plant,
-        &current_epoch.unwrap_or(Epoch::j2000()),
-    );
+    let sensors = sat
+        .sensors
+        .evaluate(t_next, &sat.state.plant, &sample_epoch(epoch, t_next));
     let actuator_telemetry = ActuatorTelemetry {
         rw: if sat.has_rw {
             sat.dynamics
@@ -1008,7 +1034,7 @@ fn mtq_for_body(
 ///
 /// The sun sensor's reading is a direction to the Sun, so it depends on the
 /// central body the same way the solar force models do.
-fn build_sensor_bundle(
+pub(crate) fn build_sensor_bundle(
     choices: Option<&[SensorChoice]>,
     body: arika::body::KnownBody,
     sat_id: &str,
@@ -1149,6 +1175,7 @@ mod tests {
             body: arika::body::KnownBody::Earth,
             thruster_specs: Vec::new(),
             discards_messages: false,
+            geomagnetic_truth: None,
             tick_base_t: start_t,
             ticks_done: 0,
         };
@@ -1952,6 +1979,84 @@ mod tests {
             before,
             "the rebuild is silent; the warning belongs where the device is built"
         );
+    }
+
+    /// A controller that records the first magnetometer's reading at every
+    /// tick.
+    struct MagnetometerRecorder {
+        readings: Arc<std::sync::Mutex<Vec<Vector3<f64>>>>,
+    }
+
+    impl PluginController for MagnetometerRecorder {
+        fn name(&self) -> &str {
+            "magnetometer-recorder"
+        }
+        fn sample_period(&self) -> f64 {
+            1.0
+        }
+        fn update(&mut self, input: &TickInput<'_>) -> Result<Option<Command>, PluginError> {
+            self.readings
+                .lock()
+                .expect("no panics in these tests")
+                .push(input.sensors.magnetometers[0].into_inner().into_inner());
+            Ok(None)
+        }
+    }
+
+    /// The telemetry at a tick is what the controller received there: the
+    /// sensors evaluated again give the same noisy reading. Between ticks it is
+    /// a reading the controller never got, and the geomagnetic field beside it
+    /// is the one without the noise.
+    #[test]
+    fn telemetry_at_a_tick_is_what_the_controller_received() {
+        use orts::sensor::noise::GaussianNoise;
+
+        let readings = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (mut sat, _ticks) = satellite_with(1.0, 0.0);
+        sat.controller = Box::new(MagnetometerRecorder {
+            readings: Arc::clone(&readings),
+        });
+        let field = orts::magnetic::igrf_field_for_body(sat.body);
+        sat.sensors.magnetometers = vec![
+            Magnetometer::new(Arc::clone(&field)).with_noise(GaussianNoise::isotropic(1e-7, 42)),
+        ];
+        sat.geomagnetic_truth = Some(Magnetometer::new(field));
+
+        // The epoch the ticks were taken at, which the telemetry has to use too.
+        let params = params_with(crate::cli::IntegratorChoice::Rk4, 0.1, 1e-9);
+        advance_controlled(&mut sat, 0.0, 3.0, &params).expect("integrates and ticks");
+        let epoch = params.epoch.as_ref();
+
+        let seen = readings.lock().unwrap().clone();
+        assert_eq!(seen.len(), 3);
+        let at_tick = sat
+            .magnetometer_telemetry(3.0, epoch)
+            .expect("a magnetometer is mounted");
+        assert_eq!(at_tick.readings, vec![seen[2]]);
+        let noise = (at_tick.readings[0]
+            - at_tick
+                .geomagnetic_field_body
+                .expect("Earth's field is modelled"))
+        .norm();
+        assert!(noise > 0.0 && noise < 1e-6, "the noise alone: {noise:e}");
+        assert_eq!(sat.magnetometer_telemetry(3.0, epoch), Some(at_tick));
+    }
+
+    /// The geomagnetic field is recorded with or without a magnetometer,
+    /// wherever there is a field model; with neither there is nothing.
+    #[test]
+    fn a_satellite_without_a_magnetometer_records_only_the_field() {
+        let (mut sat, _ticks) = satellite_with(1.0, 0.0);
+        sat.geomagnetic_truth = crate::sim::telemetry::geomagnetic_truth_for(KnownBody::Earth);
+        let m = sat
+            .magnetometer_telemetry(0.0, None)
+            .expect("Earth's field is recorded");
+        assert!(m.readings.is_empty());
+        assert!(m.geomagnetic_field_body.is_some_and(|b| b.norm() > 1e-5));
+
+        sat.geomagnetic_truth = crate::sim::telemetry::geomagnetic_truth_for(KnownBody::Mars);
+        assert!(sat.geomagnetic_truth.is_none(), "Mars has no field model");
+        assert_eq!(sat.magnetometer_telemetry(0.0, None), None);
     }
 
     /// The rebuild after a command goes through the same factory.
