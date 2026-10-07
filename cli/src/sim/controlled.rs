@@ -2193,6 +2193,154 @@ mod tests {
         );
     }
 
+    /// A finite-difference B-dot controller that also records, at each tick,
+    /// the command it returned and the one the true field alone would give.
+    struct BdotWithTruth {
+        gain: f64,
+        max_moment: f64,
+        truth: Magnetometer,
+        prev: Option<(Vector3<f64>, Vector3<f64>)>,
+        log: Arc<std::sync::Mutex<Vec<(Vector3<f64>, Vector3<f64>)>>>,
+    }
+
+    impl PluginController for BdotWithTruth {
+        fn name(&self) -> &str {
+            "bdot-with-truth"
+        }
+        fn sample_period(&self) -> f64 {
+            1.0
+        }
+        fn update(&mut self, input: &TickInput<'_>) -> Result<Option<Command>, PluginError> {
+            let read = input.sensors.magnetometers[0].into_inner().into_inner();
+            let epoch = crate::sim::telemetry::sample_epoch(input.epoch, 0.0);
+            let truth = self
+                .truth
+                .measure(
+                    input.t,
+                    input.spacecraft,
+                    &epoch,
+                    &OnboardMagneticSources::none(),
+                )
+                .into_inner()
+                .into_inner();
+            let Some((prev_read, prev_truth)) = self.prev.replace((read, truth)) else {
+                return Ok(Some(Command::mtq(vec![0.0; 3])));
+            };
+            let clamp = |v: f64| v.clamp(-self.max_moment, self.max_moment);
+            // The sample period is 1 s, so the difference is the rate.
+            let command = (read - prev_read).map(|d| clamp(-self.gain * d));
+            let ideal = -self.gain * (truth - prev_truth);
+            self.log.lock().expect("no panics").push((command, ideal));
+            Ok(Some(Command::mtq(command.iter().copied().collect())))
+        }
+    }
+
+    /// B-dot on a magnetometer coupled to its own MTQ settles where the
+    /// closed-form analysis of `u_k = sat(c_k - a (u_{k-1} - u_{k-2}))` says,
+    /// with `c_k` the command the true field alone gives and `a = gain · K`
+    /// the loop gain of the rod's own field:
+    ///
+    /// - on the x rod's axis (`a = +7.41`) the command locks to ±10 A·m², the
+    ///   sign flipping every tick, so it averages to zero whatever `c_k` is;
+    /// - beside the y and z rods (`a = -3.70`) it runs `+10, +10, c, -10, -10,
+    ///   c`: two equal saturated ticks cancel in the difference, so the next
+    ///   command is `c_k` itself, and a six-tick mean keeps `c / 3`.
+    ///
+    /// The geometry and gain of the bdot-finite-diff example, magnetometer
+    /// 0.3 m along x from the rods.
+    #[test]
+    fn bdot_on_a_coupled_magnetometer_settles_into_the_analytic_cycles() {
+        const GAIN: f64 = 1e6;
+        const MAX_MOMENT: f64 = 10.0;
+        // Point-dipole coupling 0.3 m away: on the axis 2 μ0/4π / d³, beside
+        // it -μ0/4π / d³ [T per A·m²].
+        let on_axis = 2.0 * 1e-7 / 0.3_f64.powi(3);
+        let beside = -1e-7 / 0.3_f64.powi(3);
+
+        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (mut sat, _ticks) = satellite_with(1.0, 0.0);
+        let field = orts::magnetic::igrf_field_for_body(sat.body);
+        sat.controller = Box::new(BdotWithTruth {
+            gain: GAIN,
+            max_moment: MAX_MOMENT,
+            truth: Magnetometer::new(Arc::clone(&field)),
+            prev: None,
+            log: Arc::clone(&log),
+        });
+        let core = orts::spacecraft::MtqAssemblyCore::three_axis(MAX_MOMENT);
+        sat.dynamics = sat.dynamics.with_model(mtq_for_body(sat.body, &core, None));
+        sat.mtq = Some(core);
+        sat.sensors.magnetometers =
+            vec![
+                Magnetometer::new(field).with_mtq_coupling(MtqCoupling::from_columns(vec![
+                    Vector3::new(on_axis, 0.0, 0.0),
+                    Vector3::new(0.0, beside, 0.0),
+                    Vector3::new(0.0, 0.0, beside),
+                ])),
+            ];
+
+        let params = params_with(crate::cli::IntegratorChoice::Rk4, 0.1, 1e-9);
+        advance_controlled(&mut sat, 0.0, 60.0, &params).expect("integrates and ticks");
+
+        let log = log.lock().unwrap().clone();
+        // Past the transient while the commands first saturate.
+        let settled = &log[10..];
+        assert!(settled.len() > 40);
+        let ideal_max = settled.iter().map(|(_, c)| c.amax()).fold(0.0, f64::max);
+        assert!(
+            ideal_max < 2.0,
+            "the analysis needs |c| well inside the limit: {ideal_max}"
+        );
+
+        // x: ±10, the sign flipping every tick.
+        for pair in settled.windows(2) {
+            let (a, b) = (pair[0].0.x, pair[1].0.x);
+            assert_eq!(a.abs(), MAX_MOMENT, "x is saturated: {a}");
+            assert_eq!(a, -b, "x flips every tick");
+        }
+
+        // y and z: every command off the limit is c_k itself, right after two
+        // equal saturated ticks, and those come in runs of two of each sign.
+        for axis in [1, 2] {
+            let u: Vec<f64> = settled.iter().map(|(m, _)| m[axis]).collect();
+            let c: Vec<f64> = settled.iter().map(|(_, c)| c[axis]).collect();
+            let mut unsaturated = Vec::new();
+            for k in 2..u.len() {
+                if u[k].abs() < MAX_MOMENT {
+                    unsaturated.push(k);
+                    assert!(
+                        (u[k] - c[k]).abs() < 1e-9,
+                        "axis {axis} tick {k}: {} is not c = {}",
+                        u[k],
+                        c[k]
+                    );
+                    assert!(
+                        u[k - 1] == u[k - 2] && u[k - 1].abs() == MAX_MOMENT,
+                        "axis {axis} tick {k}: c follows two equal saturated ticks"
+                    );
+                }
+            }
+            assert!(unsaturated.len() > 10, "axis {axis}: {unsaturated:?}");
+            for gap in unsaturated.windows(2) {
+                assert_eq!(
+                    gap[1] - gap[0],
+                    3,
+                    "axis {axis}: c every third tick, {unsaturated:?}"
+                );
+            }
+            // Six-tick means keep a third of the ideal command.
+            for w in (2..u.len() - 6).step_by(6) {
+                let mean_u: f64 = u[w..w + 6].iter().sum::<f64>() / 6.0;
+                let mean_c: f64 = c[w..w + 6].iter().sum::<f64>() / 6.0;
+                assert!(
+                    (mean_u - mean_c / 3.0).abs() < 0.05 * mean_c.abs().max(0.05),
+                    "axis {axis} window {w}: mean {mean_u} vs c/3 = {}",
+                    mean_c / 3.0
+                );
+            }
+        }
+    }
+
     /// Telemetry at a tick reads the rods' field from the command held up to
     /// it, as the controller did, though the tick has already applied the
     /// next one; between ticks it reads the command held then.
