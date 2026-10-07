@@ -109,8 +109,8 @@ pub struct ControlledSatellite {
     /// `orts run` leaves this off and logs them.
     pub discards_messages: bool,
     /// An ideal, uncoupled magnetometer on the geomagnetic field model the
-    /// sensors use: what the recorder compares the readings with. `None`
-    /// without a magnetometer.
+    /// sensors use: the field the recorder records, and compares the readings
+    /// with. `None` about a body with no field model.
     pub geomagnetic_truth: Option<Magnetometer>,
     /// Sim time this satellite's controller schedule is anchored at [s]: where
     /// the satellite entered the simulation.
@@ -132,8 +132,8 @@ pub struct ControlledSatellite {
 
 impl ControlledSatellite {
     /// The magnetometers' readings and the geomagnetic field at sim time `t`,
-    /// evaluated again from the state, which must be at `t`. `None` without a
-    /// magnetometer.
+    /// evaluated again from the state, which must be at `t`. `None` with
+    /// neither a magnetometer nor a field model.
     pub fn magnetometer_telemetry(
         &mut self,
         t: f64,

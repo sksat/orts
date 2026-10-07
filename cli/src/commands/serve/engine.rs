@@ -518,7 +518,7 @@ impl ServeEngine {
         }
         // No logger is installed in the CLI, so warnings go to stderr
         // directly rather than through `log`.
-        for w in unhonored_config_warnings(&params.satellites, mode) {
+        for w in unhonored_config_warnings(&params.satellites, mode, false) {
             eprintln!("Warning: {w}");
         }
         let use_spacecraft = mode == SimMode::Spacecraft;
@@ -1307,7 +1307,7 @@ impl ServeEngine {
         crate::sim::mode::validate_satellite_spec(&spec)?;
         // Sensors / actuators only act through a control loop; say so instead
         // of accepting them into an orbit-only fleet unnoticed.
-        for w in unhonored_config_warnings(std::slice::from_ref(&spec), SimMode::OrbitOnly) {
+        for w in unhonored_config_warnings(std::slice::from_ref(&spec), SimMode::OrbitOnly, false) {
             eprintln!("Warning: {w}");
         }
         // SGP4/TEME is Earth-centered; reject a TLE/OMM orbit on a non-Earth sim.

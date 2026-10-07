@@ -126,7 +126,7 @@ pub fn run_simulation_cmd(
     ensure_commands_deliverable(mode, params.commands.len()).map_err(CmdError::usage)?;
     ensure_streams_unused(&params.satellites).map_err(CmdError::usage)?;
     // 選択したモードで効かない設定は、無視する前に知らせる。
-    let warnings = unhonored_config_warnings(&params.satellites, mode);
+    let warnings = unhonored_config_warnings(&params.satellites, mode, true);
     for w in &warnings {
         eprintln!("Warning: {w}");
     }
