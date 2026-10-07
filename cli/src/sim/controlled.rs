@@ -739,9 +739,11 @@ pub fn tick_controller(
 
     // センサ評価 + プラグイン呼び出し。
     let current_epoch = epoch.map(|e| e.add_si_seconds(t_next));
-    let sensors = sat
-        .sensors
-        .evaluate(&sat.state.plant, &current_epoch.unwrap_or(Epoch::j2000()));
+    let sensors = sat.sensors.evaluate(
+        t_next,
+        &sat.state.plant,
+        &current_epoch.unwrap_or(Epoch::j2000()),
+    );
     let actuator_telemetry = ActuatorTelemetry {
         rw: if sat.has_rw {
             sat.dynamics
@@ -1760,7 +1762,7 @@ mod tests {
         state: &orts::spacecraft::SpacecraftState,
         epoch: &Epoch,
     ) -> Option<nalgebra::Vector3<f64>> {
-        match bundle.sun_sensors[0].measure(state, epoch) {
+        match bundle.sun_sensors[0].measure(0.0, state, epoch) {
             orts::plugin::SunSensorOutput::Fine { direction, .. } => {
                 direction.map(|d| d.into_inner().into_inner())
             }
@@ -1844,7 +1846,7 @@ mod tests {
                 build_sensor_bundle(Some(&[SensorChoice::Magnetometer]), body, "sat-test")
                     .unwrap_or_else(|e| panic!("{body:?} builds a magnetometer: {e}"));
             let reading = bundle.magnetometers[0]
-                .measure(&state, &epoch)
+                .measure(0.0, &state, &epoch)
                 .into_inner()
                 .into_inner();
             assert_eq!(
@@ -1861,7 +1863,7 @@ mod tests {
         )
         .expect("Earth's field is modelled");
         let earth_reading = on_earth.magnetometers[0]
-            .measure(&state, &epoch)
+            .measure(0.0, &state, &epoch)
             .into_inner()
             .into_inner();
         assert!(

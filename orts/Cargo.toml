@@ -37,8 +37,6 @@ utsuroi.workspace = true
 tobari.workspace = true
 log = "0.4.29"
 serde_json = { workspace = true }
-rand = "0.10.0"
-rand_distr = "0.6.0"
 serde.workspace = true
 thiserror.workspace = true
 wasmtime = { workspace = true, optional = true }

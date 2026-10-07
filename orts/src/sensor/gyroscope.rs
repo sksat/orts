@@ -40,8 +40,15 @@ impl Gyroscope {
     }
 
     /// Measure the angular velocity in the body frame, for a `SimpleEci` state.
-    pub fn measure(&mut self, state: &SpacecraftState, epoch: &Epoch) -> AngularVelocityBody {
-        self.measure_in_frame::<arika::frame::SimpleEci>(state, epoch)
+    ///
+    /// `t` is the sim time of the sample [s], which the noise models are keyed on.
+    pub fn measure(
+        &mut self,
+        t: f64,
+        state: &SpacecraftState,
+        epoch: &Epoch,
+    ) -> AngularVelocityBody {
+        self.measure_in_frame::<arika::frame::SimpleEci>(t, state, epoch)
     }
 
     /// Measure the angular velocity in the body frame for a state propagated in
@@ -52,12 +59,13 @@ impl Gyroscope {
     /// any inertial frame.
     pub fn measure_in_frame<F: arika::frame::Eci>(
         &mut self,
+        t: f64,
         state: &SpacecraftState<F>,
         _epoch: &Epoch,
     ) -> AngularVelocityBody {
         let mut omega = state.attitude.angular_velocity;
         for n in &mut self.noise {
-            omega = n.apply(omega);
+            omega = n.apply(t, omega);
         }
         AngularVelocityBody::new(arika::frame::Vec3::from_raw(omega))
     }
@@ -95,7 +103,7 @@ mod tests {
         let state = make_state(omega);
         let epoch = Epoch::j2000();
         assert_eq!(
-            gyro.measure(&state, &epoch).into_inner().into_inner(),
+            gyro.measure(0.0, &state, &epoch).into_inner().into_inner(),
             omega
         );
     }
@@ -106,7 +114,7 @@ mod tests {
         let omega = Vector3::new(0.1, 0.05, -0.03);
         let state = make_state(omega);
         let epoch = Epoch::j2000();
-        let measured = gyro.measure(&state, &epoch).into_inner().into_inner();
+        let measured = gyro.measure(0.0, &state, &epoch).into_inner().into_inner();
         assert!((measured - omega).magnitude() > 0.0);
         assert!((measured - omega).magnitude() < 0.1);
     }
@@ -119,10 +127,12 @@ mod tests {
         let omega = Vector3::new(0.1, 0.05, -0.03);
         let state = make_state(omega);
         let epoch = Epoch::j2000();
-        let m1 = gyro.measure(&state, &epoch).into_inner();
-        let m2 = gyro.measure(&state, &epoch).into_inner();
-        // Bias drift accumulates, so consecutive measurements differ.
+        let m1 = gyro.measure(1.0, &state, &epoch).into_inner();
+        let m2 = gyro.measure(2.0, &state, &epoch).into_inner();
+        // The bias drifts and the white noise is drawn per time, so two
+        // samples differ; reading t = 1 again gives the first one back.
         assert_ne!(m1, m2);
+        assert_eq!(gyro.measure(1.0, &state, &epoch).into_inner(), m1);
     }
 
     #[test]
@@ -132,6 +142,9 @@ mod tests {
         let epoch = Epoch::j2000();
         let mut g1 = Gyroscope::new().with_noise(GaussianNoise::isotropic(1e-3, 42));
         let mut g2 = Gyroscope::new().with_noise(GaussianNoise::isotropic(1e-3, 42));
-        assert_eq!(g1.measure(&state, &epoch), g2.measure(&state, &epoch));
+        assert_eq!(
+            g1.measure(0.0, &state, &epoch),
+            g2.measure(0.0, &state, &epoch)
+        );
     }
 }

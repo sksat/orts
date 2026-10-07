@@ -179,7 +179,7 @@ fn run_case<F: MagneticFieldModel + 'static>(
             attitude: state.clone(),
             mass: MASS,
         };
-        let sensors = sensor_bundle.evaluate(&snapshot, &current_epoch);
+        let sensors = sensor_bundle.evaluate(t, &snapshot, &current_epoch);
         let actuator_state = ActuatorTelemetry::default();
         let obs = TickInput {
             t,
