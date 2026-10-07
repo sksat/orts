@@ -116,6 +116,48 @@ impl MtqAssemblyCore {
         total
     }
 
+    /// Resolve a command into the per-MTQ dipole moments the rods realize
+    /// [A·m²], in the order of [`Self::mtqs`].
+    ///
+    /// `MtqCommand::Moments` is clamped to each MTQ's
+    /// `[-max_moment, max_moment]`; `MtqCommand::NormalizedMoments` is clamped
+    /// to `[-1, 1]` per element and scaled by each MTQ's `max_moment`. These are
+    /// the moments [`Self::realized_moment`] sums into the torque, so a
+    /// consumer of the rods' own fields (a magnetometer's coupling) sees the
+    /// same dipoles the dynamics does.
+    ///
+    /// # Panics
+    /// Panics if the command length does not match the number of MTQs.
+    pub fn realized_rod_moments(&self, command: &MtqCommand) -> Vec<f64> {
+        let n = self.num_mtqs();
+        match command {
+            MtqCommand::Moments(m) => {
+                assert_eq!(
+                    m.len(),
+                    n,
+                    "MtqCommand::Moments length ({}) != MTQ count ({n})",
+                    m.len(),
+                );
+                m.iter()
+                    .zip(&self.mtqs)
+                    .map(|(&m, mtq)| m.clamp(-mtq.max_moment, mtq.max_moment))
+                    .collect()
+            }
+            MtqCommand::NormalizedMoments(u) => {
+                assert_eq!(
+                    u.len(),
+                    n,
+                    "MtqCommand::NormalizedMoments length ({}) != MTQ count ({n})",
+                    u.len(),
+                );
+                u.iter()
+                    .zip(&self.mtqs)
+                    .map(|(&u, mtq)| u.clamp(-1.0, 1.0) * mtq.max_moment)
+                    .collect()
+            }
+        }
+    }
+
     /// Compute the magnetic torque from per-MTQ commanded moments and
     /// the local magnetic field in the body frame.
     ///
@@ -225,38 +267,9 @@ impl<F: MagneticFieldModel, Fr: EarthFixedTransform> MtqAssembly<F, Fr> {
 
     /// Resolve the current command into per-MTQ dipole moments [A·m²].
     ///
-    /// `MtqCommand::Moments` is used directly; `MtqCommand::NormalizedMoments`
-    /// is clamped to `[-1, 1]` per element and scaled by each MTQ's
-    /// `max_moment`.
-    ///
-    /// # Panics
-    /// Panics if the command length does not match the number of MTQs.
-    fn resolved_moments(&self) -> Vec<f64> {
-        match &self.command {
-            MtqCommand::Moments(m) => {
-                assert_eq!(
-                    m.len(),
-                    self.core.num_mtqs(),
-                    "MtqCommand::Moments length ({}) != MTQ count ({})",
-                    m.len(),
-                    self.core.num_mtqs()
-                );
-                m.clone()
-            }
-            MtqCommand::NormalizedMoments(u) => {
-                assert_eq!(
-                    u.len(),
-                    self.core.num_mtqs(),
-                    "MtqCommand::NormalizedMoments length ({}) != MTQ count ({})",
-                    u.len(),
-                    self.core.num_mtqs()
-                );
-                u.iter()
-                    .zip(self.core.mtqs())
-                    .map(|(&u, mtq)| u.clamp(-1.0, 1.0) * mtq.max_moment)
-                    .collect()
-            }
-        }
+    /// See [`MtqAssemblyCore::realized_rod_moments`].
+    pub fn realized_rod_moments(&self) -> Vec<f64> {
+        self.core.realized_rod_moments(&self.command)
     }
 }
 
@@ -291,7 +304,7 @@ impl<
             .attitude_from_inertial()
             .transform(&b_inertial)
             .into_inner();
-        let moments = self.resolved_moments();
+        let moments = self.realized_rod_moments();
         ExternalLoads::torque(self.core.torque(&moments, &b_body))
     }
 }
@@ -371,6 +384,53 @@ mod tests {
         assert!((m.x - 0.5).abs() < 1e-15);
         assert!((m.y - (-0.5)).abs() < 1e-15);
         assert!((m.z - 0.3).abs() < 1e-15);
+    }
+
+    #[test]
+    fn realized_rod_moments_clamps_direct_moments_to_each_rod_limit() {
+        let core = MtqAssemblyCore::new(vec![
+            Mtq::new(Vector3::x(), 0.5),
+            Mtq::new(Vector3::y(), 2.0),
+        ]);
+        let rods = core.realized_rod_moments(&MtqCommand::Moments(vec![10.0, -1.5]));
+        assert_eq!(rods, vec![0.5, -1.5]);
+    }
+
+    #[test]
+    fn realized_rod_moments_scales_normalized_commands_by_each_rod_limit() {
+        let core = MtqAssemblyCore::new(vec![
+            Mtq::new(Vector3::x(), 0.5),
+            Mtq::new(Vector3::y(), 2.0),
+        ]);
+        let rods = core.realized_rod_moments(&MtqCommand::NormalizedMoments(vec![3.0, -0.25]));
+        assert_eq!(rods, vec![0.5, -0.5]);
+    }
+
+    /// The rods' moments are the ones the torque is built from: summing them
+    /// along the axes gives the realized dipole, for a skewed layout too.
+    #[test]
+    fn realized_rod_moments_sum_to_the_realized_moment() {
+        let core = MtqAssemblyCore::new(vec![
+            Mtq::new(Vector3::x(), 1.0),
+            Mtq::new(Vector3::new(1.0, 1.0, 0.0), 1.0),
+            Mtq::new(Vector3::z(), 0.2),
+        ]);
+        let command = vec![0.4, -3.0, 0.7];
+        let rods = core.realized_rod_moments(&MtqCommand::Moments(command.clone()));
+        let summed: Vector3<f64> = rods
+            .iter()
+            .zip(core.mtqs())
+            .map(|(&u, mtq)| u * mtq.axis())
+            .sum();
+        assert_eq!(summed, core.realized_moment(&command));
+    }
+
+    #[test]
+    fn realized_rod_moments_propagates_nan() {
+        let core = MtqAssemblyCore::three_axis(1.0);
+        let rods = core.realized_rod_moments(&MtqCommand::Moments(vec![f64::NAN, 0.0, 0.0]));
+        assert!(rods[0].is_nan());
+        assert_eq!(&rods[1..], &[0.0, 0.0]);
     }
 
     #[test]

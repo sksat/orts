@@ -327,6 +327,24 @@ Basilisk や Orekit と同様の 3 層分離を採用する。
 - **ContinuousModel の境界**: memoryless な計算のみ。サンプル信号、フィルタ、anti-windup、モードロジックは discrete 側に属する
 - **DiscreteController**: 固定サンプル周期で segment-by-segment に積分する。制御区間内はコマンドを凍結し (ZOH)、adaptive solver の内部サブステップでも不変とする。共有可変状態 (`Arc<Mutex>`) は使わない
 
+### 搭載機器の磁場を磁気センサに入れる
+
+MTQ は姿勢を変えるための磁場を出し、同じ機体の磁気センサはその磁場も読む。
+読み値は次の形で表す。
+
+$$
+B_\mathrm{meas} = \mathrm{noise}\left(R_{bi} B_\mathrm{earth} + K u\right)
+$$
+
+$u$ は MTQ assembly が command を物理化して clamp した rod ごとの dipole [A·m²]、$K$ は磁気センサごとの結合行列 (3×N) である。
+$K$ の列 $i$ は rod $i$ の 1 A·m² が磁気センサの位置に作る磁場 [T] を body frame で表す。
+
+- **結合は磁気センサが持つ**: $K$ は磁場源と受け手の組で決まる量で、位置のほかに配線や機体の磁性材の影響を含む。地上試験で測った $K$ をそのまま書けることを主経路にし、点 dipole の幾何から $K$ を作る constructor は補助とする。rod の長さと距離が同程度になる近距離では点 dipole 近似が崩れるため、幾何の側を主にすると実機の値を表せない
+- **rod ごとの実現値は MTQ が決める**: command の物理化と clamp はトルクと同じ経路 (`MtqAssemblyCore`) で行い、トルクに効く dipole と磁気センサに入る dipole を同じ値にする
+- **磁場源の状態は省略できない入力にする**: センサの評価は搭載磁場源の状態を必ず受け取り、磁場源の無い衛星は「無い」と明示して渡す。既定で干渉なしとする口を作ると、結合を設定した衛星で渡し忘れても干渉が黙って消える
+- **トルクの環境磁場には足さない**: $K u$ は磁気センサの位置での局所場であり、MTQ が受ける $m \times B$ の $B$ は地磁気モデルのままにする
+- **tick 境界の左右**: 磁気センサは tick 境界の左極限、つまり直前の区間で ON だった command の磁場を読み、その tick で返った command は境界の右側から効く。plugin が同じ tick の中で MTQ を止めてから読むことはできないので、読む前に止める運用 (duty cycling) は 1 tick 前の command で表す
+
 ## プラグインアーキテクチャ
 
 宇宙機の制御則やミッションロジックを、host (orts) から分離した外部プラグインとして差し替え可能にする。
