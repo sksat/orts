@@ -14,13 +14,6 @@ section is subdivided by package.
 ### `orts` (Rust, crates.io)
 
 #### Added
-- `record::components` has `MagnetometerReading3D` (one per magnetometer,
-  named by `magnetometer_columns`: `magnetometer`, `magnetometer.2`, …) and
-  `GeomagneticFieldBody3D`, for recording magnetometer readings beside the field
-  they measure.
-  named by `magnetometer_columns`: `magnetometer`, `magnetometer.2`, …),
-  `GeomagneticFieldBody3D` and `SensorSampleTime` [s], for recording sensor
-  samples.
 - A magnetometer reads the field the MTQ rods produce at it. `sensor::MtqCoupling`
   holds, per rod, the field [T, body frame] one A·m² of that rod makes at the
   sensor — given column by column (`from_columns`, e.g. measured in a ground
@@ -29,6 +22,10 @@ section is subdivided by package.
   `noise(R_bi · B_earth + K · u)`. `MtqAssemblyCore::realized_rod_moments`
   resolves an `MtqCommand` into the per-rod moments `u` the torque is built
   from, so the sensor and the dynamics see the same dipoles.
+- `record::components` has `MagnetometerReading3D` (one per magnetometer,
+  named by `magnetometer_columns`: `magnetometer`, `magnetometer.2`, …) and
+  `GeomagneticFieldBody3D`, for recording magnetometer readings beside the field
+  they measure.
 - `plugin::wasm::ComponentBytes` holds a WASM component as bytes together with
   their SHA-256, and `WasmPluginCache::build_sync_controller_from_bytes_with_streams`
   / `build_async_controller_from_bytes_with_streams` build a controller from one
@@ -166,6 +163,12 @@ section is subdivided by package.
   ([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
+- **BREAKING**: `Magnetometer::measure` / `measure_in_frame` and
+  `SensorBundle::evaluate` / `evaluate_in_frame` take an
+  `OnboardMagneticSources`: the MTQ rods' moments over the interval ending at
+  the sample, or `OnboardMagneticSources::none()` for a spacecraft without
+  them. It has no default, so a coupled magnetometer cannot be read with the
+  MTQ state left out; one is refused with a panic.
 - **BREAKING**: sensor noise is a function of its seed and the sim time it is
   asked about. `NoiseModel::apply`, every sensor's `measure` /
   `measure_in_frame` and `SensorBundle::evaluate` / `evaluate_in_frame` take the
@@ -181,12 +184,6 @@ section is subdivided by package.
   drawn directly by Lévy's midpoint construction, 48 levels deep, so any time
   costs the same and a time beyond `2^48` steps is refused. A non-finite `t` panics, and
   negative or non-finite sigmas are refused at construction.
-- **BREAKING**: `Magnetometer::measure` / `measure_in_frame` and
-  `SensorBundle::evaluate` / `evaluate_in_frame` take an
-  `OnboardMagneticSources`: the MTQ rods' moments over the interval ending at
-  the sample, or `OnboardMagneticSources::none()` for a spacecraft without
-  them. It has no default, so a coupled magnetometer cannot be read with the
-  MTQ state left out; one is refused with a panic.
 - **BREAKING**: every WASM controller runs under limits, whichever way its
   component arrived, and a guest past one fails the call with an error naming
   the limit. A *turn* — from the host handing the guest control
@@ -967,6 +964,17 @@ section is subdivided by package.
   ([#536](https://github.com/sksat/orts/issues/536))
 
 #### Added
+- A `sensors` entry can be a table as well as a name. `{ type = "magnetometer",
+  mtq_coupling = [[...], [...], [...]] }` gives the field each MTQ rod makes at
+  the magnetometer per A·m² [T, body frame], one row per rod of
+  `magnetorquers`. In the controlled loop the magnetometer then reads the
+  command held over the interval ending at the tick, before the controller
+  returns the next one, and the recording reads the same at that instant; a
+  satellite without a controller reads its MTQ as off. A coupling without
+  `magnetorquers`, with a row count other than the rods', or with a non-finite
+  component is refused, and so are two magnetometer entries with different
+  couplings, since one magnetometer is built. A negative or non-finite
+  `magnetorquers.max_moment` is refused rather than panicking at the build.
 - `orts run` records the magnetometer readings of a satellite with attitude at
   every output sample, with a controller or without one: each magnetometer's
   reading [T, body frame] and the geomagnetic field at the same instant with no
@@ -976,27 +984,6 @@ section is subdivided by package.
   satellite with attitude about a body with a field model, magnetometer or not.
   Declaring only magnetometers on a run without a controller no longer warns
   that the sensors go unread.
-  function of the sample time. Declaring only magnetometers on a run without a
-  controller no longer warns that the sensors go unread.
-- `orts run` records the magnetometer readings of a controlled satellite at
-  every output sample: each magnetometer's reading [T, body frame] and the
-  geomagnetic field at the same instant with no sensor in between. The sensors
-  are evaluated again at the output time, which at a controller tick gives what
-  the controller received, since the noise is a function of the sample time.
-- `orts run` records the magnetometer readings of a controlled satellite: each
-  magnetometer's reading [T, body frame], the geomagnetic field at the same
-  instant with no sensor in between, and the time of that sample. An output
-  sample records the latest sensor sample rather than evaluating the sensors
-  again, which would advance their noise; before the first sample the cells are
-  empty.
-- A `sensors` entry can be a table as well as a name. `{ type = "magnetometer",
-  mtq_coupling = [[...], [...], [...]] }` gives the field each MTQ rod makes at
-  the magnetometer per A·m² [T, body frame], one row per rod of
-  `magnetorquers`. In the controlled loop the magnetometer then reads the
-  command held over the interval ending at the tick, before the controller
-  returns the next one. A coupling without `magnetorquers`, with a row count
-  other than the rods', or with a non-finite component is refused, and so are
-  two magnetometer entries that differ, since one magnetometer is built.
 - `orts serve --realtime` advances every simulation the server runs — the
   one its command line starts and each `start_simulation` — at wall-clock
   speed, 1 sim s per wall s, one `stream_interval` per step. Without it a
