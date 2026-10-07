@@ -20,8 +20,8 @@ pub struct MagnetometerTelemetry {
     /// Each magnetometer's reading [T, body frame], in bundle order.
     pub readings: Vec<Vector3<f64>>,
     /// The geomagnetic field at the spacecraft [T, body frame], with no sensor
-    /// in between.
-    pub geomagnetic_field_body: Vector3<f64>,
+    /// in between. `None` about a body with no field model.
+    pub geomagnetic_field_body: Option<Vector3<f64>>,
 }
 
 /// The epoch the sensors are evaluated at for sim time `t`: the run's epoch
@@ -30,17 +30,26 @@ pub fn sample_epoch(epoch: Option<&Epoch>, t: f64) -> Epoch {
     epoch.map(|e| e.add_si_seconds(t)).unwrap_or(Epoch::j2000())
 }
 
-/// Read `magnetometers` and `truth` (an ideal, uncoupled magnetometer on the
-/// same field model) at sim time `t`, for a state at `t`.
+/// An ideal, uncoupled magnetometer on the field model the sensors use, which
+/// reads the geomagnetic field itself; `None` about a body with no field
+/// model, where there is no field to record.
+pub fn geomagnetic_truth_for(body: arika::body::KnownBody) -> Option<Magnetometer> {
+    orts::magnetic::field_is_modelled(body)
+        .then(|| Magnetometer::new(orts::magnetic::igrf_field_for_body(body)))
+}
+
+/// Read `magnetometers` and `truth` (from [`geomagnetic_truth_for`]) at sim
+/// time `t`, for a state at `t`.
 pub fn read_magnetometers(
     magnetometers: &mut [Magnetometer],
-    truth: &mut Magnetometer,
+    truth: Option<&mut Magnetometer>,
     t: f64,
     state: &SpacecraftState,
     epoch: Option<&Epoch>,
 ) -> MagnetometerTelemetry {
     let epoch = sample_epoch(epoch, t);
-    let geomagnetic_field_body = truth.measure(t, state, &epoch).into_inner().into_inner();
+    let geomagnetic_field_body =
+        truth.map(|truth| truth.measure(t, state, &epoch).into_inner().into_inner());
     let readings = magnetometers
         .iter_mut()
         .map(|m| m.measure(t, state, &epoch).into_inner().into_inner())
@@ -51,20 +60,21 @@ pub fn read_magnetometers(
     }
 }
 
-/// The magnetometers of a satellite without a controller, read only for the
-/// recording.
+/// The magnetometers and the geomagnetic field of a satellite without a
+/// controller, read only for the recording.
 ///
 /// Nothing reads them during the run, but what they would read is still a
-/// result: the geomagnetic field through the sensor's noise and its residual
-/// field, along an attitude that no controller steers.
+/// result: the geomagnetic field through the sensor's noise, along an attitude
+/// that no controller steers. The field itself is recorded whether or not a
+/// magnetometer is mounted.
 pub struct MagnetometerProbe {
     magnetometers: Vec<Magnetometer>,
-    truth: Magnetometer,
+    truth: Option<Magnetometer>,
 }
 
 impl MagnetometerProbe {
-    /// The probe for `spec`'s configured magnetometers about `body`, or
-    /// `None` when it has none.
+    /// The probe for `spec` about `body`, or `None` when there is nothing to
+    /// record: no magnetometer and no field model.
     pub fn for_spec(
         spec: &SatelliteSpec,
         body: arika::body::KnownBody,
@@ -74,12 +84,13 @@ impl MagnetometerProbe {
             body,
             &spec.id,
         )?;
-        if bundle.magnetometers.is_empty() {
+        let truth = geomagnetic_truth_for(body);
+        if bundle.magnetometers.is_empty() && truth.is_none() {
             return Ok(None);
         }
         Ok(Some(Self {
             magnetometers: bundle.magnetometers,
-            truth: Magnetometer::new(orts::magnetic::igrf_field_for_body(body)),
+            truth,
         }))
     }
 
@@ -90,6 +101,12 @@ impl MagnetometerProbe {
         state: &SpacecraftState,
         epoch: Option<&Epoch>,
     ) -> MagnetometerTelemetry {
-        read_magnetometers(&mut self.magnetometers, &mut self.truth, t, state, epoch)
+        read_magnetometers(
+            &mut self.magnetometers,
+            self.truth.as_mut(),
+            t,
+            state,
+            epoch,
+        )
     }
 }

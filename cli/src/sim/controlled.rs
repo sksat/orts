@@ -139,10 +139,12 @@ impl ControlledSatellite {
         t: f64,
         epoch: Option<&Epoch>,
     ) -> Option<MagnetometerTelemetry> {
-        let truth = self.geomagnetic_truth.as_mut()?;
+        if self.sensors.magnetometers.is_empty() && self.geomagnetic_truth.is_none() {
+            return None;
+        }
         Some(read_magnetometers(
             &mut self.sensors.magnetometers,
-            truth,
+            self.geomagnetic_truth.as_mut(),
             t,
             &self.state.plant,
             epoch,
@@ -380,8 +382,7 @@ pub fn build_controlled_satellite(
 
     // センサを構築。
     let sensors = build_sensor_bundle(spec.sensor_choices.as_deref(), params.body, &spec.id)?;
-    let geomagnetic_truth = (!sensors.magnetometers.is_empty())
-        .then(|| Magnetometer::new(orts::magnetic::igrf_field_for_body(params.body)));
+    let geomagnetic_truth = crate::sim::telemetry::geomagnetic_truth_for(params.body);
 
     let actuators = ActuatorBundle::new();
     let sample_period = controller.sample_period();
@@ -2032,14 +2033,29 @@ mod tests {
             .magnetometer_telemetry(3.0, epoch)
             .expect("a magnetometer is mounted");
         assert_eq!(at_tick.readings, vec![seen[2]]);
-        let noise = (at_tick.readings[0] - at_tick.geomagnetic_field_body).norm();
+        let noise = (at_tick.readings[0]
+            - at_tick
+                .geomagnetic_field_body
+                .expect("Earth's field is modelled"))
+        .norm();
         assert!(noise > 0.0 && noise < 1e-6, "the noise alone: {noise:e}");
         assert_eq!(sat.magnetometer_telemetry(3.0, epoch), Some(at_tick));
     }
 
+    /// The geomagnetic field is recorded with or without a magnetometer,
+    /// wherever there is a field model; with neither there is nothing.
     #[test]
-    fn a_satellite_without_a_magnetometer_has_no_magnetometer_telemetry() {
+    fn a_satellite_without_a_magnetometer_records_only_the_field() {
         let (mut sat, _ticks) = satellite_with(1.0, 0.0);
+        sat.geomagnetic_truth = crate::sim::telemetry::geomagnetic_truth_for(KnownBody::Earth);
+        let m = sat
+            .magnetometer_telemetry(0.0, None)
+            .expect("Earth's field is recorded");
+        assert!(m.readings.is_empty());
+        assert!(m.geomagnetic_field_body.is_some_and(|b| b.norm() > 1e-5));
+
+        sat.geomagnetic_truth = crate::sim::telemetry::geomagnetic_truth_for(KnownBody::Mars);
+        assert!(sat.geomagnetic_truth.is_none(), "Mars has no field model");
         assert_eq!(sat.magnetometer_telemetry(0.0, None), None);
     }
 

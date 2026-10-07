@@ -1690,11 +1690,9 @@ fn log_magnetometer_telemetry(
     m: &crate::sim::telemetry::MagnetometerTelemetry,
 ) {
     use orts::record::components::{GeomagneticFieldBody3D, magnetometer_columns};
-    rec.log_temporal(
-        entity,
-        tp,
-        &GeomagneticFieldBody3D(m.geomagnetic_field_body),
-    );
+    if let Some(b) = m.geomagnetic_field_body {
+        rec.log_temporal(entity, tp, &GeomagneticFieldBody3D(b));
+    }
     let columns = magnetometer_columns(m.readings.len());
     for ((name, fields), b) in columns.into_iter().zip(&m.readings) {
         let fields: Vec<&str> = fields.iter().map(String::as_str).collect();
@@ -2748,6 +2746,39 @@ mod tests {
     /// column and the geomagnetic field beside them, at every output sample,
     /// the first included. Through an `.rrd`, since the magnetometer columns
     /// are named at run time.
+    /// A satellite with attitude records the geomagnetic field even without a
+    /// magnetometer, about a body with a field model; about one without, there
+    /// is no field column.
+    #[test]
+    fn the_attitude_path_records_the_field_without_a_magnetometer() {
+        let header_for = |body: &str| {
+            let toml = format!(
+                r#"
+body = "{body}"
+dt = 1.0
+output_interval = 1.0
+duration = 2.0
+epoch = "2024-03-20T12:00:00Z"
+
+[[satellites]]
+id = "a"
+orbit = {{ type = "circular", altitude = 500 }}
+attitude = {{ inertia_diag = [10, 10, 10], mass = 50 }}
+"#
+            );
+            let config: crate::config::SimConfig = toml::from_str(&toml).expect("parses");
+            let params = SimParams::from_config(&config).expect("builds params");
+            let rec = run_spacecraft_simulation(&params).expect("runs");
+            let entity = params.satellites[0].entity_path();
+            build_csv_header(&csv_columns(&rec, &[&entity]), false)
+        };
+        let earth = header_for("earth");
+        assert!(earth.contains("geomag_body_x_T"), "{earth}");
+        assert!(!earth.contains("magnetometer."), "{earth}");
+        let mars = header_for("mars");
+        assert!(!mars.contains("geomag_body"), "{mars}");
+    }
+
     /// A satellite with attitude but no controller records its magnetometer
     /// too, from the first sample on. With no noise and no onboard field, the
     /// reading is the geomagnetic field it is recorded beside.
@@ -2897,7 +2928,9 @@ sensors = ["magnetometer"]
         let field_at = |name: &str| -> f64 { row[idx(name)].parse().expect(name) };
 
         // The CSV writes ten decimals, so compare to 1e-10 T.
-        let b = expected.geomagnetic_field_body;
+        let b = expected
+            .geomagnetic_field_body
+            .expect("Earth's field is modelled");
         for (name, value) in [
             ("geomag_body_x_T", b.x),
             ("geomag_body_z_T", b.z),

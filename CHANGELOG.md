@@ -955,8 +955,10 @@ section is subdivided by package.
   reading [T, body frame] and the geomagnetic field at the same instant with no
   sensor in between. The sensors are evaluated again at the output time, which
   at a controller tick gives what the controller received, since the noise is a
-  function of the sample time. Declaring only magnetometers on a run without a
-  controller no longer warns that the sensors go unread.
+  function of the sample time. The geomagnetic field is recorded for every
+  satellite with attitude about a body with a field model, magnetometer or not.
+  Declaring only magnetometers on a run without a controller no longer warns
+  that the sensors go unread.
 - `orts serve --realtime` advances every simulation the server runs — the
   one its command line starts and each `start_simulation` — at wall-clock
   speed, 1 sim s per wall s, one `stream_interval` per step. Without it a
