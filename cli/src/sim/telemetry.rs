@@ -98,9 +98,10 @@ impl MagnetometerProbe {
             return Ok(None);
         }
         let sources = match &spec.mtq_config {
-            Some(crate::config::MtqConfig::ThreeAxis { max_moment }) => {
-                let rods = orts::spacecraft::MtqAssemblyCore::three_axis(*max_moment).num_mtqs();
-                OnboardMagneticSources::none().with_mtq_rod_moments(vec![0.0; rods])
+            // Three rods, all off: no assembly is built, so its limits do not
+            // matter here.
+            Some(crate::config::MtqConfig::ThreeAxis { .. }) => {
+                OnboardMagneticSources::none().with_mtq_rod_moments(vec![0.0; 3])
             }
             None => OnboardMagneticSources::none(),
         };

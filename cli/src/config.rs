@@ -1277,7 +1277,12 @@ fn validate_sensors(sensors: &[SensorConfig], mtq: Option<&MtqConfig>) -> Result
         .iter()
         .filter(|s| s.kind() == SensorChoice::Magnetometer)
         .collect();
-    if magnetometers.windows(2).any(|w| w[0] != w[1]) {
+    // Compared by what they configure, so the shorthand and a table with the
+    // same settings agree.
+    if magnetometers
+        .windows(2)
+        .any(|w| w[0].mtq_coupling() != w[1].mtq_coupling())
+    {
         return Err(
             "magnetometer entries differ, but one magnetometer is built per satellite".into(),
         );
@@ -1978,6 +1983,13 @@ impl SatelliteConfig {
         }
         if let Some(attitude) = &self.attitude {
             attitude.validate().map_err(|e| format!("attitude: {e}"))?;
+        }
+        if let Some(MtqConfig::ThreeAxis { max_moment }) = &self.mtq
+            && !(max_moment.is_finite() && *max_moment >= 0.0)
+        {
+            return Err(format!(
+                "magnetorquers.max_moment must be non-negative and finite, got {max_moment}"
+            ));
         }
         if let Some(sensors) = &self.sensors {
             validate_sensors(sensors, self.mtq.as_ref()).map_err(|e| format!("sensors: {e}"))?;
@@ -3697,6 +3709,21 @@ satellites:
         );
     }
 
+    /// A limit the MTQ assembly would refuse to build is refused at the
+    /// config, before either build path reaches it.
+    #[test]
+    fn an_mtq_max_moment_must_be_non_negative_and_finite() {
+        for bad in ["-1.0", "nan", "inf"] {
+            let toml = format!(
+                "[[satellites]]\n[satellites.orbit]\ntype = \"circular\"\naltitude = 500\n\
+                 [satellites.magnetorquers]\ntype = \"three_axis\"\nmax_moment = {bad}\n"
+            );
+            let config: SimConfig = toml::from_str(&toml).expect("parses");
+            let err = config.satellites[0].validate().expect_err(bad);
+            assert!(err.contains("max_moment"), "{bad}: {err}");
+        }
+    }
+
     #[test]
     fn an_mtq_coupling_must_be_finite() {
         let err = sensors_config(
@@ -3719,6 +3746,8 @@ satellites:
         .expect_err("they differ");
         assert!(err.contains("magnetometer entries differ"), "msg: {err}");
         sensors_config(r#"["magnetometer", "magnetometer"]"#, false).expect("same entry twice");
+        sensors_config(r#"["magnetometer", { type = "magnetometer" }]"#, false)
+            .expect("the shorthand and a table with the same settings agree");
     }
 
     #[test]
