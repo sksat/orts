@@ -119,15 +119,28 @@ pub fn unhonored_config_warnings(satellites: &[SatelliteSpec], mode: SimMode) ->
     let mut warnings = Vec::new();
     for spec in satellites {
         let mut keys: Vec<&str> = Vec::new();
-        // An attitude run records the magnetometers' readings; any other
-        // sensor, and every sensor in an orbit-only run, goes unread.
-        let unread_sensor = spec.sensor_choices.as_ref().is_some_and(|sensors| {
-            mode != SimMode::Spacecraft
-                || sensors
-                    .iter()
-                    .any(|s| *s != crate::config::SensorChoice::Magnetometer)
-        });
-        if unread_sensor {
+        // An attitude run records the magnetometers' readings. With one among
+        // the sensors, the key is read, so name the others instead of the key.
+        let sensors = spec.sensor_choices.as_deref().unwrap_or_default();
+        let records_magnetometers = mode == SimMode::Spacecraft
+            && sensors.contains(&crate::config::SensorChoice::Magnetometer);
+        if records_magnetometers {
+            let unread: Vec<String> = sensors
+                .iter()
+                .filter(|s| **s != crate::config::SensorChoice::Magnetometer)
+                .map(|s| format!("`{}`", s.config_name()))
+                .collect();
+            if !unread.is_empty() {
+                warnings.push(format!(
+                    "satellite '{}': without `[satellites.controller]` only the magnetometers are read, \
+                     for the recording; {} {} not read in {} mode",
+                    spec.id,
+                    unread.join(", "),
+                    if unread.len() == 1 { "is" } else { "are" },
+                    mode.as_str(),
+                ));
+            }
+        } else if spec.sensor_choices.is_some() {
             keys.push("sensors");
         }
         if spec.rw_config.is_some() {
@@ -556,8 +569,8 @@ reaction_wheels = { type = "three_axis", inertia = 0.01, max_momentum = 1.0, max
     }
 
     /// An attitude run records the magnetometers, so declaring only those is
-    /// not a dead key; another sensor beside them, or a magnetometer on an
-    /// orbit-only run, still is.
+    /// not a dead key; another sensor beside them is named as unread, and a
+    /// magnetometer on an orbit-only run leaves the whole key unread.
     #[test]
     fn magnetometers_without_controller_are_read_only_on_an_attitude_run() {
         let with = |sensors: &str, attitude: bool| {
@@ -579,7 +592,13 @@ reaction_wheels = { type = "three_axis", inertia = 0.01, max_momentum = 1.0, max
             &with(r#"["magnetometer", "gyroscope"]"#, true),
             SimMode::Spacecraft,
         );
-        assert!(mixed[0].contains("`sensors`"), "got: {mixed:?}");
+        assert_eq!(mixed.len(), 1, "got: {mixed:?}");
+        assert!(
+            mixed[0].contains("only the magnetometers are read")
+                && mixed[0].contains("`gyroscope`")
+                && !mixed[0].contains("`sensors`"),
+            "got: {mixed:?}"
+        );
         let orbit_only =
             unhonored_config_warnings(&with(r#"["magnetometer"]"#, false), SimMode::OrbitOnly);
         assert!(orbit_only[0].contains("`sensors`"), "got: {orbit_only:?}");

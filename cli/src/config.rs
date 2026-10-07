@@ -1204,6 +1204,18 @@ pub enum SensorChoice {
     SunSensor,
 }
 
+impl SensorChoice {
+    /// The name the config writes this sensor with.
+    pub fn config_name(&self) -> &'static str {
+        match self {
+            SensorChoice::Magnetometer => "magnetometer",
+            SensorChoice::Gyroscope => "gyroscope",
+            SensorChoice::StarTracker => "star_tracker",
+            SensorChoice::SunSensor => "sun_sensor",
+        }
+    }
+}
+
 /// リアクションホイール設定。
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
 #[serde(tag = "type", deny_unknown_fields)]

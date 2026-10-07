@@ -635,7 +635,10 @@ pub fn run_spacecraft_simulation(params: &SimParams) -> Result<Recording, CmdErr
     })?;
     // Each satellite's configured magnetometers, read only for the recording:
     // no controller reads them. Behind a `RefCell` because the logger is `Fn`.
-    let mut probes: Vec<(EntityPath, crate::sim::telemetry::MagnetometerProbe)> = Vec::new();
+    let mut probes: std::collections::HashMap<
+        EntityPath,
+        crate::sim::telemetry::MagnetometerProbe,
+    > = std::collections::HashMap::new();
     for sat in &params.satellites {
         // `run_simulation_cmd` validated every satellite before dispatching
         // here, so `build_spacecraft_dynamics` cannot be reached with an
@@ -664,7 +667,7 @@ pub fn run_spacecraft_simulation(params: &SimParams) -> Result<Recording, CmdErr
         if let Some(probe) = crate::sim::telemetry::MagnetometerProbe::for_spec(sat, params.body)
             .map_err(|e| CmdError::failure(format!("satellite '{}': {e}", sat.id)))?
         {
-            probes.push((sat.entity_path(), probe));
+            probes.insert(sat.entity_path(), probe);
         }
     }
     let probes = std::cell::RefCell::new(probes);
@@ -677,7 +680,7 @@ pub fn run_spacecraft_simulation(params: &SimParams) -> Result<Recording, CmdErr
         rec.log_orbital_state_with_attitude(entity, tp, &os, Some(&q), Some(&w));
         log_disturbance_torques(rec, entity, tp, t, state, dynamics);
         let mut probes = probes.borrow_mut();
-        if let Some((_, probe)) = probes.iter_mut().find(|(path, _)| path == entity) {
+        if let Some(probe) = probes.get_mut(entity) {
             let m = probe.read(t, sc, params.epoch.as_ref());
             log_magnetometer_telemetry(rec, entity, tp, &m);
         }
