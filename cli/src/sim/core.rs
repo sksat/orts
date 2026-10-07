@@ -299,6 +299,16 @@ pub fn spacecraft_dynamics_for(
     params: &SimParams,
     third_bodies: &[ThirdBodyGravity],
 ) -> Result<SpacecraftDynamics<Box<dyn GravityField>>, String> {
+    if spec.disturbances.residual_dipole.is_some()
+        && !orts::magnetic::field_is_modelled(params.body)
+    {
+        log::warn!(
+            "{}: residual_dipole has no magnetic field model for {} (only Earth's is \
+             modelled), so its torque is zero",
+            spec.id,
+            params.body.properties().name
+        );
+    }
     build_spacecraft_dynamics(
         &params.body,
         params.central_gravity(),

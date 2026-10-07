@@ -381,9 +381,9 @@ mod tests {
         let mut with_residual = Magnetometer::new(Arc::new(TiltedDipole::earth()))
             .with_mtq_coupling(coupling())
             .with_residual_field(b_res);
-        let without = coupled.measure(&state, &epoch, &mtq_on()).into_inner();
+        let without = coupled.measure(0.0, &state, &epoch, &mtq_on()).into_inner();
         let got = with_residual
-            .measure(&state, &epoch, &mtq_on())
+            .measure(0.0, &state, &epoch, &mtq_on())
             .into_inner();
         assert_eq!(got.into_inner(), without.into_inner() + b_res);
     }

@@ -9,4 +9,10 @@ export type DetailedSensorConfig = { "type": "magnetometer",
  * [T, body frame]。外側の並びは rod の順 (`three_axis` なら x, y, z)。
  * 地上試験で測った値をそのまま書く。省略すると MTQ の磁場を読まない。
  */
-mtq_coupling?: Array<[number, number, number]>, };
+mtq_coupling?: Array<[number, number, number]>, 
+/**
+ * 機体の残留磁化がこの磁気センサの位置に作る一定の磁場
+ * [T, body frame] (較正で測る hard-iron offset)。
+ * `disturbances.residual_dipole` とは別に与える。
+ */
+residual_field?: [number, number, number], };

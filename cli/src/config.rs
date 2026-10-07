@@ -565,6 +565,12 @@ pub struct DisturbancesConfig {
     #[serde(default = "default_true")]
     #[ts(as = "Option<_>", optional)]
     pub gravity_gradient: bool,
+    /// The spacecraft's residual magnetic dipole [A·m², body frame]. When
+    /// given, its torque `m_res × B` in the geomagnetic field is modelled
+    /// (zero about a body with no field model).
+    #[serde(default)]
+    #[ts(optional)]
+    pub residual_dipole: Option<[f64; 3]>,
 }
 
 fn default_true() -> bool {
@@ -913,6 +919,7 @@ impl DisturbancesConfig {
     fn to_disturbance_torques(&self) -> DisturbanceTorques {
         DisturbanceTorques {
             gravity_gradient: self.gravity_gradient,
+            residual_dipole: self.residual_dipole.map(nalgebra::Vector3::from),
         }
     }
 }
@@ -1241,6 +1248,12 @@ pub enum DetailedSensorConfig {
         #[serde(default)]
         #[ts(optional)]
         mtq_coupling: Option<Vec<[f64; 3]>>,
+        /// 機体の残留磁化がこの磁気センサの位置に作る一定の磁場
+        /// [T, body frame] (較正で測る hard-iron offset)。
+        /// `disturbances.residual_dipole` とは別に与える。
+        #[serde(default)]
+        #[ts(optional)]
+        residual_field: Option<[f64; 3]>,
     },
 }
 
@@ -1258,9 +1271,20 @@ impl SensorConfig {
     /// The magnetometer's MTQ coupling rows, if this entry gives one.
     pub fn mtq_coupling(&self) -> Option<&[[f64; 3]]> {
         match self {
-            SensorConfig::Detailed(DetailedSensorConfig::Magnetometer { mtq_coupling }) => {
+            SensorConfig::Detailed(DetailedSensorConfig::Magnetometer { mtq_coupling, .. }) => {
                 mtq_coupling.as_deref()
             }
+            SensorConfig::Kind(_) => None,
+        }
+    }
+
+    /// The magnetometer's residual field [T, body frame], if this entry gives
+    /// one.
+    pub fn residual_field(&self) -> Option<[f64; 3]> {
+        match self {
+            SensorConfig::Detailed(DetailedSensorConfig::Magnetometer {
+                residual_field, ..
+            }) => *residual_field,
             SensorConfig::Kind(_) => None,
         }
     }
@@ -1286,6 +1310,11 @@ fn validate_sensors(sensors: &[SensorConfig], mtq: Option<&MtqConfig>) -> Result
         return Err(
             "magnetometer entries differ, but one magnetometer is built per satellite".into(),
         );
+    }
+    if let Some(b) = magnetometers.first().and_then(|m| m.residual_field())
+        && !b.iter().all(|v| v.is_finite())
+    {
+        return Err("magnetometer.residual_field components must be finite".into());
     }
     let Some(coupling) = magnetometers.first().and_then(|m| m.mtq_coupling()) else {
         return Ok(());
@@ -2013,6 +2042,11 @@ impl SatelliteConfig {
             return Err(
                 "disturbances requires attitude: a torque needs an orientation to act on".into(),
             );
+        }
+        if let Some(m) = self.disturbances.as_ref().and_then(|d| d.residual_dipole)
+            && !m.iter().all(|v| v.is_finite())
+        {
+            return Err("disturbances.residual_dipole components must be finite".into());
         }
         if let Some(panels) = &self.panels {
             // A list of zero panels describes no surface at all, so it is a
@@ -4494,6 +4528,76 @@ attitude = { inertia_diag = [10, 10, 10], mass = 50 }
             .expect("the fixture builds a spec");
         assert_eq!(spec.disturbances, DisturbanceTorques::default());
         assert!(spec.disturbances.gravity_gradient);
+    }
+
+    /// The residual dipole reaches the spec, and through it the dynamics both
+    /// `run` and `serve` build.
+    #[test]
+    fn a_residual_dipole_reaches_the_dynamics() {
+        let toml = r#"
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+attitude = { inertia_diag = [10, 10, 10], mass = 50 }
+disturbances = { residual_dipole = [0.01, -0.02, 0.03] }
+"#;
+        let config: SimConfig = toml::from_str(toml).expect("parses");
+        config.satellites[0].validate().expect("valid");
+        let spec = config.satellites[0]
+            .to_satellite_spec(0, KnownBody::Earth, 398600.4418)
+            .expect("the fixture builds a spec");
+        assert_eq!(
+            spec.disturbances.residual_dipole,
+            Some(nalgebra::Vector3::new(0.01, -0.02, 0.03))
+        );
+        assert!(
+            spec.disturbances.gravity_gradient,
+            "the other default stays"
+        );
+
+        let params =
+            crate::sim::params::SimParams::from_config(&config).expect("the fixture builds params");
+        let dynamics = crate::sim::core::spacecraft_dynamics_for(
+            &spec,
+            spec.attitude_config.as_ref().expect("attitude"),
+            &params,
+            &[],
+        )
+        .expect("builds");
+        assert!(dynamics.model_names().contains(&"residual_dipole"));
+    }
+
+    #[test]
+    fn a_non_finite_residual_dipole_is_rejected() {
+        let toml = r#"
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+attitude = { inertia_diag = [10, 10, 10], mass = 50 }
+disturbances = { residual_dipole = [0.0, inf, 0.0] }
+"#;
+        let config: SimConfig = toml::from_str(toml).expect("parses");
+        let err = config.satellites[0].validate().unwrap_err();
+        assert!(err.contains("residual_dipole"), "got: {err}");
+    }
+
+    #[test]
+    fn a_magnetometer_residual_field_parses_and_must_be_finite() {
+        let sat = sensors_config(
+            r#"[{ type = "magnetometer", residual_field = [1e-7, 0, -2e-7] }]"#,
+            false,
+        )
+        .expect("a residual field needs no MTQ");
+        assert_eq!(
+            sat.sensors.expect("sensors")[0].residual_field(),
+            Some([1e-7, 0.0, -2e-7])
+        );
+        let err = sensors_config(
+            r#"[{ type = "magnetometer", residual_field = [nan, 0, 0] }]"#,
+            false,
+        )
+        .expect_err("NaN");
+        assert!(err.contains("residual_field"), "msg: {err}");
     }
 
     #[test]

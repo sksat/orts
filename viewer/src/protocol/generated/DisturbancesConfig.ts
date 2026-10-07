@@ -12,4 +12,10 @@ export type DisturbancesConfig = {
 /**
  * Gravity-gradient torque from the central body (default: true).
  */
-gravity_gradient?: boolean, };
+gravity_gradient?: boolean, 
+/**
+ * The spacecraft's residual magnetic dipole [A·m², body frame]. When
+ * given, its torque `m_res × B` in the geomagnetic field is modelled
+ * (zero about a body with no field model).
+ */
+residual_dipole?: [number, number, number], };
