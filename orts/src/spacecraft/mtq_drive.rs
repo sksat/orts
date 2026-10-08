@@ -68,14 +68,18 @@ impl MtqMomentProfile {
         if self.time_constant == 0.0 {
             return self.drive_target.clone();
         }
-        let left = (-(t - self.start_t) / self.time_constant).exp();
+        let x = -(t - self.start_t) / self.time_constant;
+        let left = x.exp();
+        // 1 - e^x through exp_m1: for a step much shorter than τ, 1 - left
+        // would round to 0 and lose the response.
+        let reached = -x.exp_m1();
         // A weighted mean of the two ends: no difference of them is formed,
         // so ends of opposite sign near the largest finite value cannot
         // overflow, and the result stays between them.
         self.drive_start
             .iter()
             .zip(&self.drive_target)
-            .map(|(&start, &target)| start * left + target * (1.0 - left))
+            .map(|(&start, &target)| start * left + target * reached)
             .collect()
     }
 
@@ -374,6 +378,19 @@ mod tests {
             let u = drive.moments_at(t)[0];
             assert!(u.is_finite() && u.abs() <= huge, "t {t}: {u}");
         }
+    }
+
+    /// A step far shorter than the time constant still moves the drive: with
+    /// τ = 1e308 s and 1 s elapsed, a 1e308 command has driven the rod by
+    /// about 1, where 1 - e^-x would have rounded to nothing.
+    #[test]
+    fn a_step_far_shorter_than_the_time_constant_still_moves_the_drive() {
+        let huge = 1e308;
+        let core = MtqAssemblyCore::new(vec![Mtq::new(Vector3::x(), huge)]);
+        let mut drive = MtqMomentDrive::new(core, 0.0).with_time_constant(huge);
+        drive.apply(0.0, &MtqCommand::Moments(vec![huge]));
+        let d = drive.profile().drive_at(1.0)[0];
+        assert!((d - 1.0).abs() < 1e-12, "{d}");
     }
 
     /// A non-finite command realizes a non-finite moment while it is held,
