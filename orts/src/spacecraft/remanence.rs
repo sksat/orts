@@ -147,6 +147,16 @@ impl RemanencePlay {
                 ..p
             })
             .collect();
+        // A wide operator keeps only part of its weight after a full drive,
+        // so its weight can exceed the curve's largest remanence; scaled back
+        // near f64::MAX it may not be finite.
+        if plays.iter().any(|p| !p.weight.is_finite()) {
+            return Err(
+                "the remanence curve's operators need a weight larger than the largest finite \
+                 value"
+                    .into(),
+            );
+        }
         let misfit = curve
             .iter()
             .map(|&(v, r)| {
@@ -626,6 +636,13 @@ mod tests {
             !plays.is_empty() && misfit < 0.05 * 1e308,
             "misfit {misfit}"
         );
+        // A curve rising only just before the full drive needs wide operators
+        // with weights above its largest remanence: near f64::MAX they cannot
+        // be finite, which is an error rather than an infinite operator.
+        // Only operators about 0.97 wide start that late, and they keep about
+        // 3% of their weight, so the weight would be some 30 times 1e308.
+        let err = RemanencePlay::fit_remanence_curve(&[(0.97, 0.0), (1.0, 1e308)]).unwrap_err();
+        assert!(err.contains("largest finite"), "{err}");
         let zeros = [(0.5, 0.0), (1.0, 0.0)];
         assert_eq!(
             RemanencePlay::fit_remanence_curve(&zeros).unwrap(),
