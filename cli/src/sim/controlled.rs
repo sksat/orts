@@ -365,7 +365,6 @@ pub fn build_controlled_satellite(
             // command-less assembly.
             dynamics = dynamics.with_model(mtq_for_body(params.body, &core, None, None));
             let time_constant = mtq_config.time_constant();
-            warn_unresolved_mtq_response(params, time_constant, &spec.id);
             let mut drive = orts::spacecraft::MtqMomentDrive::new(core.clone(), start_t)
                 .with_time_constant(time_constant);
             if let Some(plays) = mtq_config.remanence_plays()? {
@@ -423,6 +422,11 @@ pub fn build_controlled_satellite(
     let sample_period = controller.sample_period();
     crate::config::validate_sample_period(sample_period)?;
     validate_tick_advances(start_t, sample_period)?;
+    // The propagation is cut at every controller tick, so the period bounds
+    // the RK4 step as well as `--dt` does.
+    if let Some(drive) = &mtq {
+        warn_unresolved_mtq_response(params, sample_period, drive.time_constant(), &spec.id);
+    }
 
     Ok(ControlledSatellite {
         dynamics,
@@ -1107,14 +1111,19 @@ fn mtq_for_body(
 const MTQ_RESPONSE_STEPS_PER_TIME_CONSTANT: f64 = 5.0;
 
 /// The RK4 step that is too long for an MTQ response with `time_constant`,
-/// or `None` when `integrator` resolves it: an adaptive one, a step within the
-/// bound, or no response to resolve.
-fn unresolved_mtq_response_step(integrator: &IntegratorConfig, time_constant: f64) -> Option<f64> {
+/// or `None` when it is resolved: an adaptive integrator, a step within the
+/// bound, or no response to resolve. The step is the shorter of `--dt` and
+/// the controller's `sample_period`, at which the propagation is cut.
+fn unresolved_mtq_response_step(
+    integrator: &IntegratorConfig,
+    sample_period: f64,
+    time_constant: f64,
+) -> Option<f64> {
     match *integrator {
-        IntegratorConfig::Rk4 { dt }
-            if time_constant > 0.0 && dt > time_constant / MTQ_RESPONSE_STEPS_PER_TIME_CONSTANT =>
-        {
-            Some(dt)
+        IntegratorConfig::Rk4 { dt } => {
+            let step = dt.min(sample_period);
+            (time_constant > 0.0 && step > time_constant / MTQ_RESPONSE_STEPS_PER_TIME_CONSTANT)
+                .then_some(step)
         }
         _ => None,
     }
@@ -1123,13 +1132,21 @@ fn unresolved_mtq_response_step(integrator: &IntegratorConfig, time_constant: f6
 /// Warn when a fixed-step integrator's step is too long for the MTQ response:
 /// the magnetometer reads the transient exactly, but its torque is integrated
 /// coarsely.
-fn warn_unresolved_mtq_response(params: &SimParams, time_constant: f64, sat_id: &str) {
-    if let Some(dt) = unresolved_mtq_response_step(&params.integrator_config(), time_constant) {
+fn warn_unresolved_mtq_response(
+    params: &SimParams,
+    sample_period: f64,
+    time_constant: f64,
+    sat_id: &str,
+) {
+    if let Some(step) =
+        unresolved_mtq_response_step(&params.integrator_config(), sample_period, time_constant)
+    {
         log::warn!(
             "{sat_id}: magnetorquers.time_constant = {time_constant} s is shorter than \
-             {MTQ_RESPONSE_STEPS_PER_TIME_CONSTANT} RK4 steps of dt = {dt} s, so the torque of the \
-             transient after each command is integrated coarsely (the magnetometer still reads \
-             it exactly). Use a smaller --dt or an adaptive integrator to resolve it."
+             {MTQ_RESPONSE_STEPS_PER_TIME_CONSTANT} RK4 steps of {step} s (the shorter of --dt \
+             and the controller period), so the torque of the transient after each command is \
+             integrated coarsely (the magnetometer still reads it exactly). Use a smaller --dt \
+             or an adaptive integrator to resolve it."
         );
     }
 }
@@ -2528,15 +2545,32 @@ mod tests {
 
     /// The RK4 warning fires for a step longer than a fifth of the time
     /// constant, not at a fifth exactly, never with no response, and never for
-    /// an adaptive integrator, whatever its initial step.
+    /// an adaptive integrator, whatever its initial step. The step is bounded
+    /// by the controller period too: a long `--dt` cut every 1 ms is fine.
     #[test]
     fn the_mtq_response_warning_covers_only_coarse_rk4_steps() {
         let tau = 0.1;
         let rk4 = |dt| IntegratorConfig::Rk4 { dt };
-        assert_eq!(unresolved_mtq_response_step(&rk4(tau / 5.0), tau), None);
-        assert_eq!(unresolved_mtq_response_step(&rk4(0.021), tau), Some(0.021));
+        let slow = 10.0;
         assert_eq!(
-            unresolved_mtq_response_step(&rk4(10.0), 0.0),
+            unresolved_mtq_response_step(&rk4(tau / 5.0), slow, tau),
+            None
+        );
+        assert_eq!(
+            unresolved_mtq_response_step(&rk4(0.021), slow, tau),
+            Some(0.021)
+        );
+        assert_eq!(
+            unresolved_mtq_response_step(&rk4(1.0), 0.001, tau),
+            None,
+            "1 ms ticks"
+        );
+        assert_eq!(
+            unresolved_mtq_response_step(&rk4(1.0), 0.05, tau),
+            Some(0.05)
+        );
+        assert_eq!(
+            unresolved_mtq_response_step(&rk4(10.0), slow, 0.0),
             None,
             "no response"
         );
@@ -2547,7 +2581,7 @@ mod tests {
                 rtol: 1e-9,
             },
         };
-        assert_eq!(unresolved_mtq_response_step(&adaptive, tau), None);
+        assert_eq!(unresolved_mtq_response_step(&adaptive, slow, tau), None);
     }
 
     /// A finite-difference B-dot controller that also records, at each tick,

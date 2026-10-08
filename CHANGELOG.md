@@ -998,8 +998,8 @@ section is subdivided by package.
 - `magnetorquers.time_constant` [s] makes each rod's moment approach a new
   command with a first-order response, so a magnetometer read soon after the
   MTQ is switched off still sees its field decaying; left out, a command takes
-  effect at once. A fixed-step integrator whose step is longer than a fifth of
-  it gets a warning, since the transient's torque is then integrated coarsely.
+  effect at once. An RK4 step (the shorter of `--dt` and the controller period)
+  longer than a fifth of it gets a warning, since the transient's torque is then integrated coarsely.
   `magnetorquers.remanence` [A·m²] is the moment each rod's core keeps after a
   full drive (a datasheet's residual moment), between 0 and `max_moment`, and
   `magnetorquers.remanence_curve = [[v, R], ...]` a measured curve instead:
