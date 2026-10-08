@@ -1533,6 +1533,9 @@ mod tests {
         use clap::Parser;
         let args = crate::cli::SimArgs::parse_from(["orts"]);
         let mut params = SimParams::from_sim_args(&args, false).expect("default args are valid");
+        // Without `--epoch` the default is the wall clock, which moves the
+        // geomagnetic field a test's controller reads from run to run.
+        params.epoch = Some(Epoch::from_gregorian(2026, 3, 20, 12, 0, 0.0));
         params.integrator = integrator;
         params.dt = dt;
         params.tolerances = utsuroi::Tolerances {
@@ -2277,8 +2280,22 @@ mod tests {
     /// 0.3 m along x from the rods.
     #[test]
     fn bdot_on_a_coupled_magnetometer_settles_into_the_analytic_cycles() {
+        // Two epochs, a field apart: how long the commands take to lock into
+        // the cycles depends on the field, the cycles themselves do not.
+        for epoch in [
+            Epoch::from_gregorian(2026, 3, 20, 12, 0, 0.0),
+            Epoch::from_gregorian(2026, 10, 8, 7, 0, 0.0),
+        ] {
+            check_bdot_cycles_at(epoch);
+        }
+    }
+
+    fn check_bdot_cycles_at(epoch: Epoch) {
         const GAIN: f64 = 1e6;
         const MAX_MOMENT: f64 = 10.0;
+        // Ticks run past the latest lock-in, leaving at least this many to check.
+        const RUN_TICKS: f64 = 90.0;
+        const MIN_CHECKED_TICKS: usize = 40;
         // Point-dipole coupling 0.3 m away: on the axis 2 μ0/4π / d³, beside
         // it -μ0/4π / d³ [T per A·m²].
         let on_axis = 2.0 * 1e-7 / 0.3_f64.powi(3);
@@ -2306,62 +2323,81 @@ mod tests {
                 ])),
             ];
 
-        let params = params_with(crate::cli::IntegratorChoice::Rk4, 0.1, 1e-9);
-        advance_controlled(&mut sat, 0.0, 60.0, &params).expect("integrates and ticks");
+        let mut params = params_with(crate::cli::IntegratorChoice::Rk4, 0.1, 1e-9);
+        params.epoch = Some(epoch);
+        advance_controlled(&mut sat, 0.0, RUN_TICKS, &params).expect("integrates and ticks");
 
         let log = log.lock().unwrap().clone();
-        // Past the transient while the commands first saturate.
-        let settled = &log[10..];
-        assert!(settled.len() > 40);
-        let ideal_max = settled.iter().map(|(_, c)| c.amax()).fold(0.0, f64::max);
+        let ideal_max = log.iter().map(|(_, c)| c.amax()).fold(0.0, f64::max);
         assert!(
             ideal_max < 2.0,
-            "the analysis needs |c| well inside the limit: {ideal_max}"
+            "{epoch:?}: the analysis needs |c| well inside the limit: {ideal_max}"
         );
+        let series = |axis: usize| -> (Vec<f64>, Vec<f64>) {
+            log.iter().map(|(m, c)| (m[axis], c[axis])).unzip()
+        };
 
-        // x: ±10, the sign flipping every tick.
-        for pair in settled.windows(2) {
-            let (a, b) = (pair[0].0.x, pair[1].0.x);
-            assert_eq!(a.abs(), MAX_MOMENT, "x is saturated: {a}");
-            assert_eq!(a, -b, "x flips every tick");
+        // x: from the first saturated tick its successor flips, ±10 with the
+        // sign flipping every tick to the end of the run.
+        let (u, _) = series(0);
+        let lock = (0..u.len() - 1)
+            .find(|&k| u[k].abs() == MAX_MOMENT && u[k + 1] == -u[k])
+            .expect("x locks into the ±10 cycle");
+        assert!(
+            u.len() - lock >= MIN_CHECKED_TICKS,
+            "{epoch:?}: x locks at {lock}"
+        );
+        for k in lock..u.len() - 1 {
+            assert_eq!(u[k].abs(), MAX_MOMENT, "{epoch:?}: x tick {k} is saturated");
+            assert_eq!(u[k], -u[k + 1], "{epoch:?}: x flips at tick {k}");
         }
 
-        // y and z: every command off the limit is c_k itself, right after two
-        // equal saturated ticks, and those come in runs of two of each sign.
+        // y and z: from the first pair of equal saturated ticks on, every
+        // command off the limit is c_k itself, right after two equal saturated
+        // ticks, every third tick.
         for axis in [1, 2] {
-            let u: Vec<f64> = settled.iter().map(|(m, _)| m[axis]).collect();
-            let c: Vec<f64> = settled.iter().map(|(_, c)| c[axis]).collect();
+            let (u, c) = series(axis);
+            let lock = (0..u.len() - 1)
+                .find(|&k| u[k].abs() == MAX_MOMENT && u[k + 1] == u[k])
+                .expect("the rod locks into the six-tick cycle");
+            assert!(
+                u.len() - lock >= MIN_CHECKED_TICKS,
+                "{epoch:?}: axis {axis} locks at {lock}"
+            );
             let mut unsaturated = Vec::new();
-            for k in 2..u.len() {
+            for k in lock + 2..u.len() {
                 if u[k].abs() < MAX_MOMENT {
                     unsaturated.push(k);
                     assert!(
                         (u[k] - c[k]).abs() < 1e-9,
-                        "axis {axis} tick {k}: {} is not c = {}",
+                        "{epoch:?}: axis {axis} tick {k}: {} is not c = {}",
                         u[k],
                         c[k]
                     );
                     assert!(
                         u[k - 1] == u[k - 2] && u[k - 1].abs() == MAX_MOMENT,
-                        "axis {axis} tick {k}: c follows two equal saturated ticks"
+                        "{epoch:?}: axis {axis} tick {k}: c follows two equal saturated ticks"
                     );
                 }
             }
-            assert!(unsaturated.len() > 10, "axis {axis}: {unsaturated:?}");
+            assert!(
+                unsaturated.len() > 10,
+                "{epoch:?}: axis {axis}: {unsaturated:?}"
+            );
             for gap in unsaturated.windows(2) {
                 assert_eq!(
                     gap[1] - gap[0],
                     3,
-                    "axis {axis}: c every third tick, {unsaturated:?}"
+                    "{epoch:?}: axis {axis}: c every third tick, {unsaturated:?}"
                 );
             }
             // Six-tick means keep a third of the ideal command.
-            for w in (2..u.len() - 6).step_by(6) {
+            for w in (lock..u.len() - 6).step_by(6) {
                 let mean_u: f64 = u[w..w + 6].iter().sum::<f64>() / 6.0;
                 let mean_c: f64 = c[w..w + 6].iter().sum::<f64>() / 6.0;
                 assert!(
                     (mean_u - mean_c / 3.0).abs() < 0.05 * mean_c.abs().max(0.05),
-                    "axis {axis} window {w}: mean {mean_u} vs c/3 = {}",
+                    "{epoch:?}: axis {axis} window {w}: mean {mean_u} vs c/3 = {}",
                     mean_c / 3.0
                 );
             }
