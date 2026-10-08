@@ -7,4 +7,21 @@ export type MtqConfig = { "type": "three_axis",
 /**
  * 最大ダイポールモーメント [A·m²]。
  */
-max_moment: number, };
+max_moment: number, 
+/**
+ * 最大モーメントで駆動して切った後に各 rod の鉄心に残るモーメント [A·m²]
+ * (データシートの residual moment)。`remanence_curve` と両方は書けない。
+ * どちらも省略すると残留なし。
+ */
+remanence?: number, 
+/**
+ * 消磁した rod を最大モーメントの `v` 倍で駆動して切った後に残るモーメント
+ * `R` [A·m²] の実測表、`[v, R]` の列 (`v` は (0, 1] で増加)。
+ */
+remanence_curve?: Array<[number, number]>, 
+/**
+ * command が変わった後、rod の moment が新しい値に近づく時定数 [s]
+ * (コイルの L/R と渦電流を合わせた一次遅れ)。省略時は 0 で、command
+ * はすぐに効く。
+ */
+time_constant?: number, };
