@@ -1533,6 +1533,9 @@ mod tests {
         use clap::Parser;
         let args = crate::cli::SimArgs::parse_from(["orts"]);
         let mut params = SimParams::from_sim_args(&args, false).expect("default args are valid");
+        // Without `--epoch` the default is the wall clock, which moves the
+        // geomagnetic field a test's controller reads from run to run.
+        params.epoch = Some(Epoch::from_gregorian(2026, 3, 20, 12, 0, 0.0));
         params.integrator = integrator;
         params.dt = dt;
         params.tolerances = utsuroi::Tolerances {
