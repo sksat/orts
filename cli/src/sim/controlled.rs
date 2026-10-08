@@ -1106,14 +1106,25 @@ fn mtq_for_body(
 /// too few points within a step for its integral to come out right.
 const MTQ_RESPONSE_STEPS_PER_TIME_CONSTANT: f64 = 5.0;
 
+/// The RK4 step that is too long for an MTQ response with `time_constant`,
+/// or `None` when `integrator` resolves it: an adaptive one, a step within the
+/// bound, or no response to resolve.
+fn unresolved_mtq_response_step(integrator: &IntegratorConfig, time_constant: f64) -> Option<f64> {
+    match *integrator {
+        IntegratorConfig::Rk4 { dt }
+            if time_constant > 0.0 && dt > time_constant / MTQ_RESPONSE_STEPS_PER_TIME_CONSTANT =>
+        {
+            Some(dt)
+        }
+        _ => None,
+    }
+}
+
 /// Warn when a fixed-step integrator's step is too long for the MTQ response:
 /// the magnetometer reads the transient exactly, but its torque is integrated
 /// coarsely.
 fn warn_unresolved_mtq_response(params: &SimParams, time_constant: f64, sat_id: &str) {
-    if let IntegratorConfig::Rk4 { dt } = params.integrator_config()
-        && time_constant > 0.0
-        && dt > time_constant / MTQ_RESPONSE_STEPS_PER_TIME_CONSTANT
-    {
+    if let Some(dt) = unresolved_mtq_response_step(&params.integrator_config(), time_constant) {
         log::warn!(
             "{sat_id}: magnetorquers.time_constant = {time_constant} s is shorter than \
              {MTQ_RESPONSE_STEPS_PER_TIME_CONSTANT} RK4 steps of dt = {dt} s, so the torque of the \
@@ -2513,6 +2524,30 @@ mod tests {
         let ratio = torque_at(t_off + TAU) / torque_at(t_off);
         // The field moves with the epoch over the 0.2 s too, by about 1e-6.
         assert!((ratio - (-1.0_f64).exp()).abs() < 1e-5, "{ratio}");
+    }
+
+    /// The RK4 warning fires for a step longer than a fifth of the time
+    /// constant, not at a fifth exactly, never with no response, and never for
+    /// an adaptive integrator, whatever its initial step.
+    #[test]
+    fn the_mtq_response_warning_covers_only_coarse_rk4_steps() {
+        let tau = 0.1;
+        let rk4 = |dt| IntegratorConfig::Rk4 { dt };
+        assert_eq!(unresolved_mtq_response_step(&rk4(tau / 5.0), tau), None);
+        assert_eq!(unresolved_mtq_response_step(&rk4(0.021), tau), Some(0.021));
+        assert_eq!(
+            unresolved_mtq_response_step(&rk4(10.0), 0.0),
+            None,
+            "no response"
+        );
+        let adaptive = IntegratorConfig::Dop853 {
+            dt: 10.0,
+            tolerances: utsuroi::Tolerances {
+                atol: 1e-9,
+                rtol: 1e-9,
+            },
+        };
+        assert_eq!(unresolved_mtq_response_step(&adaptive, tau), None);
     }
 
     /// A finite-difference B-dot controller that also records, at each tick,
