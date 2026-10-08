@@ -21,7 +21,10 @@ use super::mtq::MtqAssemblyCore;
 pub struct RemanencePlay {
     /// Half the play, in units of the rod's `max_moment`, in (0, 1).
     pub width: f64,
-    /// The remanence this operator leaves at its fullest [A·m²].
+    /// Scale of what the operator leaves [A·m²]: a saturated state leaves the
+    /// whole weight, which only an operator at most half wide reaches; a wider
+    /// one holds at most `(1 − width) / width` of it
+    /// ([`Self::reachable_remanence`]).
     pub weight: f64,
 }
 
