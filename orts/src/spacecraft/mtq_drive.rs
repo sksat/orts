@@ -87,13 +87,16 @@ impl MtqMomentProfile {
     }
 
     /// Each rod's moment at time `t` [A·m²]: the drive blended with the
-    /// remanence ([`MtqAssemblyCore::rod_moments_with_remanence`]).
+    /// remanence ([`MtqAssemblyCore::rod_moments_with_remanence`]). On the
+    /// integrator's hot path, so the remanence is evaluated from the borrowed
+    /// state, with no copy of it.
     pub fn at(&self, t: f64) -> Vec<f64> {
         let drive = self.drive_at(t);
-        match self.remanence_at(t) {
-            Some(remanence) => self
-                .core
-                .rod_moments_with_remanence(&drive, remanence.residual()),
+        match &self.remanence {
+            Some(remanence) => {
+                let residual = remanence.residual_after(&drive);
+                self.core.rod_moments_with_remanence(&drive, &residual)
+            }
             None => drive,
         }
     }

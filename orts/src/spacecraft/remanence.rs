@@ -345,11 +345,55 @@ impl MtqRemanence {
             let v = (c / max_moment).clamp(-1.0, 1.0);
             let mut r = 0.0;
             for (p, z) in self.plays[rod].iter().zip(&mut self.states[rod]) {
-                *z = z.clamp(v - p.width, v + p.width);
-                r += p.weight * (z.clamp(-p.width, p.width) / p.width);
+                *z = p.follow(*z, v);
+                r += p.holds(*z);
             }
             self.residual[rod] = r;
         }
+    }
+
+    /// The remanence [`Self::apply`] with `clamped` would leave [A·m²],
+    /// without changing the state: what an evaluation at a time within a held
+    /// command needs, with no copy of the state.
+    ///
+    /// # Panics
+    /// Panics if the length differs from the number of MTQs.
+    pub fn residual_after(&self, clamped: &[f64]) -> Vec<f64> {
+        assert_eq!(
+            clamped.len(),
+            self.residual.len(),
+            "clamped moments length != MTQ count"
+        );
+        clamped
+            .iter()
+            .enumerate()
+            .map(|(rod, &c)| {
+                let max_moment = self.max_moments[rod];
+                if !c.is_finite() || max_moment <= 0.0 {
+                    return self.residual[rod];
+                }
+                let v = (c / max_moment).clamp(-1.0, 1.0);
+                self.plays[rod]
+                    .iter()
+                    .zip(&self.states[rod])
+                    .map(|(p, &z)| p.holds(p.follow(z, v)))
+                    .sum()
+            })
+            .collect()
+    }
+}
+
+impl RemanencePlay {
+    /// The state after following the normalized drive `v` from `z`.
+    fn follow(&self, z: f64, v: f64) -> f64 {
+        z.clamp(v - self.width, v + self.width)
+    }
+
+    /// The remanence the state `z` leaves when the rod is switched off
+    /// [A·m²]: normalized first, so a tiny weight is not lost under a tiny
+    /// width.
+    fn holds(&self, z: f64) -> f64 {
+        self.weight * (z.clamp(-self.width, self.width) / self.width)
     }
 }
 
@@ -499,6 +543,35 @@ mod tests {
         assert_eq!(rem.residual(), &[-huge]);
         let u = core.rod_moments_with_remanence(&[huge], rem.residual());
         assert_eq!(u, vec![huge]);
+    }
+
+    /// Evaluating without applying gives exactly what applying would leave,
+    /// and leaves the state as it was.
+    #[test]
+    fn residual_after_matches_apply_without_changing_the_state() {
+        let core = MtqAssemblyCore::new(vec![Mtq::new(Vector3::x(), REM_MAX)]);
+        let plays = vec![
+            RemanencePlay {
+                width: 0.1,
+                weight: 0.02,
+            },
+            RemanencePlay {
+                width: 0.4,
+                weight: 0.03,
+            },
+            RemanencePlay {
+                width: 0.8,
+                weight: 0.05,
+            },
+        ];
+        let mut rem = MtqRemanence::demagnetized_with_plays(&core, vec![plays]);
+        for c in [10.0, -3.0, 6.0, f64::NAN, -10.0, 0.0] {
+            let before = rem.clone();
+            let predicted = rem.residual_after(&[c]);
+            assert_eq!(rem.residual(), before.residual(), "unchanged by evaluating");
+            rem.apply(&[c]);
+            assert_eq!(rem.residual(), predicted.as_slice(), "c {c}");
+        }
     }
 
     /// A saturated operator keeps its whole weight however small the weight

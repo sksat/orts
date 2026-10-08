@@ -1469,8 +1469,9 @@ impl MtqConfig {
                 if misfit > REMANENCE_CURVE_MAX_MISFIT * largest {
                     return Err(format!(
                         "magnetorquers.remanence_curve: the fitted remanence is {misfit} A·m² off \
-                         a point, more than {}% of the largest; a remanence that grows less with \
-                         a stronger drive cannot be fitted",
+                         a point, more than {}% of the largest; the operators, 1/32 of the drive \
+                         apart in width, follow only a remanence that does not fall with a \
+                         stronger drive and does not rise over much less than 1/32 of it",
                         REMANENCE_CURVE_MAX_MISFIT * 100.0
                     ));
                 }
@@ -3972,7 +3973,7 @@ satellites:
         let err = mtq_with_curve("remanence_curve = [[0.5, 0.06], [1.0, 0.0]]").satellites[0]
             .validate()
             .expect_err("falling");
-        assert!(err.contains("cannot be fitted"), "{err}");
+        assert!(err.contains("follow only"), "{err}");
     }
 
     #[test]
