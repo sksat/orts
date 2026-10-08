@@ -2284,7 +2284,7 @@ mod tests {
         // the cycles depends on the field, the cycles themselves do not.
         for epoch in [
             Epoch::from_gregorian(2026, 3, 20, 12, 0, 0.0),
-            Epoch::from_gregorian(2026, 10, 8, 0, 0, 0.0),
+            Epoch::from_gregorian(2026, 10, 8, 7, 0, 0.0),
         ] {
             check_bdot_cycles_at(epoch);
         }
