@@ -49,6 +49,13 @@ impl RemanencePlay {
         }]
     }
 
+    /// The most remanence this operator can ever hold [A·m²]. With drives
+    /// within ±1 its state stays within ±(1 − width), so an operator wider
+    /// than a half keeps at most `(1 − width) / width` of its weight.
+    pub fn reachable_remanence(&self) -> f64 {
+        self.weight * ((1.0 - self.width) / self.width).min(1.0)
+    }
+
     /// What a demagnetized rod keeps after a drive `v` (normalized, in
     /// [0, 1]) and switching off, through this operator alone [A·m²].
     fn remanence_after_drive(&self, v: f64) -> f64 {
@@ -265,8 +272,9 @@ impl MtqRemanence {
     ///
     /// # Panics
     /// Panics if the length differs from the number of MTQs, a width is
-    /// outside (0, 1), a weight is negative or non-finite, or a rod's weights
-    /// sum above its `max_moment` (its blended moment would then exceed it).
+    /// outside (0, 1), a weight is negative or non-finite, or a rod's
+    /// reachable remanence ([`RemanencePlay::reachable_remanence`] summed)
+    /// is above its `max_moment` (its blended moment could then exceed it).
     pub fn demagnetized_with_plays(core: &MtqAssemblyCore, plays: Vec<Vec<RemanencePlay>>) -> Self {
         assert_eq!(
             plays.len(),
@@ -288,10 +296,10 @@ impl MtqRemanence {
                     p.weight
                 );
             }
-            let sum: f64 = rod.iter().map(|p| p.weight).sum();
+            let sum: f64 = rod.iter().map(RemanencePlay::reachable_remanence).sum();
             assert!(
                 sum <= mtq.max_moment,
-                "remanence must be within [0, max_moment = {}], got {sum}",
+                "remanence must be within [0, max_moment = {}], got a reachable {sum}",
                 mtq.max_moment
             );
         }
@@ -514,6 +522,30 @@ mod tests {
     fn a_remanence_above_the_rod_limit_is_refused() {
         let core = MtqAssemblyCore::new(vec![Mtq::new(Vector3::x(), 1.0)]);
         MtqRemanence::demagnetized(&core, vec![1.5]);
+    }
+
+    /// A wide operator's weight may exceed the limit when what it can hold
+    /// does not: 0.75 wide with weight 3 holds at most 1, which a 1 A·m² rod
+    /// takes, and a full drive leaves exactly that.
+    #[test]
+    fn a_wide_play_is_bounded_by_what_it_can_hold_not_by_its_weight() {
+        let core = MtqAssemblyCore::new(vec![Mtq::new(Vector3::x(), 1.0)]);
+        let play = RemanencePlay {
+            width: 0.75,
+            weight: 3.0,
+        };
+        assert_close(play.reachable_remanence(), 1.0);
+        let mut rem = MtqRemanence::demagnetized_with_plays(&core, vec![vec![play]]);
+        rem.apply(&[1.0]);
+        assert_close(rem.residual()[0], 1.0);
+        for c in [-1.0, 1.0, -1.0, 0.3] {
+            rem.apply(&[c]);
+            assert!(
+                rem.residual()[0].abs() <= 1.0 + 1e-15,
+                "{:?}",
+                rem.residual()
+            );
+        }
     }
 
     #[test]

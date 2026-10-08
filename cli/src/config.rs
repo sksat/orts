@@ -1474,7 +1474,7 @@ impl MtqConfig {
                         REMANENCE_CURVE_MAX_MISFIT * 100.0
                     ));
                 }
-                let sum: f64 = plays.iter().map(|p| p.weight).sum();
+                let sum: f64 = plays.iter().map(RemanencePlay::reachable_remanence).sum();
                 if sum > *max_moment {
                     return Err(format!(
                         "magnetorquers.remanence_curve: the remanence reaches {sum} A·m², above \
@@ -3939,6 +3939,22 @@ satellites:
                 rem.residual()[0]
             );
         }
+    }
+
+    /// A remanence rising only late in the drive needs wide operators whose
+    /// weights exceed the limit, though what they hold does not: such a curve
+    /// within the limit is accepted.
+    #[test]
+    fn a_late_rising_remanence_curve_within_the_limit_is_accepted() {
+        let config: SimConfig = toml::from_str(
+            "[[satellites]]\n[satellites.orbit]\ntype = \"circular\"\naltitude = 500\n\
+             [satellites.magnetorquers]\ntype = \"three_axis\"\nmax_moment = 1.0\n\
+             remanence_curve = [[0.75, 0.0], [1.0, 1.0]]\n",
+        )
+        .expect("parses");
+        config.satellites[0]
+            .validate()
+            .expect("a full drive leaves 1 A·m², the limit");
     }
 
     #[test]
