@@ -33,3 +33,5 @@ minimumReleaseAgeExclude:
   - astro@7.1.0 || 7.2.8
   # Renovate security update: mermaid@11.16.1
   - mermaid@11.16.1
+  # Renovate security update: katex@0.18.2
+  - katex@0.18.2
