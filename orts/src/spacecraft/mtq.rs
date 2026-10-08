@@ -17,6 +17,8 @@ use tobari::magnetic::MagneticFieldModel;
 use crate::magnetic;
 use crate::model::{ExternalLoads, HasAttitude, HasFrame, HasOrbit, Model};
 
+use super::mtq_drive::MtqMomentProfile;
+
 /// A single magnetic torquer with physical limits.
 #[derive(Debug, Clone)]
 pub struct Mtq {
@@ -158,6 +160,59 @@ impl MtqAssemblyCore {
         }
     }
 
+    /// The per-rod moments [A·m²] of rods driven at the clamped moments
+    /// `clamped` while their cores hold the remanence `residual`.
+    ///
+    /// `u = c + r (1 − |c| / max_moment)`: the command at a full drive, the
+    /// remanence when off, a linear blend in between
+    /// (DESIGN.md "MTQ の rod の moment は、遅れて追従する駆動と残留磁化から決める"). A rod with a zero limit has no drive range and realizes
+    /// `c + r`.
+    ///
+    /// # Panics
+    /// Panics if either slice's length differs from the number of MTQs, or a
+    /// remanent moment is non-finite or above its rod's `max_moment`.
+    pub fn rod_moments_with_remanence(&self, clamped: &[f64], residual: &[f64]) -> Vec<f64> {
+        let n = self.num_mtqs();
+        assert_eq!(clamped.len(), n, "clamped moments length != MTQ count");
+        self.check_rod_moments(residual, "remanent moment");
+        clamped
+            .iter()
+            .zip(residual)
+            .zip(&self.mtqs)
+            .map(|((&c, &r), mtq)| {
+                if mtq.max_moment > 0.0 {
+                    c + r * (1.0 - c.abs() / mtq.max_moment)
+                } else {
+                    c + r
+                }
+            })
+            .collect()
+    }
+
+    /// Whether `other` has the same rods: count, axes and limits.
+    pub(crate) fn has_the_rods_of(&self, other: &Self) -> bool {
+        self.mtqs.len() == other.mtqs.len()
+            && self
+                .mtqs
+                .iter()
+                .zip(&other.mtqs)
+                .all(|(a, b)| a.axis == b.axis && a.max_moment == b.max_moment)
+    }
+
+    /// Panics unless `moments` has one finite moment per rod, each within
+    /// that rod's `max_moment`: a larger remanence would make the blended
+    /// moment exceed the limit, and a profile could not come from the rods.
+    fn check_rod_moments(&self, moments: &[f64], what: &str) {
+        assert_eq!(moments.len(), self.num_mtqs(), "{what} length != MTQ count");
+        for (&m, mtq) in moments.iter().zip(&self.mtqs) {
+            assert!(
+                m.is_finite() && m.abs() <= mtq.max_moment,
+                "{what} must be finite and within max_moment = {}, got {m}",
+                mtq.max_moment
+            );
+        }
+    }
+
     /// Compute the magnetic torque from per-MTQ commanded moments and
     /// the local magnetic field in the body frame.
     ///
@@ -207,6 +262,10 @@ pub struct MtqAssembly<F: MagneticFieldModel, Fr: EarthFixedTransform = frame::S
     core: MtqAssemblyCore,
     /// Per-MTQ command (direct moments or normalized), updated between ODE segments.
     pub command: MtqCommand,
+    /// The rods' moments over this segment, from an
+    /// [`MtqMomentDrive`](super::MtqMomentDrive); `None` resolves `command`
+    /// alone, at once and with no remanence.
+    moment_profile: Option<MtqMomentProfile>,
     /// Geomagnetic field model.
     field: F,
     /// EOP storage for the frame adapter. `()` for `SimpleEci`.
@@ -223,6 +282,7 @@ where
         Self {
             core: self.core.clone(),
             command: self.command.clone(),
+            moment_profile: self.moment_profile.clone(),
             field: self.field.clone(),
             eop: self.eop.clone(),
         }
@@ -250,9 +310,27 @@ impl<F: MagneticFieldModel, Fr: EarthFixedTransform> MtqAssembly<F, Fr> {
         Self {
             core,
             command: MtqCommand::Moments(vec![0.0; n]),
+            moment_profile: None,
             field,
             eop,
         }
+    }
+
+    /// The same assembly with its rods' moments over this segment given by
+    /// `profile` ([`MtqMomentDrive::profile`](super::MtqMomentDrive::profile)
+    /// at the start of the segment), in place of `command`.
+    ///
+    /// # Panics
+    /// Panics if the profile is for other rods (count, axes or limits): its
+    /// moments are kept within its own rods' limits, which are only these
+    /// rods' if the two are the same.
+    pub fn with_moment_profile(mut self, profile: MtqMomentProfile) -> Self {
+        assert!(
+            self.core.has_the_rods_of(profile.core()),
+            "the moment profile is for other MTQ rods than this assembly's"
+        );
+        self.moment_profile = Some(profile);
+        self
     }
 
     /// Standard 3-axis orthogonal arrangement in an arbitrary inertial frame `Fr`.
@@ -271,6 +349,15 @@ impl<F: MagneticFieldModel, Fr: EarthFixedTransform> MtqAssembly<F, Fr> {
     pub fn realized_rod_moments(&self) -> Vec<f64> {
         self.core.realized_rod_moments(&self.command)
     }
+
+    /// Per-MTQ dipole moments at time `t` [A·m²]: the moment profile's when
+    /// one is set, otherwise [`Self::realized_rod_moments`].
+    pub fn realized_rod_moments_at(&self, t: f64) -> Vec<f64> {
+        match &self.moment_profile {
+            Some(profile) => profile.at(t),
+            None => self.realized_rod_moments(),
+        }
+    }
 }
 
 // Frame-generic MTQ torque: the geomagnetic field is evaluated in the state's
@@ -288,7 +375,7 @@ impl<
         "mtq_assembly"
     }
 
-    fn eval(&self, _t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<Fr> {
+    fn eval(&self, t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<Fr> {
         let Some(epoch) = epoch else {
             return ExternalLoads::zeros();
         };
@@ -304,7 +391,7 @@ impl<
             .attitude_from_inertial()
             .transform(&b_inertial)
             .into_inner();
-        let moments = self.realized_rod_moments();
+        let moments = self.realized_rod_moments_at(t);
         ExternalLoads::torque(self.core.torque(&moments, &b_body))
     }
 }
@@ -314,6 +401,7 @@ mod tests {
     use super::*;
     use crate::attitude::AttitudeState;
     use crate::orbital::OrbitalState;
+    use crate::spacecraft::{MtqMomentDrive, RemanencePlay};
     use arika::epoch::Epoch;
     use arika::frame::Vec3 as FrameVec3;
     use nalgebra::Vector4;
@@ -433,6 +521,89 @@ mod tests {
         assert_eq!(&rods[1..], &[0.0, 0.0]);
     }
 
+    // Remanence tests: a 10 A·m² rod keeping 0.06 A·m² (0.6 %) after a full drive.
+
+    const REM_MAX: f64 = 10.0;
+    const REM_SAT: f64 = 0.06;
+
+    fn assert_close(actual: f64, expected: f64) {
+        assert!(
+            (actual - expected).abs() < 1e-12,
+            "expected {expected}, got {actual}"
+        );
+    }
+
+    /// A remanence larger than a rod's limit, handed to the blend or to an
+    /// assembly, would make the moment exceed the limit; both refuse it.
+    #[test]
+    #[should_panic(expected = "within max_moment")]
+    fn a_remanent_moment_above_the_limit_is_refused_by_the_blend() {
+        let core = MtqAssemblyCore::new(vec![Mtq::new(Vector3::x(), 1.0)]);
+        core.rod_moments_with_remanence(&[0.0], &[10.0]);
+    }
+
+    /// A profile keeps its moments within its own rods' limits; for rods with
+    /// other limits it could exceed this assembly's, so it is refused.
+    #[test]
+    #[should_panic(expected = "other MTQ rods")]
+    fn a_profile_for_other_rods_is_refused_by_the_assembly() {
+        let other = MtqMomentProfile::off(MtqAssemblyCore::three_axis(10.0), 0.0);
+        let _ = MtqAssembly::three_axis(1.0, TiltedDipole::earth()).with_moment_profile(other);
+    }
+
+    /// Full drive realizes the command, off realizes the remanence, and in
+    /// between the remanence fades linearly with the drive.
+    #[test]
+    fn the_rod_moment_blends_the_command_and_the_remanence() {
+        let core = MtqAssemblyCore::new(vec![Mtq::new(Vector3::x(), REM_MAX)]);
+        let r = [REM_SAT];
+        assert_close(core.rod_moments_with_remanence(&[REM_MAX], &r)[0], REM_MAX);
+        assert_close(core.rod_moments_with_remanence(&[0.0], &r)[0], REM_SAT);
+        assert_close(
+            core.rod_moments_with_remanence(&[-REM_MAX / 2.0], &r)[0],
+            -REM_MAX / 2.0 + REM_SAT / 2.0,
+        );
+    }
+
+    /// The blended moment stays inside the rod's limit for any command and
+    /// any remanence the play operator can reach.
+    #[test]
+    fn the_rod_moment_stays_inside_the_limit() {
+        let core = MtqAssemblyCore::new(vec![Mtq::new(Vector3::x(), 1.0)]);
+        for i in -20..=20 {
+            let c = i as f64 / 20.0;
+            for r in [-1.0, -0.3, 0.0, 0.3, 1.0] {
+                let u = core.rod_moments_with_remanence(&[c], &[r])[0];
+                assert!(u.abs() <= 1.0 + 1e-15, "c {c}, r {r}: {u}");
+            }
+        }
+    }
+
+    /// With no command, an assembly carrying a remanence feels r × B.
+    #[test]
+    fn an_assembly_with_remanence_and_no_command_feels_its_torque() {
+        let b = Vector3::new(0.0, 0.0, 1e-5);
+        let mut drive = MtqMomentDrive::new(MtqAssemblyCore::three_axis(REM_MAX), 0.0)
+            .with_remanence_plays(vec![RemanencePlay::from_residual_moment(REM_SAT); 3]);
+        drive.apply(0.0, &MtqCommand::Moments(vec![REM_MAX, 0.0, 0.0]));
+        drive.apply(1.0, &MtqCommand::Moments(vec![0.0; 3]));
+        let assembly = MtqAssembly::three_axis(REM_MAX, TiltedDipole::earth())
+            .with_moment_profile(drive.profile().clone());
+        let moments = assembly.realized_rod_moments_at(2.0);
+        assert_close(moments[0], REM_SAT);
+        assert_eq!(&moments[1..], &[0.0, 0.0]);
+        let tau = assembly.core().torque(&moments, &b);
+        assert_close(tau.y, -REM_SAT * 1e-5);
+    }
+
+    /// Zero remanence leaves the realized moments exactly the clamped command.
+    #[test]
+    fn zero_remanence_realizes_the_clamped_command_exactly() {
+        let mut assembly = MtqAssembly::three_axis(REM_MAX, TiltedDipole::earth());
+        assembly.command = MtqCommand::Moments(vec![12.0, -3.25, 0.5]);
+        assert_eq!(assembly.realized_rod_moments(), vec![REM_MAX, -3.25, 0.5]);
+    }
+
     #[test]
     fn torque_is_m_cross_b() {
         let core = MtqAssemblyCore::three_axis(1.0);
@@ -549,6 +720,31 @@ mod tests {
         let epoch = test_epoch();
         let loads = assembly.eval(0.0, &state, Some(&epoch));
         assert!(loads.torque_body.magnitude() < 1e-20);
+    }
+
+    /// With a moment profile, the torque follows the rods' moments in time:
+    /// one time constant after a switch-off from 10 A·m², e^-1 of it is left,
+    /// whatever `command` holds.
+    #[test]
+    fn assembly_torque_follows_the_moment_profile_in_time() {
+        let tau = 0.05;
+        let mut drive =
+            MtqMomentDrive::new(MtqAssemblyCore::three_axis(10.0), 0.0).with_time_constant(tau);
+        drive.apply(0.0, &MtqCommand::Moments(vec![10.0, 0.0, 0.0]));
+        drive.apply(2.0, &MtqCommand::Moments(vec![0.0; 3]));
+        let mut assembly = MtqAssembly::three_axis(10.0, TiltedDipole::earth())
+            .with_moment_profile(drive.profile().clone());
+        assembly.command = MtqCommand::Moments(vec![0.0, 3.0, 0.0]);
+        let state = TestState {
+            attitude: AttitudeState::identity(),
+            orbit: OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::zeros()),
+        };
+        let epoch = test_epoch();
+        let at_switch = assembly.eval(2.0, &state, Some(&epoch)).torque_body;
+        let one_tau = assembly.eval(2.0 + tau, &state, Some(&epoch)).torque_body;
+        assert!(at_switch.magnitude() > 0.0);
+        let ratio = one_tau.magnitude() / at_switch.magnitude();
+        assert!((ratio - (-1.0_f64).exp()).abs() < 1e-9, "{ratio}");
     }
 
     #[test]
