@@ -1,8 +1,8 @@
 //! Magnetometer sensor.
 //!
 //! Transforms the geomagnetic field from the ECI frame to the
-//! spacecraft body frame using the attitude quaternion, then
-//! optionally applies noise models.
+//! spacecraft body frame using the attitude quaternion, adds the field the
+//! onboard MTQs produce at the sensor, then optionally applies noise models.
 
 use std::sync::Arc;
 
@@ -12,6 +12,7 @@ use arika::frame;
 use tobari::magnetic::MagneticFieldModel;
 
 use super::noise::NoiseModel;
+use super::onboard_field::{MtqCoupling, OnboardMagneticSources};
 use crate::SpacecraftState;
 use crate::magnetic;
 use crate::model::HasAttitude;
@@ -20,17 +21,22 @@ use crate::plugin::tick_input::MagneticFieldBody;
 /// Three-axis magnetometer.
 ///
 /// Evaluates the host's geomagnetic field model at the spacecraft's
-/// current ECI position and epoch, then rotates the result into the
-/// body frame via the attitude quaternion:
+/// current ECI position and epoch, rotates the result into the
+/// body frame via the attitude quaternion, and adds the field the MTQ rods
+/// produce at the sensor:
 ///
 /// ```text
-/// B_body = noise(R_bi · B_eci(r, epoch))
+/// B_body = noise(R_bi · B_eci(r, epoch) + K · u)
 /// ```
+///
+/// `K` is the sensor's [`MtqCoupling`] (none by default, i.e. zero) and `u` the
+/// rods' realized moments from [`OnboardMagneticSources`].
 ///
 /// Noise models are added via the builder-style [`Self::with_noise`]
 /// method and applied in the order they were added.
 pub struct Magnetometer {
     field_model: Arc<dyn MagneticFieldModel>,
+    mtq_coupling: Option<MtqCoupling>,
     noise: Vec<Box<dyn NoiseModel>>,
 }
 
@@ -39,8 +45,21 @@ impl Magnetometer {
     pub fn new(field_model: Arc<dyn MagneticFieldModel>) -> Self {
         Self {
             field_model,
+            mtq_coupling: None,
             noise: Vec::new(),
         }
+    }
+
+    /// Couple the sensor to the MTQ rods: the reading then includes the field
+    /// the rods produce at the sensor.
+    pub fn with_mtq_coupling(mut self, coupling: MtqCoupling) -> Self {
+        self.mtq_coupling = Some(coupling);
+        self
+    }
+
+    /// The sensor's coupling to the MTQ rods, if any.
+    pub fn mtq_coupling(&self) -> Option<&MtqCoupling> {
+        self.mtq_coupling.as_ref()
     }
 
     /// Add a noise model. Multiple calls chain in order.
@@ -61,8 +80,19 @@ impl Magnetometer {
     /// `SimpleEci`).
     ///
     /// `t` is the sim time of the sample [s], which the noise models are keyed on.
-    pub fn measure(&mut self, t: f64, state: &SpacecraftState, epoch: &Epoch) -> MagneticFieldBody {
-        self.measure_in_frame::<frame::SimpleEci>(t, state, &EarthOrientation::simple(*epoch))
+    pub fn measure(
+        &mut self,
+        t: f64,
+        state: &SpacecraftState,
+        epoch: &Epoch,
+        sources: &OnboardMagneticSources,
+    ) -> MagneticFieldBody {
+        self.measure_in_frame::<frame::SimpleEci>(
+            t,
+            state,
+            &EarthOrientation::simple(*epoch),
+            sources,
+        )
     }
 
     /// Measure the magnetic field in the body frame for a state propagated in
@@ -71,12 +101,17 @@ impl Magnetometer {
     /// The field is evaluated in `F` via [`magnetic::field_inertial`] — the
     /// ERA-only rotation for `SimpleEci`, the full IAU 2006 chain for `Gcrs`
     /// (whose `orientation` carries the EOP data) — and then rotated into the
-    /// body frame.
+    /// body frame, where the MTQs' field at the sensor is added before noise.
+    ///
+    /// # Panics
+    /// Panics if the sensor has an MTQ coupling and `sources` carries no MTQ
+    /// state, or a rod count different from the coupling's.
     pub fn measure_in_frame<F: EarthFixedTransform>(
         &mut self,
         t: f64,
         state: &SpacecraftState<F>,
         orientation: &EarthOrientation<'_, F>,
+        sources: &OnboardMagneticSources,
     ) -> MagneticFieldBody {
         super::noise::keyed::check_sample_time(t);
         let b_inertial = magnetic::field_inertial::<F>(
@@ -86,6 +121,12 @@ impl Magnetometer {
         );
         let b_body_typed = state.attitude_from_inertial().transform(&b_inertial);
         let mut b_body = b_body_typed.into_inner();
+        if let Some(coupling) = &self.mtq_coupling {
+            let rods = sources
+                .mtq_rod_moments()
+                .expect("magnetometer is coupled to MTQs, but the sources carry no MTQ state");
+            b_body += coupling.field(rods);
+        }
         for n in &mut self.noise {
             b_body = n.apply(t, b_body);
         }
@@ -118,7 +159,9 @@ mod tests {
         let mut mag = Magnetometer::new(Arc::new(TiltedDipole::earth()));
         let state = leo_state();
         let epoch = Epoch::j2000();
-        let b_body = mag.measure(0.0, &state, &epoch).into_inner();
+        let b_body = mag
+            .measure(0.0, &state, &epoch, &OnboardMagneticSources::none())
+            .into_inner();
         assert!(b_body.is_finite());
         let magnitude = b_body.magnitude();
         assert!(
@@ -133,7 +176,9 @@ mod tests {
         let mut mag = Magnetometer::new(Arc::clone(&field_model) as Arc<dyn MagneticFieldModel>);
         let state = leo_state();
         let epoch = Epoch::j2000();
-        let b_body = mag.measure(0.0, &state, &epoch).into_inner();
+        let b_body = mag
+            .measure(0.0, &state, &epoch, &OnboardMagneticSources::none())
+            .into_inner();
         let b_eci = magnetic::field_eci(field_model.as_ref(), &state.orbit.position_eci(), &epoch);
         assert!((b_body.into_inner() - b_eci.into_inner()).magnitude() < 1e-15);
     }
@@ -163,7 +208,14 @@ mod tests {
     fn simple_eci_measurement_snapshot() {
         let mut mag = Magnetometer::new(Arc::new(TiltedDipole::earth()));
         let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
-        let got = mag.measure(0.0, &snapshot_state(), &epoch).into_inner();
+        let got = mag
+            .measure(
+                0.0,
+                &snapshot_state(),
+                &epoch,
+                &OnboardMagneticSources::none(),
+            )
+            .into_inner();
         let expected = nalgebra::Vector3::new(
             4.382433684690031e-6,
             3.059072261218701e-5,
@@ -198,6 +250,7 @@ mod tests {
                 0.0,
                 &state,
                 &EarthOrientation::new(epoch, &zero_eop()),
+                &OnboardMagneticSources::none(),
             )
             .into_inner()
             .into_inner();
@@ -216,10 +269,86 @@ mod tests {
             "Gcrs magnetometer must use the Gcrs field: {got:?} vs {expected:?}"
         );
 
-        let simple_eci = mag.measure(0.0, &simple, &epoch).into_inner().into_inner();
+        let simple_eci = mag
+            .measure(0.0, &simple, &epoch, &OnboardMagneticSources::none())
+            .into_inner()
+            .into_inner();
         assert!(
             (got - simple_eci).magnitude() > simple_eci.magnitude() * 1e-4,
             "Gcrs reading should differ from the SimpleEci reading"
+        );
+    }
+
+    // Onboard MTQ field
+
+    fn coupling() -> MtqCoupling {
+        MtqCoupling::from_columns(vec![
+            Vector3::new(2e-5, 1e-6, 0.0),
+            Vector3::new(0.0, -1e-5, 3e-6),
+            Vector3::new(-4e-6, 0.0, 5e-5),
+        ])
+    }
+
+    fn mtq_on() -> OnboardMagneticSources {
+        OnboardMagneticSources::none().with_mtq_rod_moments(vec![0.5, -1.0, 0.2])
+    }
+
+    /// The coupled reading is the uncoupled one plus `K · u`.
+    #[test]
+    fn coupled_reading_adds_the_rods_field() {
+        let state = snapshot_state();
+        let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        let mut plain = Magnetometer::new(Arc::new(TiltedDipole::earth()));
+        let mut coupled =
+            Magnetometer::new(Arc::new(TiltedDipole::earth())).with_mtq_coupling(coupling());
+
+        let earth = plain.measure(0.0, &state, &epoch, &mtq_on()).into_inner();
+        let got = coupled.measure(0.0, &state, &epoch, &mtq_on()).into_inner();
+        let expected = earth.into_inner() + coupling().field(&[0.5, -1.0, 0.2]);
+        assert_eq!(got.into_inner(), expected);
+        assert!(
+            (got.into_inner() - earth.into_inner()).magnitude() > 1e-6,
+            "the rods' field must move the reading"
+        );
+    }
+
+    /// An uncoupled sensor reads the geomagnetic field whatever the MTQs do.
+    #[test]
+    fn uncoupled_reading_ignores_the_mtq_state() {
+        let state = snapshot_state();
+        let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        let mut mag = Magnetometer::new(Arc::new(TiltedDipole::earth()));
+        assert_eq!(
+            mag.measure(0.0, &state, &epoch, &mtq_on()),
+            mag.measure(0.0, &state, &epoch, &OnboardMagneticSources::none())
+        );
+    }
+
+    /// With no ambient field the reading is the rods' field alone: the
+    /// self-interference does not vanish with the geomagnetic field.
+    #[test]
+    fn coupled_reading_without_ambient_field_is_the_rods_field() {
+        let mut mag =
+            Magnetometer::new(Arc::new(tobari::magnetic::NoField)).with_mtq_coupling(coupling());
+        let got = mag
+            .measure(0.0, &leo_state(), &Epoch::j2000(), &mtq_on())
+            .into_inner()
+            .into_inner();
+        assert_eq!(got, coupling().field(&[0.5, -1.0, 0.2]));
+    }
+
+    /// A coupled sensor refuses a sample without MTQ state rather than
+    /// reading as if the rods were off.
+    #[test]
+    #[should_panic(expected = "the sources carry no MTQ state")]
+    fn coupled_reading_requires_the_mtq_state() {
+        let mut mag =
+            Magnetometer::new(Arc::new(TiltedDipole::earth())).with_mtq_coupling(coupling());
+        let _ = mag.measure(
+            0.0,
+            &leo_state(),
+            &Epoch::j2000(),
+            &OnboardMagneticSources::none(),
         );
     }
 
@@ -231,8 +360,12 @@ mod tests {
             .with_noise(GaussianNoise::isotropic(1e-6, 42));
         let state = leo_state();
         let epoch = Epoch::j2000();
-        let b_ideal = ideal.measure(0.0, &state, &epoch).into_inner();
-        let b_noisy = noisy.measure(0.0, &state, &epoch).into_inner();
+        let b_ideal = ideal
+            .measure(0.0, &state, &epoch, &OnboardMagneticSources::none())
+            .into_inner();
+        let b_noisy = noisy
+            .measure(0.0, &state, &epoch, &OnboardMagneticSources::none())
+            .into_inner();
         assert!(
             (b_ideal - b_noisy).magnitude() > 0.0,
             "noisy and ideal should differ"
@@ -250,8 +383,8 @@ mod tests {
         let state = leo_state();
         let epoch = Epoch::j2000();
         assert_eq!(
-            m1.measure(0.0, &state, &epoch),
-            m2.measure(0.0, &state, &epoch)
+            m1.measure(0.0, &state, &epoch, &OnboardMagneticSources::none()),
+            m2.measure(0.0, &state, &epoch, &OnboardMagneticSources::none())
         );
     }
 }

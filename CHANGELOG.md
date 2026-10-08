@@ -14,6 +14,14 @@ section is subdivided by package.
 ### `orts` (Rust, crates.io)
 
 #### Added
+- A magnetometer reads the field the MTQ rods produce at it. `sensor::MtqCoupling`
+  holds, per rod, the field [T, body frame] one A·m² of that rod makes at the
+  sensor — given column by column (`from_columns`, e.g. measured in a ground
+  test) or from point-dipole geometry (`from_point_dipoles`).
+  `Magnetometer::with_mtq_coupling` attaches it, and the reading becomes
+  `noise(R_bi · B_earth + K · u)`. `MtqAssemblyCore::realized_rod_moments`
+  resolves an `MtqCommand` into the per-rod moments `u` the torque is built
+  from, so the sensor and the dynamics see the same dipoles.
 - `record::components` has `MagnetometerReading3D` (one per magnetometer,
   named by `magnetometer_columns`: `magnetometer`, `magnetometer.2`, …) and
   `GeomagneticFieldBody3D`, for recording magnetometer readings beside the field
@@ -155,6 +163,12 @@ section is subdivided by package.
   ([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
+- **BREAKING**: `Magnetometer::measure` / `measure_in_frame` and
+  `SensorBundle::evaluate` / `evaluate_in_frame` take an
+  `OnboardMagneticSources`: the MTQ rods' moments over the interval ending at
+  the sample, or `OnboardMagneticSources::none()` for a spacecraft without
+  them. It has no default, so a coupled magnetometer cannot be read with the
+  MTQ state left out; one is refused with a panic.
 - **BREAKING**: sensor noise is a function of its seed and the sim time it is
   asked about. `NoiseModel::apply`, every sensor's `measure` /
   `measure_in_frame` and `SensorBundle::evaluate` / `evaluate_in_frame` take the
@@ -950,6 +964,17 @@ section is subdivided by package.
   ([#536](https://github.com/sksat/orts/issues/536))
 
 #### Added
+- A `sensors` entry can be a table as well as a name. `{ type = "magnetometer",
+  mtq_coupling = [[...], [...], [...]] }` gives the field each MTQ rod makes at
+  the magnetometer per A·m² [T, body frame], one row per rod of
+  `magnetorquers`. In the controlled loop the magnetometer then reads the
+  command held over the interval ending at the tick, before the controller
+  returns the next one, and the recording reads the same at that instant; a
+  satellite without a controller reads its MTQ as off. A coupling without
+  `magnetorquers`, with a row count other than the rods', or with a non-finite
+  component is refused, and so are two magnetometer entries with different
+  couplings, since one magnetometer is built. A negative or non-finite
+  `magnetorquers.max_moment` is refused rather than panicking at the build.
 - `orts run` records the magnetometer readings of a satellite with attitude at
   every output sample, with a controller or without one: each magnetometer's
   reading [T, body frame] and the geomagnetic field at the same instant with no

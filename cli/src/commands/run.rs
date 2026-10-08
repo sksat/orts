@@ -1727,7 +1727,7 @@ fn log_controlled_state(
     // TODO: distinguish Moments vs NormalizedMoments — currently both are
     // recorded as MtqCommand3D with A·m² labels. NormalizedMoments values
     // are [-1, 1] and should be scaled or use a separate component.
-    if sat.has_mtq {
+    if sat.mtq.is_some() {
         let mtq_vec = sat
             .actuators
             .mtq_command()
@@ -2827,6 +2827,47 @@ sensors = ["magnetometer"]
             }
             let b = row[idx("geomag_body_z_T")].abs() + row[idx("geomag_body_x_T")].abs();
             assert!(b > 1e-6, "a LEO field: {row:?}");
+        }
+    }
+
+    /// Without a controller nothing commands the MTQ, so a magnetometer
+    /// coupled to it reads the rods off: the geomagnetic field.
+    #[test]
+    fn the_attitude_path_reads_an_uncommanded_mtq_as_off() {
+        let toml = r#"
+body = "earth"
+dt = 1.0
+output_interval = 1.0
+duration = 2.0
+epoch = "2024-03-20T12:00:00Z"
+
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+attitude = { inertia_diag = [10, 10, 10], mass = 50 }
+sensors = [{ type = "magnetometer", mtq_coupling = [[1e-5, 0, 0], [0, 1e-5, 0], [0, 0, 1e-5]] }]
+magnetorquers = { type = "three_axis", max_moment = 10.0 }
+"#;
+        let config: crate::config::SimConfig = toml::from_str(toml).expect("parses");
+        config.validate().expect("valid");
+        let params = SimParams::from_config(&config).expect("builds params");
+        let rec = run_spacecraft_simulation(&params).expect("runs");
+
+        let entity = params.satellites[0].entity_path();
+        let columns = csv_columns(&rec, &[&entity]);
+        let header = build_csv_header(&columns, false);
+        let cols: Vec<&str> = header.trim_start_matches("# ").split(',').collect();
+        let idx = |name: &str| cols.iter().position(|c| *c == name).expect(name);
+        let mut out = Vec::new();
+        write_satellite_csv(&mut out, &rec, &entity, params.mu, false, &columns).expect("csv");
+        let text = String::from_utf8(out).expect("utf-8");
+        for line in text.lines().filter(|l| !l.starts_with('#')) {
+            let row: Vec<&str> = line.split(',').map(str::trim).collect();
+            assert_eq!(
+                row[idx("magnetometer.reading_body_x_T")],
+                row[idx("geomag_body_x_T")],
+                "the rods are off"
+            );
         }
     }
 

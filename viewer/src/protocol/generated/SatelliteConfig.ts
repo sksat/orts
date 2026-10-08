@@ -7,7 +7,7 @@ import type { MtqConfig } from "./MtqConfig";
 import type { OrbitConfig } from "./OrbitConfig";
 import type { PanelConfig } from "./PanelConfig";
 import type { ReactionWheelConfig } from "./ReactionWheelConfig";
-import type { SensorChoice } from "./SensorChoice";
+import type { SensorConfig } from "./SensorConfig";
 import type { ThrusterConfig } from "./ThrusterConfig";
 
 /**
@@ -41,7 +41,7 @@ controller?: ControllerConfig,
 /**
  * 有効にするセンサ一覧。
  */
-sensors?: Array<SensorChoice>, 
+sensors?: Array<SensorConfig>, 
 /**
  * リアクションホイール設定。
  */
