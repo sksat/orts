@@ -4,8 +4,6 @@
 //! 組み立て、制御サンプル周期ごとに積分 -> センサ評価 -> プラグイン呼び出し ->
 //! アクチュエータ更新 を繰り返す。`orts run` と `orts serve` の両方から使う。
 
-use std::sync::Arc;
-
 use arika::epoch::Epoch;
 use orts::effector::AugmentedState;
 use orts::orbital::gravity::GravityField;
@@ -1106,17 +1104,16 @@ pub(crate) fn build_sensor_bundle(
             "its reading has no ambient field in it",
             sat_id,
         );
-        let field: Arc<dyn tobari::magnetic::MagneticFieldModel> = if body_field_is_modelled(body) {
-            Arc::new(Igrf::earth())
-        } else {
-            Arc::new(tobari::magnetic::NoField)
-        };
-        let mut mag = Magnetometer::new(field);
+        let mut mag = Magnetometer::new(orts::magnetic::igrf_field_for_body(body));
         if let Some(rows) = entry.mtq_coupling() {
             // Validated finite, and one row per rod, by `SatelliteConfig::validate`.
             mag = mag.with_mtq_coupling(MtqCoupling::from_columns(
                 rows.iter().map(|r| Vector3::from_row_slice(r)).collect(),
             ));
+        }
+        if let Some(b) = entry.residual_field() {
+            // Validated finite by `SatelliteConfig::validate`.
+            mag = mag.with_residual_field(Vector3::from(b));
         }
         vec![mag]
     } else {
@@ -1148,6 +1145,7 @@ mod tests {
     use super::*;
     use arika::body::KnownBody;
     use orts::plugin::{Command, PluginError, TickInput};
+    use std::sync::Arc;
 
     /// A controller that records the `t` of every tick it is given.
     ///
@@ -2119,6 +2117,34 @@ mod tests {
         assert_eq!(sat.magnetometer_telemetry(0.0, None), None);
     }
 
+    /// The configured residual field reaches the magnetometer: on Mars, with
+    /// no ambient field, it is the whole reading.
+    #[test]
+    fn the_magnetometer_reads_its_configured_residual_field() {
+        let b_res = [1e-7, -2e-7, 3e-7];
+        let mut bundle = build_sensor_bundle(
+            Some(&[SensorConfig::Detailed(
+                crate::config::DetailedSensorConfig::Magnetometer {
+                    mtq_coupling: None,
+                    residual_field: Some(b_res),
+                },
+            )]),
+            KnownBody::Mars,
+            "sat-test",
+        )
+        .expect("a magnetometer builds on Mars");
+        let reading = bundle.magnetometers[0]
+            .measure(
+                0.0,
+                &state_at(nalgebra::Vector3::new(7000.0, 0.0, 0.0)),
+                &Epoch::j2000(),
+                &OnboardMagneticSources::none(),
+            )
+            .into_inner()
+            .into_inner();
+        assert_eq!(reading, Vector3::from(b_res));
+    }
+
     /// A controller that records the first magnetometer's reading at every
     /// tick and returns the next MTQ command from a script.
     struct MagnetometerRecorder {
@@ -2172,6 +2198,7 @@ mod tests {
             Some(&[SensorConfig::Detailed(
                 crate::config::DetailedSensorConfig::Magnetometer {
                     mtq_coupling: Some(rows.to_vec()),
+                    residual_field: None,
                 },
             )]),
             sat.body,

@@ -31,8 +31,10 @@ pub fn field_is_modelled(body: arika::body::KnownBody) -> bool {
 ///
 /// [`Igrf`](tobari::magnetic::Igrf) on Earth and
 /// [`NoField`](tobari::magnetic::NoField) where [`field_is_modelled`] says
-/// there is none. The WASM host's import keeps its own choice,
-/// [`field_for_body`].
+/// there is none. The residual-dipole torque and the magnetometer take their
+/// field from here, and the magnetorquer, which holds its field as a type,
+/// chooses by the same [`field_is_modelled`], so the three agree. The WASM
+/// host's import keeps its own choice, [`field_for_body`].
 pub fn igrf_field_for_body(body: arika::body::KnownBody) -> std::sync::Arc<dyn MagneticFieldModel> {
     if field_is_modelled(body) {
         std::sync::Arc::new(tobari::magnetic::Igrf::earth())

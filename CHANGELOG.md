@@ -14,6 +14,14 @@ section is subdivided by package.
 ### `orts` (Rust, crates.io)
 
 #### Added
+- The spacecraft's residual magnetic dipole. `setup::DisturbanceTorques`
+  has `residual_dipole: Option<Vector3<f64>>` [A·m², body frame], and
+  `build_spacecraft_dynamics` installs `attitude::ResidualDipoleTorque`
+  (`m_res × B`, model name `residual_dipole`) when it is set.
+  `Magnetometer::with_residual_field` adds the constant field the
+  magnetization makes at the sensor (the hard-iron offset), given apart from
+  the dipole. The torque takes its field from `magnetic::igrf_field_for_body`,
+  as the CLI's magnetometer does: IGRF on Earth, `NoField` elsewhere.
 - A magnetometer reads the field the MTQ rods produce at it. `sensor::MtqCoupling`
   holds, per rod, the field [T, body frame] one A·m² of that rod makes at the
   sensor — given column by column (`from_columns`, e.g. measured in a ground
@@ -163,6 +171,8 @@ section is subdivided by package.
   ([#411](https://github.com/sksat/orts/issues/411))
 
 #### Changed
+- **BREAKING**: `setup::DisturbanceTorques` has a `residual_dipole` field, so
+  a struct literal has to name it (`None` keeps the previous behaviour).
 - **BREAKING**: `Magnetometer::measure` / `measure_in_frame` and
   `SensorBundle::evaluate` / `evaluate_in_frame` take an
   `OnboardMagneticSources`: the MTQ rods' moments over the interval ending at
@@ -964,6 +974,12 @@ section is subdivided by package.
   ([#536](https://github.com/sksat/orts/issues/536))
 
 #### Added
+- `disturbances.residual_dipole = [mx, my, mz]` [A·m², body frame] models the
+  torque of the spacecraft's residual dipole in the geomagnetic field, in
+  `run` and `serve` alike, and a magnetometer table takes
+  `residual_field = [bx, by, bz]` [T, body frame] for the constant field the
+  magnetization makes at the sensor. Non-finite components are refused. About
+  a body with no field model the torque is zero, with a warning.
 - A `sensors` entry can be a table as well as a name. `{ type = "magnetometer",
   mtq_coupling = [[...], [...], [...]] }` gives the field each MTQ rod makes at
   the magnetometer per A·m² [T, body frame], one row per rod of
