@@ -14,6 +14,27 @@ section is subdivided by package.
 ### `orts` (Rust, crates.io)
 
 #### Added
+- The MTQ rods' response and remanence. `spacecraft::MtqMomentDrive` holds
+  the rods' state across commands and gives their moments at any time: each
+  rod's drive (its coil current, as the moment it makes) approaches the
+  command with a first-order response (`with_time_constant`), the core's
+  remanence follows that drive (`with_remanence_plays`), and the moment blends
+  the two, `d + r (1 - |d| / max_moment)`. A pulse too short for the drive to
+  reach far leaves only the remanence that drive gives. `MtqMomentProfile` is
+  that over one held command, a pure function of time;
+  `MtqAssembly::with_moment_profile` makes the torque evaluate it through
+  `MtqAssembly::realized_rod_moments_at`. `spacecraft::MtqRemanence` is the
+  remanence, a weighted sum of play operators of different widths
+  (`spacecraft::RemanencePlay`, a Prandtl–Ishlinskii model) on the drive
+  normalized by each rod's limit: held while a rod is off, reduced and then
+  flipped by a reverse drive, and cleared by a drive alternating with a
+  decreasing amplitude. `RemanencePlay::from_residual_moment` gives the one
+  operator a datasheet's residual moment stands for, and
+  `RemanencePlay::fit_remanence_curve` fits operators by non-negative least
+  squares to a measured curve, ending at the full drive, of what a
+  demagnetized rod keeps after each drive. Applying the same command again
+  changes neither the remanence nor the moments, so how many controller ticks
+  a command is held for does not matter.
 - The spacecraft's residual magnetic dipole. `setup::DisturbanceTorques`
   has `residual_dipole: Option<Vector3<f64>>` [A·m², body frame], and
   `build_spacecraft_dynamics` installs `attitude::ResidualDipoleTorque`
@@ -974,6 +995,19 @@ section is subdivided by package.
   ([#536](https://github.com/sksat/orts/issues/536))
 
 #### Added
+- `magnetorquers.time_constant` [s] makes each rod's moment approach a new
+  command with a first-order response, so a magnetometer read soon after the
+  MTQ is switched off still sees its field decaying; left out, a command takes
+  effect at once. A fixed-step integrator whose step is longer than a fifth of
+  it gets a warning, since the transient's torque is then integrated coarsely.
+  `magnetorquers.remanence` [A·m²] is the moment each rod's core keeps after a
+  full drive (a datasheet's residual moment), between 0 and `max_moment`, and
+  `magnetorquers.remanence_curve = [[v, R], ...]` a measured curve instead:
+  `R` [A·m²] kept by a demagnetized rod after a drive of `v` times its limit,
+  ending at `v = 1`. A curve the fitted operators miss by more than 5% of its largest remanence is
+  refused, as is one with both keys. The rods start off and demagnetized; in
+  the controlled loop each MTQ command the controller returns is applied to
+  them, and both the MTQ torque and a coupled magnetometer read their moments.
 - `disturbances.residual_dipole = [mx, my, mz]` [A·m², body frame] models the
   torque of the spacecraft's residual dipole in the geomagnetic field, in
   `run` and `serve` alike, and a magnetometer table takes
