@@ -32,6 +32,11 @@ const FIT_WIDTHS: usize = 32;
 /// Points the linearly interpolated curve is sampled at for the fit, evenly
 /// spaced in the drive; four per operator width.
 const FIT_SAMPLES: usize = 4 * FIT_WIDTHS;
+/// Most points a remanence curve may have. A measured curve has a few to a
+/// few tens; past this, 31 operators follow it no better, and a curve taken
+/// from a network request (`orts serve`'s `add_satellite`) cannot make the
+/// fit arbitrarily costly.
+pub const MAX_REMANENCE_CURVE_POINTS: usize = 64;
 
 impl RemanencePlay {
     /// The one operator a datasheet's residual moment `m_r` [A·m²] gives: the
@@ -60,14 +65,25 @@ impl RemanencePlay {
     /// a non-zero weight and the largest difference [A·m²] between the
     /// fitted curve and the points, which the caller judges.
     ///
+    /// The fit runs on the curve divided by its largest remanence, and the
+    /// weights are scaled back, so a curve and the same curve times any
+    /// positive factor give the same operators up to that factor.
+    ///
     /// # Errors
-    /// If the curve is empty, a drive is outside (0, 1] or not increasing,
+    /// If the curve is empty or has more than [`MAX_REMANENCE_CURVE_POINTS`]
+    /// points, a drive is outside (0, 1] or not increasing,
     /// the last drive is not 1 (the full drive, without which the remanence
     /// after it would be extrapolated), or a remanence is negative or
     /// non-finite.
     pub fn fit_remanence_curve(curve: &[(f64, f64)]) -> Result<(Vec<Self>, f64), String> {
         if curve.is_empty() {
             return Err("the remanence curve has no points".into());
+        }
+        if curve.len() > MAX_REMANENCE_CURVE_POINTS {
+            return Err(format!(
+                "the remanence curve has {} points, more than {MAX_REMANENCE_CURVE_POINTS}",
+                curve.len()
+            ));
         }
         let mut last_v = 0.0;
         for &(v, r) in curve {
@@ -87,6 +103,12 @@ impl RemanencePlay {
             return Err(format!(
                 "the remanence curve must end at the full drive, v = 1; it ends at {last_v}"
             ));
+        }
+        // Fitted on the curve scaled to a largest remanence of 1, so the
+        // solver's tolerances do not depend on the curve's units.
+        let scale = curve.iter().map(|&(_, r)| r).fold(0.0, f64::max);
+        if scale == 0.0 {
+            return Ok((Vec::new(), 0.0));
         }
         let interpolated = |v: f64| -> f64 {
             let mut prev = (0.0, 0.0);
@@ -111,13 +133,19 @@ impl RemanencePlay {
         let a = DMatrix::from_fn(drives.len(), basis.len(), |i, j| {
             basis[j].remanence_after_drive(drives[i])
         });
-        let b = DVector::from_iterator(drives.len(), drives.iter().map(|&v| interpolated(v)));
+        let b = DVector::from_iterator(
+            drives.len(),
+            drives.iter().map(|&v| interpolated(v) / scale),
+        );
         let weights = nnls(&a, &b);
         let plays: Vec<Self> = basis
             .into_iter()
             .zip(weights.iter())
             .filter(|(_, w)| **w > 0.0)
-            .map(|(p, &w)| Self { weight: w, ..p })
+            .map(|(p, &w)| Self {
+                weight: w * scale,
+                ..p
+            })
             .collect();
         let misfit = curve
             .iter()
@@ -568,6 +596,56 @@ mod tests {
         ] {
             assert!(RemanencePlay::fit_remanence_curve(&bad).is_err(), "{bad:?}");
         }
+    }
+
+    /// A curve and the same curve scaled to near f64::MAX fit to the same
+    /// operators up to the scale; a curve of zeros leaves none.
+    #[test]
+    fn the_fit_does_not_depend_on_the_curves_scale() {
+        let curve: Vec<(f64, f64)> = [0.2, 0.4, 0.6, 0.8, 1.0]
+            .iter()
+            .map(|&v| (v, 0.06 * v * v))
+            .collect();
+        let (small, _) = RemanencePlay::fit_remanence_curve(&curve).unwrap();
+        // The largest remanence becomes 1e306.
+        let factor = 1e306 / 0.06;
+        let big: Vec<(f64, f64)> = curve.iter().map(|&(v, r)| (v, r * factor)).collect();
+        let (large, misfit) = RemanencePlay::fit_remanence_curve(&big).unwrap();
+        assert!(misfit < 0.03 * 1e306, "misfit {misfit}");
+        assert_eq!(small.len(), large.len());
+        for (s, l) in small.iter().zip(&large) {
+            assert_eq!(s.width, l.width);
+            assert!(
+                (l.weight / factor - s.weight).abs() <= 1e-9 * s.weight,
+                "{s:?} {l:?}"
+            );
+        }
+        // A single full-drive point at the largest finite scale fits too.
+        let (plays, misfit) = RemanencePlay::fit_remanence_curve(&[(1.0, 1e308)]).unwrap();
+        assert!(
+            !plays.is_empty() && misfit < 0.05 * 1e308,
+            "misfit {misfit}"
+        );
+        let zeros = [(0.5, 0.0), (1.0, 0.0)];
+        assert_eq!(
+            RemanencePlay::fit_remanence_curve(&zeros).unwrap(),
+            (vec![], 0.0)
+        );
+    }
+
+    #[test]
+    fn a_curve_with_too_many_points_is_refused() {
+        let n = MAX_REMANENCE_CURVE_POINTS + 1;
+        let curve: Vec<(f64, f64)> = (1..=n).map(|k| (k as f64 / n as f64, 0.01)).collect();
+        let err = RemanencePlay::fit_remanence_curve(&curve).unwrap_err();
+        assert!(err.contains("points"), "{err}");
+        let ok: Vec<(f64, f64)> = curve[1..]
+            .iter()
+            .map(|&(_, r)| r)
+            .enumerate()
+            .map(|(k, r)| ((k + 1) as f64 / (n - 1) as f64, r))
+            .collect();
+        assert!(RemanencePlay::fit_remanence_curve(&ok).is_ok());
     }
 
     /// NNLS reaches the least residual over all non-negative x, compared with

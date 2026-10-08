@@ -1004,7 +1004,7 @@ section is subdivided by package.
   full drive (a datasheet's residual moment), between 0 and `max_moment`, and
   `magnetorquers.remanence_curve = [[v, R], ...]` a measured curve instead:
   `R` [A·m²] kept by a demagnetized rod after a drive of `v` times its limit,
-  ending at `v = 1`. A curve the fitted operators miss by more than 5% of its largest remanence is
+  ending at `v = 1`, of at most 64 points. A curve the fitted operators miss by more than 5% of its largest remanence is
   refused, as is one with both keys. The rods start off and demagnetized; in
   the controlled loop each MTQ command the controller returns is applied to
   them, and both the MTQ torque and a coupled magnetometer read their moments.

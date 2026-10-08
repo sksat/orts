@@ -16,7 +16,8 @@ max_moment: number,
 remanence?: number, 
 /**
  * 消磁した rod を最大モーメントの `v` 倍で駆動して切った後に残るモーメント
- * `R` [A·m²] の実測表、`[v, R]` の列 (`v` は (0, 1] で増加)。
+ * `R` [A·m²] の実測表、`[v, R]` の列。`v` は (0, 1] で増加し、最大駆動の
+ * `v = 1` で終わる。点は 64 個まで。
  */
 remanence_curve?: Array<[number, number]>, 
 /**
