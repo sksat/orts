@@ -1398,7 +1398,95 @@ pub enum MtqConfig {
     ThreeAxis {
         /// 最大ダイポールモーメント [A·m²]。
         max_moment: f64,
+        /// 最大モーメントで駆動して切った後に各 rod の鉄心に残るモーメント [A·m²]
+        /// (データシートの residual moment)。`remanence_curve` と両方は書けない。
+        /// どちらも省略すると残留なし。
+        #[serde(default)]
+        #[ts(optional)]
+        remanence: Option<f64>,
+        /// 消磁した rod を最大モーメントの `v` 倍で駆動して切った後に残るモーメント
+        /// `R` [A·m²] の実測表、`[v, R]` の列。`v` は (0, 1] で増加し、最大駆動の
+        /// `v = 1` で終わる。点は 64 個まで。
+        #[serde(default)]
+        #[ts(optional)]
+        remanence_curve: Option<Vec<[f64; 2]>>,
+        /// command が変わった後、rod の moment が新しい値に近づく時定数 [s]
+        /// (コイルの L/R と渦電流を合わせた一次遅れ)。省略時は 0 で、command
+        /// はすぐに効く。
+        #[serde(default)]
+        #[ts(optional)]
+        time_constant: Option<f64>,
     },
+}
+
+/// Largest difference the operators fitted to a `remanence_curve` may leave
+/// from its points, as a fraction of the curve's largest remanence: past it
+/// the operators no longer stand for the measured curve.
+const REMANENCE_CURVE_MAX_MISFIT: f64 = 0.05;
+
+impl MtqConfig {
+    /// The rods' response time constant [s]; 0 when left out.
+    pub fn time_constant(&self) -> f64 {
+        let MtqConfig::ThreeAxis { time_constant, .. } = self;
+        time_constant.unwrap_or(0.0)
+    }
+
+    /// Each rod's remanence operators, from `remanence` or `remanence_curve`;
+    /// `None` with neither.
+    ///
+    /// # Errors
+    /// With both, with a `remanence` outside [0, `max_moment`], or with a curve
+    /// that is malformed, that the operators cannot follow within
+    /// [`REMANENCE_CURVE_MAX_MISFIT`], or whose operators sum above
+    /// `max_moment`.
+    pub fn remanence_plays(&self) -> Result<Option<Vec<orts::spacecraft::RemanencePlay>>, String> {
+        use orts::spacecraft::RemanencePlay;
+        let MtqConfig::ThreeAxis {
+            max_moment,
+            remanence,
+            remanence_curve,
+            ..
+        } = self;
+        match (remanence, remanence_curve) {
+            (Some(_), Some(_)) => {
+                Err("magnetorquers takes remanence or remanence_curve, not both".into())
+            }
+            (Some(m_r), None) => {
+                // Above the limit, the moment a rod realizes would exceed it.
+                if !(m_r.is_finite() && (0.0..=*max_moment).contains(m_r)) {
+                    return Err(format!(
+                        "magnetorquers.remanence must be finite and within [0, max_moment = \
+                         {max_moment}], got {m_r}"
+                    ));
+                }
+                Ok(Some(RemanencePlay::from_residual_moment(*m_r)))
+            }
+            (None, Some(curve)) => {
+                let points: Vec<(f64, f64)> = curve.iter().map(|&[v, r]| (v, r)).collect();
+                let (plays, misfit) = RemanencePlay::fit_remanence_curve(&points)
+                    .map_err(|e| format!("magnetorquers.remanence_curve: {e}"))?;
+                let largest = points.iter().map(|&(_, r)| r).fold(0.0, f64::max);
+                if misfit > REMANENCE_CURVE_MAX_MISFIT * largest {
+                    return Err(format!(
+                        "magnetorquers.remanence_curve: the fitted remanence is {misfit} A·m² off \
+                         a point, more than {}% of the largest; the operators, 1/32 of the drive \
+                         apart in width, follow only a remanence that does not fall with a \
+                         stronger drive and does not rise over much less than 1/32 of it",
+                        REMANENCE_CURVE_MAX_MISFIT * 100.0
+                    ));
+                }
+                let sum: f64 = plays.iter().map(RemanencePlay::reachable_remanence).sum();
+                if sum > *max_moment {
+                    return Err(format!(
+                        "magnetorquers.remanence_curve: the remanence reaches {sum} A·m², above \
+                         max_moment = {max_moment}"
+                    ));
+                }
+                Ok(Some(plays))
+            }
+            (None, None) => Ok(None),
+        }
+    }
 }
 
 /// 推進器一機分の静的パラメータ。
@@ -2012,12 +2100,19 @@ impl SatelliteConfig {
         if let Some(attitude) = &self.attitude {
             attitude.validate().map_err(|e| format!("attitude: {e}"))?;
         }
-        if let Some(MtqConfig::ThreeAxis { max_moment }) = &self.mtq
-            && !(max_moment.is_finite() && *max_moment >= 0.0)
-        {
-            return Err(format!(
-                "magnetorquers.max_moment must be non-negative and finite, got {max_moment}"
-            ));
+        if let Some(mtq @ MtqConfig::ThreeAxis { max_moment, .. }) = &self.mtq {
+            if !(max_moment.is_finite() && *max_moment >= 0.0) {
+                return Err(format!(
+                    "magnetorquers.max_moment must be non-negative and finite, got {max_moment}"
+                ));
+            }
+            mtq.remanence_plays()?;
+            let time_constant = mtq.time_constant();
+            if !(time_constant.is_finite() && time_constant >= 0.0) {
+                return Err(format!(
+                    "magnetorquers.time_constant must be finite and non-negative, got {time_constant}"
+                ));
+            }
         }
         if let Some(sensors) = &self.sensors {
             validate_sensors(sensors, self.mtq.as_ref()).map_err(|e| format!("sensors: {e}"))?;
@@ -3754,6 +3849,169 @@ satellites:
             let config: SimConfig = toml::from_str(&toml).expect("parses");
             let err = config.satellites[0].validate().expect_err(bad);
             assert!(err.contains("max_moment"), "{bad}: {err}");
+        }
+    }
+
+    fn mtq_with_remanence(remanence: &str) -> SimConfig {
+        let toml = format!(
+            "[[satellites]]\n[satellites.orbit]\ntype = \"circular\"\naltitude = 500\n\
+             [satellites.magnetorquers]\ntype = \"three_axis\"\nmax_moment = 10.0\n\
+             remanence = {remanence}\n"
+        );
+        toml::from_str(&toml).expect("parses")
+    }
+
+    #[test]
+    fn an_mtq_remanence_is_read_into_the_magnetorquers() {
+        let config = mtq_with_remanence("0.06");
+        config.satellites[0].validate().expect("within the limit");
+        assert!(matches!(
+            config.satellites[0].mtq,
+            Some(MtqConfig::ThreeAxis {
+                remanence: Some(0.06),
+                ..
+            })
+        ));
+    }
+
+    /// Above the limit, the blended rod moment would exceed it; the assembly
+    /// refuses such a remanence, so the config refuses it first.
+    #[test]
+    fn an_mtq_remanence_must_be_finite_and_within_the_limit() {
+        for bad in ["-0.01", "10.5", "nan", "inf"] {
+            let err = mtq_with_remanence(bad).satellites[0]
+                .validate()
+                .expect_err(bad);
+            assert!(err.contains("remanence"), "{bad}: {err}");
+        }
+        mtq_with_remanence("10.0").satellites[0]
+            .validate()
+            .expect("the limit itself is allowed");
+    }
+
+    fn mtq_with_curve(extra: &str) -> SimConfig {
+        let toml = format!(
+            "[[satellites]]\n[satellites.orbit]\ntype = \"circular\"\naltitude = 500\n\
+             [satellites.magnetorquers]\ntype = \"three_axis\"\nmax_moment = 10.0\n{extra}\n"
+        );
+        toml::from_str(&toml).expect("parses")
+    }
+
+    /// A measured curve becomes operators that reproduce it: a demagnetized
+    /// rod driven to each point's drive keeps that point's remanence.
+    #[test]
+    fn an_mtq_remanence_curve_is_fitted_into_operators_that_follow_it() {
+        let curve = [
+            (0.2, 0.0024),
+            (0.4, 0.0096),
+            (0.6, 0.0216),
+            (0.8, 0.0384),
+            (1.0, 0.06),
+        ];
+        let config = mtq_with_curve(&format!(
+            "remanence_curve = [{}]",
+            curve
+                .iter()
+                .map(|(v, r)| format!("[{v}, {r}]"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+        config.satellites[0]
+            .validate()
+            .expect("a smooth curve fits");
+        let plays = config.satellites[0]
+            .mtq
+            .as_ref()
+            .unwrap()
+            .remanence_plays()
+            .unwrap()
+            .expect("a curve gives operators");
+        let core = orts::spacecraft::MtqAssemblyCore::three_axis(10.0);
+        for (v, r) in curve {
+            let mut rem = orts::spacecraft::MtqRemanence::demagnetized_with_plays(
+                &core,
+                vec![plays.clone(); 3],
+            );
+            rem.apply(&[v * 10.0, 0.0, 0.0]);
+            rem.apply(&[0.0, 0.0, 0.0]);
+            assert!(
+                (rem.residual()[0] - r).abs() <= 0.05 * 0.06,
+                "drive {v}: {} vs {r}",
+                rem.residual()[0]
+            );
+        }
+    }
+
+    /// A remanence rising only late in the drive needs wide operators whose
+    /// weights exceed the limit, though what they hold does not: such a curve
+    /// within the limit is accepted.
+    #[test]
+    fn a_late_rising_remanence_curve_within_the_limit_is_accepted() {
+        let config: SimConfig = toml::from_str(
+            "[[satellites]]\n[satellites.orbit]\ntype = \"circular\"\naltitude = 500\n\
+             [satellites.magnetorquers]\ntype = \"three_axis\"\nmax_moment = 1.0\n\
+             remanence_curve = [[0.75, 0.0], [1.0, 1.0]]\n",
+        )
+        .expect("parses");
+        config.satellites[0]
+            .validate()
+            .expect("a full drive leaves 1 A·m², the limit");
+    }
+
+    #[test]
+    fn an_mtq_takes_a_remanence_or_a_curve_not_both() {
+        let err = mtq_with_curve("remanence = 0.06\nremanence_curve = [[1.0, 0.06]]").satellites[0]
+            .validate()
+            .expect_err("both");
+        assert!(err.contains("not both"), "{err}");
+    }
+
+    /// A remanence falling with a stronger drive is not what a demagnetized
+    /// core does, and no sum of play operators follows it.
+    #[test]
+    fn an_mtq_remanence_curve_the_operators_cannot_follow_is_refused() {
+        let err = mtq_with_curve("remanence_curve = [[0.5, 0.06], [1.0, 0.0]]").satellites[0]
+            .validate()
+            .expect_err("falling");
+        assert!(err.contains("follow only"), "{err}");
+    }
+
+    #[test]
+    fn a_malformed_mtq_remanence_curve_is_refused() {
+        for bad in [
+            "remanence_curve = []",
+            "remanence_curve = [[0.6, 0.01], [0.4, 0.02]]",
+            "remanence_curve = [[1.5, 0.01]]",
+            "remanence_curve = [[0.5, -0.01]]",
+            "remanence_curve = [[1.0, 20.0]]",
+        ] {
+            let err = mtq_with_curve(bad).satellites[0].validate().expect_err(bad);
+            assert!(err.contains("remanence_curve"), "{bad}: {err}");
+        }
+    }
+
+    #[test]
+    fn an_mtq_time_constant_is_read_and_must_be_finite_and_non_negative() {
+        let config = mtq_with_curve("time_constant = 0.05");
+        config.satellites[0].validate().expect("a time constant");
+        assert_eq!(
+            config.satellites[0].mtq.as_ref().unwrap().time_constant(),
+            0.05
+        );
+        assert_eq!(
+            mtq_with_curve("").satellites[0]
+                .mtq
+                .as_ref()
+                .unwrap()
+                .time_constant(),
+            0.0,
+            "left out, a command takes effect at once"
+        );
+        for bad in ["-0.1", "nan", "inf"] {
+            let err = mtq_with_curve(&format!("time_constant = {bad}")).satellites[0]
+                .validate()
+                .expect_err(bad);
+            assert!(err.contains("time_constant"), "{bad}: {err}");
         }
     }
 

@@ -89,12 +89,14 @@ pub struct ControlledSatellite {
     pub actuators: ActuatorBundle,
     /// RW effector が登録されているかどうか。
     pub has_rw: bool,
-    /// The MTQ rods' geometry and limits, or `None` without an MTQ.
+    /// The MTQ rods' geometry, limits and state across commands (remanence,
+    /// response), or `None` without an MTQ.
     ///
-    /// Built once with the satellite: rebuilding the model on a command and
-    /// resolving the rods' moments for the magnetometer both read it, and its
-    /// constructor computes the allocation pseudo-inverse.
-    pub mtq: Option<orts::spacecraft::MtqAssemblyCore>,
+    /// The one owner of the rods' moments: each held MTQ command is applied to
+    /// it, the rebuilt model's torque evaluates its moment profile, and the
+    /// magnetometer reads its moments at the same time
+    /// (DESIGN.md "MTQ の rod の moment は、遅れて追従する駆動と残留磁化から決める").
+    pub mtq: Option<orts::spacecraft::MtqMomentDrive>,
     /// Central body this satellite orbits.
     ///
     /// A commanded MTQ is rebuilt on every tick that carries a command, and the
@@ -152,9 +154,7 @@ impl ControlledSatellite {
         // held now (DESIGN.md "tick 境界の左右").
         let sources = match &self.tick_boundary_sources {
             Some((at, sources)) if *at == t => sources.clone(),
-            _ => self
-                .onboard_magnetic_sources()
-                .expect("the held MTQ command was checked when it was applied"),
+            _ => self.onboard_magnetic_sources(t),
         };
         Some(read_magnetometers(
             &mut self.sensors.magnetometers,
@@ -166,21 +166,15 @@ impl ControlledSatellite {
         ))
     }
 
-    /// The onboard magnetic sources as the sensors see them at a tick: the MTQ
-    /// command held over the interval that ends there, before the controller
-    /// returns a new one. An MTQ that has had no command yet is off.
-    fn onboard_magnetic_sources(&self) -> Result<OnboardMagneticSources, String> {
-        let Some(core) = &self.mtq else {
-            return Ok(OnboardMagneticSources::none());
-        };
-        let rods = match self.actuators.mtq_command() {
-            Some(cmd) => {
-                check_mtq_command_len(cmd, core.num_mtqs())?;
-                core.realized_rod_moments(cmd)
-            }
-            None => vec![0.0; core.num_mtqs()],
-        };
-        Ok(OnboardMagneticSources::none().with_mtq_rod_moments(rods))
+    /// The onboard magnetic sources at sim time `t`: the rods' moments under
+    /// the command applied last. At a tick, read before the controller returns
+    /// a new command, that is the command held over the interval ending there.
+    /// An MTQ that has had no command yet is off.
+    fn onboard_magnetic_sources(&self, t: f64) -> OnboardMagneticSources {
+        match &self.mtq {
+            Some(drive) => OnboardMagneticSources::none().with_mtq_rod_moments(drive.moments_at(t)),
+            None => OnboardMagneticSources::none(),
+        }
     }
 
     /// Assemble one for a test in another module of this crate, with no
@@ -364,11 +358,19 @@ pub fn build_controlled_satellite(
 
     // MTQ を追加。
     let mtq = match &spec.mtq_config {
-        Some(MtqConfig::ThreeAxis { max_moment }) => {
+        Some(mtq_config @ MtqConfig::ThreeAxis { max_moment, .. }) => {
             warn_no_field_model(params.body, "magnetorquer", "its torque is zero", &spec.id);
             let core = orts::spacecraft::MtqAssemblyCore::three_axis(*max_moment);
-            dynamics = dynamics.with_model(mtq_for_body(params.body, &core, None));
-            Some(core)
+            // Off and demagnetized at the start, so the first build is the
+            // command-less assembly.
+            dynamics = dynamics.with_model(mtq_for_body(params.body, &core, None, None));
+            let time_constant = mtq_config.time_constant();
+            let mut drive = orts::spacecraft::MtqMomentDrive::new(core.clone(), start_t)
+                .with_time_constant(time_constant);
+            if let Some(plays) = mtq_config.remanence_plays()? {
+                drive = drive.with_remanence_plays(vec![plays; core.num_mtqs()]);
+            }
+            Some(drive)
         }
         None => None,
     };
@@ -420,6 +422,11 @@ pub fn build_controlled_satellite(
     let sample_period = controller.sample_period();
     crate::config::validate_sample_period(sample_period)?;
     validate_tick_advances(start_t, sample_period)?;
+    // The propagation is cut at every controller tick, so the period bounds
+    // the RK4 step as well as `--dt` does.
+    if let Some(drive) = &mtq {
+        warn_unresolved_mtq_response(params, sample_period, drive.time_constant(), &spec.id);
+    }
 
     Ok(ControlledSatellite {
         dynamics,
@@ -460,7 +467,7 @@ fn check_mtq_command_len(cmd: &MtqCommand, num_mtqs: usize) -> Result<(), String
 /// pure integration under a held command. A command the controller did not name
 /// keeps its previous value — the zero-order hold the plugin contract promises —
 /// so this is also what carries a command across a span with no tick in it.
-fn apply_held_commands(sat: &mut ControlledSatellite) -> Result<(), String> {
+fn apply_held_commands(sat: &mut ControlledSatellite, t: f64) -> Result<(), String> {
     // 前 tick のコマンドで RW を設定。
     if sat.has_rw
         && sat.actuators.has_rw_command()
@@ -485,14 +492,23 @@ fn apply_held_commands(sat: &mut ControlledSatellite) -> Result<(), String> {
     }
 
     // 前 tick のコマンドで MTQ を設定（モデルを差し替え）。
-    if let Some(core) = &sat.mtq
+    if let Some(drive) = &mut sat.mtq
         && sat.actuators.has_mtq_command()
         && let Some(mtq_cmd) = sat.actuators.mtq_command()
     {
-        check_mtq_command_len(mtq_cmd, core.num_mtqs())?;
+        check_mtq_command_len(mtq_cmd, drive.core().num_mtqs())?;
+        // The command takes over from here: the rods start from their moments
+        // at `t` towards it. A command held over several ticks is applied at
+        // each, which leaves the moments on the same curve.
+        drive.apply(t, mtq_cmd);
         // Same factory as the initial build, so the field model stays the one
         // this body has.
-        let rebuilt = mtq_for_body(sat.body, core, Some(&mtq_cmd.clone()));
+        let rebuilt = mtq_for_body(
+            sat.body,
+            drive.core(),
+            Some(&mtq_cmd.clone()),
+            Some(drive.profile().clone()),
+        );
         sat.dynamics.replace_model("mtq_assembly", rebuilt);
     }
 
@@ -807,7 +823,7 @@ pub fn tick_controller(
     // Before the controller runs: the field the magnetometer reads is the one
     // the rods made over the interval ending here (DESIGN.md "tick 境界の左右").
     // Kept with the tick's time, so telemetry at this instant reads the same.
-    let sources = sat.onboard_magnetic_sources()?;
+    let sources = sat.onboard_magnetic_sources(t_next);
     sat.tick_boundary_sources = Some((t_next, sources.clone()));
     let sensors = sat.sensors.evaluate(
         t_next,
@@ -860,7 +876,7 @@ pub fn tick_controller(
     // Only once the whole tick has landed: `apply_held_commands` can reject a
     // command whose length does not match the actuator, and a schedule advanced
     // past a tick that failed would resume on the wrong phase.
-    apply_held_commands(sat)?;
+    apply_held_commands(sat, t_next)?;
     // The schedule has to advance, or the caller's `while sat.tick_due_at(to)`
     // would tick again at this instant and never finish. Construction refuses
     // a period below the clock's resolution there, but that resolution doubles
@@ -1059,19 +1075,79 @@ fn mtq_for_body(
     body: arika::body::KnownBody,
     core: &orts::spacecraft::MtqAssemblyCore,
     command: Option<&MtqCommand>,
+    profile: Option<orts::spacecraft::MtqMomentProfile>,
 ) -> Box<dyn orts::model::Model<orts::spacecraft::SpacecraftState>> {
+    fn with<F: tobari::magnetic::MagneticFieldModel>(
+        mut mtq: MtqAssembly<F>,
+        command: Option<&MtqCommand>,
+        profile: Option<orts::spacecraft::MtqMomentProfile>,
+    ) -> MtqAssembly<F> {
+        if let Some(cmd) = command {
+            mtq.command = cmd.clone();
+        }
+        match profile {
+            Some(profile) => mtq.with_moment_profile(profile),
+            None => mtq,
+        }
+    }
     if body_field_is_modelled(body) {
-        let mut mtq = MtqAssembly::new(core.clone(), Igrf::earth());
-        if let Some(cmd) = command {
-            mtq.command = cmd.clone();
-        }
-        Box::new(mtq)
+        Box::new(with(
+            MtqAssembly::new(core.clone(), Igrf::earth()),
+            command,
+            profile,
+        ))
     } else {
-        let mut mtq = MtqAssembly::new(core.clone(), tobari::magnetic::NoField);
-        if let Some(cmd) = command {
-            mtq.command = cmd.clone();
+        Box::new(with(
+            MtqAssembly::new(core.clone(), tobari::magnetic::NoField),
+            command,
+            profile,
+        ))
+    }
+}
+
+/// Fixed-step steps longer than this fraction of the MTQ response time
+/// constant step over the transient's torque: RK4 samples the exponential at
+/// too few points within a step for its integral to come out right.
+const MTQ_RESPONSE_STEPS_PER_TIME_CONSTANT: f64 = 5.0;
+
+/// The RK4 step that is too long for an MTQ response with `time_constant`,
+/// or `None` when it is resolved: an adaptive integrator, a step within the
+/// bound, or no response to resolve. The step is the shorter of `--dt` and
+/// the controller's `sample_period`, at which the propagation is cut.
+fn unresolved_mtq_response_step(
+    integrator: &IntegratorConfig,
+    sample_period: f64,
+    time_constant: f64,
+) -> Option<f64> {
+    match *integrator {
+        IntegratorConfig::Rk4 { dt } => {
+            let step = dt.min(sample_period);
+            (time_constant > 0.0 && step > time_constant / MTQ_RESPONSE_STEPS_PER_TIME_CONSTANT)
+                .then_some(step)
         }
-        Box::new(mtq)
+        _ => None,
+    }
+}
+
+/// Warn when a fixed-step integrator's step is too long for the MTQ response:
+/// the magnetometer reads the transient exactly, but its torque is integrated
+/// coarsely.
+fn warn_unresolved_mtq_response(
+    params: &SimParams,
+    sample_period: f64,
+    time_constant: f64,
+    sat_id: &str,
+) {
+    if let Some(step) =
+        unresolved_mtq_response_step(&params.integrator_config(), sample_period, time_constant)
+    {
+        log::warn!(
+            "{sat_id}: magnetorquers.time_constant = {time_constant} s is shorter than \
+             {MTQ_RESPONSE_STEPS_PER_TIME_CONSTANT} RK4 steps of {step} s (the shorter of --dt \
+             and the controller period), so the torque of the transient after each command is \
+             integrated coarsely (the magnetometer still reads it exactly). Use a smaller --dt \
+             or an adaptive integrator to resolve it."
+        );
     }
 }
 
@@ -2014,7 +2090,8 @@ mod tests {
             torque_with(mtq_for_body(
                 KnownBody::Mars,
                 &orts::spacecraft::MtqAssemblyCore::three_axis(10.0),
-                Some(&command)
+                Some(&command),
+                None
             )),
             0.0,
             "Mars has no field model, so a commanded magnetorquer makes no torque"
@@ -2023,7 +2100,8 @@ mod tests {
             torque_with(mtq_for_body(
                 KnownBody::Earth,
                 &orts::spacecraft::MtqAssemblyCore::three_axis(10.0),
-                Some(&command)
+                Some(&command),
+                None
             )) > 0.0,
             "Earth's field is modelled, so the same command makes torque"
         );
@@ -2039,13 +2117,17 @@ mod tests {
     fn rebuilding_a_commanded_magnetorquer_does_not_warn_again() {
         let (mut sat, _ticks) = satellite_with(1.0, 0.0);
         sat.body = KnownBody::Mars;
-        sat.mtq = Some(orts::spacecraft::MtqAssemblyCore::three_axis(10.0));
+        sat.mtq = Some(orts::spacecraft::MtqMomentDrive::new(
+            orts::spacecraft::MtqAssemblyCore::three_axis(10.0),
+            0.0,
+        ));
         sat.dynamics = sat
             .dynamics
             .with_epoch(Epoch::from_gregorian(2026, 3, 20, 12, 0, 0.0))
             .with_model(mtq_for_body(
                 sat.body,
                 &orts::spacecraft::MtqAssemblyCore::three_axis(10.0),
+                None,
                 None,
             ));
         sat.actuators
@@ -2054,7 +2136,7 @@ mod tests {
 
         let before = FIELD_WARNINGS.with(|n| n.get());
         for _ in 0..10 {
-            apply_held_commands(&mut sat).expect("the command length matches the MTQ count");
+            apply_held_commands(&mut sat, 0.0).expect("the command length matches the MTQ count");
         }
         assert_eq!(
             FIELD_WARNINGS.with(|n| n.get()),
@@ -2076,6 +2158,7 @@ mod tests {
         sat.controller = Box::new(MagnetometerRecorder {
             script: Default::default(),
             readings: Arc::clone(&readings),
+            period: 1.0,
         });
         let field = orts::magnetic::igrf_field_for_body(sat.body);
         sat.sensors.magnetometers = vec![
@@ -2153,6 +2236,8 @@ mod tests {
     struct MagnetometerRecorder {
         script: std::collections::VecDeque<Command>,
         readings: Arc<std::sync::Mutex<Vec<Vector3<f64>>>>,
+        /// Controller period [s].
+        period: f64,
     }
 
     impl PluginController for MagnetometerRecorder {
@@ -2160,7 +2245,7 @@ mod tests {
             "magnetometer-recorder"
         }
         fn sample_period(&self) -> f64 {
-            1.0
+            self.period
         }
         fn update(&mut self, input: &TickInput<'_>) -> Result<Option<Command>, PluginError> {
             self.readings
@@ -2188,12 +2273,17 @@ mod tests {
             ]
             .into(),
             readings: Arc::clone(&readings),
+            period: 1.0,
         });
         sat.body = KnownBody::Mars;
-        sat.mtq = Some(orts::spacecraft::MtqAssemblyCore::three_axis(10.0));
+        sat.mtq = Some(orts::spacecraft::MtqMomentDrive::new(
+            orts::spacecraft::MtqAssemblyCore::three_axis(10.0),
+            0.0,
+        ));
         sat.dynamics = sat.dynamics.with_model(mtq_for_body(
             sat.body,
             &orts::spacecraft::MtqAssemblyCore::three_axis(10.0),
+            None,
             None,
         ));
         let rows = [[1e-6, 0.0, 0.0], [0.0, 2e-6, 0.0], [0.0, 0.0, 3e-6]];
@@ -2221,6 +2311,277 @@ mod tests {
             ],
             "tick 1 has no command yet; ticks 2 and 3 read the previous tick's"
         );
+    }
+
+    /// A satellite whose three 10 A·m² rods keep `remanence` after a full
+    /// drive, with a magnetometer coupled to the x rod by 1 µT/(A·m²), driven
+    /// by `script` about `body`.
+    fn remanent_satellite(
+        body: KnownBody,
+        remanence: Option<f64>,
+        script: Vec<Command>,
+        readings: &Arc<std::sync::Mutex<Vec<Vector3<f64>>>>,
+    ) -> ControlledSatellite {
+        responding_satellite(body, remanence, 0.0, 1.0, script, readings)
+    }
+
+    /// As [`remanent_satellite`], with the rods responding with time constant
+    /// `time_constant` [s] and the controller ticking every `period` [s].
+    fn responding_satellite(
+        body: KnownBody,
+        remanence: Option<f64>,
+        time_constant: f64,
+        period: f64,
+        script: Vec<Command>,
+        readings: &Arc<std::sync::Mutex<Vec<Vector3<f64>>>>,
+    ) -> ControlledSatellite {
+        let (mut sat, _ticks) = satellite_with(period, 0.0);
+        sat.controller = Box::new(MagnetometerRecorder {
+            script: script.into(),
+            readings: Arc::clone(readings),
+            period,
+        });
+        sat.body = body;
+        let core = orts::spacecraft::MtqAssemblyCore::three_axis(10.0);
+        // The MTQ model makes no torque without an epoch to evaluate the field at.
+        sat.dynamics = sat
+            .dynamics
+            .with_epoch(Epoch::from_gregorian(2026, 3, 20, 12, 0, 0.0))
+            .with_model(mtq_for_body(sat.body, &core, None, None));
+        let mut drive = orts::spacecraft::MtqMomentDrive::new(core.clone(), 0.0)
+            .with_time_constant(time_constant);
+        if let Some(m_r) = remanence {
+            drive = drive.with_remanence_plays(vec![
+                orts::spacecraft::RemanencePlay::from_residual_moment(m_r);
+                3
+            ]);
+        }
+        sat.mtq = Some(drive);
+        sat.sensors = build_sensor_bundle(
+            Some(&[SensorConfig::Detailed(
+                crate::config::DetailedSensorConfig::Magnetometer {
+                    mtq_coupling: Some(vec![[1e-6, 0.0, 0.0], [0.0; 3], [0.0; 3]]),
+                    residual_field: None,
+                },
+            )]),
+            sat.body,
+            "sat-test",
+        )
+        .expect("a magnetometer builds");
+        sat
+    }
+
+    /// After a full drive the x rod is switched off: from the next tick on,
+    /// the magnetometer reads the remanence the core keeps, and keeps reading
+    /// it while the rod stays off.
+    ///
+    /// On Mars, so the reading is the rod's field alone.
+    #[test]
+    fn the_magnetometer_reads_the_remanence_a_switched_off_rod_keeps() {
+        let readings = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut sat = remanent_satellite(
+            KnownBody::Mars,
+            Some(0.06),
+            vec![
+                Command::mtq_normalized(vec![1.0, 0.0, 0.0]),
+                Command::mtq_normalized(vec![0.0, 0.0, 0.0]),
+            ],
+            &readings,
+        );
+
+        advance(&mut sat, 0.0, 4.0, 0.1);
+
+        let seen: Vec<f64> = readings.lock().unwrap().iter().map(|b| b.x).collect();
+        let expected = [0.0, 1e-6 * 10.0, 1e-6 * 0.06, 1e-6 * 0.06];
+        assert_eq!(seen.len(), expected.len());
+        for (k, (got, want)) in seen.iter().zip(expected).enumerate() {
+            assert!(
+                (got - want).abs() < 1e-18,
+                "tick {}: {got} vs {want}",
+                k + 1
+            );
+        }
+    }
+
+    /// The switched-off rod's remanence also feels the geomagnetic field: the
+    /// MTQ model's torque is r × B, perpendicular to the x rod, and is zero
+    /// without a remanence.
+    #[test]
+    fn a_switched_off_rods_remanence_feels_a_torque() {
+        let torque_after_off = |remanence| {
+            let readings = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let mut sat = remanent_satellite(
+                KnownBody::Earth,
+                remanence,
+                vec![
+                    Command::mtq_normalized(vec![1.0, 0.0, 0.0]),
+                    Command::mtq_normalized(vec![0.0, 0.0, 0.0]),
+                ],
+                &readings,
+            );
+            advance(&mut sat, 0.0, 2.0, 0.1);
+            let (_, loads) = sat
+                .dynamics
+                .model_breakdown(sat.state_t, &sat.state)
+                .into_iter()
+                .find(|(name, _)| *name == "mtq_assembly")
+                .expect("the MTQ model is registered");
+            loads.torque_body.into_inner()
+        };
+        let with = torque_after_off(Some(0.06));
+        let without = torque_after_off(None);
+        assert_eq!(without, Vector3::zeros(), "off without remanence");
+        assert!(with.norm() > 0.0, "off with remanence: {with}");
+        assert!(
+            with.x.abs() <= 1e-12 * with.norm(),
+            "r × B is perpendicular to the x rod: {with}"
+        );
+    }
+
+    /// Time-shared reading: the x rod is commanded to full moment for 1 s, then
+    /// switched off, and the controller reads every 0.1 s. With a 0.2 s time
+    /// constant the drive reaches `d_off = 10 (1 - e^-5)` by the switch-off and
+    /// then decays as `d = d_off e^{-(t - t_off) / τ}`; the core keeps
+    /// `r = 0.06 (d_off / 10 - 1/2) / (1/2)` from it, and each reading is the
+    /// moment at that tick, `d + r (1 - d / 10)`.
+    ///
+    /// On Mars, so the reading is the rod's field alone (1 µT per A·m²).
+    #[test]
+    fn after_switching_off_the_magnetometer_reads_the_rod_field_decay() {
+        const TAU: f64 = 0.2;
+        const PERIOD: f64 = 0.1;
+        const REMANENCE: f64 = 0.06;
+        let readings = Arc::new(std::sync::Mutex::new(Vec::new()));
+        // Ticks 1-10 return full x, tick 11 switches it off.
+        let mut script = vec![Command::mtq_normalized(vec![1.0, 0.0, 0.0]); 10];
+        script.push(Command::mtq_normalized(vec![0.0, 0.0, 0.0]));
+        let mut sat = responding_satellite(
+            KnownBody::Mars,
+            Some(REMANENCE),
+            TAU,
+            PERIOD,
+            script,
+            &readings,
+        );
+
+        advance(&mut sat, 0.0, 2.05, 0.01);
+
+        let seen: Vec<f64> = readings.lock().unwrap().iter().map(|b| b.x).collect();
+        let tick_t = |k: usize| (k + 1) as f64 * PERIOD;
+        // Switched on at tick 1, held through tick 10, off at tick 11.
+        let (t_on, t_off) = (tick_t(0), tick_t(10));
+        let d_off = 10.0 * (1.0 - (-(t_off - t_on) / TAU).exp());
+        let r = REMANENCE * (d_off / 10.0 - 0.5) / 0.5;
+        for (k, &got) in seen.iter().enumerate().skip(11) {
+            let d = d_off * (-(tick_t(k) - t_off) / TAU).exp();
+            let u = d + r * (1.0 - d / 10.0);
+            assert!(
+                (got - 1e-6 * u).abs() < 1e-15,
+                "tick {}: {got} vs {}",
+                k + 1,
+                1e-6 * u
+            );
+        }
+        assert!(seen.len() >= 20, "{} ticks", seen.len());
+    }
+
+    /// Telemetry between ticks reads the decaying field at its own time, not
+    /// the field at the last tick: 0.05 s after the switch-off, e^-0.25 of
+    /// the drive is left.
+    #[test]
+    fn telemetry_between_ticks_reads_the_decay_at_its_time() {
+        const TAU: f64 = 0.2;
+        let readings = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut script = vec![Command::mtq_normalized(vec![1.0, 0.0, 0.0]); 10];
+        script.push(Command::mtq_normalized(vec![0.0, 0.0, 0.0]));
+        let mut sat =
+            responding_satellite(KnownBody::Mars, Some(0.06), TAU, 0.1, script, &readings);
+        advance(&mut sat, 0.0, 1.15, 0.01);
+        let drive = sat.mtq.as_ref().unwrap();
+        let t_off = drive.profile().start_t();
+        let d_off = drive.profile().drive_at(t_off)[0];
+        let r = 0.06 * (d_off / 10.0 - 0.5) / 0.5;
+        let t = sat.state_t;
+        let d = d_off * (-(t - t_off) / TAU).exp();
+        let expected = d + r * (1.0 - d / 10.0);
+        let got = sat
+            .magnetometer_telemetry(t, None)
+            .expect("a magnetometer is mounted")
+            .readings[0]
+            .x;
+        assert!(
+            (got - 1e-6 * expected).abs() < 1e-15,
+            "{got} vs {}",
+            1e-6 * expected
+        );
+    }
+
+    /// The MTQ torque follows the same decay: one time constant after the
+    /// switch-off, e^-1 of the torque at it is left.
+    #[test]
+    fn after_switching_off_the_mtq_torque_decays_with_the_time_constant() {
+        const TAU: f64 = 0.2;
+        let readings = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut script = vec![Command::mtq_normalized(vec![1.0, 0.0, 0.0]); 10];
+        script.push(Command::mtq_normalized(vec![0.0, 0.0, 0.0]));
+        let mut sat = responding_satellite(KnownBody::Earth, None, TAU, 0.1, script, &readings);
+        advance(&mut sat, 0.0, 1.15, 0.01);
+        let t_off = sat.mtq.as_ref().unwrap().profile().start_t();
+        let torque_at = |t: f64| {
+            sat.dynamics
+                .model_breakdown(t, &sat.state)
+                .into_iter()
+                .find(|(name, _)| *name == "mtq_assembly")
+                .expect("the MTQ model is registered")
+                .1
+                .torque_body
+                .inner()
+                .norm()
+        };
+        let ratio = torque_at(t_off + TAU) / torque_at(t_off);
+        // The field moves with the epoch over the 0.2 s too, by about 1e-6.
+        assert!((ratio - (-1.0_f64).exp()).abs() < 1e-5, "{ratio}");
+    }
+
+    /// The RK4 warning fires for a step longer than a fifth of the time
+    /// constant, not at a fifth exactly, never with no response, and never for
+    /// an adaptive integrator, whatever its initial step. The step is bounded
+    /// by the controller period too: a long `--dt` cut every 1 ms is fine.
+    #[test]
+    fn the_mtq_response_warning_covers_only_coarse_rk4_steps() {
+        let tau = 0.1;
+        let rk4 = |dt| IntegratorConfig::Rk4 { dt };
+        let slow = 10.0;
+        assert_eq!(
+            unresolved_mtq_response_step(&rk4(tau / 5.0), slow, tau),
+            None
+        );
+        assert_eq!(
+            unresolved_mtq_response_step(&rk4(0.021), slow, tau),
+            Some(0.021)
+        );
+        assert_eq!(
+            unresolved_mtq_response_step(&rk4(1.0), 0.001, tau),
+            None,
+            "1 ms ticks"
+        );
+        assert_eq!(
+            unresolved_mtq_response_step(&rk4(1.0), 0.05, tau),
+            Some(0.05)
+        );
+        assert_eq!(
+            unresolved_mtq_response_step(&rk4(10.0), slow, 0.0),
+            None,
+            "no response"
+        );
+        let adaptive = IntegratorConfig::Dop853 {
+            dt: 10.0,
+            tolerances: utsuroi::Tolerances {
+                atol: 1e-9,
+                rtol: 1e-9,
+            },
+        };
+        assert_eq!(unresolved_mtq_response_step(&adaptive, slow, tau), None);
     }
 
     /// A finite-difference B-dot controller that also records, at each tick,
@@ -2312,8 +2673,10 @@ mod tests {
             log: Arc::clone(&log),
         });
         let core = orts::spacecraft::MtqAssemblyCore::three_axis(MAX_MOMENT);
-        sat.dynamics = sat.dynamics.with_model(mtq_for_body(sat.body, &core, None));
-        sat.mtq = Some(core);
+        sat.dynamics = sat
+            .dynamics
+            .with_model(mtq_for_body(sat.body, &core, None, None));
+        sat.mtq = Some(orts::spacecraft::MtqMomentDrive::new(core, 0.0));
         sat.sensors.magnetometers =
             vec![
                 Magnetometer::new(field).with_mtq_coupling(MtqCoupling::from_columns(vec![
@@ -2421,11 +2784,14 @@ mod tests {
             ]
             .into(),
             readings: Arc::clone(&readings),
+            period: 1.0,
         });
         sat.body = KnownBody::Mars;
         let core = orts::spacecraft::MtqAssemblyCore::three_axis(10.0);
-        sat.dynamics = sat.dynamics.with_model(mtq_for_body(sat.body, &core, None));
-        sat.mtq = Some(core);
+        sat.dynamics = sat
+            .dynamics
+            .with_model(mtq_for_body(sat.body, &core, None, None));
+        sat.mtq = Some(orts::spacecraft::MtqMomentDrive::new(core, 0.0));
         let k = MtqCoupling::from_columns(vec![
             Vector3::new(1e-6, 0.0, 0.0),
             Vector3::new(0.0, 2e-6, 0.0),
@@ -2464,7 +2830,10 @@ mod tests {
     fn a_commanded_magnetorquer_keeps_the_field_of_its_body() {
         let (mut sat, _ticks) = satellite_with(1.0, 0.0);
         sat.body = KnownBody::Mars;
-        sat.mtq = Some(orts::spacecraft::MtqAssemblyCore::three_axis(10.0));
+        sat.mtq = Some(orts::spacecraft::MtqMomentDrive::new(
+            orts::spacecraft::MtqAssemblyCore::three_axis(10.0),
+            0.0,
+        ));
         sat.dynamics = sat
             .dynamics
             .with_epoch(Epoch::from_gregorian(2026, 3, 20, 12, 0, 0.0))
@@ -2472,12 +2841,13 @@ mod tests {
                 sat.body,
                 &orts::spacecraft::MtqAssemblyCore::three_axis(10.0),
                 None,
+                None,
             ));
 
         sat.actuators
             .apply(&Command::mtq_normalized(vec![1.0, 0.0, 0.0]))
             .expect("three moments for three MTQs");
-        apply_held_commands(&mut sat).expect("the command length matches the MTQ count");
+        apply_held_commands(&mut sat, 0.0).expect("the command length matches the MTQ count");
 
         let torque = sat
             .dynamics
@@ -2600,7 +2970,7 @@ path = "does-not-exist.wasm"
             .expect("one throttle for one thruster");
         // What a tick does with a held command; `propagate_controlled` on its
         // own only walks the span.
-        apply_held_commands(&mut sat).expect("one throttle for one thruster");
+        apply_held_commands(&mut sat, 0.0).expect("one throttle for one thruster");
         // The fixture's state was built before the pool was registered, so it
         // carries no mode for it.
         sat.state = sat
