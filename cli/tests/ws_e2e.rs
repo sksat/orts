@@ -1,6 +1,6 @@
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Condvar, Mutex, mpsc};
+use std::sync::mpsc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
@@ -9,13 +9,6 @@ use tokio_tungstenite::connect_async;
 /// How long a server gets to announce its endpoint after being spawned.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Every stderr line a server has printed so far, for tests that wait on one.
-#[derive(Default)]
-struct StderrLog {
-    lines: Mutex<Vec<String>>,
-    appended: Condvar,
-}
-
 /// A running server with its child process and stderr drain thread. Killed
 /// on drop, so a failing assertion does not leave it listening.
 struct Server {
@@ -23,7 +16,6 @@ struct Server {
     /// The port the server bound. It asks the OS for a free one (`--port 0`),
     /// so a server left over from another run cannot answer in its place.
     port: u16,
-    stderr: Arc<StderrLog>,
     /// Join handle for the thread that drains stderr (keeps the pipe alive).
     _stderr_thread: std::thread::JoinHandle<()>,
 }
@@ -66,12 +58,10 @@ impl Server {
             .expect("failed to spawn orts");
 
         let stderr = child.stderr.take().expect("failed to capture stderr");
-        let log = Arc::new(StderrLog::default());
         let (tx, rx) = mpsc::channel::<Option<u16>>();
 
         // Spawn a thread to read stderr. This keeps the pipe open for the entire
         // lifetime of the server process, preventing broken-pipe crashes.
-        let thread_log = Arc::clone(&log);
         let stderr_thread = std::thread::spawn(move || {
             let reader = BufReader::new(stderr);
             let mut notified = false;
@@ -84,8 +74,6 @@ impl Server {
                     let _ = tx.send(rest.trim_end_matches("/ws").parse().ok());
                     notified = true;
                 }
-                thread_log.lines.lock().unwrap().push(line);
-                thread_log.appended.notify_all();
             }
             // The server exited without announcing an endpoint (a rejected
             // config, a failed bind): fail the spawn instead of letting the
@@ -95,15 +83,23 @@ impl Server {
             }
         });
 
-        let port = rx
-            .recv_timeout(STARTUP_TIMEOUT)
-            .expect("server did not announce its WebSocket endpoint in time")
-            .expect("server exited before announcing its WebSocket endpoint");
+        // `Server` (and its `Drop`) does not exist yet, so a failed start
+        // kills the child here; otherwise it would outlive the test.
+        let port = match rx.recv_timeout(STARTUP_TIMEOUT) {
+            Ok(Some(port)) => port,
+            failure => {
+                let _ = child.kill();
+                let _ = child.wait();
+                match failure {
+                    Err(_) => panic!("server did not announce its WebSocket endpoint in time"),
+                    _ => panic!("server exited or announced an unreadable WebSocket endpoint"),
+                }
+            }
+        };
 
         Server {
             child,
             port,
-            stderr: log,
             _stderr_thread: stderr_thread,
         }
     }
@@ -120,29 +116,6 @@ impl Server {
 
     fn ws_url(&self) -> String {
         format!("ws://localhost:{}/ws", self.port)
-    }
-
-    /// Block until the server has printed a stderr line containing `needle`,
-    /// returning that line. Panics after `timeout`.
-    fn wait_for_stderr(&self, needle: &str, timeout: Duration) -> String {
-        let deadline = std::time::Instant::now() + timeout;
-        let mut lines = self.stderr.lines.lock().unwrap();
-        loop {
-            if let Some(line) = lines.iter().find(|l| l.contains(needle)) {
-                return line.clone();
-            }
-            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-            assert!(
-                !remaining.is_zero(),
-                "server did not print {needle:?} within {timeout:?}"
-            );
-            lines = self
-                .stderr
-                .appended
-                .wait_timeout(lines, remaining)
-                .unwrap()
-                .0;
-        }
     }
 
     fn kill(&mut self) {
@@ -856,14 +829,21 @@ async fn test_websocket_terminated_replay_on_late_connect() {
     // → immediate atmospheric entry termination
     let mut server = Server::spawn_with_sats(&["altitude=50,id=low", "altitude=800,id=high"]);
 
-    // Connect only once the low satellite has terminated, so its
-    // `simulation_terminated` must come from the replay list rather than the
-    // live broadcast. The engine prints this line in the same step that adds
-    // the event to that list.
-    server.wait_for_stderr("Simulation terminated for low", Duration::from_secs(30));
-
     let result = tokio::time::timeout(Duration::from_secs(30), async {
         let url = server.ws_url();
+
+        // An observer waits until the termination has reached the clients.
+        // The engine adds the event to its replay list before it broadcasts
+        // it, so once the observer has it (live or replayed) the list holds
+        // it. The client below connects after the broadcast went out, so it
+        // can only get the event from the replay.
+        {
+            let (ws, _) = connect_async(&url).await.expect("failed to connect");
+            let (_write, mut read) = ws.split();
+            let (terminated, _) = read_until_type(&mut read, "simulation_terminated", 200).await;
+            assert_eq!(terminated["entity_path"], "/world/sat/low");
+        }
+
         let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (_write, mut read) = ws.split();
 
