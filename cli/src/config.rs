@@ -1416,8 +1416,37 @@ pub enum MtqConfig {
         #[serde(default)]
         #[ts(optional)]
         time_constant: Option<f64>,
+        /// rod ごとの上書き。x, y, z の順に 3 つ。rod に書かなかった
+        /// `time_constant` は上の値を使う。残留は、rod に `remanence` も
+        /// `remanence_curve` も無ければ上の定義を使い、どちらかがあればその
+        /// rod の定義で置き換える。
+        #[serde(default)]
+        #[ts(optional)]
+        rods: Option<Vec<MtqRodConfig>>,
     },
 }
+
+/// 1 本の MTQ rod の設定。省略した key は magnetorquer 全体の値を使う。
+#[derive(Deserialize, Serialize, Clone, Debug, Default, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct MtqRodConfig {
+    /// この rod の応答の時定数 [s]。
+    #[serde(default)]
+    #[ts(optional)]
+    pub time_constant: Option<f64>,
+    /// この rod の residual moment [A·m²]。`remanence_curve` と両方は書けない。
+    #[serde(default)]
+    #[ts(optional)]
+    pub remanence: Option<f64>,
+    /// この rod の残留の実測表 (`[v, R]` の列)。
+    #[serde(default)]
+    #[ts(optional)]
+    pub remanence_curve: Option<Vec<[f64; 2]>>,
+}
+
+/// The rods a `three_axis` magnetorquer has, in the order of `rods`.
+const THREE_AXIS_RODS: usize = 3;
 
 /// Largest difference the operators fitted to a `remanence_curve` may leave
 /// from its points, as a fraction of the curve's largest remanence: past it
@@ -1425,67 +1454,159 @@ pub enum MtqConfig {
 const REMANENCE_CURVE_MAX_MISFIT: f64 = 0.05;
 
 impl MtqConfig {
-    /// The rods' response time constant [s]; 0 when left out.
-    pub fn time_constant(&self) -> f64 {
-        let MtqConfig::ThreeAxis { time_constant, .. } = self;
-        time_constant.unwrap_or(0.0)
+    /// Each rod's response time constant [s], x, y, z: the rod's own, else
+    /// the magnetorquer's, else 0.
+    pub fn time_constants(&self) -> Vec<f64> {
+        let MtqConfig::ThreeAxis {
+            time_constant,
+            rods,
+            ..
+        } = self;
+        (0..THREE_AXIS_RODS)
+            .map(|i| {
+                rods.as_ref()
+                    .and_then(|r| r.get(i))
+                    .and_then(|rod| rod.time_constant)
+                    .or(*time_constant)
+                    .unwrap_or(0.0)
+            })
+            .collect()
     }
 
-    /// Each rod's remanence operators, from `remanence` or `remanence_curve`;
-    /// `None` with neither.
+    /// Each rod's remanence operators, x, y, z: from the rod's `remanence` or
+    /// `remanence_curve` when it has either, else from the magnetorquer's.
+    /// A rod with neither anywhere has none (an empty list); `None` when no
+    /// rod has any.
     ///
     /// # Errors
-    /// With both, with a `remanence` outside [0, `max_moment`], or with a curve
-    /// that is malformed, that the operators cannot follow within
-    /// [`REMANENCE_CURVE_MAX_MISFIT`], or whose operators sum above
-    /// `max_moment`.
-    pub fn remanence_plays(&self) -> Result<Option<Vec<orts::spacecraft::RemanencePlay>>, String> {
-        use orts::spacecraft::RemanencePlay;
+    /// With both keys in one table, a `rods` list of another length, a
+    /// `remanence` outside [0, `max_moment`], or a curve that is malformed,
+    /// that the operators cannot follow within [`REMANENCE_CURVE_MAX_MISFIT`],
+    /// or whose remanence reaches above `max_moment`.
+    pub fn remanence_plays(
+        &self,
+    ) -> Result<Option<Vec<Vec<orts::spacecraft::RemanencePlay>>>, String> {
         let MtqConfig::ThreeAxis {
             max_moment,
             remanence,
             remanence_curve,
+            rods,
             ..
         } = self;
-        match (remanence, remanence_curve) {
-            (Some(_), Some(_)) => {
-                Err("magnetorquers takes remanence or remanence_curve, not both".into())
+        let shared = remanence_plays_of("magnetorquers", *max_moment, remanence, remanence_curve)?;
+        let per_rod: Vec<Option<Vec<orts::spacecraft::RemanencePlay>>> = match rods {
+            None => vec![shared; THREE_AXIS_RODS],
+            Some(rods) => {
+                check_rod_count(rods)?;
+                rods.iter()
+                    .enumerate()
+                    .map(|(i, rod)| {
+                        if rod.remanence.is_none() && rod.remanence_curve.is_none() {
+                            Ok(shared.clone())
+                        } else {
+                            remanence_plays_of(
+                                &format!("magnetorquers.rods[{i}]"),
+                                *max_moment,
+                                &rod.remanence,
+                                &rod.remanence_curve,
+                            )
+                        }
+                    })
+                    .collect::<Result<_, String>>()?
             }
-            (Some(m_r), None) => {
-                // Above the limit, the moment a rod realizes would exceed it.
-                if !(m_r.is_finite() && (0.0..=*max_moment).contains(m_r)) {
-                    return Err(format!(
-                        "magnetorquers.remanence must be finite and within [0, max_moment = \
-                         {max_moment}], got {m_r}"
-                    ));
-                }
-                Ok(Some(RemanencePlay::from_residual_moment(*m_r)))
-            }
-            (None, Some(curve)) => {
-                let points: Vec<(f64, f64)> = curve.iter().map(|&[v, r]| (v, r)).collect();
-                let (plays, misfit) = RemanencePlay::fit_remanence_curve(&points)
-                    .map_err(|e| format!("magnetorquers.remanence_curve: {e}"))?;
-                let largest = points.iter().map(|&(_, r)| r).fold(0.0, f64::max);
-                if misfit > REMANENCE_CURVE_MAX_MISFIT * largest {
-                    return Err(format!(
-                        "magnetorquers.remanence_curve: the fitted remanence is {misfit} A·m² off \
-                         a point, more than {}% of the largest; the operators, 1/32 of the drive \
-                         apart in width, follow only a remanence that does not fall with a \
-                         stronger drive and does not rise over much less than 1/32 of it",
-                        REMANENCE_CURVE_MAX_MISFIT * 100.0
-                    ));
-                }
-                let sum: f64 = plays.iter().map(RemanencePlay::reachable_remanence).sum();
-                if sum > *max_moment {
-                    return Err(format!(
-                        "magnetorquers.remanence_curve: the remanence reaches {sum} A·m², above \
-                         max_moment = {max_moment}"
-                    ));
-                }
-                Ok(Some(plays))
-            }
-            (None, None) => Ok(None),
+        };
+        if per_rod.iter().all(Option::is_none) {
+            return Ok(None);
         }
+        Ok(Some(
+            per_rod.into_iter().map(Option::unwrap_or_default).collect(),
+        ))
+    }
+
+    /// Refuse a time constant that is negative or non-finite, the
+    /// magnetorquer's or a rod's, and a `rods` list of another length.
+    fn check_time_constants(&self) -> Result<(), String> {
+        let MtqConfig::ThreeAxis {
+            time_constant,
+            rods,
+            ..
+        } = self;
+        let check = |scope: &str, tau: Option<f64>| match tau {
+            Some(tau) if !(tau.is_finite() && tau >= 0.0) => Err(format!(
+                "{scope}.time_constant must be finite and non-negative, got {tau}"
+            )),
+            _ => Ok(()),
+        };
+        check("magnetorquers", *time_constant)?;
+        if let Some(rods) = rods {
+            check_rod_count(rods)?;
+            for (i, rod) in rods.iter().enumerate() {
+                check(&format!("magnetorquers.rods[{i}]"), rod.time_constant)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn check_rod_count(rods: &[MtqRodConfig]) -> Result<(), String> {
+    if rods.len() == THREE_AXIS_RODS {
+        Ok(())
+    } else {
+        Err(format!(
+            "magnetorquers.rods has {} entries, but a three_axis magnetorquer has \
+             {THREE_AXIS_RODS} rods (x, y, z)",
+            rods.len()
+        ))
+    }
+}
+
+/// The remanence operators one table (`scope`) gives, from its `remanence`
+/// or `remanence_curve`; `None` with neither.
+fn remanence_plays_of(
+    scope: &str,
+    max_moment: f64,
+    remanence: &Option<f64>,
+    remanence_curve: &Option<Vec<[f64; 2]>>,
+) -> Result<Option<Vec<orts::spacecraft::RemanencePlay>>, String> {
+    use orts::spacecraft::RemanencePlay;
+    match (remanence, remanence_curve) {
+        (Some(_), Some(_)) => Err(format!(
+            "{scope} takes remanence or remanence_curve, not both"
+        )),
+        (Some(m_r), None) => {
+            // Above the limit, the moment a rod realizes would exceed it.
+            if !(m_r.is_finite() && (0.0..=max_moment).contains(m_r)) {
+                return Err(format!(
+                    "{scope}.remanence must be finite and within [0, max_moment = \
+                     {max_moment}], got {m_r}"
+                ));
+            }
+            Ok(Some(RemanencePlay::from_residual_moment(*m_r)))
+        }
+        (None, Some(curve)) => {
+            let points: Vec<(f64, f64)> = curve.iter().map(|&[v, r]| (v, r)).collect();
+            let (plays, misfit) = RemanencePlay::fit_remanence_curve(&points)
+                .map_err(|e| format!("{scope}.remanence_curve: {e}"))?;
+            let largest = points.iter().map(|&(_, r)| r).fold(0.0, f64::max);
+            if misfit > REMANENCE_CURVE_MAX_MISFIT * largest {
+                return Err(format!(
+                    "{scope}.remanence_curve: the fitted remanence is {misfit} A·m² off a \
+                     point, more than {}% of the largest; the operators, 1/32 of the drive \
+                     apart in width, follow only a remanence that does not fall with a \
+                     stronger drive and does not rise over much less than 1/32 of it",
+                    REMANENCE_CURVE_MAX_MISFIT * 100.0
+                ));
+            }
+            let sum: f64 = plays.iter().map(RemanencePlay::reachable_remanence).sum();
+            if sum > max_moment {
+                return Err(format!(
+                    "{scope}.remanence_curve: the remanence reaches {sum} A·m², above \
+                     max_moment = {max_moment}"
+                ));
+            }
+            Ok(Some(plays))
+        }
+        (None, None) => Ok(None),
     }
 }
 
@@ -2106,13 +2227,8 @@ impl SatelliteConfig {
                     "magnetorquers.max_moment must be non-negative and finite, got {max_moment}"
                 ));
             }
+            mtq.check_time_constants()?;
             mtq.remanence_plays()?;
-            let time_constant = mtq.time_constant();
-            if !(time_constant.is_finite() && time_constant >= 0.0) {
-                return Err(format!(
-                    "magnetorquers.time_constant must be finite and non-negative, got {time_constant}"
-                ));
-            }
         }
         if let Some(sensors) = &self.sensors {
             validate_sensors(sensors, self.mtq.as_ref()).map_err(|e| format!("sensors: {e}"))?;
@@ -3928,10 +4044,8 @@ satellites:
             .expect("a curve gives operators");
         let core = orts::spacecraft::MtqAssemblyCore::three_axis(10.0);
         for (v, r) in curve {
-            let mut rem = orts::spacecraft::MtqRemanence::demagnetized_with_plays(
-                &core,
-                vec![plays.clone(); 3],
-            );
+            let mut rem =
+                orts::spacecraft::MtqRemanence::demagnetized_with_plays(&core, plays.clone());
             rem.apply(&[v * 10.0, 0.0, 0.0]);
             rem.apply(&[0.0, 0.0, 0.0]);
             assert!(
@@ -3956,6 +4070,83 @@ satellites:
         config.satellites[0]
             .validate()
             .expect("a full drive leaves 1 A·m², the limit");
+    }
+
+    /// Each rod takes its own time constant and remanence, the rest from
+    /// the magnetorquer: x keeps the shared 0.05 s and 0.06 A·m², y has its own
+    /// time constant, and z its own remanence curve.
+    #[test]
+    fn each_rod_overrides_the_magnetorquers_settings() {
+        let config = mtq_with_curve(
+            "time_constant = 0.05\nremanence = 0.06\nrods = [{}, { time_constant = 0.1 }, \
+             { remanence_curve = [[0.5, 0.0], [1.0, 0.02]] }]",
+        );
+        config.satellites[0].validate().expect("per-rod settings");
+        let mtq = config.satellites[0].mtq.as_ref().unwrap();
+        assert_eq!(mtq.time_constants(), vec![0.05, 0.1, 0.05]);
+        let plays = mtq
+            .remanence_plays()
+            .unwrap()
+            .expect("remanence on every rod");
+        let full = |rod: &[orts::spacecraft::RemanencePlay]| -> f64 {
+            let core = orts::spacecraft::MtqAssemblyCore::new(vec![orts::spacecraft::Mtq::new(
+                nalgebra::Vector3::x(),
+                10.0,
+            )]);
+            let mut rem =
+                orts::spacecraft::MtqRemanence::demagnetized_with_plays(&core, vec![rod.to_vec()]);
+            rem.apply(&[10.0]);
+            rem.residual()[0]
+        };
+        assert!((full(&plays[0]) - 0.06).abs() < 1e-12, "x shares 0.06");
+        assert!((full(&plays[1]) - 0.06).abs() < 1e-12, "y shares 0.06");
+        assert!(
+            (full(&plays[2]) - 0.02).abs() < 0.05 * 0.02,
+            "z has its curve"
+        );
+    }
+
+    /// A rod with neither key and no shared remanence has none, while
+    /// another rod has its own.
+    #[test]
+    fn a_rod_without_remanence_anywhere_has_none() {
+        let config = mtq_with_curve("rods = [{ remanence = 0.03 }, {}, {}]");
+        let plays = config.satellites[0]
+            .mtq
+            .as_ref()
+            .unwrap()
+            .remanence_plays()
+            .unwrap()
+            .expect("x has remanence");
+        assert_eq!(plays[0].len(), 1);
+        assert!(plays[1].is_empty() && plays[2].is_empty());
+    }
+
+    #[test]
+    fn rods_must_be_three_and_each_valid() {
+        for (bad, needle) in [
+            ("rods = [{}, {}]", "3 rods"),
+            (
+                "rods = [{}, { time_constant = -1.0 }, {}]",
+                "rods[1].time_constant",
+            ),
+            (
+                "rods = [{}, {}, { remanence = 0.1, remanence_curve = [[1.0, 0.1]] }]",
+                "not both",
+            ),
+            ("rods = [{ remanence = 20.0 }, {}, {}]", "rods[0].remanence"),
+            ("rods = [{ unknown = 1.0 }, {}, {}]", "unknown"),
+        ] {
+            let toml = format!(
+                "[[satellites]]\n[satellites.orbit]\ntype = \"circular\"\naltitude = 500\n\
+                 [satellites.magnetorquers]\ntype = \"three_axis\"\nmax_moment = 10.0\n{bad}\n"
+            );
+            let err = match toml::from_str::<SimConfig>(&toml) {
+                Err(e) => e.to_string(),
+                Ok(config) => config.satellites[0].validate().expect_err(bad),
+            };
+            assert!(err.contains(needle), "{bad}: {err}");
+        }
     }
 
     #[test]
@@ -3995,16 +4186,16 @@ satellites:
         let config = mtq_with_curve("time_constant = 0.05");
         config.satellites[0].validate().expect("a time constant");
         assert_eq!(
-            config.satellites[0].mtq.as_ref().unwrap().time_constant(),
-            0.05
+            config.satellites[0].mtq.as_ref().unwrap().time_constants(),
+            vec![0.05; 3]
         );
         assert_eq!(
             mtq_with_curve("").satellites[0]
                 .mtq
                 .as_ref()
                 .unwrap()
-                .time_constant(),
-            0.0,
+                .time_constants(),
+            vec![0.0; 3],
             "left out, a command takes effect at once"
         );
         for bad in ["-0.1", "nan", "inf"] {
