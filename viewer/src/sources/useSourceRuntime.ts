@@ -20,7 +20,7 @@ import {
   setIngestBufferFactory,
   setTrailBufferFactory,
 } from "./eventDispatcher.js";
-import type { SimInfo, SourceConnectionState, SourceEvent, SourceId } from "./types.js";
+import type { SimInfo, SourceConnectionState, SourceEvent, SourceId, SourceKind } from "./types.js";
 
 // Re-export for convenience
 export type { ServerState } from "./eventDispatcher.js";
@@ -46,7 +46,14 @@ const CHART_COLUMNS = [
 
 // Initialize factories for eventDispatcher
 
-setTrailBufferFactory(() => new TrailBuffer(50000));
+/** How many recent points a stream's trail keeps: a stream has no end, and the
+ * renderer uploads every point a trail holds. A file's trail keeps them all. */
+const STREAM_TRAIL_CAPACITY = 50000;
+
+setTrailBufferFactory(
+  (_id, retention) =>
+    new TrailBuffer(retention === "whole" ? Number.POSITIVE_INFINITY : STREAM_TRAIL_CAPACITY),
+);
 setIngestBufferFactory(() => new IngestBuffer<OrbitPoint>());
 
 export function useSourceRuntime() {
@@ -71,9 +78,12 @@ export function useSourceRuntime() {
   const [chartBufferVersion, setChartBufferVersion] = useState(0);
 
   const activeSourceIdRef = useRef<SourceId | null>(null);
+  const [sourceKind, setSourceKind] = useState<SourceKind | null>(null);
 
-  const setActiveSourceId = useCallback((id: SourceId | null) => {
+  /** Make `id` the source whose events are taken, and say what kind it is. */
+  const setActiveSourceId = useCallback((id: SourceId | null, kind: SourceKind | null) => {
     activeSourceIdRef.current = id;
+    setSourceKind(id ? kind : null);
     if (id) {
       setConnectionState("connecting");
     } else {
@@ -183,6 +193,7 @@ export function useSourceRuntime() {
     setTerminatedSatellites(new Set());
     setConnectionState("disconnected");
     activeSourceIdRef.current = null;
+    setSourceKind(null);
   }, []);
 
   return {
@@ -193,6 +204,8 @@ export function useSourceRuntime() {
     serverState,
     terminatedSatellites,
     connectionState,
+    /** The active source's kind, or null while there is none. */
+    sourceKind,
     textureRevision,
     chartBufferVersion,
     isLive:

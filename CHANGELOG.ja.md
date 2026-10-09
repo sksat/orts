@@ -1678,6 +1678,8 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `viewer`
 
 #### Added
+- 100 万点以上のファイルでは、ファイルの情報の下に警告を出す。viewer はファイルの
+  全点を持ち、page の heap で 1 点あたり約 0.5 KB を使う (Chromium で測定)。([#608](https://github.com/sksat/orts/pull/608))
 - simulation の設定 dialog に Speed の選択を追加した: server の既定 (server の
   idle status が伝えた値を併記)、realtime、accelerated。dt と output interval は、
   ユーザーが入力するまでこの選択に合わせて切り替わる: realtime は 0.1 s / 0.1 s
@@ -1740,6 +1742,9 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   収束していた。([#111](https://github.com/sksat/orts/pull/111), [#90](https://github.com/sksat/orts/issues/90))
 
 #### Changed
+- 読み込みを終えたファイルは、末尾で一時停止して replay する。再生バーは Replay の
+  表示で Live の button は出ず、再生が末尾に届くとそこで一時停止し、チャートは DuckDB
+  から描く。([#608](https://github.com/sksat/orts/pull/608))
 - **破壊的変更:** `SatelliteState` が、衛星が姿勢について述べる 3 つの事実のどれかを言えるように
   した。従来の `attitude` には「姿勢を名乗ったが回転として使えない」を表す方法が無かったため、
   その事実を持つ呼び出し側は、viewer が有効でないと判定する値 (NaN や全 0) を渡すしかなく、
@@ -1781,6 +1786,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   wire 型を置き換え、`satellite_added` variant を追加。([#95](https://github.com/sksat/orts/pull/95))
 
 #### Fixed
+- 読み込んだ CSV / RRD ファイルを、全体を持って全体を表示するようになった。点を
+  ストリーム用の buffer (trail は 75,000 点を超えると 50,000 点に切り詰め、live の
+  チャートの buffer は 50,000 点で古い半分を捨てる) に入れ、読み込みの最後に切り詰めた
+  trail で DuckDB を上書きしていたので、80,001 点のファイルは点数が 55,000、再生が
+  t = 250,010 s から、チャートが t = 500,000 s からになっていた。ファイルの trail と
+  DuckDB のテーブルは全点を持ち、テーブルは compaction せず、点の無いファイルは前の
+  ファイルのチャートを消す。([#608](https://github.com/sksat/orts/pull/608))
 - pause 中や replay 中に time slider が勝手に左へ戻らないようにした。server が
   送り続ける最新の state を基準に位置を測っていたため、pause 中のつまみが左へずれ、
   replay 速度が server の速さより遅い (dt = 0.1 s では約 9 sim s/s) と Play 中も
@@ -1858,6 +1870,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `uneri` (npm: `@sksat/uneri`)
 
 #### Added
+- `useTimeSeriesStoreWorker` の `compaction` option (worker への `set-compaction` /
+  `multi-set-compaction` の message、両 client の `setCompaction()`) で、終わりのある
+  データでは DuckDB の compaction を止め、全行を保持できる。worker の生存中に変えられる。
+  ([#608](https://github.com/sksat/orts/pull/608))
 - `TimeSeriesChart` に `spanGaps` を追加（既定 `true`、従来の挙動）。multi-series の
   データは、ある系列に sample が無く別の系列にはある時刻で gap を持つので、そこを線で
   つなぐのが正しい。gap が「その時刻に値が存在しない」を意味する呼び出し側（実行が持たない

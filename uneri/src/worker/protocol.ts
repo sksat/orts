@@ -74,6 +74,15 @@ export type MainToWorkerMessage =
       timeRange: TimeRange;
       maxPoints: number;
     }
+  | {
+      /**
+       * Whether the Worker compacts its table(s) (default on). Compaction
+       * thins old rows so an endless stream stays within memory; finite data,
+       * such as a loaded file, turns it off to keep every row.
+       */
+      type: "set-compaction";
+      enabled: boolean;
+    }
   | { type: "dispose" }
   | { type: "debug-query"; id: number; query: "row-count" }
   | { type: "zoom-query"; id: number; tMin: number; tMax: number; maxPoints: number };
@@ -102,6 +111,15 @@ export type MultiMainToWorkerMessage =
   | { type: "multi-ingest"; satelliteId: string; rows: RowTuple[]; latestT: number }
   | { type: "multi-rebuild"; satelliteId: string; rows: RowTuple[]; latestT: number }
   | { type: "multi-configure"; timeRange: TimeRange; maxPoints: number }
+  | {
+      /**
+       * Whether the Worker compacts its table(s) (default on). Compaction
+       * thins old rows so an endless stream stays within memory; finite data,
+       * such as a loaded file, turns it off to keep every row.
+       */
+      type: "multi-set-compaction";
+      enabled: boolean;
+    }
   | {
       /** Replace the base schema for every satellite table (see `update-schema`). */
       type: "multi-update-schema";

@@ -594,3 +594,44 @@ describe("MultiChartDataCore", () => {
     expect(conn.queries.filter((q) => q.startsWith("INSERT")).length).toBe(4);
   });
 });
+
+describe("MultiChartDataCore compaction", () => {
+  /** The compaction check opens with a COUNT(*) per satellite table. */
+  function compactionChecks(conn: FakeDuckDBConn): number {
+    return conn.queries.filter((q) => q.startsWith("SELECT COUNT(*)")).length;
+  }
+
+  async function initCompactingEveryQuery(core: MultiChartDataCore): Promise<void> {
+    core.handle({
+      type: "multi-init",
+      baseSchema: EARTH_SCHEMA,
+      satelliteConfigs: [{ id: SAT_ID, label: "A", color: "#fff" }],
+      metricNames: ["altitude"],
+      tickInterval: 1_000_000,
+      queryEveryN: 1,
+      compactEveryN: 1,
+    });
+    core.handle({ type: "multi-configure", timeRange: null, maxPoints: 2000 });
+    await core.whenIdle();
+  }
+
+  async function ingestAndTick(core: MultiChartDataCore): Promise<void> {
+    core.handle({ type: "multi-ingest", satelliteId: SAT_ID, rows: rows(0, 1), latestT: 1 });
+    for (let i = 0; i < 5; i++) await core.tickOnce();
+  }
+
+  it("checks a stream's tables for compaction", async () => {
+    const { core, conn } = setup();
+    await initCompactingEveryQuery(core);
+    await ingestAndTick(core);
+    expect(compactionChecks(conn)).toBeGreaterThan(0);
+  });
+
+  it("never compacts once compaction is turned off", async () => {
+    const { core, conn } = setup();
+    await initCompactingEveryQuery(core);
+    core.handle({ type: "multi-set-compaction", enabled: false });
+    await ingestAndTick(core);
+    expect(compactionChecks(conn)).toBe(0);
+  });
+});

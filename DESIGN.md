@@ -522,6 +522,7 @@ viewer への入力 (WebSocket ストリーム、CSV / RRD ファイル) は、�
 
 - **DuckDB-WASM はローカルキャッシュ**: サーバーへのクエリを減らすための履歴ストア。リアルタイム表示のクリティカルパスには置かない
 - **live 表示は JS バッファが正**: 3D (TrailBuffer) もチャート (ChartBuffer) もストリーミングデータを直接表示し、DuckDB を経由しない
+- **ファイル source は全体を持つ**: ファイルは有限で、読み込みを終えれば中身が決まる。そこでファイルを読み込むときは、TrailBuffer を切り詰めず、DuckDB も compaction しない。再生の範囲・3D の位置・点数・チャートは、どれもファイル全体を対象にする。TrailBuffer の上限 (75,000 点を超えると 50,000 点に切り詰める)、ChartBuffer の上限 (50,000 点) と DuckDB の compaction は、終わりの無いストリーム (WebSocket) で、メモリと描画の量を抑えるためにある
 - **derived 値はサーバーで事前計算**: altitude, energy 等のチャート用 derived 値はサーバーが計算して state メッセージに含め、viewer 側での再計算を排除する
 
 ### チャートデータソースの切り替えポリシー
@@ -535,11 +536,17 @@ viewer への入力 (WebSocket ストリーム、CSV / RRD ファイル) は、�
 
 切り替え条件: `requestedRange ⊆ chartBuffer.coverage` なら JS バッファ、はみ出したら DuckDB にフォールバック。
 
+ファイルは、読み込みを終えると末尾で一時停止し、そこから live-follow には戻らない。変わらない記録を live と表示しないためで、再生が末尾に届いたときも一時停止する。このため読み込みを終えたファイルのチャートは、いつも DuckDB から描く。読み込みの途中は live-follow で、届いた chunk を ChartBuffer と TrailBuffer で描く。
+
+### ファイル source のメモリ
+
+読み込んだ点は、TrailBuffer の JS の object と DuckDB の行と GPU の頂点 buffer になり、どれも点数に比例する。Chromium で衛星 1 機の CSV を読み込むと、page の JS heap は 30 万点で 237 MB、100 万点で 582 MB 増えた (1 点あたり約 0.5 KB。DuckDB の Worker の memory は含まない)。ファイルの全体を持つので、メモリには上限を置かない。その代わり、点数が多いファイルでは、メモリを多く使うことを画面に出す (閾値と測定は `viewer/src/sources/fileSize.ts`)。`orts run` の既定 (出力の間隔 10 s で 1 周) では 1 衛星あたり数百点で、閾値に届くのは、細かい間隔か長い期間で回した出力である。
+
 ### 一貫性の定義
 
 JS バッファと DuckDB の完全一致は求めない。
 「live source が正、DuckDB は eventually consistent cache」と定義する。
-DuckDB は compaction で古いデータが間引かれうる。
+ストリームのとき、DuckDB は compaction で古いデータが間引かれうる (ファイル source では compaction しない)。
 source 切替時は overlap 区間で stitch し、境界の段差を防ぐ。
 
 ### 再接続時の履歴転送

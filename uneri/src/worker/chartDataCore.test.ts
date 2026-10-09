@@ -657,3 +657,30 @@ describe("ChartDataCore ingest", () => {
     expect(conn.tValuesOf("orbit")).toEqual([0, 1]);
   });
 });
+
+describe("ChartDataCore compaction", () => {
+  /** The compaction check opens with a COUNT(*) on every 5th cold query. */
+  function compactionChecks(conn: FakeDuckDBConn): number {
+    return conn.queries.filter((q) => q.startsWith("SELECT COUNT(*)")).length;
+  }
+
+  async function ingestAndTick(core: ChartDataCore): Promise<void> {
+    core.handle({ type: "ingest", rows: rows(0, 1), latestT: 1 });
+    for (let i = 0; i < 10; i++) await core.tickOnce();
+  }
+
+  it("checks a stream's table for compaction", async () => {
+    const { core, conn } = setup();
+    await init(core, EARTH_SCHEMA, 1); // cold refresh on every tick
+    await ingestAndTick(core);
+    expect(compactionChecks(conn)).toBeGreaterThan(0);
+  });
+
+  it("never compacts once compaction is turned off", async () => {
+    const { core, conn } = setup();
+    await init(core, EARTH_SCHEMA, 1);
+    core.handle({ type: "set-compaction", enabled: false });
+    await ingestAndTick(core);
+    expect(compactionChecks(conn)).toBe(0);
+  });
+});

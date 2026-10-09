@@ -2159,6 +2159,9 @@ section is subdivided by package.
 ### `viewer`
 
 #### Added
+- A file of 1,000,000 points or more is flagged under the file info: the
+  viewer keeps every point of a file, about 0.5 KB each in the page's heap
+  (measured in Chromium). ([#608](https://github.com/sksat/orts/pull/608))
 - The simulation config dialog has a Speed choice: the server's default
   (named once the server's idle status says what it is), realtime, or
   accelerated. The dt and output interval follow it until the user types
@@ -2230,6 +2233,9 @@ section is subdivided by package.
   satellite-centred view always collapsed to LVLH. ([#111](https://github.com/sksat/orts/pull/111), [#90](https://github.com/sksat/orts/issues/90))
 
 #### Changed
+- A file that has finished loading pauses at its end and is replayed: the
+  playback bar shows Replay with no Live button, playback that reaches the end
+  pauses there, and the chart is drawn from DuckDB. ([#608](https://github.com/sksat/orts/pull/608))
 - **Breaking:** `SatelliteState` says which of three things a satellite states
   about its orientation. `attitude` had no way to express "an orientation was
   claimed and cannot be used", so a caller holding that fact had to pass values
@@ -2279,6 +2285,13 @@ section is subdivided by package.
   replacing the hand-written wire types and adding the `satellite_added` variant. ([#95](https://github.com/sksat/orts/pull/95))
 
 #### Fixed
+- A loaded CSV or RRD file is kept and shown whole. Its points went into the
+  buffers a stream uses (the trail trims to 50,000 points past 75,000, the live
+  chart buffer drops its older half at 50,000), and DuckDB was overwritten with
+  the trimmed trail when the load ended: an 80,001-point file showed 55,000
+  points, played back from t = 250,010 s and charted from t = 500,000 s. A
+  file's trail and DuckDB tables now hold every point, the tables are not
+  compacted, and a file with no points empties the previous file's chart. ([#608](https://github.com/sksat/orts/pull/608))
 - The time slider no longer slides back on its own while the view is paused
   or replaying: it was measured against the newest state the server kept
   sending, so a paused thumb drifted left, and at a replay speed below the
@@ -2373,6 +2386,10 @@ section is subdivided by package.
 ### `uneri` (npm: `@sksat/uneri`)
 
 #### Added
+- A `compaction` option on `useTimeSeriesStoreWorker` (the `set-compaction` /
+  `multi-set-compaction` worker messages, `setCompaction()` on both clients)
+  turns DuckDB compaction off for finite data, which then keeps every row. It
+  may change while the worker lives. ([#608](https://github.com/sksat/orts/pull/608))
 - `TimeSeriesChart` takes `spanGaps` (default `true`, the behaviour it had).
   Multi-series data carries a gap wherever one series has no sample at an
   instant another one does, and a line drawn across that gap is right. A

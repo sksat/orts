@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CSVFileAdapter } from "../sources/CSVFileAdapter.js";
+import { largeFileWarning } from "../sources/fileSize.js";
 import { RrdFileAdapter } from "../sources/RrdFileAdapter.js";
 import type { SourceAdapter, SourceEvent } from "../sources/types.js";
 
@@ -28,6 +29,8 @@ interface UseFileSourceOptions {
 interface FileSourceResult {
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   orbitInfo: string;
+  /** Set once a loaded file is large enough to say so (see `fileSize.ts`). */
+  sizeWarning: string | null;
   fileSourceActive: boolean;
   /**
    * Load a file. The optional `onBeforeEmit` callback is called after validation
@@ -44,6 +47,7 @@ interface FileSourceResult {
 
 export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSourceResult {
   const [orbitInfo, setOrbitInfo] = useState<string>("");
+  const [sizeWarning, setSizeWarning] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [fileSourceActive, setFileSourceActive] = useState(false);
   const fileAdapterRef = useRef<SourceAdapter | null>(null);
@@ -102,6 +106,8 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
             if (!gateOpened && event.points.length > 0) {
               gateOpened = true;
               onBeforeEmit?.();
+              // The new file replaces the shown one here, and so does its warning.
+              setSizeWarning(null);
               if (pendingInfo) handleEvent(sourceId, pendingInfo);
               setFileSourceActive(true);
             }
@@ -123,6 +129,7 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
             setOrbitInfo(
               `Loaded: ${file.name} | ${pointCount} points | Duration: ${(tMax - tMin).toFixed(1)} s`,
             );
+            setSizeWarning(largeFileWarning(pointCount));
             retireAdapter(adapter);
             return;
           case "error":
@@ -151,6 +158,7 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
     (file: File, onBeforeEmit?: () => void) => {
       // RRD validation happens in the worker, so switch sources eagerly
       onBeforeEmit?.();
+      setSizeWarning(null);
       let totalPoints = 0;
       const wrapped: typeof handleEvent = (sourceId, event) => {
         if (fileAdapterRef.current !== adapter) return;
@@ -160,6 +168,7 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
         }
         if (event.kind === "complete") {
           setOrbitInfo(`Loaded: ${file.name} | ${totalPoints} points`);
+          setSizeWarning(largeFileWarning(totalPoints));
           retireAdapter(adapter);
         }
         if (event.kind === "error") {
@@ -202,11 +211,13 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
 
   const clearFileSourceActive = useCallback(() => {
     setFileSourceActive(false);
+    setSizeWarning(null);
   }, []);
 
   return {
     fileInputRef,
     orbitInfo,
+    sizeWarning,
     fileSourceActive,
     loadFile,
     handleLoadClick,

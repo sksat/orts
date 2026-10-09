@@ -84,6 +84,7 @@ export class ChartDataCore {
   private coldQueryCount = 0;
   private hasData = false;
   private compactCooldown = 0;
+  private compactionEnabled = true;
   /**
    * Rows of the last broadcast, so an emptied dataset is broadcast exactly
    * once. Starts at 0: before anything has been sent there is nothing to
@@ -179,6 +180,10 @@ export class ChartDataCore {
         }
         break;
       }
+
+      case "set-compaction":
+        this.compactionEnabled = msg.enabled;
+        break;
 
       case "dispose": {
         // Stop the tick loop synchronously; the connection is closed once the
@@ -584,7 +589,7 @@ export class ChartDataCore {
         this.coldQueryCount++;
         if (this.compactCooldown > 0) {
           this.compactCooldown--;
-        } else if (this.coldQueryCount % COMPACT_EVERY_N === 0) {
+        } else if (this.compactionEnabled && this.coldQueryCount % COMPACT_EVERY_N === 0) {
           const compacted = await compactTable(this.conn, tableSchema, COMPACT_DEFAULTS);
           if (compacted) this.coldRefreshNeeded = true;
         }

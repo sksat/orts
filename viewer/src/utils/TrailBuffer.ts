@@ -28,6 +28,7 @@ export interface TrailBufferLike {
  * `capacity * 1.5`, the oldest points are trimmed and `generation`
  * is incremented so that consumers (e.g. OrbitTrail GPU buffer)
  * know to do a full rewrite instead of an incremental append.
+ * A capacity of `Number.POSITIVE_INFINITY` keeps every point.
  */
 export class TrailBuffer implements TrailBufferLike {
   private points: OrbitPoint[] = [];

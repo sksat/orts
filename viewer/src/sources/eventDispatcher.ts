@@ -98,10 +98,21 @@ function getOrCreate<T>(map: Map<string, T>, id: string, factory: () => T): T {
   return item;
 }
 
-/** Factory for TrailBuffer — imported dynamically to avoid circular deps. */
-let trailBufferFactory: (id: string) => TrailBuffer;
+/**
+ * How much of a satellite's trail a buffer keeps.
+ *
+ * - `"bounded"`: a stream's trail, which has no end and keeps the recent part.
+ * - `"whole"`: a file's trail, which is finite and keeps every point, so
+ *   playback and the point count cover the whole file.
+ */
+export type TrailRetention = "bounded" | "whole";
 
-export function setTrailBufferFactory(factory: (id: string) => TrailBuffer): void {
+/** Factory for TrailBuffer — imported dynamically to avoid circular deps. */
+let trailBufferFactory: (id: string, retention: TrailRetention) => TrailBuffer;
+
+export function setTrailBufferFactory(
+  factory: (id: string, retention: TrailRetention) => TrailBuffer,
+): void {
   trailBufferFactory = factory;
 }
 
@@ -114,21 +125,43 @@ export function setIngestBufferFactory(
   ingestBufferFactory = factory;
 }
 
-function getOrCreateTrailBuffer(map: Map<string, TrailBuffer>, id: string): TrailBuffer {
-  return getOrCreate(map, id, () => trailBufferFactory(id));
+function getOrCreateTrailBuffer(
+  map: Map<string, TrailBuffer>,
+  id: string,
+  retention: TrailRetention = "bounded",
+): TrailBuffer {
+  return getOrCreate(map, id, () => trailBufferFactory(id, retention));
 }
 
-/** Hand a buffer the trail as its replacement dataset, as a snapshot.
+/**
+ * The ingest buffer a file load pushes `id`'s points into.
  *
- * `TrailBuffer.getAll()` returns its own array and `markRebuild` retains what
- * it is given, while later pushes queue separately and `consumeRebuild`
- * returns the two concatenated — so passing the live array counts anything
- * that arrives in between twice.
+ * A buffer the load creates starts with an empty rebuild: the DuckDB table
+ * behind it can outlive the buffer (the single-satellite table lives as long
+ * as its worker), and the rebuild replaces the rows an earlier load left
+ * there. The points the load pushes after it join the rebuild, or arrive as
+ * appends once the worker has taken it.
  */
-function rebuildFromTrails(buffers: RuntimeBuffers): void {
-  for (const [id, buf] of buffers.trailBuffers) {
-    getOrCreateIngestBuffer(buffers.ingestBuffers, id).markRebuild([...buf.getAll()]);
+function getOrCreateLoadIngestBuffer(
+  map: Map<string, IngestBufferLike<OrbitPoint>>,
+  id: string,
+): IngestBufferLike<OrbitPoint> {
+  let buf = map.get(id);
+  if (!buf) {
+    buf = ingestBufferFactory(id);
+    buf.markRebuild([]);
+    map.set(id, buf);
   }
+  return buf;
+}
+
+/** Start a file load: forget what the previous source left in every buffer. */
+function startFileLoad(buffers: RuntimeBuffers): void {
+  // Dropped rather than cleared: a file's trails keep every point, which the
+  // trails a stream created do not.
+  buffers.trailBuffers.clear();
+  buffers.chartBuffer.clear();
+  for (const buf of buffers.ingestBuffers.values()) buf.markRebuild([]);
 }
 
 function getOrCreateIngestBuffer(
@@ -242,25 +275,20 @@ export function createEventDispatcher(
       }
 
       case "history-chunk": {
-        // Clear stale data on the first chunk of a new load
+        // A file load: every point goes into a whole trail and into DuckDB.
         if (!buffers.chunkLoadStarted && event.points.length > 0) {
-          for (const buf of buffers.trailBuffers.values()) buf.clear();
-          buffers.chartBuffer.clear();
+          startFileLoad(buffers);
           buffers.chunkLoadStarted = true;
         }
         for (const point of event.points) {
           const id = point.entityPath ?? "default";
-          getOrCreateTrailBuffer(buffers.trailBuffers, id).push(point);
-          getOrCreateIngestBuffer(buffers.ingestBuffers, id).push(point);
+          getOrCreateTrailBuffer(buffers.trailBuffers, id, "whole").push(point);
+          getOrCreateLoadIngestBuffer(buffers.ingestBuffers, id).push(point);
           buffers.chartBuffer.push(orbitPointToChartRow(point));
         }
         if (event.done) {
-          // If no chunks arrived (empty/invalid file), clear stale data
-          if (!buffers.chunkLoadStarted) {
-            for (const buf of buffers.trailBuffers.values()) buf.clear();
-            buffers.chartBuffer.clear();
-          }
-          rebuildFromTrails(buffers);
+          // A file with no points still replaces what was shown before it.
+          if (!buffers.chunkLoadStarted) startFileLoad(buffers);
           buffers.chunkLoadStarted = false; // reset for next load
         }
         break;
