@@ -364,11 +364,10 @@ pub fn build_controlled_satellite(
             // Off and demagnetized at the start, so the first build is the
             // command-less assembly.
             dynamics = dynamics.with_model(mtq_for_body(params.body, &core, None, None));
-            let time_constant = mtq_config.time_constant();
             let mut drive = orts::spacecraft::MtqMomentDrive::new(core.clone(), start_t)
-                .with_time_constant(time_constant);
+                .with_time_constants(mtq_config.time_constants());
             if let Some(plays) = mtq_config.remanence_plays()? {
-                drive = drive.with_remanence_plays(vec![plays; core.num_mtqs()]);
+                drive = drive.with_remanence_plays(plays);
             }
             Some(drive)
         }
@@ -425,7 +424,7 @@ pub fn build_controlled_satellite(
     // The propagation is cut at every controller tick, so the period bounds
     // the RK4 step as well as `--dt` does.
     if let Some(drive) = &mtq {
-        warn_unresolved_mtq_response(params, sample_period, drive.time_constant(), &spec.id);
+        warn_unresolved_mtq_response(params, sample_period, drive.time_constants(), &spec.id);
     }
 
     Ok(ControlledSatellite {
@@ -1129,20 +1128,28 @@ fn unresolved_mtq_response_step(
     }
 }
 
-/// Warn when a fixed-step integrator's step is too long for the MTQ response:
-/// the magnetometer reads the transient exactly, but its torque is integrated
-/// coarsely.
+/// Warn when a fixed-step integrator's step is too long for the MTQ response
+/// of the rod with the shortest time constant: the magnetometer reads the
+/// transient exactly, but its torque is integrated coarsely.
 fn warn_unresolved_mtq_response(
     params: &SimParams,
     sample_period: f64,
-    time_constant: f64,
+    time_constants: &[f64],
     sat_id: &str,
 ) {
+    let Some((rod, &time_constant)) = time_constants
+        .iter()
+        .enumerate()
+        .filter(|&(_, &tau)| tau > 0.0)
+        .min_by(|a, b| a.1.total_cmp(b.1))
+    else {
+        return;
+    };
     if let Some(step) =
         unresolved_mtq_response_step(&params.integrator_config(), sample_period, time_constant)
     {
         log::warn!(
-            "{sat_id}: magnetorquers.time_constant = {time_constant} s is shorter than \
+            "{sat_id}: rod {rod}'s magnetorquer time_constant = {time_constant} s is shorter than \
              {MTQ_RESPONSE_STEPS_PER_TIME_CONSTANT} RK4 steps of {step} s (the shorter of --dt \
              and the controller period), so the torque of the transient after each command is \
              integrated coarsely (the magnetometer still reads it exactly). Use a smaller --dt \

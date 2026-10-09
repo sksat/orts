@@ -29,8 +29,8 @@ pub struct MtqMomentProfile {
     drive_start: Vec<f64>,
     /// Each rod's clamped command [A·m²].
     drive_target: Vec<f64>,
-    /// Response time constant [s].
-    time_constant: f64,
+    /// Each rod's response time constant [s].
+    time_constants: Vec<f64>,
     /// The cores' remanence at `start_t`; `None` keeps none.
     remanence: Option<MtqRemanence>,
 }
@@ -43,8 +43,8 @@ impl MtqMomentProfile {
             core,
             start_t,
             drive_start: off.clone(),
-            drive_target: off,
-            time_constant: 0.0,
+            drive_target: off.clone(),
+            time_constants: off,
             remanence: None,
         }
     }
@@ -60,26 +60,27 @@ impl MtqMomentProfile {
     }
 
     /// Each rod's drive at time `t` [A·m²]: the start before `start_t`, the
-    /// command from it on with no time constant.
+    /// command from it on for a rod with no time constant.
     pub fn drive_at(&self, t: f64) -> Vec<f64> {
         if t < self.start_t {
             return self.drive_start.clone();
         }
-        if self.time_constant == 0.0 {
-            return self.drive_target.clone();
-        }
-        let x = -(t - self.start_t) / self.time_constant;
-        let left = x.exp();
-        // 1 - e^x through exp_m1: for a step much shorter than τ, 1 - left
-        // would round to 0 and lose the response.
-        let reached = -x.exp_m1();
-        // A weighted mean of the two ends: no difference of them is formed,
-        // so ends of opposite sign near the largest finite value cannot
-        // overflow, and the result stays between them.
         self.drive_start
             .iter()
             .zip(&self.drive_target)
-            .map(|(&start, &target)| start * left + target * reached)
+            .zip(&self.time_constants)
+            .map(|((&start, &target), &tau)| {
+                if tau == 0.0 {
+                    return target;
+                }
+                let x = -(t - self.start_t) / tau;
+                // 1 - e^x through exp_m1: for a step much shorter than τ,
+                // 1 - e^x would round to 0 and lose the response. A weighted
+                // mean of the two ends: no difference of them is formed, so
+                // ends of opposite sign near the largest finite value cannot
+                // overflow, and the result stays between them.
+                start * x.exp() + target * -x.exp_m1()
+            })
             .collect()
     }
 
@@ -118,7 +119,8 @@ impl MtqMomentProfile {
 /// remanence driven along it ends in the same state.
 #[derive(Debug, Clone)]
 pub struct MtqMomentDrive {
-    time_constant: f64,
+    /// Each rod's response time constant [s].
+    time_constants: Vec<f64>,
     profile: MtqMomentProfile,
 }
 
@@ -131,7 +133,7 @@ impl MtqMomentDrive {
     pub fn new(core: MtqAssemblyCore, start_t: f64) -> Self {
         assert!(start_t.is_finite(), "start_t must be finite, got {start_t}");
         Self {
-            time_constant: 0.0,
+            time_constants: vec![0.0; core.num_mtqs()],
             profile: MtqMomentProfile::off(core, start_t),
         }
     }
@@ -150,17 +152,35 @@ impl MtqMomentDrive {
         self
     }
 
-    /// The same rods responding to a command with time constant
+    /// The same rods, all responding to a command with time constant
     /// `time_constant` [s].
     ///
     /// # Panics
     /// If `time_constant` is negative or non-finite.
-    pub fn with_time_constant(mut self, time_constant: f64) -> Self {
-        assert!(
-            time_constant.is_finite() && time_constant >= 0.0,
-            "time_constant must be finite and non-negative, got {time_constant}"
+    pub fn with_time_constant(self, time_constant: f64) -> Self {
+        let n = self.core().num_mtqs();
+        self.with_time_constants(vec![time_constant; n])
+    }
+
+    /// The same rods, rod `i` responding with time constant
+    /// `time_constants[i]` [s].
+    ///
+    /// # Panics
+    /// If the length differs from the number of MTQs, or a time constant is
+    /// negative or non-finite.
+    pub fn with_time_constants(mut self, time_constants: Vec<f64>) -> Self {
+        assert_eq!(
+            time_constants.len(),
+            self.core().num_mtqs(),
+            "time constants length != MTQ count"
         );
-        self.time_constant = time_constant;
+        for &tau in &time_constants {
+            assert!(
+                tau.is_finite() && tau >= 0.0,
+                "time_constant must be finite and non-negative, got {tau}"
+            );
+        }
+        self.time_constants = time_constants;
         self
     }
 
@@ -169,9 +189,9 @@ impl MtqMomentDrive {
         &self.profile.core
     }
 
-    /// Response time constant [s].
-    pub fn time_constant(&self) -> f64 {
-        self.time_constant
+    /// Each rod's response time constant [s].
+    pub fn time_constants(&self) -> &[f64] {
+        &self.time_constants
     }
 
     /// Each rod's moment at time `t` [A·m²], under the command applied last.
@@ -218,7 +238,7 @@ impl MtqMomentDrive {
             start_t: t,
             drive_start,
             drive_target,
-            time_constant: self.time_constant,
+            time_constants: self.time_constants.clone(),
             remanence,
         };
     }
@@ -402,6 +422,28 @@ mod tests {
         assert!(drive.moments_at(0.05)[0].is_nan());
         drive.apply(1.0, &MtqCommand::Moments(vec![0.0]));
         assert_eq!(drive.moments_at(1.05), vec![0.0]);
+    }
+
+    /// Each rod follows its own time constant: switched off together, a
+    /// 0.05 s rod is at e^-1 when a 0.1 s rod is at e^-0.5, and a rod with
+    /// none is off at once.
+    #[test]
+    fn each_rod_follows_its_own_time_constant() {
+        let core = MtqAssemblyCore::three_axis(MAX);
+        let mut drive = MtqMomentDrive::new(core, 0.0).with_time_constants(vec![0.05, 0.1, 0.0]);
+        drive.apply(0.0, &MtqCommand::Moments(vec![MAX; 3]));
+        drive.apply(5.0, &MtqCommand::Moments(vec![0.0; 3]));
+        let on = drive.profile().drive_at(5.0);
+        let u = drive.moments_at(5.05);
+        assert_close(u[0], on[0] * (-1.0_f64).exp());
+        assert_close(u[1], on[1] * (-0.5_f64).exp());
+        assert_eq!(u[2], 0.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "MTQ count")]
+    fn time_constants_for_another_rod_count_are_refused() {
+        let _ = MtqMomentDrive::new(one_rod(), 0.0).with_time_constants(vec![0.1, 0.1]);
     }
 
     #[test]
