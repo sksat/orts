@@ -16,6 +16,12 @@ section is subdivided by package.
 #### Added
 - `MtqMomentDrive::with_time_constants` gives each MTQ rod its own response
   time constant; `time_constants` reads them back.
+- Magnetic viscosity of an MTQ rod's remanence. `RemanenceRelaxation`
+  scales the remanence by `q(Δt) = 1 − Σ a_j (1 − e^{−Δt/T_j})` while the
+  rod's command stays at 0, `Δt` counted from when the command became 0;
+  `RemanenceRelaxation::fit` builds the terms from a measured `R(t)/R(0)`
+  table. `MtqMomentDrive::with_relaxations` sets one per rod, and driving the
+  rod again starts from the relaxed remanence.
 - The MTQ rods' response and remanence. `spacecraft::MtqMomentDrive` holds
   the rods' state across commands and gives their moments at any time: each
   rod's drive (its coil current, as the moment it makes) approaches the
@@ -2602,6 +2608,12 @@ Release blog post: [orts: 人工衛星シミュレーションプラットフォ
   magnetorquer's time constant unless it gives its own, and its remanence
   unless it gives either key; a list of another length is refused. The RK4
   step warning names the rod with the shortest time constant.
+- `magnetorquers.remanence_relaxation = [[t, ratio], ...]`, also per rod in
+  `rods`, makes the remanence decay after the command goes to 0, following
+  the measured ratio `R(t)/R(0)` (`t` in s). A table the fitted decay misses
+  by more than 0.05 is refused, and so is a table with no remanence to
+  relax. A rod whose relaxation has a term faster than 10 times its
+  `time_constant` is warned about.
 - WASM plugin thruster throttle commands (`[0,1]` per device) are
   wired through the controlled simulation loop (Phase P4)
 

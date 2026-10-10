@@ -16,7 +16,7 @@ pub use mtq_drive::{MtqMomentDrive, MtqMomentProfile};
 pub use panel_srp::PanelSrp;
 pub use propellant::PropellantPool;
 pub use reaction_wheel::{ReactionWheelAssembly, RwCommand, TorqueResponse};
-pub use remanence::{MtqRemanence, RemanencePlay};
+pub use remanence::{MtqRemanence, RemanencePlay, RemanenceRelaxation};
 pub use state::SpacecraftState;
 pub use surface::{PanelDrag, PanelOptics, PanelOutline, SpacecraftShape, SurfacePanel};
 pub use thruster::{

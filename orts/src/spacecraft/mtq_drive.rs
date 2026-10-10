@@ -3,13 +3,15 @@
 //! A rod does not follow a new command at once: its drive (the coil current,
 //! as the moment it would make) approaches the command with a first-order
 //! response, the core's remanence follows that drive, and the rod's moment is
-//! the drive blended with the remanence (DESIGN.md "MTQ の rod の moment は、遅れて追従する駆動と残留磁化から決める").
-//! [`MtqMomentProfile`] is that over one held
-//! command, evaluated at any time; [`MtqMomentDrive`] owns the rods' state
-//! across commands.
+//! the drive blended with the remanence (DESIGN.md "MTQ の rod の moment は、
+//! 遅れて追従する駆動と残留磁化から決める"). Once a rod's command is 0, its
+//! remanence relaxes with time (DESIGN.md "command を 0 にした後の残留は、
+//! 時間とともに減る"). [`MtqMomentProfile`] is that over one held command,
+//! evaluated at any time; [`MtqMomentDrive`] owns the rods' state across
+//! commands.
 
 use super::mtq::{MtqAssemblyCore, MtqCommand};
-use super::remanence::{MtqRemanence, RemanencePlay};
+use super::remanence::{MtqRemanence, RemanencePlay, RemanenceRelaxation};
 
 /// The rods over the span one command is held for: each rod's drive goes from
 /// its value at `start_t` towards the clamped command with time constant
@@ -33,12 +35,18 @@ pub struct MtqMomentProfile {
     time_constants: Vec<f64>,
     /// The cores' remanence at `start_t`; `None` keeps none.
     remanence: Option<MtqRemanence>,
+    /// When each rod's command went to 0 and has stayed there [s]; `None`
+    /// while it is driven.
+    off_since: Vec<Option<f64>>,
+    /// How each rod's remanence relaxes once its command is 0.
+    relaxations: Vec<RemanenceRelaxation>,
 }
 
 impl MtqMomentProfile {
     /// Rods of `core` off, with no remanence, from `start_t` on.
     pub fn off(core: MtqAssemblyCore, start_t: f64) -> Self {
-        let off = vec![0.0; core.num_mtqs()];
+        let n = core.num_mtqs();
+        let off = vec![0.0; n];
         Self {
             core,
             start_t,
@@ -46,6 +54,8 @@ impl MtqMomentProfile {
             drive_target: off.clone(),
             time_constants: off,
             remanence: None,
+            off_since: vec![Some(start_t); n],
+            relaxations: vec![RemanenceRelaxation::none(); n],
         }
     }
 
@@ -99,10 +109,22 @@ impl MtqMomentProfile {
         let drive = self.drive_at(t);
         match &self.remanence {
             Some(remanence) => {
-                let residual = remanence.residual_after(&drive);
+                let mut residual = remanence.residual_after(&drive);
+                for (rod, r) in residual.iter_mut().enumerate() {
+                    *r *= self.relaxation_at(rod, t);
+                }
                 self.core.rod_moments_with_remanence(&drive, &residual)
             }
             None => drive,
+        }
+    }
+
+    /// The factor rod `rod`'s remanence has relaxed by at `t`: 1 while the
+    /// rod is driven, and held at its start value before `start_t`.
+    fn relaxation_at(&self, rod: usize, t: f64) -> f64 {
+        match self.off_since[rod] {
+            Some(since) => self.relaxations[rod].factor(t.max(self.start_t) - since),
+            None => 1.0,
         }
     }
 }
@@ -152,6 +174,21 @@ impl MtqMomentDrive {
         self
     }
 
+    /// The same rods, rod `i`'s remanence relaxing as `relaxations[i]` once
+    /// its command is 0.
+    ///
+    /// # Panics
+    /// If the length differs from the number of MTQs.
+    pub fn with_relaxations(mut self, relaxations: Vec<RemanenceRelaxation>) -> Self {
+        assert_eq!(
+            relaxations.len(),
+            self.core().num_mtqs(),
+            "relaxations length != MTQ count"
+        );
+        self.profile.relaxations = relaxations;
+        self
+    }
+
     /// The same rods, all responding to a command with time constant
     /// `time_constant` [s].
     ///
@@ -188,6 +225,11 @@ impl MtqMomentDrive {
     /// Each rod's response time constant [s].
     pub fn time_constants(&self) -> &[f64] {
         &self.time_constants
+    }
+
+    /// Each rod's remanence relaxation.
+    pub fn relaxations(&self) -> &[RemanenceRelaxation] {
+        &self.profile.relaxations
     }
 
     /// Each rod's moment at time `t` [A·m²], under the command applied last.
@@ -228,7 +270,26 @@ impl MtqMomentDrive {
             .zip(&drive_target)
             .map(|(d, &c)| if d.is_finite() { d } else { c })
             .collect();
-        let remanence = self.profile.remanence_at(t);
+        let mut remanence = self.profile.remanence_at(t);
+        // A rod whose command stays 0 keeps its clock; one driven again has
+        // its relaxation so far folded into its state, so the remanence does
+        // not spring back, and stops relaxing.
+        let off_since = drive_target
+            .iter()
+            .enumerate()
+            .map(|(rod, &c)| match (c == 0.0, self.profile.off_since[rod]) {
+                (true, Some(since)) => Some(since),
+                (true, None) => Some(t),
+                (false, Some(_)) => {
+                    let q = self.profile.relaxation_at(rod, t);
+                    if let Some(remanence) = &mut remanence {
+                        remanence.relax(rod, q);
+                    }
+                    None
+                }
+                (false, None) => None,
+            })
+            .collect();
         self.profile = MtqMomentProfile {
             core: self.profile.core.clone(),
             start_t: t,
@@ -236,6 +297,8 @@ impl MtqMomentDrive {
             drive_target,
             time_constants: self.time_constants.clone(),
             remanence,
+            off_since,
+            relaxations: self.profile.relaxations.clone(),
         };
     }
 }
@@ -442,6 +505,93 @@ mod tests {
         assert_close(u[0], on[0] * (-1.0_f64).exp());
         assert_close(u[1], on[1] * (-0.5_f64).exp());
         assert_eq!(u[2], 0.0);
+    }
+
+    fn relaxing(tau: f64, relaxation: RemanenceRelaxation) -> MtqMomentDrive {
+        remanent(tau).with_relaxations(vec![relaxation])
+    }
+
+    /// Switched off after a full drive, the remanence relaxes by the factor:
+    /// half is gone after one 100 s term with a share of a half.
+    #[test]
+    fn after_switching_off_the_remanence_relaxes() {
+        let mut drive = relaxing(0.0, RemanenceRelaxation::new(vec![(0.5, 100.0)]));
+        drive.apply(0.0, &MtqCommand::Moments(vec![MAX]));
+        drive.apply(1.0, &MtqCommand::Moments(vec![0.0]));
+        assert_close(drive.moments_at(1.0)[0], REMANENCE);
+        let q = 1.0 - 0.5 * (1.0 - (-1.0_f64).exp());
+        assert_close(drive.moments_at(101.0)[0], REMANENCE * q);
+        assert_close(drive.moments_at(1e9)[0], REMANENCE * 0.5);
+    }
+
+    /// Reapplying the 0 command at later ticks keeps the clock running from
+    /// the first one.
+    #[test]
+    fn reapplying_zero_keeps_the_relaxation_clock() {
+        let make = || {
+            let mut d = relaxing(0.0, RemanenceRelaxation::new(vec![(0.5, 100.0)]));
+            d.apply(0.0, &MtqCommand::Moments(vec![MAX]));
+            d.apply(1.0, &MtqCommand::Moments(vec![0.0]));
+            d
+        };
+        let once = make();
+        let mut ticked = make();
+        for k in 2..=50 {
+            ticked.apply(k as f64, &MtqCommand::Moments(vec![0.0]));
+        }
+        assert_close(ticked.moments_at(101.0)[0], once.moments_at(101.0)[0]);
+    }
+
+    /// Before the profile's start the moment holds its start value, the
+    /// relaxation included, as the drive does.
+    #[test]
+    fn before_a_reapplied_zero_the_relaxed_start_is_held() {
+        let mut drive = relaxing(0.0, RemanenceRelaxation::new(vec![(0.5, 100.0)]));
+        drive.apply(0.0, &MtqCommand::Moments(vec![MAX]));
+        drive.apply(1.0, &MtqCommand::Moments(vec![0.0]));
+        drive.apply(50.0, &MtqCommand::Moments(vec![0.0]));
+        assert_close(drive.moments_at(20.0)[0], drive.moments_at(50.0)[0]);
+    }
+
+    /// Driven again after relaxing, the remanence carries on from where the
+    /// relaxation left it instead of springing back: a drive too weak to move
+    /// the operator adds only itself.
+    #[test]
+    fn driving_again_keeps_the_relaxed_remanence() {
+        let mut drive = relaxing(0.0, RemanenceRelaxation::new(vec![(0.5, 100.0)]));
+        drive.apply(0.0, &MtqCommand::Moments(vec![MAX]));
+        drive.apply(1.0, &MtqCommand::Moments(vec![0.0]));
+        let t = 1001.0;
+        let before = drive.moments_at(t)[0];
+        let small = 0.1;
+        drive.apply(t, &MtqCommand::Moments(vec![small]));
+        let after = drive.moments_at(t)[0];
+        assert_close(after, small + before * (1.0 - small / MAX));
+        // And it no longer relaxes while driven.
+        assert_close(drive.moments_at(t + 1000.0)[0], after);
+        // Off again, it relaxes from the relaxed value.
+        drive.apply(t + 1.0, &MtqCommand::Moments(vec![0.0]));
+        assert_close(drive.moments_at(t + 1.0)[0], before);
+    }
+
+    /// Each rod relaxes by its own: one rod with no relaxation keeps its
+    /// remanence while the other's falls.
+    #[test]
+    fn each_rod_relaxes_by_its_own() {
+        let core = MtqAssemblyCore::three_axis(MAX);
+        let mut drive = MtqMomentDrive::new(core, 0.0)
+            .with_remanence_plays(vec![RemanencePlay::from_residual_moment(REMANENCE); 3])
+            .with_relaxations(vec![
+                RemanenceRelaxation::new(vec![(0.5, 100.0)]),
+                RemanenceRelaxation::none(),
+                RemanenceRelaxation::new(vec![(1.0, 10.0)]),
+            ]);
+        drive.apply(0.0, &MtqCommand::Moments(vec![MAX; 3]));
+        drive.apply(1.0, &MtqCommand::Moments(vec![0.0; 3]));
+        let u = drive.moments_at(1e9);
+        assert_close(u[0], REMANENCE * 0.5);
+        assert_close(u[1], REMANENCE);
+        assert!(u[2].abs() < 1e-12, "{u:?}");
     }
 
     #[test]
