@@ -15,4 +15,8 @@ remanence?: number,
 /**
  * この rod の残留の実測表 (`[v, R]` の列)。
  */
-remanence_curve?: Array<[number, number]>, };
+remanence_curve?: Array<[number, number]>, 
+/**
+ * この rod の、command を 0 にした後の残留の比の実測表 (`[t, ratio]` の列)。
+ */
+remanence_relaxation?: Array<[number, number]>, };

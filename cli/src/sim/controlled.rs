@@ -364,12 +364,7 @@ pub fn build_controlled_satellite(
             // Off and demagnetized at the start, so the first build is the
             // command-less assembly.
             dynamics = dynamics.with_model(mtq_for_body(params.body, &core, None, None));
-            let mut drive = orts::spacecraft::MtqMomentDrive::new(core.clone(), start_t)
-                .with_time_constants(mtq_config.time_constants());
-            if let Some(plays) = mtq_config.remanence_plays()? {
-                drive = drive.with_remanence_plays(plays);
-            }
-            Some(drive)
+            Some(mtq_drive_for(mtq_config, core, start_t)?)
         }
         None => None,
     };
@@ -1060,6 +1055,22 @@ fn warn_no_field_model(body: arika::body::KnownBody, device: &str, effect: &str,
          so {effect}. Control that steers on the field, such as B-dot, has nothing to act on.",
         body.properties().name
     );
+}
+
+/// The rods' state a magnetorquer config gives, off and demagnetized from
+/// `start_t` on: each rod's time constant, remanence and relaxation.
+fn mtq_drive_for(
+    config: &MtqConfig,
+    core: orts::spacecraft::MtqAssemblyCore,
+    start_t: f64,
+) -> Result<orts::spacecraft::MtqMomentDrive, String> {
+    let mut drive = orts::spacecraft::MtqMomentDrive::new(core, start_t)
+        .with_time_constants(config.time_constants())
+        .with_relaxations(config.relaxations()?);
+    if let Some(plays) = config.remanence_plays()? {
+        drive = drive.with_remanence_plays(plays);
+    }
+    Ok(drive)
 }
 
 /// The magnetorquer assembly for `body`, with `command` already applied.
@@ -2498,6 +2509,48 @@ mod tests {
         assert!(seen.len() >= 20, "{} ticks", seen.len());
     }
 
+    /// With a relaxation, the remanence the magnetometer reads after the
+    /// switch-off falls tick by tick as `0.06 q(t - t_off)`, here
+    /// `q = 1 - 0.5 (1 - e^{-Δt / 10 s})`, while the 0 command is reapplied at
+    /// every tick.
+    ///
+    /// On Mars, so the reading is the rod's field alone (1 µT per A·m²).
+    #[test]
+    fn after_switching_off_the_magnetometer_reads_the_remanence_relax() {
+        use orts::spacecraft::{MtqMomentDrive, RemanencePlay, RemanenceRelaxation};
+        let readings = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut script = vec![Command::mtq_normalized(vec![1.0, 0.0, 0.0])];
+        script.extend(vec![Command::mtq_normalized(vec![0.0, 0.0, 0.0]); 30]);
+        let mut sat = remanent_satellite(KnownBody::Mars, None, script, &readings);
+        let core = orts::spacecraft::MtqAssemblyCore::three_axis(10.0);
+        sat.mtq = Some(
+            MtqMomentDrive::new(core, 0.0)
+                .with_remanence_plays(vec![RemanencePlay::from_residual_moment(0.06); 3])
+                .with_relaxations(vec![
+                    RemanenceRelaxation::new(vec![(0.5, 10.0)]),
+                    RemanenceRelaxation::none(),
+                    RemanenceRelaxation::none(),
+                ]),
+        );
+
+        advance(&mut sat, 0.0, 30.0, 0.1);
+
+        let seen: Vec<f64> = readings.lock().unwrap().iter().map(|b| b.x).collect();
+        // Tick 1 (t = 1) drives full; tick 2 (t = 2) applies the 0 command.
+        let t_off = 2.0;
+        for (k, &got) in seen.iter().enumerate().skip(2) {
+            let t = (k + 1) as f64;
+            let q = 1.0 - 0.5 * (1.0 - (-(t - t_off) / 10.0).exp());
+            assert!(
+                (got - 1e-6 * 0.06 * q).abs() < 1e-15,
+                "tick {}: {got} vs {}",
+                k + 1,
+                1e-6 * 0.06 * q
+            );
+        }
+        assert!(seen.len() >= 25, "{} ticks", seen.len());
+    }
+
     /// Telemetry between ticks reads the decaying field at its own time, not
     /// the field at the last tick: 0.05 s after the switch-off, e^-0.25 of
     /// the drive is left.
@@ -2554,6 +2607,39 @@ mod tests {
         let ratio = torque_at(t_off + TAU) / torque_at(t_off);
         // The field moves with the epoch over the 0.2 s too, by about 1e-6.
         assert!((ratio - (-1.0_f64).exp()).abs() < 1e-5, "{ratio}");
+    }
+
+    /// The drive a config builds carries every rod's settings: after a full
+    /// drive and the 0 command, rod x (time constant 0.1 s, remanence 0.06,
+    /// relaxing by half over 10 s) and rod y (no time constant, remanence
+    /// 0.03, no relaxation) each follow their own.
+    #[test]
+    fn the_mtq_drive_takes_each_rods_settings_from_the_config() {
+        let config: crate::config::SimConfig = toml::from_str(
+            "[[satellites]]\n[satellites.orbit]\ntype = \"circular\"\naltitude = 500\n\
+             [satellites.magnetorquers]\ntype = \"three_axis\"\nmax_moment = 10.0\n\
+             rods = [\
+               { time_constant = 0.1, remanence = 0.06, remanence_relaxation = [[10.0, 0.6], [1000.0, 0.5]] },\
+               { remanence = 0.03 }, {}]\n",
+        )
+        .expect("parses");
+        let mtq = config.satellites[0].mtq.as_ref().unwrap();
+        let mut drive = mtq_drive_for(
+            mtq,
+            orts::spacecraft::MtqAssemblyCore::three_axis(10.0),
+            0.0,
+        )
+        .expect("builds");
+        assert_eq!(drive.time_constants(), &[0.1, 0.0, 0.0]);
+        drive.apply(0.0, &MtqCommand::Moments(vec![10.0; 3]));
+        drive.apply(10.0, &MtqCommand::Moments(vec![0.0; 3]));
+        let late = drive.moments_at(1e6);
+        assert!(
+            (late[0] - 0.06 * 0.5).abs() < 0.06 * 0.05,
+            "x relaxed: {late:?}"
+        );
+        assert!((late[1] - 0.03).abs() < 1e-12, "y keeps its own: {late:?}");
+        assert_eq!(late[2], 0.0, "z has none");
     }
 
     /// The warning goes by the rod with the shortest time constant, skipping

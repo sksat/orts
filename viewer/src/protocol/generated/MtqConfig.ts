@@ -28,6 +28,12 @@ remanence_curve?: Array<[number, number]>,
  */
 time_constant?: number, 
 /**
+ * command を 0 にしてから `t` [s] 後に残る残留の比 `R(t)/R(0)` の実測表、
+ * `[t, ratio]` の列 (`t` は正で増加、`ratio` は [0, 1])。点は 64 個まで。
+ * 省略すると残留は時間で減らない。
+ */
+remanence_relaxation?: Array<[number, number]>, 
+/**
  * rod ごとの上書き。x, y, z の順に 3 つ。rod に書かなかった
  * `time_constant` は上の値を使う。残留は、rod に `remanence` も
  * `remanence_curve` も無ければ上の定義を使い、どちらかがあればその

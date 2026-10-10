@@ -178,6 +178,178 @@ impl RemanencePlay {
     }
 }
 
+/// How a rod's remanence relaxes after its command goes to 0 (magnetic
+/// viscosity): after `Δt` the remanence is `q(Δt)` times what it was,
+/// `q(Δt) = 1 − Σ a_j (1 − e^{−Δt/T_j})`, which starts at 1 and tends to
+/// `1 − Σ a_j` (DESIGN.md "command を 0 にした後の残留は、時間とともに減る").
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct RemanenceRelaxation {
+    /// Each term's share `a_j` and time constant `T_j` [s].
+    terms: Vec<(f64, f64)>,
+}
+
+/// Relaxation time constants per decade the fit places, spaced evenly in
+/// their logarithm: three per decade keep a logarithmic decay within a few
+/// percent between them.
+const RELAXATION_TERMS_PER_DECADE: f64 = 3.0;
+/// How far past the last measured time the fit's longest time constant
+/// reaches, as a factor: enough to bend the curve over within the table.
+const RELAXATION_SPAN: f64 = 3.0;
+/// How far below the first measured time the fit's shortest time constant
+/// reaches, as a factor: a ratio already well down at the first time needs a
+/// term that has run its course by then.
+const RELAXATION_LEAD: f64 = 10.0;
+/// Most decades the fit's time constants may span: 61 terms at three per
+/// decade, against a table of at most [`MAX_RELAXATION_POINTS`] points. A
+/// table from 1 ms to a year spans about 12.
+const MAX_RELAXATION_DECADES: f64 = 20.0;
+/// Most points a relaxation table may have, as for a remanence curve.
+pub const MAX_RELAXATION_POINTS: usize = 64;
+
+impl RemanenceRelaxation {
+    /// No relaxation: the remanence stays what it was.
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    /// The relaxation `1 − Σ a_j (1 − e^{−Δt/T_j})` with `terms` the
+    /// `(a_j, T_j [s])` pairs.
+    ///
+    /// # Panics
+    /// If a share is negative or non-finite, a time constant is not positive
+    /// and finite, or the shares sum above 1 (the remanence would turn over).
+    pub fn new(terms: Vec<(f64, f64)>) -> Self {
+        for &(a, t) in &terms {
+            assert!(
+                a.is_finite() && a >= 0.0,
+                "a relaxation share must be finite and non-negative, got {a}"
+            );
+            assert!(
+                t.is_finite() && t > 0.0,
+                "a relaxation time constant must be positive and finite, got {t}"
+            );
+        }
+        let sum: f64 = terms.iter().map(|&(a, _)| a).sum();
+        assert!(
+            sum <= 1.0,
+            "relaxation shares must sum to at most 1, got {sum}"
+        );
+        Self { terms }
+    }
+
+    /// The `(a_j, T_j)` terms.
+    pub fn terms(&self) -> &[(f64, f64)] {
+        &self.terms
+    }
+
+    /// What is left after a very long time, `1 − Σ a_j`.
+    pub fn long_term(&self) -> f64 {
+        1.0 - self.terms.iter().map(|&(a, _)| a).sum::<f64>()
+    }
+
+    /// The factor `q(Δt)` the remanence is multiplied by `dt` [s] after the
+    /// command went to 0; 1 for `dt ≤ 0`.
+    pub fn factor(&self, dt: f64) -> f64 {
+        if dt.is_nan() || dt <= 0.0 {
+            return 1.0;
+        }
+        // 1 − e^{−x} through exp_m1, so a short dt keeps its decay.
+        1.0 - self
+            .terms
+            .iter()
+            .map(|&(a, t)| a * -(-dt / t).exp_m1())
+            .sum::<f64>()
+    }
+
+    /// The relaxation reproducing a measured table: `(t, R(t)/R(0))` pairs,
+    /// `t` [s] after the command went to 0, increasing and positive, and the
+    /// ratio within [0, 1].
+    ///
+    /// The time constants are spaced three per decade from a tenth of the
+    /// first time to three times the last, and the shares fitted by
+    /// non-negative least squares to `1 − ratio`. Returns the relaxation with
+    /// the terms of non-zero share and the largest difference between it and
+    /// the table.
+    ///
+    /// # Errors
+    /// If the table is empty, longer than [`MAX_RELAXATION_POINTS`], has a
+    /// time that is not positive, finite and increasing or a ratio outside
+    /// [0, 1], whose time constants would span more than
+    /// [`MAX_RELAXATION_DECADES`] decades or reach past the finite range, or
+    /// that fits to shares summing above 1.
+    pub fn fit(table: &[(f64, f64)]) -> Result<(Self, f64), String> {
+        if table.is_empty() {
+            return Err("the relaxation table has no points".into());
+        }
+        if table.len() > MAX_RELAXATION_POINTS {
+            return Err(format!(
+                "the relaxation table has {} points, more than {MAX_RELAXATION_POINTS}",
+                table.len()
+            ));
+        }
+        let mut last_t = 0.0;
+        for &(t, ratio) in table {
+            if !(t.is_finite() && t > last_t) {
+                return Err(format!(
+                    "the relaxation table's times must be positive and increasing, got {t} after {last_t}"
+                ));
+            }
+            if !(ratio.is_finite() && (0.0..=1.0).contains(&ratio)) {
+                return Err(format!(
+                    "the relaxation table's ratios must be within [0, 1], got {ratio}"
+                ));
+            }
+            last_t = t;
+        }
+        let shortest = table[0].0 / RELAXATION_LEAD;
+        let longest = RELAXATION_SPAN * last_t;
+        if !(shortest.is_normal() && longest.is_finite()) {
+            return Err(format!(
+                "the relaxation table's times {} to {last_t} are out of range",
+                table[0].0
+            ));
+        }
+        let decades = longest.log10() - shortest.log10();
+        if decades > MAX_RELAXATION_DECADES {
+            return Err(format!(
+                "the relaxation table's times {} to {last_t} span more than \
+                 {MAX_RELAXATION_DECADES} decades of time constants",
+                table[0].0
+            ));
+        }
+        let count = (decades * RELAXATION_TERMS_PER_DECADE).ceil() as usize + 1;
+        let times: Vec<f64> = (0..count)
+            .map(|k| shortest * 10f64.powf(k as f64 / RELAXATION_TERMS_PER_DECADE))
+            .collect();
+        let a = DMatrix::from_fn(table.len(), times.len(), |i, j| {
+            -(-table[i].0 / times[j]).exp_m1()
+        });
+        let b = DVector::from_iterator(table.len(), table.iter().map(|&(_, r)| 1.0 - r));
+        let shares = nnls(&a, &b);
+        let sum: f64 = shares.iter().sum();
+        // Allow for rounding: the solver may land a hair above a ratio of 0.
+        if sum > 1.0 + 1e-9 {
+            return Err(format!(
+                "the relaxation table fits to shares summing to {sum}, above 1: the \
+                 remanence would turn over"
+            ));
+        }
+        let scale = if sum > 1.0 { 1.0 / sum } else { 1.0 };
+        let terms: Vec<(f64, f64)> = shares
+            .iter()
+            .zip(&times)
+            .filter(|(a, _)| **a > 0.0)
+            .map(|(&a, &t)| (a * scale, t))
+            .collect();
+        let relaxation = Self { terms };
+        let misfit = table
+            .iter()
+            .map(|&(t, r)| (relaxation.factor(t) - r).abs())
+            .fold(0.0, f64::max);
+        Ok((relaxation, misfit))
+    }
+}
+
 /// Non-negative least squares, `min ‖A x − b‖` subject to `x ≥ 0`, by the
 /// active-set method of Lawson & Hanson (Solving Least Squares Problems,
 /// 1974, ch. 23).
@@ -353,6 +525,26 @@ impl MtqRemanence {
             }
             self.residual[rod] = r;
         }
+    }
+
+    /// Multiply rod `rod`'s operator states by `factor`, in [0, 1]: the
+    /// relaxation since its command went to 0, folded into the state before
+    /// the rod is driven again. With the drive settled at 0 every state is
+    /// within its width, so the remanence is multiplied by exactly `factor`.
+    ///
+    /// # Panics
+    /// If `rod` is out of range or `factor` is outside [0, 1].
+    pub fn relax(&mut self, rod: usize, factor: f64) {
+        assert!(
+            (0.0..=1.0).contains(&factor),
+            "a relaxation factor must be within [0, 1], got {factor}"
+        );
+        let mut r = 0.0;
+        for (p, z) in self.plays[rod].iter().zip(&mut self.states[rod]) {
+            *z *= factor;
+            r += p.holds(*z);
+        }
+        self.residual[rod] = r;
     }
 
     /// The remanence [`Self::apply`] with `clamped` would leave [A·m²],
@@ -575,6 +767,92 @@ mod tests {
             rem.apply(&[c]);
             assert_eq!(rem.residual(), predicted.as_slice(), "c {c}");
         }
+    }
+
+    /// A relaxation fitted to a table one relaxation makes gives that table
+    /// back, with what is left after a long time close to the original's.
+    #[test]
+    fn a_relaxation_fits_back_a_table_it_made() {
+        let truth = RemanenceRelaxation::new(vec![(0.1, 10.0), (0.2, 1000.0)]);
+        let table: Vec<(f64, f64)> = [1.0, 3.0, 10.0, 30.0, 100.0, 300.0, 1000.0, 3000.0]
+            .iter()
+            .map(|&t| (t, truth.factor(t)))
+            .collect();
+        let (fitted, misfit) = RemanenceRelaxation::fit(&table).unwrap();
+        assert!(misfit < 1e-3, "misfit {misfit}");
+        assert!((fitted.long_term() - truth.long_term()).abs() < 0.05);
+        assert_eq!(fitted.factor(0.0), 1.0);
+    }
+
+    /// A logarithmic decay over four decades (Street–Woolley, S = 0.02 per
+    /// e-fold) is followed within a few tenths of a percent.
+    #[test]
+    fn a_logarithmic_decay_is_fitted_closely() {
+        let table: Vec<(f64, f64)> = [1.0, 10.0, 100.0, 1000.0, 10000.0]
+            .iter()
+            .map(|&t: &f64| (t, 1.0 - 0.02 * (1.0 + t).ln()))
+            .collect();
+        let (fitted, misfit) = RemanenceRelaxation::fit(&table).unwrap();
+        assert!(misfit < 0.005, "misfit {misfit}");
+        assert!(fitted.long_term() >= 0.0);
+    }
+
+    #[test]
+    fn a_relaxation_table_out_of_range_or_turning_over_is_refused() {
+        for bad in [
+            vec![],
+            vec![(0.0, 0.9)],
+            vec![(10.0, 0.9), (5.0, 0.8)],
+            vec![(1.0, 1.2)],
+            vec![(1.0, f64::NAN)],
+        ] {
+            assert!(RemanenceRelaxation::fit(&bad).is_err(), "{bad:?}");
+        }
+        // Times whose grid of time constants cannot be represented or would
+        // need too many terms.
+        for bad in [
+            vec![(1.0, 0.9), (f64::MAX, 0.5)],
+            vec![(f64::MIN_POSITIVE / 4.0, 0.9)],
+            vec![(1e-10, 0.9), (1e20, 0.5)],
+        ] {
+            assert!(RemanenceRelaxation::fit(&bad).is_err(), "{bad:?}");
+        }
+        let too_many: Vec<(f64, f64)> = (1..=MAX_RELAXATION_POINTS + 1)
+            .map(|k| (k as f64, 0.9))
+            .collect();
+        assert!(RemanenceRelaxation::fit(&too_many).is_err());
+    }
+
+    #[test]
+    fn the_relaxation_factor_starts_at_one_and_falls_to_the_long_term() {
+        let r = RemanenceRelaxation::new(vec![(0.3, 1.0), (0.2, 100.0)]);
+        assert_eq!(r.factor(0.0), 1.0);
+        assert_eq!(r.factor(-1.0), 1.0);
+        let mut last = 1.0;
+        for t in [0.1, 1.0, 10.0, 100.0, 1000.0] {
+            let q = r.factor(t);
+            assert!(q < last, "t {t}: {q}");
+            last = q;
+        }
+        assert!((r.factor(1e9) - 0.5).abs() < 1e-12);
+        assert!((r.long_term() - 0.5).abs() < 1e-12);
+    }
+
+    #[test]
+    #[should_panic(expected = "at most 1")]
+    fn relaxation_shares_above_one_are_refused() {
+        let _ = RemanenceRelaxation::new(vec![(0.7, 1.0), (0.6, 10.0)]);
+    }
+
+    /// Relaxing after a full drive and switch-off multiplies the remanence
+    /// by the factor exactly.
+    #[test]
+    fn relaxing_multiplies_a_settled_remanence() {
+        let mut rem = one_rod();
+        rem.apply(&[REM_MAX]);
+        rem.apply(&[0.0]);
+        rem.relax(0, 0.4);
+        assert_close(rem.residual()[0], 0.4 * REM_SAT);
     }
 
     /// A saturated operator keeps its whole weight however small the weight

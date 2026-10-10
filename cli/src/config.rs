@@ -1416,6 +1416,12 @@ pub enum MtqConfig {
         #[serde(default)]
         #[ts(optional)]
         time_constant: Option<f64>,
+        /// command を 0 にしてから `t` [s] 後に残る残留の比 `R(t)/R(0)` の実測表、
+        /// `[t, ratio]` の列 (`t` は正で増加、`ratio` は [0, 1])。点は 64 個まで。
+        /// 省略すると残留は時間で減らない。
+        #[serde(default)]
+        #[ts(optional)]
+        remanence_relaxation: Option<Vec<[f64; 2]>>,
         /// rod ごとの上書き。x, y, z の順に 3 つ。rod に書かなかった
         /// `time_constant` は上の値を使う。残留は、rod に `remanence` も
         /// `remanence_curve` も無ければ上の定義を使い、どちらかがあればその
@@ -1443,7 +1449,16 @@ pub struct MtqRodConfig {
     #[serde(default)]
     #[ts(optional)]
     pub remanence_curve: Option<Vec<[f64; 2]>>,
+    /// この rod の、command を 0 にした後の残留の比の実測表 (`[t, ratio]` の列)。
+    #[serde(default)]
+    #[ts(optional)]
+    pub remanence_relaxation: Option<Vec<[f64; 2]>>,
 }
+
+/// Largest difference the relaxation fitted to a `remanence_relaxation`
+/// table may leave from its points, in the ratio itself: past it the terms no
+/// longer stand for the measured decay.
+const REMANENCE_RELAXATION_MAX_MISFIT: f64 = 0.05;
 
 /// The rods a `three_axis` magnetorquer has, in the order of `rods`.
 const THREE_AXIS_RODS: usize = 3;
@@ -1523,6 +1538,38 @@ impl MtqConfig {
         ))
     }
 
+    /// Each rod's remanence relaxation, x, y, z: from the rod's
+    /// `remanence_relaxation`, else the magnetorquer's, else none.
+    ///
+    /// # Errors
+    /// With a `rods` list of another length, or a table that is malformed or
+    /// that the fitted terms miss by more than
+    /// [`REMANENCE_RELAXATION_MAX_MISFIT`].
+    pub fn relaxations(&self) -> Result<Vec<orts::spacecraft::RemanenceRelaxation>, String> {
+        let MtqConfig::ThreeAxis {
+            remanence_relaxation,
+            rods,
+            ..
+        } = self;
+        let shared = relaxation_of("magnetorquers", remanence_relaxation)?;
+        match rods {
+            None => Ok(vec![shared; THREE_AXIS_RODS]),
+            Some(rods) => {
+                check_rod_count(rods)?;
+                rods.iter()
+                    .enumerate()
+                    .map(|(i, rod)| match &rod.remanence_relaxation {
+                        Some(_) => relaxation_of(
+                            &format!("magnetorquers.rods[{i}]"),
+                            &rod.remanence_relaxation,
+                        ),
+                        None => Ok(shared.clone()),
+                    })
+                    .collect()
+            }
+        }
+    }
+
     /// Refuse a time constant that is negative or non-finite, the
     /// magnetorquer's or a rod's, and a `rods` list of another length.
     fn check_time_constants(&self) -> Result<(), String> {
@@ -1558,6 +1605,29 @@ fn check_rod_count(rods: &[MtqRodConfig]) -> Result<(), String> {
             rods.len()
         ))
     }
+}
+
+/// The relaxation one table (`scope`) gives; none without a
+/// `remanence_relaxation`.
+fn relaxation_of(
+    scope: &str,
+    table: &Option<Vec<[f64; 2]>>,
+) -> Result<orts::spacecraft::RemanenceRelaxation, String> {
+    use orts::spacecraft::RemanenceRelaxation;
+    let Some(table) = table else {
+        return Ok(RemanenceRelaxation::none());
+    };
+    let points: Vec<(f64, f64)> = table.iter().map(|&[t, r]| (t, r)).collect();
+    let (relaxation, misfit) = RemanenceRelaxation::fit(&points)
+        .map_err(|e| format!("{scope}.remanence_relaxation: {e}"))?;
+    if misfit > REMANENCE_RELAXATION_MAX_MISFIT {
+        return Err(format!(
+            "{scope}.remanence_relaxation: the fitted relaxation is {misfit} off a point in the \
+             ratio, more than {REMANENCE_RELAXATION_MAX_MISFIT}; the terms, spaced three per \
+             decade, follow only a ratio that does not rise with time"
+        ));
+    }
+    Ok(relaxation)
 }
 
 /// The remanence operators one table (`scope`) gives, from its `remanence`
@@ -2229,6 +2299,7 @@ impl SatelliteConfig {
             }
             mtq.check_time_constants()?;
             mtq.remanence_plays()?;
+            mtq.relaxations()?;
         }
         if let Some(sensors) = &self.sensors {
             validate_sensors(sensors, self.mtq.as_ref()).map_err(|e| format!("sensors: {e}"))?;
@@ -4146,6 +4217,53 @@ satellites:
                 Ok(config) => config.satellites[0].validate().expect_err(bad),
             };
             assert!(err.contains(needle), "{bad}: {err}");
+        }
+    }
+
+    /// A measured relaxation table becomes terms that follow it, shared by
+    /// the rods unless one gives its own; a rod without one anywhere keeps
+    /// its remanence.
+    #[test]
+    fn an_mtq_remanence_relaxation_is_fitted_and_overridden_per_rod() {
+        let config = mtq_with_curve(
+            "remanence = 0.06\nremanence_relaxation = [[1.0, 0.98], [10.0, 0.95], [100.0, 0.9], \
+             [1000.0, 0.86]]\nrods = [{}, { remanence_relaxation = [[10.0, 0.5]] }, {}]",
+        );
+        config.satellites[0].validate().expect("a relaxation table");
+        let relax = config.satellites[0]
+            .mtq
+            .as_ref()
+            .unwrap()
+            .relaxations()
+            .unwrap();
+        for (t, r) in [(1.0, 0.98), (100.0, 0.9), (1000.0, 0.86)] {
+            assert!((relax[0].factor(t) - r).abs() < 0.05, "x at {t}");
+        }
+        assert!((relax[1].factor(10.0) - 0.5).abs() < 0.05, "y has its own");
+        assert_eq!(relax[0], relax[2], "z shares x's");
+        let none = mtq_with_curve("").satellites[0]
+            .mtq
+            .as_ref()
+            .unwrap()
+            .relaxations()
+            .unwrap();
+        assert!(
+            none.iter().all(|r| r.factor(1e9) == 1.0),
+            "left out, no relaxation"
+        );
+    }
+
+    #[test]
+    fn a_malformed_remanence_relaxation_is_refused() {
+        for bad in [
+            "remanence_relaxation = []",
+            "remanence_relaxation = [[0.0, 0.9]]",
+            "remanence_relaxation = [[10.0, 0.9], [5.0, 0.8]]",
+            "remanence_relaxation = [[1.0, 1.5]]",
+            "rods = [{ remanence_relaxation = [[1.0, -0.1]] }, {}, {}]",
+        ] {
+            let err = mtq_with_curve(bad).satellites[0].validate().expect_err(bad);
+            assert!(err.contains("remanence_relaxation"), "{bad}: {err}");
         }
     }
 
