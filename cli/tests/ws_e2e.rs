@@ -6,42 +6,43 @@ use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::connect_async;
 
-/// Pick a port unlikely to collide with other processes.
-fn test_port() -> u16 {
-    let pid = std::process::id();
-    19000 + (pid % 1000) as u16
-}
+/// How long a server gets to announce its endpoint after being spawned.
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// A running server with its child process and stderr drain thread.
+/// A running server with its child process and stderr drain thread. Killed
+/// on drop, so a failing assertion does not leave it listening.
 struct Server {
     child: std::process::Child,
+    /// The port the server bound. It asks the OS for a free one (`--port 0`),
+    /// so a server left over from another run cannot answer in its place.
+    port: u16,
     /// Join handle for the thread that drains stderr (keeps the pipe alive).
     _stderr_thread: std::thread::JoinHandle<()>,
 }
 
 impl Server {
     /// Spawn the CLI binary in WebSocket server mode.
-    /// Blocks until the server prints its "listening" message to stderr.
+    /// Blocks until the server announces its WebSocket endpoint on stderr.
     /// Uses explicit `--sat` args to avoid CelesTrak network dependency.
-    fn spawn(port: u16) -> Self {
-        Self::spawn_with_sats(port, &["altitude=400,id=test"])
+    fn spawn() -> Self {
+        Self::spawn_with_sats(&["altitude=400,id=test"])
     }
 
     /// Spawn the CLI binary with custom satellite configurations.
-    fn spawn_with_sats(port: u16, sats: &[&str]) -> Self {
-        Self::spawn_with_sats_and_env(port, sats, &[])
+    fn spawn_with_sats(sats: &[&str]) -> Self {
+        Self::spawn_with_sats_and_env(sats, &[])
     }
 
     /// Spawn with custom satellite configurations and extra environment
     /// variables. With no `sats` the server starts idle.
-    fn spawn_with_sats_and_env(port: u16, sats: &[&str], env: &[(&str, &str)]) -> Self {
-        Self::spawn_with(port, sats, env, &[])
+    fn spawn_with_sats_and_env(sats: &[&str], env: &[(&str, &str)]) -> Self {
+        Self::spawn_with(sats, env, &[])
     }
 
     /// `extra` goes on the `serve` command line after the satellites.
-    fn spawn_with(port: u16, sats: &[&str], env: &[(&str, &str)], extra: &[&str]) -> Self {
+    fn spawn_with(sats: &[&str], env: &[(&str, &str)], extra: &[&str]) -> Self {
         let binary = env!("CARGO_BIN_EXE_orts");
-        let mut args = vec!["serve".to_string(), "--port".to_string(), port.to_string()];
+        let mut args = vec!["serve".to_string(), "--port".to_string(), "0".to_string()];
         for sat in sats {
             args.push("--sat".to_string());
             args.push(sat.to_string());
@@ -57,7 +58,7 @@ impl Server {
             .expect("failed to spawn orts");
 
         let stderr = child.stderr.take().expect("failed to capture stderr");
-        let (tx, rx) = mpsc::channel::<()>();
+        let (tx, rx) = mpsc::channel::<Option<u16>>();
 
         // Spawn a thread to read stderr. This keeps the pipe open for the entire
         // lifetime of the server process, preventing broken-pipe crashes.
@@ -65,43 +66,67 @@ impl Server {
             let reader = BufReader::new(stderr);
             let mut notified = false;
             for line in reader.lines() {
-                let line = line.expect("failed to read stderr line");
+                let Ok(line) = line else { break };
                 eprintln!("[server stderr] {line}");
-                if !notified && line.contains("Server listening on") {
-                    let _ = tx.send(());
+                if !notified
+                    && let Some(rest) = line.strip_prefix("WebSocket endpoint: ws://localhost:")
+                {
+                    let _ = tx.send(rest.trim_end_matches("/ws").parse().ok());
                     notified = true;
                 }
             }
-            // If the server never printed the ready message, notify anyway so
-            // the test doesn't hang.
+            // The server exited without announcing an endpoint (a rejected
+            // config, a failed bind): fail the spawn instead of letting the
+            // test connect to whatever else is listening.
             if !notified {
-                let _ = tx.send(());
+                let _ = tx.send(None);
             }
         });
 
-        // Wait for the "listening" signal from the stderr reader thread.
-        rx.recv_timeout(Duration::from_secs(10))
-            .expect("server did not print 'listening' message within 10 seconds");
+        // `Server` (and its `Drop`) does not exist yet, so a failed start
+        // kills the child here; otherwise it would outlive the test.
+        let port = match rx.recv_timeout(STARTUP_TIMEOUT) {
+            Ok(Some(port)) => port,
+            failure => {
+                let _ = child.kill();
+                let _ = child.wait();
+                match failure {
+                    Err(_) => panic!("server did not announce its WebSocket endpoint in time"),
+                    _ => panic!("server exited or announced an unreadable WebSocket endpoint"),
+                }
+            }
+        };
 
         Server {
             child,
+            port,
             _stderr_thread: stderr_thread,
         }
     }
 
     /// Spawn in idle mode (no --sat args, no --config).
-    fn spawn_idle(port: u16) -> Self {
-        Self::spawn_idle_with_env(port, &[])
+    fn spawn_idle() -> Self {
+        Self::spawn_idle_with_env(&[])
     }
 
     /// Spawn in idle mode with extra environment variables.
-    fn spawn_idle_with_env(port: u16, env: &[(&str, &str)]) -> Self {
-        Self::spawn_with_sats_and_env(port, &[], env)
+    fn spawn_idle_with_env(env: &[(&str, &str)]) -> Self {
+        Self::spawn_with_sats_and_env(&[], env)
+    }
+
+    fn ws_url(&self) -> String {
+        format!("ws://localhost:{}/ws", self.port)
     }
 
     fn kill(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        self.kill();
     }
 }
 
@@ -146,13 +171,12 @@ async fn read_until_type(
 
 #[tokio::test]
 async fn test_websocket_info_and_state_messages() {
-    let port = test_port();
-    let mut server = Server::spawn(port);
+    let mut server = Server::spawn();
 
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let url = format!("ws://localhost:{port}/ws");
+        let url = server.ws_url();
 
         let mut ws_stream = None;
         for attempt in 0..20 {
@@ -309,13 +333,12 @@ async fn test_websocket_info_and_state_messages() {
 
 #[tokio::test]
 async fn test_websocket_multiple_clients() {
-    let port = test_port() + 1;
-    let mut server = Server::spawn(port);
+    let mut server = Server::spawn();
 
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let url = format!("ws://localhost:{port}/ws");
+        let url = server.ws_url();
 
         // Connect first client.
         let (ws1, _) = connect_async(&url)
@@ -362,14 +385,13 @@ async fn test_websocket_multiple_clients() {
 
 #[tokio::test]
 async fn test_websocket_history_on_connect() {
-    let port = test_port() + 2;
-    let mut server = Server::spawn(port);
+    let mut server = Server::spawn();
 
     // Wait for simulation to accumulate some states
     tokio::time::sleep(Duration::from_secs(3)).await;
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let url = format!("ws://localhost:{port}/ws");
+        let url = server.ws_url();
         let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (_write, mut read) = ws.split();
 
@@ -412,11 +434,10 @@ async fn test_websocket_history_on_connect() {
 
 #[tokio::test]
 async fn test_websocket_history_grows_over_time() {
-    let port = test_port() + 3;
-    let mut server = Server::spawn(port);
+    let mut server = Server::spawn();
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let url = format!("ws://localhost:{port}/ws");
+        let url = server.ws_url();
 
         // Connect client A immediately
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -462,14 +483,13 @@ async fn test_websocket_history_grows_over_time() {
 /// handshake still works end-to-end after the simplification.
 #[tokio::test]
 async fn test_websocket_info_history_state_handshake() {
-    let port = test_port() + 4;
-    let mut server = Server::spawn(port);
+    let mut server = Server::spawn();
 
     // Wait for data to accumulate
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let url = format!("ws://localhost:{port}/ws");
+        let url = server.ws_url();
         let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (_write, mut read) = ws.split();
 
@@ -513,53 +533,20 @@ async fn test_websocket_info_history_state_handshake() {
 /// messages should ever arrive, even after observing many subsequent frames.
 #[tokio::test]
 async fn test_websocket_no_history_detail_sent() {
-    let port = test_port() + 20;
     // Use dt=1 output_interval=1 so history accumulates fast enough that the
     // old code path would actually chunk detail replay (rather than ship an
     // empty HistoryDetailComplete marker immediately).
-    let binary = env!("CARGO_BIN_EXE_orts");
-    let mut child = Command::new(binary)
-        .env("ORTS_DISABLE_TEXTURE_DOWNLOAD", "1")
-        .args([
-            "serve",
-            "--port",
-            &port.to_string(),
-            "--dt",
-            "1",
-            "--output-interval",
-            "1",
-            "--sat",
-            "altitude=400,id=test",
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("failed to spawn orts");
-    let stderr = child.stderr.take().expect("stderr");
-    let (tx, rx) = mpsc::channel::<()>();
-    let _stderr_thread = std::thread::spawn(move || {
-        let reader = BufReader::new(stderr);
-        let mut notified = false;
-        for line in reader.lines() {
-            let line = line.expect("stderr line");
-            eprintln!("[server stderr] {line}");
-            if !notified && line.contains("Server listening on") {
-                let _ = tx.send(());
-                notified = true;
-            }
-        }
-        if !notified {
-            let _ = tx.send(());
-        }
-    });
-    rx.recv_timeout(Duration::from_secs(10))
-        .expect("server did not start");
+    let server = Server::spawn_with(
+        &["altitude=400,id=test"],
+        &[],
+        &["--dt", "1", "--output-interval", "1"],
+    );
 
     // Let several history outputs accumulate.
     tokio::time::sleep(Duration::from_secs(5)).await;
 
     let result = tokio::time::timeout(Duration::from_secs(20), async {
-        let url = format!("ws://localhost:{port}/ws");
+        let url = server.ws_url();
         let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (_write, mut read) = ws.split();
 
@@ -602,8 +589,7 @@ async fn test_websocket_no_history_detail_sent() {
     })
     .await;
 
-    let _ = child.kill();
-    let _ = child.wait();
+    drop(server);
     result.expect("test timed out after 20 seconds");
 }
 
@@ -615,46 +601,12 @@ async fn test_websocket_no_history_detail_sent() {
 /// follow-up `query_range` requests, not baked into the handshake.
 #[tokio::test]
 async fn test_websocket_history_overview_payload_is_bounded() {
-    let port = test_port() + 21;
     // dt=1 output_interval=1 accumulates 1 history point per wall-clock second.
-    let binary = env!("CARGO_BIN_EXE_orts");
-    let mut child = Command::new(binary)
-        .env("ORTS_DISABLE_TEXTURE_DOWNLOAD", "1")
-        .args([
-            "serve",
-            "--port",
-            &port.to_string(),
-            "--dt",
-            "1",
-            "--output-interval",
-            "1",
-            "--sat",
-            "altitude=400,id=test",
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("failed to spawn orts");
-
-    let stderr = child.stderr.take().expect("failed to capture stderr");
-    let (tx, rx) = mpsc::channel::<()>();
-    let _stderr_thread = std::thread::spawn(move || {
-        let reader = BufReader::new(stderr);
-        let mut notified = false;
-        for line in reader.lines() {
-            let line = line.expect("failed to read stderr line");
-            eprintln!("[server stderr] {line}");
-            if !notified && line.contains("Server listening on") {
-                let _ = tx.send(());
-                notified = true;
-            }
-        }
-        if !notified {
-            let _ = tx.send(());
-        }
-    });
-    rx.recv_timeout(Duration::from_secs(10))
-        .expect("server did not start");
+    let server = Server::spawn_with(
+        &["altitude=400,id=test"],
+        &[],
+        &["--dt", "1", "--output-interval", "1"],
+    );
 
     // Let the sim accumulate well past the server's overview cap (1000
     // points). The sim loop often produces bursts of >1 output per wall
@@ -663,7 +615,7 @@ async fn test_websocket_history_overview_payload_is_bounded() {
     tokio::time::sleep(Duration::from_secs(8)).await;
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let url = format!("ws://localhost:{port}/ws");
+        let url = server.ws_url();
         let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (_write, mut read) = ws.split();
 
@@ -686,21 +638,19 @@ async fn test_websocket_history_overview_payload_is_bounded() {
     })
     .await;
 
-    let _ = child.kill();
-    let _ = child.wait();
+    drop(server);
     result.expect("test timed out after 30 seconds");
 }
 
 #[tokio::test]
 async fn test_websocket_overview_arrives_fast() {
-    let port = test_port() + 5;
-    let mut server = Server::spawn(port);
+    let mut server = Server::spawn();
 
     // Wait for substantial data accumulation
     tokio::time::sleep(Duration::from_secs(5)).await;
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let url = format!("ws://localhost:{port}/ws");
+        let url = server.ws_url();
         let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (_write, mut read) = ws.split();
 
@@ -724,14 +674,13 @@ async fn test_websocket_overview_arrives_fast() {
 
 #[tokio::test]
 async fn test_websocket_query_range() {
-    let port = test_port() + 6;
-    let mut server = Server::spawn(port);
+    let mut server = Server::spawn();
 
     // Wait for data to accumulate
     tokio::time::sleep(Duration::from_secs(3)).await;
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let url = format!("ws://localhost:{port}/ws");
+        let url = server.ws_url();
         let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (mut write, mut read) = ws.split();
 
@@ -799,15 +748,14 @@ async fn test_websocket_query_range() {
 /// The server must NOT reset t to 0 at the start of each orbit period.
 #[tokio::test]
 async fn test_websocket_monotonic_time_across_orbits() {
-    let port = test_port() + 7;
-    let mut server = Server::spawn(port);
+    let mut server = Server::spawn();
 
     // Wait long enough for more than one full orbit (~55s wall time at default params).
     // 65 seconds ensures the second orbit has started and t resets would be visible.
     tokio::time::sleep(Duration::from_secs(65)).await;
 
     let result = tokio::time::timeout(Duration::from_secs(60), async {
-        let url = format!("ws://localhost:{port}/ws");
+        let url = server.ws_url();
         let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (_write, mut read) = ws.split();
 
@@ -877,16 +825,25 @@ async fn test_websocket_monotonic_time_across_orbits() {
 /// for satellites that terminated before the client connected.
 #[tokio::test]
 async fn test_websocket_terminated_replay_on_late_connect() {
-    let port = test_port() + 8;
     // altitude=50 is below Earth's atmosphere (100 km Kármán line)
     // → immediate atmospheric entry termination
-    let mut server = Server::spawn_with_sats(port, &["altitude=50,id=low", "altitude=800,id=high"]);
-
-    // Wait for the low satellite to terminate (should be nearly instant)
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    let mut server = Server::spawn_with_sats(&["altitude=50,id=low", "altitude=800,id=high"]);
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let url = format!("ws://localhost:{port}/ws");
+        let url = server.ws_url();
+
+        // An observer waits until the termination has reached the clients.
+        // The engine adds the event to its replay list before it broadcasts
+        // it, so once the observer has it (live or replayed) the list holds
+        // it. The client below connects after the broadcast went out, so it
+        // can only get the event from the replay.
+        {
+            let (ws, _) = connect_async(&url).await.expect("failed to connect");
+            let (_write, mut read) = ws.split();
+            let (terminated, _) = read_until_type(&mut read, "simulation_terminated", 200).await;
+            assert_eq!(terminated["entity_path"], "/world/sat/low");
+        }
+
         let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (_write, mut read) = ws.split();
 
@@ -931,11 +888,10 @@ async fn test_websocket_terminated_replay_on_late_connect() {
 /// and that a client can start the simulation via start_simulation message.
 #[tokio::test]
 async fn test_websocket_idle_then_start_simulation() {
-    let port = test_port() + 9;
-    let mut server = Server::spawn_idle(port);
+    let mut server = Server::spawn_idle();
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let url = format!("ws://localhost:{port}/ws");
+        let url = server.ws_url();
         let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (mut write, mut read) = ws.split();
 
@@ -981,11 +937,10 @@ async fn test_websocket_idle_then_start_simulation() {
 /// Verify that add_satellite works on a running simulation.
 #[tokio::test]
 async fn test_websocket_add_satellite() {
-    let port = test_port() + 10;
-    let mut server = Server::spawn(port);
+    let mut server = Server::spawn();
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let url = format!("ws://localhost:{port}/ws");
+        let url = server.ws_url();
         let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (mut write, mut read) = ws.split();
 
@@ -1045,11 +1000,10 @@ async fn test_websocket_add_satellite() {
 /// never arrives.
 #[tokio::test]
 async fn test_websocket_unreadable_message_is_answered() {
-    let port = test_port() + 22;
-    let mut server = Server::spawn_idle(port);
+    let mut server = Server::spawn_idle();
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let url = format!("ws://localhost:{port}/ws");
+        let url = server.ws_url();
         let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (mut write, mut read) = ws.split();
 
@@ -1208,15 +1162,14 @@ fn circular_start() -> serde_json::Value {
 /// empty `HOME` of its own.
 #[tokio::test]
 async fn test_websocket_unbuildable_start_leaves_the_server_usable() {
-    let port = test_port() + 23;
     let home_dir = tempfile::tempdir().expect("a temporary HOME");
     let home = home_dir.path().to_str().expect("a UTF-8 temp path");
     let mut env = UNREACHABLE_PROXY_ENV.to_vec();
     env.push(("HOME", home));
-    let mut server = Server::spawn_idle_with_env(port, &env);
+    let mut server = Server::spawn_idle_with_env(&env);
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let url = format!("ws://localhost:{port}/ws");
+        let url = server.ws_url();
         let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (mut write, mut read) = ws.split();
         assert_eq!(next_json(&mut read).await["state"], "idle");
@@ -1278,11 +1231,10 @@ async fn test_websocket_unbuildable_start_leaves_the_server_usable() {
 /// connected client got an `error` for a request it had not sent.
 #[tokio::test]
 async fn test_websocket_start_the_engine_refuses_is_answered_to_its_sender() {
-    let port = test_port() + 26;
-    let mut server = Server::spawn_idle(port);
+    let mut server = Server::spawn_idle();
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let url = format!("ws://localhost:{port}/ws");
+        let url = server.ws_url();
         let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (mut write, mut read) = ws.split();
         assert_eq!(next_json(&mut read).await["state"], "idle");
@@ -1334,15 +1286,14 @@ async fn test_websocket_start_the_engine_refuses_is_answered_to_its_sender() {
 /// `test_websocket_unbuildable_start_leaves_the_server_usable`.
 #[tokio::test]
 async fn test_websocket_unbuildable_start_after_terminate_is_answered() {
-    let port = test_port() + 27;
     let home_dir = tempfile::tempdir().expect("a temporary HOME");
     let home = home_dir.path().to_str().expect("a UTF-8 temp path");
     let mut env = UNREACHABLE_PROXY_ENV.to_vec();
     env.push(("HOME", home));
-    let mut server = Server::spawn_with_sats_and_env(port, &["altitude=400,id=test"], &env);
+    let mut server = Server::spawn_with_sats_and_env(&["altitude=400,id=test"], &env);
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let url = format!("ws://localhost:{port}/ws");
+        let url = server.ws_url();
         let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (mut write, mut read) = ws.split();
         read_until_type(&mut read, "info", 10).await;
@@ -1391,11 +1342,10 @@ async fn test_websocket_unbuildable_start_after_terminate_is_answered() {
 /// simulation was lost and every connection closed.
 #[tokio::test]
 async fn test_websocket_add_with_a_malformed_tle_is_refused() {
-    let port = test_port() + 24;
-    let mut server = Server::spawn(port);
+    let mut server = Server::spawn();
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let url = format!("ws://localhost:{port}/ws");
+        let url = server.ws_url();
         let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (mut write, mut read) = ws.split();
         read_until_type(&mut read, "info", 10).await;
@@ -1437,11 +1387,10 @@ async fn test_websocket_add_with_a_malformed_tle_is_refused() {
 /// `UNREACHABLE_PROXY_ENV`.
 #[tokio::test]
 async fn test_websocket_norad_start_the_server_cannot_fetch_is_refused() {
-    let port = test_port() + 25;
-    let mut server = Server::spawn_idle_with_env(port, UNREACHABLE_PROXY_ENV);
+    let mut server = Server::spawn_idle_with_env(UNREACHABLE_PROXY_ENV);
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let url = format!("ws://localhost:{port}/ws");
+        let url = server.ws_url();
         let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (mut write, mut read) = ws.split();
         assert_eq!(next_json(&mut read).await["state"], "idle");
@@ -1480,11 +1429,10 @@ async fn test_websocket_norad_start_the_server_cannot_fetch_is_refused() {
 /// clock instead of running 100x ahead of it.
 #[tokio::test]
 async fn test_websocket_start_simulation_asks_for_realtime() {
-    let port = test_port() + 28;
-    let mut server = Server::spawn_idle(port);
+    let mut server = Server::spawn_idle();
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let url = format!("ws://localhost:{port}/ws");
+        let url = server.ws_url();
         let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (mut write, mut read) = ws.split();
 
@@ -1527,11 +1475,10 @@ async fn test_websocket_start_simulation_asks_for_realtime() {
 /// accelerated runs accelerated.
 #[tokio::test]
 async fn test_websocket_realtime_server_default_and_override() {
-    let port = test_port() + 29;
-    let mut server = Server::spawn_with(port, &[], &[], &["--realtime"]);
+    let mut server = Server::spawn_with(&[], &[], &["--realtime"]);
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let url = format!("ws://localhost:{port}/ws");
+        let url = server.ws_url();
         let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (mut write, mut read) = ws.split();
 
