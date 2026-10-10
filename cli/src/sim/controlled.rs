@@ -1128,6 +1128,17 @@ fn unresolved_mtq_response_step(
     }
 }
 
+/// The rod with the shortest positive time constant, and that time constant
+/// [s]; `None` when no rod responds with a delay.
+fn shortest_mtq_response(time_constants: &[f64]) -> Option<(usize, f64)> {
+    time_constants
+        .iter()
+        .copied()
+        .enumerate()
+        .filter(|&(_, tau)| tau > 0.0)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+}
+
 /// Warn when a fixed-step integrator's step is too long for the MTQ response
 /// of the rod with the shortest time constant: the magnetometer reads the
 /// transient exactly, but its torque is integrated coarsely.
@@ -1137,12 +1148,7 @@ fn warn_unresolved_mtq_response(
     time_constants: &[f64],
     sat_id: &str,
 ) {
-    let Some((rod, &time_constant)) = time_constants
-        .iter()
-        .enumerate()
-        .filter(|&(_, &tau)| tau > 0.0)
-        .min_by(|a, b| a.1.total_cmp(b.1))
-    else {
+    let Some((rod, time_constant)) = shortest_mtq_response(time_constants) else {
         return;
     };
     if let Some(step) =
@@ -2548,6 +2554,19 @@ mod tests {
         let ratio = torque_at(t_off + TAU) / torque_at(t_off);
         // The field moves with the epoch over the 0.2 s too, by about 1e-6.
         assert!((ratio - (-1.0_f64).exp()).abs() < 1e-5, "{ratio}");
+    }
+
+    /// The warning goes by the rod with the shortest time constant, skipping
+    /// rods with none: of 0, 0.1 s and 0.05 s it is rod 2 at 0.05 s.
+    #[test]
+    fn the_mtq_response_warning_picks_the_shortest_positive_time_constant() {
+        assert_eq!(shortest_mtq_response(&[0.0, 0.1, 0.05]), Some((2, 0.05)));
+        assert_eq!(
+            shortest_mtq_response(&[0.2, 0.0, 0.2]),
+            Some((0, 0.2)),
+            "first of equals"
+        );
+        assert_eq!(shortest_mtq_response(&[0.0; 3]), None);
     }
 
     /// The RK4 warning fires for a step longer than a fifth of the time
