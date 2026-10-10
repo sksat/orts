@@ -364,11 +364,10 @@ pub fn build_controlled_satellite(
             // Off and demagnetized at the start, so the first build is the
             // command-less assembly.
             dynamics = dynamics.with_model(mtq_for_body(params.body, &core, None, None));
-            let time_constant = mtq_config.time_constant();
             let mut drive = orts::spacecraft::MtqMomentDrive::new(core.clone(), start_t)
-                .with_time_constant(time_constant);
+                .with_time_constants(mtq_config.time_constants());
             if let Some(plays) = mtq_config.remanence_plays()? {
-                drive = drive.with_remanence_plays(vec![plays; core.num_mtqs()]);
+                drive = drive.with_remanence_plays(plays);
             }
             Some(drive)
         }
@@ -425,7 +424,7 @@ pub fn build_controlled_satellite(
     // The propagation is cut at every controller tick, so the period bounds
     // the RK4 step as well as `--dt` does.
     if let Some(drive) = &mtq {
-        warn_unresolved_mtq_response(params, sample_period, drive.time_constant(), &spec.id);
+        warn_unresolved_mtq_response(params, sample_period, drive.time_constants(), &spec.id);
     }
 
     Ok(ControlledSatellite {
@@ -1129,20 +1128,34 @@ fn unresolved_mtq_response_step(
     }
 }
 
-/// Warn when a fixed-step integrator's step is too long for the MTQ response:
-/// the magnetometer reads the transient exactly, but its torque is integrated
-/// coarsely.
+/// The rod with the shortest positive time constant, and that time constant
+/// [s]; `None` when no rod responds with a delay.
+fn shortest_mtq_response(time_constants: &[f64]) -> Option<(usize, f64)> {
+    time_constants
+        .iter()
+        .copied()
+        .enumerate()
+        .filter(|&(_, tau)| tau > 0.0)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+}
+
+/// Warn when a fixed-step integrator's step is too long for the MTQ response
+/// of the rod with the shortest time constant: the magnetometer reads the
+/// transient exactly, but its torque is integrated coarsely.
 fn warn_unresolved_mtq_response(
     params: &SimParams,
     sample_period: f64,
-    time_constant: f64,
+    time_constants: &[f64],
     sat_id: &str,
 ) {
+    let Some((rod, time_constant)) = shortest_mtq_response(time_constants) else {
+        return;
+    };
     if let Some(step) =
         unresolved_mtq_response_step(&params.integrator_config(), sample_period, time_constant)
     {
         log::warn!(
-            "{sat_id}: magnetorquers.time_constant = {time_constant} s is shorter than \
+            "{sat_id}: rod {rod}'s magnetorquer time_constant = {time_constant} s is shorter than \
              {MTQ_RESPONSE_STEPS_PER_TIME_CONSTANT} RK4 steps of {step} s (the shorter of --dt \
              and the controller period), so the torque of the transient after each command is \
              integrated coarsely (the magnetometer still reads it exactly). Use a smaller --dt \
@@ -2541,6 +2554,19 @@ mod tests {
         let ratio = torque_at(t_off + TAU) / torque_at(t_off);
         // The field moves with the epoch over the 0.2 s too, by about 1e-6.
         assert!((ratio - (-1.0_f64).exp()).abs() < 1e-5, "{ratio}");
+    }
+
+    /// The warning goes by the rod with the shortest time constant, skipping
+    /// rods with none: of 0, 0.1 s and 0.05 s it is rod 2 at 0.05 s.
+    #[test]
+    fn the_mtq_response_warning_picks_the_shortest_positive_time_constant() {
+        assert_eq!(shortest_mtq_response(&[0.0, 0.1, 0.05]), Some((2, 0.05)));
+        assert_eq!(
+            shortest_mtq_response(&[0.2, 0.0, 0.2]),
+            Some((0, 0.2)),
+            "first of equals"
+        );
+        assert_eq!(shortest_mtq_response(&[0.0; 3]), None);
     }
 
     /// The RK4 warning fires for a step longer than a fifth of the time

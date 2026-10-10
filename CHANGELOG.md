@@ -14,6 +14,8 @@ section is subdivided by package.
 ### `orts` (Rust, crates.io)
 
 #### Added
+- `MtqMomentDrive::with_time_constants` gives each MTQ rod its own response
+  time constant; `time_constants` reads them back.
 - The MTQ rods' response and remanence. `spacecraft::MtqMomentDrive` holds
   the rods' state across commands and gives their moments at any time: each
   rod's drive (its coil current, as the moment it makes) approaches the
@@ -2595,6 +2597,11 @@ Release blog post: [orts: 人工衛星シミュレーションプラットフォ
 ### `orts-cli` (Rust, crates.io, binary)
 
 #### Added
+- `magnetorquers.rods = [{...}, {...}, {...}]` (x, y, z) sets each rod's
+  `time_constant`, `remanence` or `remanence_curve`. A rod takes the
+  magnetorquer's time constant unless it gives its own, and its remanence
+  unless it gives either key; a list of another length is refused. The RK4
+  step warning names the rod with the shortest time constant.
 - WASM plugin thruster throttle commands (`[0,1]` per device) are
   wired through the controlled simulation loop (Phase P4)
 
