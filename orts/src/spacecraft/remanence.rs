@@ -1,12 +1,13 @@
 //! Remanent magnetization of MTQ rods' cores.
 //!
 //! A rod's core keeps part of its magnetization after the drive is switched
-//! off, and how much depends on how it was driven. This model keeps it fixed
-//! between drives: the slow relaxation of a real core after switch-off
-//! (magnetic viscosity) and its temperature dependence are left out. Each rod's
-//! remanence is a weighted sum of play operators of different widths (a
-//! Prandtl–Ishlinskii model) on the normalized drive `v = c / max_moment`
-//! (DESIGN.md "MTQ の rod の moment は、遅れて追従する駆動と残留磁化から決める").
+//! off, and how much depends on how it was driven. Each rod's remanence is a
+//! weighted sum of play operators of different widths (a Prandtl–Ishlinskii
+//! model) on the normalized drive `v = c / max_moment` (DESIGN.md "MTQ の rod
+//! の moment は、遅れて追従する駆動と残留磁化から決める"). While the command is
+//! 0 it relaxes over time as [`RemanenceRelaxation`] gives (magnetic
+//! viscosity, DESIGN.md "command を 0 にした後の残留は、時間とともに減る");
+//! its temperature dependence is left out.
 
 use nalgebra::{DMatrix, DVector};
 
@@ -318,8 +319,10 @@ impl RemanenceRelaxation {
             ));
         }
         let count = (decades * RELAXATION_TERMS_PER_DECADE).ceil() as usize + 1;
+        // The count is rounded up, so the last point can pass `longest` by up
+        // to a third of a decade; it stops there, within the checked range.
         let times: Vec<f64> = (0..count)
-            .map(|k| shortest * 10f64.powf(k as f64 / RELAXATION_TERMS_PER_DECADE))
+            .map(|k| (shortest * 10f64.powf(k as f64 / RELAXATION_TERMS_PER_DECADE)).min(longest))
             .collect();
         let a = DMatrix::from_fn(table.len(), times.len(), |i, j| {
             -(-table[i].0 / times[j]).exp_m1()
@@ -817,6 +820,16 @@ mod tests {
         ] {
             assert!(RemanenceRelaxation::fit(&bad).is_err(), "{bad:?}");
         }
+        // Within range, but a third of a decade more would not be finite: the
+        // grid stops at its bound, and every term is finite.
+        let (near_max, _) = RemanenceRelaxation::fit(&[(5e307, 0.5)]).expect("in range");
+        assert!(
+            near_max
+                .terms()
+                .iter()
+                .all(|&(a, t)| a.is_finite() && t.is_finite()),
+            "{near_max:?}"
+        );
         let too_many: Vec<(f64, f64)> = (1..=MAX_RELAXATION_POINTS + 1)
             .map(|k| (k as f64, 0.9))
             .collect();
