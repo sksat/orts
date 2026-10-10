@@ -158,6 +158,7 @@ impl MtqMomentDrive {
     /// # Panics
     /// If `time_constant` is negative or non-finite.
     pub fn with_time_constant(self, time_constant: f64) -> Self {
+        check_time_constant(time_constant);
         let n = self.core().num_mtqs();
         self.with_time_constants(vec![time_constant; n])
     }
@@ -174,12 +175,7 @@ impl MtqMomentDrive {
             self.core().num_mtqs(),
             "time constants length != MTQ count"
         );
-        for &tau in &time_constants {
-            assert!(
-                tau.is_finite() && tau >= 0.0,
-                "time_constant must be finite and non-negative, got {tau}"
-            );
-        }
+        time_constants.iter().copied().for_each(check_time_constant);
         self.time_constants = time_constants;
         self
     }
@@ -242,6 +238,14 @@ impl MtqMomentDrive {
             remanence,
         };
     }
+}
+
+/// Refuse a time constant that is negative or non-finite.
+fn check_time_constant(tau: f64) {
+    assert!(
+        tau.is_finite() && tau >= 0.0,
+        "time_constant must be finite and non-negative, got {tau}"
+    );
 }
 
 #[cfg(test)]
@@ -450,6 +454,14 @@ mod tests {
     #[should_panic(expected = "time_constant")]
     fn a_negative_time_constant_is_refused() {
         let _ = MtqMomentDrive::new(one_rod(), 0.0).with_time_constant(-1.0);
+    }
+
+    /// A core with no rods has nothing to replicate the scalar into; the
+    /// scalar is still checked.
+    #[test]
+    #[should_panic(expected = "time_constant")]
+    fn a_negative_time_constant_is_refused_without_rods() {
+        let _ = MtqMomentDrive::new(MtqAssemblyCore::new(vec![]), 0.0).with_time_constant(-1.0);
     }
 
     #[test]
