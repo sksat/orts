@@ -227,6 +227,11 @@ impl MtqMomentDrive {
         &self.time_constants
     }
 
+    /// Each rod's remanence relaxation.
+    pub fn relaxations(&self) -> &[RemanenceRelaxation] {
+        &self.profile.relaxations
+    }
+
     /// Each rod's moment at time `t` [A·m²], under the command applied last.
     pub fn moments_at(&self, t: f64) -> Vec<f64> {
         self.profile.at(t)

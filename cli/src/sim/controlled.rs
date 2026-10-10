@@ -420,6 +420,7 @@ pub fn build_controlled_satellite(
     // the RK4 step as well as `--dt` does.
     if let Some(drive) = &mtq {
         warn_unresolved_mtq_response(params, sample_period, drive.time_constants(), &spec.id);
+        warn_relaxation_within_mtq_response(drive, &spec.id);
     }
 
     Ok(ControlledSatellite {
@@ -1148,6 +1149,50 @@ fn shortest_mtq_response(time_constants: &[f64]) -> Option<(usize, f64)> {
         .enumerate()
         .filter(|&(_, tau)| tau > 0.0)
         .min_by(|a, b| a.1.total_cmp(&b.1))
+}
+
+/// The relaxation's shortest time constant must be at least this many response
+/// time constants: the relaxation clock starts when the command goes to 0, but
+/// the drive takes about 5 response time constants to fall, and over that
+/// time the remanence is still driven. Driving again before the drive has
+/// fallen also makes the remanence jump by about the relaxation over that
+/// time. Both stay small while the relaxation is this much slower.
+const MTQ_RELAXATION_RESPONSE_SEPARATION: f64 = 10.0;
+
+/// The first rod whose relaxation has a term faster than
+/// [`MTQ_RELAXATION_RESPONSE_SEPARATION`] response time constants: the rod,
+/// its time constant and the term's [s].
+fn relaxation_within_mtq_response(
+    time_constants: &[f64],
+    relaxations: &[orts::spacecraft::RemanenceRelaxation],
+) -> Option<(usize, f64, f64)> {
+    time_constants
+        .iter()
+        .zip(relaxations)
+        .enumerate()
+        .find_map(|(rod, (&tau, relaxation))| {
+            let fastest = relaxation
+                .terms()
+                .iter()
+                .map(|&(_, t)| t)
+                .min_by(f64::total_cmp)?;
+            (fastest < MTQ_RELAXATION_RESPONSE_SEPARATION * tau).then_some((rod, tau, fastest))
+        })
+}
+
+/// Warn when a rod's remanence relaxes on the time scale of its response.
+fn warn_relaxation_within_mtq_response(drive: &orts::spacecraft::MtqMomentDrive, sat_id: &str) {
+    if let Some((rod, tau, fastest)) =
+        relaxation_within_mtq_response(drive.time_constants(), drive.relaxations())
+    {
+        log::warn!(
+            "{sat_id}: rod {rod}'s remanence_relaxation has a term of {fastest} s, under \
+             {MTQ_RELAXATION_RESPONSE_SEPARATION} times its time_constant = {tau} s. The \
+             relaxation is counted from when the command goes to 0, while the drive still \
+             takes about 5 time constants to fall, so the remanence over that time is only \
+             approximate."
+        );
+    }
 }
 
 /// Warn when a fixed-step integrator's step is too long for the MTQ response
@@ -2653,6 +2698,29 @@ mod tests {
             "first of equals"
         );
         assert_eq!(shortest_mtq_response(&[0.0; 3]), None);
+    }
+
+    /// The relaxation warning fires for a rod whose shortest relaxation time
+    /// constant is under 10 response time constants, not at 10 exactly, and
+    /// never for a rod with no response or no relaxation.
+    #[test]
+    fn the_mtq_relaxation_warning_goes_by_the_shortest_term_of_each_rod() {
+        use orts::spacecraft::RemanenceRelaxation;
+        let relax = |terms: Vec<(f64, f64)>| RemanenceRelaxation::new(terms);
+        let rods = [
+            relax(vec![(0.2, 1000.0), (0.2, 0.99)]),
+            relax(vec![(0.2, 0.01)]),
+            RemanenceRelaxation::none(),
+        ];
+        assert_eq!(
+            relaxation_within_mtq_response(&[0.1, 0.0, 0.1], &rods),
+            Some((0, 0.1, 0.99))
+        );
+        let at_bound = [relax(vec![(0.2, 1.0)]), rods[1].clone(), rods[2].clone()];
+        assert_eq!(
+            relaxation_within_mtq_response(&[0.1, 0.0, 0.1], &at_bound),
+            None
+        );
     }
 
     /// The RK4 warning fires for a step longer than a fifth of the time

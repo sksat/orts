@@ -2611,7 +2611,9 @@ Release blog post: [orts: 人工衛星シミュレーションプラットフォ
 - `magnetorquers.remanence_relaxation = [[t, ratio], ...]`, also per rod in
   `rods`, makes the remanence decay after the command goes to 0, following
   the measured ratio `R(t)/R(0)` (`t` in s). A table the fitted decay misses
-  by more than 0.05 is refused.
+  by more than 0.05 is refused, and so is a table with no remanence to
+  relax. A rod whose relaxation has a term faster than 10 times its
+  `time_constant` is warned about.
 - WASM plugin thruster throttle commands (`[0,1]` per device) are
   wired through the controlled simulation loop (Phase P4)
 
