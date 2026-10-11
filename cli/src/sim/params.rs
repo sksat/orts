@@ -218,11 +218,11 @@ pub(crate) fn validate_element_set_body(
 /// end time when `--duration` is absent, so a value that is not positive and
 /// finite means something different on each of them: `orts run`'s orbit-only
 /// and spacecraft paths take `duration.unwrap_or(period)` per satellite and
-/// never finish, the controlled path skips it when it picks the fleet's
+/// never finish, and the controlled path skips it when it picks the fleet's
 /// horizon (so a fleet of one runs the historical 3600 s, and a mixed fleet
-/// ends before the satellite has flown an orbit), and `serve` uses it as the
-/// orbit reset time. It also reaches the CSV header, the recording's
-/// `meta/sim/period` and the WebSocket `SatelliteInfo`.
+/// ends before the satellite has flown an orbit). It also reaches the CSV
+/// header, the recording's `meta/sim/period` and the WebSocket
+/// `SatelliteInfo`.
 ///
 /// Measured before this check existed:
 /// `orbit = { type = "circular", altitude = 1e103 }` was accepted by the

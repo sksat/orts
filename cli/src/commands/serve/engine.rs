@@ -1,7 +1,7 @@
 //! Pure simulation orchestration engine for `orts serve`.
 //!
 //! [`ServeEngine`] owns the simulation state machine — group construction,
-//! propagation, orbit-boundary reset, snapshotting, the history buffer,
+//! propagation, snapshotting, the history buffer,
 //! dynamic satellite add, and the terminated-event ring — with **no tokio,
 //! no channels, and no wall-clock pacing**. The serve layer
 //! ([`super::manager`]) wraps it in a tokio task and owns everything the
@@ -14,8 +14,8 @@
 //! the paced [`HistoryState`] list on [`StepOutput::states`]) rather than via
 //! a channel, and stream-io bytes are pumped through an injected [`StreamIo`]
 //! sink/source. That is what lets the engine — including its failure modes
-//! (integration error, controller fault, stream overflow / stuck peer,
-//! boundary reset) — be unit-tested in-process without a runtime.
+//! (integration error, controller fault, stream overflow / stuck peer) — be
+//! unit-tested in-process without a runtime.
 
 use std::collections::VecDeque;
 use std::ops::ControlFlow;
@@ -176,23 +176,6 @@ impl SimGroup {
         }
     }
 
-    /// Get satellite ID at index.
-    fn sat_id(&self, idx: usize) -> SatId {
-        match self {
-            SimGroup::OrbitOnly(g) => g.satellites().nth(idx).unwrap().id.clone(),
-            SimGroup::Spacecraft(g) => g.satellites().nth(idx).unwrap().id.clone(),
-            SimGroup::Controlled(_) => SatId::from(self.controlled_meta_id(idx)),
-        }
-    }
-
-    /// Helper: get the satellite ID string for controlled satellites.
-    fn controlled_meta_id(&self, _idx: usize) -> &str {
-        // Controlled satellites don't have SatId in the group; the ID is in
-        // SatMeta which is outside SimGroup. Return a placeholder; the caller
-        // (step_chunk) uses metas[i] for the real ID.
-        "controlled"
-    }
-
     /// Check if satellite at index is terminated.
     fn is_terminated(&self, idx: usize) -> bool {
         match self {
@@ -265,18 +248,6 @@ impl SimGroup {
         }
     }
 
-    /// Reset state for orbit boundary (unperturbed 2-body only, OrbitOnly mode).
-    ///
-    /// In Spacecraft mode this is intentionally a no-op: attitude dynamics
-    /// cannot be meaningfully reset at orbit boundaries, and the coupled
-    /// integrator handles long-duration propagation correctly.
-    fn reset_orbit_state(&mut self, id: &SatId, state: OrbitalState) {
-        match self {
-            SimGroup::OrbitOnly(g) => g.reset_state(id, state),
-            SimGroup::Spacecraft(_) | SimGroup::Controlled(_) => {}
-        }
-    }
-
     /// Push a new satellite (orbit-only mode).
     fn push_orbit_satellite(
         &mut self,
@@ -324,11 +295,6 @@ pub(super) fn push_terminated_capped(events: &mut VecDeque<String>, msg: String)
 /// Per-satellite metadata for serve mode.
 struct SatMeta {
     spec: SatelliteSpec,
-    /// When this satellite's orbit is next re-anchored on its initial state
-    /// [s]. `serve` streams without end, so for an unperturbed orbit-only
-    /// satellite it restarts the orbit every period rather than stopping —
-    /// this is a recurring boundary, not a horizon.
-    next_orbit_reset_t: f64,
     next_save_t: f64,
 }
 
@@ -456,7 +422,6 @@ pub(super) struct ServeEngine {
     /// the interval that should have run it, and be taken a whole interval
     /// late.
     steps_done: u64,
-    has_perturbations: bool,
     /// Each satellite's declared stream names, indexed like `metas`. The
     /// engine iterates these to pump the injected [`StreamIo`]; resolving a
     /// name to a transport is the serve layer's concern.
@@ -571,7 +536,6 @@ impl ServeEngine {
                     controlled_sats.push(sat);
                     metas.push(SatMeta {
                         spec: spec.clone(),
-                        next_orbit_reset_t: spec.period,
                         next_save_t: params.output_interval,
                     });
                 }
@@ -625,7 +589,6 @@ impl ServeEngine {
                 sc_group = sc_group.add_satellite(spec.id.as_str(), initial, dynamics);
                 metas.push(SatMeta {
                     spec: spec.clone(),
-                    next_orbit_reset_t: spec.period,
                     next_save_t: params.output_interval,
                 });
             }
@@ -668,14 +631,11 @@ impl ServeEngine {
                 orbit_group = orbit_group.add_satellite(spec.id.as_str(), initial, system);
                 metas.push(SatMeta {
                     spec: spec.clone(),
-                    next_orbit_reset_t: spec.period,
                     next_save_t: params.output_interval,
                 });
             }
             SimGroup::OrbitOnly(orbit_group)
         };
-
-        let has_perturbations = params.body.properties().j2.is_some();
 
         // Build the Info message (broadcast by the serve layer; also retained
         // for status replay to late-connecting clients).
@@ -792,7 +752,6 @@ impl ServeEngine {
             halted: None,
             current_t: 0.0,
             steps_done: 0,
-            has_perturbations,
             sat_streams,
             stream_step,
             has_streams,
@@ -979,43 +938,6 @@ impl ServeEngine {
         broadcasts: &mut Vec<String>,
     ) -> Result<(), String> {
         let target_t = (self.steps_done + 1) as f64 * self.stream_step;
-
-        // Orbit boundary reset (only for unperturbed 2-body, orbit-only mode)
-        if !self.has_perturbations {
-            let n = self.group.len();
-            let resets: Vec<(SatId, OrbitalState)> = (0..n)
-                .filter_map(|i| {
-                    if !self.group.is_terminated(i)
-                        && self.current_t >= self.metas[i].next_orbit_reset_t - 1e-9
-                    {
-                        Some((
-                            self.group.sat_id(i),
-                            // Periodic 2-body reset to the orbit's reference
-                            // (epoch) state. The element set was validated
-                            // when the satellite was built, so re-evaluating
-                            // it here cannot fail.
-                            self.metas[i]
-                                .spec
-                                .initial_state(self.params.mu, self.params.epoch)
-                                .expect("reset of an already-built initial state must not fail"),
-                        ))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            for (id, new_state) in &resets {
-                self.group.reset_orbit_state(id, new_state.clone());
-                if let Some(i) = self
-                    .metas
-                    .iter()
-                    .position(|m| m.spec.id.as_str() == AsRef::<str>::as_ref(id))
-                {
-                    self.metas[i].next_orbit_reset_t = self.current_t + self.metas[i].spec.period;
-                }
-            }
-        }
 
         // stream-io bridge: freeze this interval's inbound bytes into the
         // controllers before stepping; flush FSW output to the peers
@@ -1302,8 +1224,8 @@ impl ServeEngine {
         let sat_index = self.metas.len();
         let spec = satellite.to_satellite_spec(sat_index, self.params.body, self.params.mu)?;
         // The rules a built spec answers to, the controlled add path's included
-        // (#492): the derived period is this satellite's orbit reset time here,
-        // and an orbit large enough overflows it.
+        // (#492): the derived period reaches clients in `SatelliteInfo`, and an
+        // orbit large enough overflows it.
         crate::sim::mode::validate_satellite_spec(&spec)?;
         // Sensors / actuators only act through a control loop; say so instead
         // of accepting them into an orbit-only fleet unnoticed.
@@ -1353,13 +1275,8 @@ impl ServeEngine {
         let t = self.current_t;
         let sat_entity_path = spec.entity_path();
 
-        let next_orbit_reset_t = self.current_t + spec.period;
         self.metas.push(SatMeta {
             spec,
-            // The satellite's own period. This used to read the *previous*
-            // entry in `metas` (or a hardcoded 5554 s for the first add), so a
-            // satellite added to a fleet re-anchored on someone else's orbit.
-            next_orbit_reset_t,
             next_save_t: self.current_t + self.params.output_interval,
         });
         // Keep `sat_streams` index-aligned with `metas` (dynamic adds cannot
@@ -1510,7 +1427,6 @@ impl ServeEngine {
 
         self.metas.push(SatMeta {
             spec,
-            next_orbit_reset_t: self.current_t + sat_info.period,
             next_save_t: self.current_t + self.params.output_interval,
         });
         // Keep `sat_streams` index-aligned with `metas` (dynamic adds cannot
@@ -1798,6 +1714,72 @@ orbit = { type = "circular", altitude = 500 }
         );
     }
 
+    /// An orbit is integrated on past its period, the way `orts run` does.
+    ///
+    /// The engine used to put a satellite back on its epoch state at the first
+    /// output boundary past each period whenever the central body had no J2.
+    /// Neither half of that held: Mercury and Venus have no J2 but carry the
+    /// Sun's third-body pull, which the reset discarded, and even a pure
+    /// two-body orbit (around the Sun) was rewound by the part of an interval
+    /// that ran past the period. On a circular orbit every chord between
+    /// consecutive samples is the same length; a rewind shortens one.
+    #[test]
+    fn an_orbit_is_integrated_on_past_its_period() {
+        // (body, altitude km, output interval s)
+        for (body, altitude, interval) in [("venus", 400.0, 10.0), ("sun", 695_700.0, 90.0)] {
+            let mut init = engine_from_toml(&format!(
+                r#"
+body = "{body}"
+dt = {interval}
+output_interval = {interval}
+stream_interval = {interval}
+
+[[satellites]]
+id = "sat-a"
+orbit = {{ type = "circular", altitude = {altitude} }}
+"#
+            ))
+            .expect("engine builds");
+            let period = init.engine.metas[0].spec.period;
+            // A reset rewinds by how far the first output boundary past the
+            // period lies past it, so the fixture keeps that well above zero.
+            let rewind = (period / interval).ceil() * interval - period;
+            assert!(
+                rewind > 0.2 * interval,
+                "{body}: the first boundary past the period is only {rewind} s past it"
+            );
+
+            let intervals = (period / interval).ceil() as usize + 3;
+            let mut positions = Vec::new();
+            for _ in 0..intervals {
+                let out = init
+                    .engine
+                    .step_chunk(1, &mut NullStreamIo)
+                    .expect("a stable orbit propagates");
+                positions.extend(
+                    out.states
+                        .iter()
+                        .map(|s| nalgebra::Vector3::from(s.position)),
+                );
+            }
+            assert_eq!(
+                positions.len(),
+                intervals,
+                "{body}: one sample per interval"
+            );
+
+            let chords: Vec<f64> = positions.windows(2).map(|w| (w[1] - w[0]).norm()).collect();
+            for (k, chord) in chords.iter().enumerate() {
+                let ratio = chord / chords[0];
+                assert!(
+                    (ratio - 1.0).abs() < 1e-3,
+                    "{body}: the chord after sample {k} is {ratio} of the first \
+                     (period {period} s, interval {interval} s)"
+                );
+            }
+        }
+    }
+
     #[test]
     fn low_orbit_terminates_and_fills_the_replay_ring() {
         // Below the Kármán line (Earth atmosphere_altitude = 100 km): the
@@ -1925,7 +1907,7 @@ orbit = { type = "circular", altitude = 50 }
     }
 
     /// A satellite a client adds with an orbit whose derived period overflows
-    /// is refused: that period is its orbit reset time here (#492).
+    /// is refused: that period reaches clients in `SatelliteInfo` (#492).
     #[test]
     fn add_refuses_an_orbit_whose_derived_period_overflows() {
         let mut init = engine_from_toml(ORBIT_ONLY).expect("engine builds");
@@ -2314,41 +2296,78 @@ orbit = { type = "circular", altitude = 50 }
         );
     }
 
-    /// A satellite added at runtime re-anchors on its own orbit.
+    /// A satellite added at runtime is integrated on past its own period too.
     ///
-    /// `serve` restarts an unperturbed orbit-only satellite at every period
-    /// boundary. The boundary for a newly added one was read from the previous
-    /// entry in `metas` — the 500 km `sat-a` here — so a satellite added to a
-    /// fleet was re-anchored on someone else's orbit.
+    /// It starts from its orbit's state at the time it is added, so a reset
+    /// would have put it back on that state at the first output boundary past
+    /// `added_t + period` — on Venus, whose runs carry the Sun's third-body
+    /// pull, and with the rewind that boundary leaves.
     #[test]
-    fn an_added_satellite_resets_on_its_own_period() {
-        let mut init = engine_from_toml(ORBIT_ONLY).expect("engine builds");
-        let existing = init.engine.metas[0].spec.period;
+    fn an_added_satellite_is_integrated_on_past_its_own_period() {
+        let interval = 10.0;
+        let mut init = engine_from_toml(&format!(
+            r#"
+body = "venus"
+dt = {interval}
+output_interval = {interval}
+stream_interval = {interval}
+
+[[satellites]]
+id = "sat-a"
+orbit = {{ type = "circular", altitude = 400 }}
+"#
+        ))
+        .expect("engine builds");
+        // Add it at a time other than 0, as a client would.
+        for _ in 0..37 {
+            init.engine
+                .step_chunk(1, &mut NullStreamIo)
+                .expect("a stable orbit propagates");
+        }
+        let added_t = init.engine.current_t();
 
         let cfg: SatelliteConfig = serde_json::from_str(
-            r#"{ "id": "sat-b", "orbit": { "type": "circular", "altitude": 1500 } }"#,
+            r#"{ "id": "sat-b", "orbit": { "type": "circular", "altitude": 800 } }"#,
         )
         .expect("valid satellite config");
         init.engine.add_satellite(cfg).expect("orbit-only add ok");
-
         let added = init
             .engine
             .metas
-            .iter()
-            .find(|m| m.spec.id == "sat-b")
+            .last()
             .expect("the added satellite is in metas");
+        let (added_path, period) = (added.spec.entity_path(), added.spec.period);
+        let rewind = ((added_t + period) / interval).ceil() * interval - (added_t + period);
         assert!(
-            added.spec.period > existing + 500.0,
-            "the fixture needs two clearly different periods: {} vs {existing}",
-            added.spec.period
+            rewind > 0.2 * interval,
+            "the first boundary past the added satellite's period is only {rewind} s past it"
         );
-        assert!(
-            (added.next_orbit_reset_t - added.spec.period).abs() < 1e-9,
-            "reset boundary {} should be the added satellite's own period {}, \
-             not the existing {existing}",
-            added.next_orbit_reset_t,
-            added.spec.period
-        );
+
+        let intervals = (period / interval).ceil() as usize + 3;
+        let mut positions = Vec::new();
+        for _ in 0..intervals {
+            let out = init
+                .engine
+                .step_chunk(1, &mut NullStreamIo)
+                .expect("a stable orbit propagates");
+            positions.extend(
+                out.states
+                    .iter()
+                    .filter(|s| s.entity_path == added_path)
+                    .map(|s| nalgebra::Vector3::from(s.position)),
+            );
+        }
+        assert_eq!(positions.len(), intervals, "one sample per interval");
+
+        let chords: Vec<f64> = positions.windows(2).map(|w| (w[1] - w[0]).norm()).collect();
+        for (k, chord) in chords.iter().enumerate() {
+            let ratio = chord / chords[0];
+            assert!(
+                (ratio - 1.0).abs() < 1e-3,
+                "the chord after sample {k} is {ratio} of the first \
+                 (added at {added_t} s, period {period} s)"
+            );
+        }
     }
 
     #[test]
