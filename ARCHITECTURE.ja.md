@@ -225,6 +225,12 @@ sequenceDiagram
   レンダ経路に乗っていない。
 - **History path (cold):** `IngestBuffer` → DuckDB が zoom / downsample /
   事後クエリ用のキャッシュ。ring buffer と eventually consistent。
+- **ファイル source は全点を持つ:** CSV / RRD の読み込みは、切り詰めない
+  `TrailBuffer` と compaction しない DuckDB のテーブルを満たす。読み込みを
+  終えると、表示はファイルの末尾で一時停止し、チャートは DuckDB から描く。
+  `TrailBuffer` の切り詰め (75,000 点を超えると 50,000 点に戻す)、`ChartBuffer`
+  の 50,000 点の上限、DuckDB の compaction はストリームのためにある。
+  [DESIGN.md](DESIGN.md) を参照。
 - **チャートの列は経路ごとに宣言する:** live の ring buffer は登録された列だけを
   copy し、DuckDB 経路は列そのもの・クエリが select する `derived` の
   pass-through・insert 1 行あたりの値を要求する。どれか 1 つで欠けると

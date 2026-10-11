@@ -144,7 +144,7 @@ export function PlaybackBar({
             ))}
           </select>
         </label>
-        <span className={styles.timeDisplay}>
+        <span className={styles.timeDisplay} data-testid="playback-time">
           {epochJd != null && <>{jd_to_utc_string(epochJd, currentTime)} | </>}
           T+{formatTime(currentTime)} / {formatTime(timelineEnd)}
         </span>
@@ -157,7 +157,12 @@ export function PlaybackBar({
             Live
           </button>
         )}
-        <span className={`${styles.modeIndicator} ${isLive ? styles.live : ""}`}>{modeLabel}</span>
+        <span
+          className={`${styles.modeIndicator} ${isLive ? styles.live : ""}`}
+          data-testid="playback-mode"
+        >
+          {modeLabel}
+        </span>
       </div>
     </div>
   );

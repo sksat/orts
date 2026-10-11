@@ -39,13 +39,22 @@ class IngestBufferStub implements IngestBufferLike<OrbitPoint> {
     if (point.t > this._latestT) this._latestT = point.t;
   }
 
-  /** As the real one does: the array is retained, not copied. */
+  /** As the real one does: the array is retained, not copied, and `latestT`
+   * comes from it alone (an empty replacement resets it). */
   markRebuild(points: OrbitPoint[]): void {
     this._rebuildData = points;
     this._pending = [];
-    if (points.length > 0) {
-      this._latestT = Math.max(...points.map((p) => p.t));
+    this._latestT = -Infinity;
+    for (const p of points) {
+      if (p.t > this._latestT) this._latestT = p.t;
     }
+  }
+
+  /** As the real one does: what was pushed since the last drain or rebuild. */
+  drain(): OrbitPoint[] {
+    const result = this._pending;
+    this._pending = [];
+    return result;
   }
 
   /** As the real one does: the retained array plus what arrived since. */
@@ -170,10 +179,9 @@ describe("createEventDispatcher", () => {
     ]);
   });
 
-  // The rebuild data must be a snapshot, not the trail's own array: a state
-  // arriving before the worker consumes the rebuild would otherwise be both
-  // in the retained array and in `pending`, and `consumeRebuild` returns the
-  // two concatenated.
+  // A state that arrives after a file load, before the worker consumes the
+  // load's rebuild, is in that rebuild once: `consumeRebuild` returns the
+  // retained array and what was pushed since, concatenated.
   it("does not repeat a sample that arrives after a finished chunk load", () => {
     const buffers = createTestBuffers();
     const state = createTestState();
@@ -230,7 +238,7 @@ describe("createEventDispatcher", () => {
     expect(buffers.streamingCount).toBe(0); // reset after history
   });
 
-  it("history-chunk accumulates points, markRebuild on done", () => {
+  it("history-chunk accumulates points into the trail and the ingest buffer", () => {
     const buffers = createTestBuffers();
     const state = createTestState();
     const dispatch = createEventDispatcher(buffers, state, "ws-0");
@@ -242,7 +250,6 @@ describe("createEventDispatcher", () => {
 
     dispatch("ws-0", { kind: "history-chunk", points: chunk2, done: true });
     expect(buffers.trailBuffers.get("sat1")?.length).toBe(3);
-    // After done, IngestBuffer should have rebuild data
     expect(buffers.ingestBuffers.get("sat1")?.latestT).toBe(20);
   });
 
@@ -361,6 +368,154 @@ describe("createEventDispatcher", () => {
 
     // Trail buffer sanity: the range-response path has always updated it.
     expect(buffers.trailBuffers.get("sat1")?.length).toBe(dense.length);
+  });
+});
+
+describe("a file load (history-chunk)", () => {
+  // Here a trail a stream builds keeps at most 3 points (capacity 2, trimmed
+  // past 1.5x), so anything taken from such a trail loses the head of the
+  // six-point loads below.
+  beforeEach(() => {
+    setTrailBufferFactory(
+      (_id, retention) => new TrailBuffer(retention === "whole" ? Number.POSITIVE_INFINITY : 2),
+    );
+  });
+
+  const LOAD = [0, 10, 20, 30, 40, 50];
+
+  /** Dispatch `ts` for `id` in chunks of two, the last chunk marked done. */
+  function loadInChunks(
+    dispatch: ReturnType<typeof createEventDispatcher>,
+    ts: number[],
+    id = "sat1",
+  ): void {
+    for (let i = 0; i < ts.length; i += 2) {
+      dispatch("csv-file", {
+        kind: "history-chunk",
+        points: ts.slice(i, i + 2).map((t) => makePoint(t, id)),
+        done: false,
+      });
+    }
+    dispatch("csv-file", { kind: "history-chunk", points: [], done: true });
+  }
+
+  function ingestOf(buffers: RuntimeBuffers, id = "sat1"): IngestBufferStub {
+    return buffers.ingestBuffers.get(id) as unknown as IngestBufferStub;
+  }
+
+  it("hands DuckDB every point it loads, more than a stream's trail keeps", () => {
+    const buffers = createTestBuffers();
+    loadInChunks(createEventDispatcher(buffers, createTestState(), "csv-file"), LOAD);
+
+    expect(
+      ingestOf(buffers)
+        .consumeRebuild()
+        ?.map((p) => p.t),
+    ).toEqual(LOAD);
+  });
+
+  it("keeps the file's whole trail", () => {
+    const buffers = createTestBuffers();
+    loadInChunks(createEventDispatcher(buffers, createTestState(), "csv-file"), LOAD);
+
+    expect(
+      buffers.trailBuffers
+        .get("sat1")
+        ?.getAll()
+        .map((p) => p.t),
+    ).toEqual(LOAD);
+  });
+
+  it("leaves a streamed trail bounded", () => {
+    const buffers = createTestBuffers();
+    const dispatch = createEventDispatcher(buffers, createTestState(), "ws-0");
+    for (const t of LOAD) dispatch("ws-0", { kind: "state", point: makePoint(t, "sat1") });
+
+    expect(buffers.trailBuffers.get("sat1")?.length).toBeLessThanOrEqual(3);
+  });
+
+  it("drops a stream's trail instead of reusing it", () => {
+    const buffers = createTestBuffers();
+    const streamed = createEventDispatcher(buffers, createTestState(), "ws-0");
+    streamed("ws-0", { kind: "state", point: makePoint(0, "sat1") });
+    loadInChunks(createEventDispatcher(buffers, createTestState(), "csv-file"), LOAD);
+
+    expect(buffers.trailBuffers.get("sat1")?.length).toBe(LOAD.length);
+  });
+
+  // The DuckDB table outlives a load, so a load replaces the rows the one
+  // before it left rather than appending to them.
+  it("replaces the rows of the load before it", () => {
+    const buffers = createTestBuffers();
+    loadInChunks(createEventDispatcher(buffers, createTestState(), "csv-file"), [0, 10, 20]);
+    ingestOf(buffers).consumeRebuild();
+
+    loadInChunks(createEventDispatcher(buffers, createTestState(), "csv-file"), [0, 5]);
+    expect(
+      ingestOf(buffers)
+        .consumeRebuild()
+        ?.map((p) => p.t),
+    ).toEqual([0, 5]);
+  });
+
+  it("rebuilds a satellite that first appears in a later chunk", () => {
+    const buffers = createTestBuffers();
+    const dispatch = createEventDispatcher(buffers, createTestState(), "csv-file");
+    dispatch("csv-file", {
+      kind: "history-chunk",
+      points: [makePoint(0, "sat1"), makePoint(10, "sat1")],
+      done: false,
+    });
+    dispatch("csv-file", {
+      kind: "history-chunk",
+      points: [makePoint(0, "sat2"), makePoint(10, "sat2")],
+      done: true,
+    });
+
+    expect(
+      ingestOf(buffers, "sat2")
+        .consumeRebuild()
+        ?.map((p) => p.t),
+    ).toEqual([0, 10]);
+  });
+
+  // The worker may take the rebuild while the file is still loading: the rows
+  // so far replace the table, and the rest arrive as appends.
+  it("sends the rest of a load as appends once its rebuild is taken", () => {
+    const buffers = createTestBuffers();
+    const dispatch = createEventDispatcher(buffers, createTestState(), "csv-file");
+    dispatch("csv-file", {
+      kind: "history-chunk",
+      points: [makePoint(0, "sat1"), makePoint(10, "sat1")],
+      done: false,
+    });
+    expect(
+      ingestOf(buffers)
+        .consumeRebuild()
+        ?.map((p) => p.t),
+    ).toEqual([0, 10]);
+
+    dispatch("csv-file", {
+      kind: "history-chunk",
+      points: [makePoint(20, "sat1"), makePoint(30, "sat1")],
+      done: true,
+    });
+    expect(ingestOf(buffers).consumeRebuild()).toBeNull();
+    expect(
+      ingestOf(buffers)
+        .drain()
+        .map((p) => p.t),
+    ).toEqual([20, 30]);
+  });
+
+  it("clears what the load before it left when the file has no points", () => {
+    const buffers = createTestBuffers();
+    loadInChunks(createEventDispatcher(buffers, createTestState(), "csv-file"), [0, 10]);
+    ingestOf(buffers).consumeRebuild();
+
+    loadInChunks(createEventDispatcher(buffers, createTestState(), "csv-file"), []);
+    expect(ingestOf(buffers).consumeRebuild()).toEqual([]);
+    expect(buffers.trailBuffers.get("sat1")?.length ?? 0).toBe(0);
   });
 });
 

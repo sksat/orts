@@ -77,6 +77,101 @@ export function computePlaybackTimeline(
   return { start: tMin, end, fraction };
 }
 
+/**
+ * The newest time any buffer holds, or 0 when none holds a point. Starts below
+ * every time, so a recording whose times are all negative ends where it does.
+ */
+export function newestTime(trailBuffers: Map<string, TrailBuffer>): number {
+  let tMax = Number.NEGATIVE_INFINITY;
+  for (const buf of trailBuffers.values()) {
+    if (buf.latest) tMax = Math.max(tMax, buf.latest.t);
+  }
+  return tMax === Number.NEGATIVE_INFINITY ? 0 : tMax;
+}
+
+/** The part of the playback state one animation frame can change. */
+export interface PlaybackStep {
+  mode: RealtimeMode;
+  currentTime: number;
+  /** See {@link computePlaybackTimeline}. */
+  frozenEnd: number | null;
+}
+
+/**
+ * Advance playback by one animation frame.
+ *
+ * Only a playing view moves: by `elapsed` wall seconds times `speed`. Reaching
+ * `tMax` (the newest point the buffers hold) ends the replay. A stream then
+ * follows live data; a source that cannot be followed live (a loaded file,
+ * which has nothing newer) pauses at its end with the span frozen there.
+ */
+export function stepPlayback(
+  state: PlaybackStep,
+  elapsed: number,
+  speed: number,
+  tMax: number,
+  canFollowLive: boolean,
+): PlaybackStep {
+  if (state.mode !== "playing") return state;
+  const currentTime = state.currentTime + elapsed * speed;
+  if (currentTime >= tMax) {
+    return canFollowLive
+      ? { mode: "live", currentTime: tMax, frozenEnd: null }
+      : { mode: "paused", currentTime: tMax, frozenEnd: tMax };
+  }
+  // Ratchet, so seeking back after this keeps the span it showed.
+  const frozenEnd =
+    state.frozenEnd !== null && currentTime > state.frozenEnd ? currentTime : state.frozenEnd;
+  return { mode: "playing", currentTime, frozenEnd };
+}
+
+/** What the buffers hold, as far as a frame's sync is concerned. */
+export interface BufferRevision {
+  /** Points across every buffer. */
+  totalLength: number;
+  /** `generation` summed across every buffer: bumped by a clear or a trim, so
+   * a buffer replaced by one of the same length still counts as a change. */
+  totalGeneration: number;
+}
+
+/** The revision of the buffers as they are now. */
+export function bufferRevision(trailBuffers: Map<string, TrailBuffer>): BufferRevision {
+  let totalLength = 0;
+  let totalGeneration = 0;
+  for (const buf of trailBuffers.values()) {
+    totalLength += buf.length;
+    totalGeneration += buf.generation;
+  }
+  return { totalLength, totalGeneration };
+}
+
+/**
+ * Whether an animation frame recomputes the playback snapshot.
+ *
+ * A playing view's time moves, so it syncs every frame, and so does the frame
+ * that changed the mode (`modeBefore` → `mode`: playback reaching the end pauses
+ * a file and makes a stream live, with no new point). A live or paused view
+ * otherwise changes only when the buffers do (`buffers` differs from the
+ * revision the last sync saw, or there was none); a seek, a play/pause or a
+ * speed change syncs on its own. A loaded file rests paused, and syncing it
+ * every frame re-rendered the app at the display's refresh rate.
+ */
+export function shouldSyncFrame(
+  modeBefore: RealtimeMode,
+  mode: RealtimeMode,
+  buffers: BufferRevision,
+  lastSynced: BufferRevision | null,
+): boolean {
+  if (buffers.totalLength === 0) return false;
+  return (
+    mode === "playing" ||
+    mode !== modeBefore ||
+    lastSynced === null ||
+    buffers.totalLength !== lastSynced.totalLength ||
+    buffers.totalGeneration !== lastSynced.totalGeneration
+  );
+}
+
 export interface RealtimePlaybackSnapshot {
   isLive: boolean;
   isPlaying: boolean;
@@ -110,6 +205,12 @@ export interface RealtimePlaybackSnapshot {
 export interface RealtimePlaybackOptions {
   /** Initial mode: "live" for streaming sources, "paused" for file sources. */
   defaultMode?: "live" | "paused";
+  /**
+   * Whether the view can follow live data (default true). False for a loaded
+   * file: playback that reaches its end pauses there instead of going live.
+   * Read on every frame, so it can change while the hook is mounted.
+   */
+  canFollowLive?: boolean;
 }
 
 export function useRealtimePlayback(
@@ -119,6 +220,8 @@ export function useRealtimePlayback(
   options?: RealtimePlaybackOptions,
 ) {
   const defaultMode = options?.defaultMode ?? "live";
+  const canFollowLiveRef = useRef(true);
+  canFollowLiveRef.current = options?.canFollowLive ?? true;
   const modeRef = useRef<RealtimeMode>(defaultMode);
   const currentTimeRef = useRef(0);
   // The slider's end while the view is out of Live; see computePlaybackTimeline.
@@ -219,12 +322,12 @@ export function useRealtimePlayback(
     });
   }, [trailBuffers, terminatedSatellites, timeRange]);
 
-  // Track last synced tMax to skip redundant syncState in live mode.
-  // Reset when inputs (timeRange, terminatedSatellites) change so that
+  // The buffers as the last frame sync saw them, to skip a sync nothing calls
+  // for. Reset when inputs (timeRange, terminatedSatellites) change so that
   // stale snapshot values are refreshed even without new data arriving.
-  const lastSyncTMaxRef = useRef(-Infinity);
+  const lastSyncedRef = useRef<BufferRevision | null>(null);
   useEffect(() => {
-    lastSyncTMaxRef.current = -Infinity;
+    lastSyncedRef.current = null;
   }, [timeRange, terminatedSatellites]);
 
   // Animation loop
@@ -234,37 +337,32 @@ export function useRealtimePlayback(
       prevTimeRef.current = time;
 
       let tMax = -Infinity;
-      let totalLength = 0;
       for (const buf of trailBuffers.values()) {
         if (buf.latest) tMax = Math.max(tMax, buf.latest.t);
-        totalLength += buf.length;
       }
       if (tMax === -Infinity) tMax = 0;
+      const buffers = bufferRevision(trailBuffers);
 
-      if (modeRef.current === "playing") {
-        currentTimeRef.current += dt * speedRef.current;
-        if (currentTimeRef.current >= tMax) {
-          currentTimeRef.current = tMax;
-          modeRef.current = "live";
-          frozenEndRef.current = null;
-        } else if (frozenEndRef.current !== null && currentTimeRef.current > frozenEndRef.current) {
-          // Ratchet, so seeking back after this keeps the span it showed.
-          frozenEndRef.current = currentTimeRef.current;
-        }
-      }
+      const modeBefore = modeRef.current;
+      const next = stepPlayback(
+        {
+          mode: modeRef.current,
+          currentTime: currentTimeRef.current,
+          frozenEnd: frozenEndRef.current,
+        },
+        dt,
+        speedRef.current,
+        tMax,
+        canFollowLiveRef.current,
+      );
+      modeRef.current = next.mode;
+      currentTimeRef.current = next.currentTime;
+      frozenEndRef.current = next.frozenEnd;
 
-      // Only sync when data has changed (live) or time is advancing (playing).
-      // In live mode, skip sync if total point count hasn't changed — no new data arrived.
-      // Using totalLength instead of tMax catches multi-satellite updates where
-      // a lagging satellite advances without changing the global tMax.
-      const shouldSync =
-        totalLength > 0 &&
-        (modeRef.current === "playing" ||
-          modeRef.current === "paused" ||
-          totalLength !== lastSyncTMaxRef.current);
-
-      if (shouldSync) {
-        lastSyncTMaxRef.current = totalLength;
+      // The point count catches multi-satellite updates where a lagging
+      // satellite advances without changing the global tMax.
+      if (shouldSyncFrame(modeBefore, modeRef.current, buffers, lastSyncedRef.current)) {
+        lastSyncedRef.current = buffers;
         syncState();
       }
 
@@ -275,24 +373,31 @@ export function useRealtimePlayback(
     return () => cancelAnimationFrame(rafRef.current);
   }, [trailBuffers, syncState]);
 
+  /** Pause at the newest point the buffers hold, with the span frozen there. */
+  const holdAtEnd = useCallback(() => {
+    const tMax = newestTime(trailBuffers);
+    currentTimeRef.current = tMax;
+    frozenEndRef.current = tMax;
+    modeRef.current = "paused";
+  }, [trailBuffers]);
+
+  /** Pause at the end of what the buffers hold, as a loaded file rests. */
+  const pauseAtEnd = useCallback(() => {
+    holdAtEnd();
+    syncState();
+  }, [holdAtEnd, syncState]);
+
   const togglePlayPause = useCallback(() => {
     const mode = modeRef.current;
     if (mode === "live") {
-      // Find max t across all buffers
-      let tMax = 0;
-      for (const buf of trailBuffers.values()) {
-        if (buf.latest) tMax = Math.max(tMax, buf.latest.t);
-      }
-      currentTimeRef.current = tMax;
-      frozenEndRef.current = tMax;
-      modeRef.current = "paused";
+      holdAtEnd();
     } else if (mode === "paused") {
       modeRef.current = "playing";
     } else {
       modeRef.current = "paused";
     }
     syncState();
-  }, [trailBuffers, syncState]);
+  }, [holdAtEnd, syncState]);
 
   const goLive = useCallback(() => {
     modeRef.current = "live";
@@ -346,6 +451,7 @@ export function useRealtimePlayback(
     snapshot,
     togglePlayPause,
     goLive,
+    pauseAtEnd,
     seekToFraction,
     setSpeed,
   };

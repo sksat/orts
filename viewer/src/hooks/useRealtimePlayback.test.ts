@@ -2,9 +2,13 @@ import { describe, expect, it } from "vitest";
 import type { OrbitPoint } from "../orbit.js";
 import { TrailBuffer } from "../utils/TrailBuffer.js";
 import {
+  bufferRevision,
   computeLiveSyncTime,
   computePlaybackTimeline,
   computeTrailDrawStarts,
+  newestTime,
+  shouldSyncFrame,
+  stepPlayback,
 } from "./useRealtimePlayback.js";
 
 function makePoint(t: number, entityPath?: string): OrbitPoint {
@@ -235,5 +239,147 @@ describe("computePlaybackTimeline", () => {
 
   it("puts the thumb at the end of an empty span", () => {
     expect(computePlaybackTimeline(10, 10, 10, null).fraction).toBe(1);
+  });
+});
+
+describe("stepPlayback", () => {
+  it("advances a playing view by the elapsed time times the speed", () => {
+    const next = stepPlayback(
+      { mode: "playing", currentTime: 100, frozenEnd: 500 },
+      2,
+      5,
+      1000,
+      true,
+    );
+    expect(next).toEqual({ mode: "playing", currentTime: 110, frozenEnd: 500 });
+  });
+
+  it("ratchets the frozen end that playback passes", () => {
+    const next = stepPlayback(
+      { mode: "playing", currentTime: 495, frozenEnd: 500 },
+      1,
+      10,
+      1000,
+      true,
+    );
+    expect(next).toEqual({ mode: "playing", currentTime: 505, frozenEnd: 505 });
+  });
+
+  it("goes live when playback reaches the newest point of a stream", () => {
+    const next = stepPlayback(
+      { mode: "playing", currentTime: 995, frozenEnd: 1000 },
+      1,
+      10,
+      1000,
+      true,
+    );
+    expect(next).toEqual({ mode: "live", currentTime: 1000, frozenEnd: null });
+  });
+
+  // A loaded file has nothing newer to follow: playback stops at its end,
+  // with the span frozen there.
+  it("pauses at the end of a recording it cannot follow live", () => {
+    const next = stepPlayback(
+      { mode: "playing", currentTime: 995, frozenEnd: 1000 },
+      1,
+      10,
+      1000,
+      false,
+    );
+    expect(next).toEqual({ mode: "paused", currentTime: 1000, frozenEnd: 1000 });
+  });
+
+  it("leaves a paused or live view where it is", () => {
+    const paused = { mode: "paused", currentTime: 100, frozenEnd: 500 } as const;
+    const live = { mode: "live", currentTime: 100, frozenEnd: null } as const;
+    expect(stepPlayback(paused, 1, 10, 1000, false)).toEqual(paused);
+    expect(stepPlayback(live, 1, 10, 1000, true)).toEqual(live);
+  });
+});
+
+describe("shouldSyncFrame", () => {
+  const at = (totalLength: number, totalGeneration = 0) => ({ totalLength, totalGeneration });
+
+  // A loaded file rests paused, so a paused view that recomputed its snapshot
+  // on every frame re-rendered the app at the display's refresh rate.
+  it("leaves a paused view alone while the buffers do not change", () => {
+    expect(shouldSyncFrame("paused", "paused", at(100), at(100))).toBe(false);
+  });
+
+  it("resyncs a paused or live view when points arrive", () => {
+    expect(shouldSyncFrame("paused", "paused", at(101), at(100))).toBe(true);
+    expect(shouldSyncFrame("live", "live", at(101), at(100))).toBe(true);
+  });
+
+  // A range response clears a trail and refills it, possibly to the same
+  // length: the clear bumps the generation.
+  it("resyncs when a buffer is replaced by one of the same length", () => {
+    expect(shouldSyncFrame("paused", "paused", at(100, 1), at(100, 0))).toBe(true);
+  });
+
+  it("resyncs when there was no sync yet", () => {
+    expect(shouldSyncFrame("paused", "paused", at(100), null)).toBe(true);
+  });
+
+  it("leaves a live view alone while no points arrive", () => {
+    expect(shouldSyncFrame("live", "live", at(100), at(100))).toBe(false);
+  });
+
+  it("resyncs a playing view on every frame, since its time moves", () => {
+    expect(shouldSyncFrame("playing", "playing", at(100), at(100))).toBe(true);
+  });
+
+  // The frame on which playback reaches the end changes the mode with no new
+  // point: a file pauses there and a stream goes live, and the bar has to say so.
+  it("resyncs on the frame that changes the mode", () => {
+    expect(shouldSyncFrame("playing", "paused", at(100), at(100))).toBe(true);
+    expect(shouldSyncFrame("playing", "live", at(100), at(100))).toBe(true);
+  });
+
+  it("has nothing to sync while the buffers are empty", () => {
+    expect(shouldSyncFrame("playing", "playing", at(0), null)).toBe(false);
+  });
+});
+
+describe("bufferRevision", () => {
+  it("counts a clear and refill to the same length as a new revision", () => {
+    const buf = new TrailBuffer(1000);
+    buf.pushMany([makePoint(0), makePoint(10)]);
+    const before = bufferRevision(new Map([["a", buf]]));
+    buf.clear();
+    buf.pushMany([makePoint(0), makePoint(5)]);
+    const after = bufferRevision(new Map([["a", buf]]));
+    expect(after.totalLength).toBe(before.totalLength);
+    expect(after.totalGeneration).not.toBe(before.totalGeneration);
+  });
+});
+
+describe("newestTime", () => {
+  it("is the newest point any buffer holds", () => {
+    const a = new TrailBuffer(1000);
+    const b = new TrailBuffer(1000);
+    a.push(makePoint(10));
+    b.push(makePoint(30));
+    expect(
+      newestTime(
+        new Map([
+          ["a", a],
+          ["b", b],
+        ]),
+      ),
+    ).toBe(30);
+  });
+
+  // A recording whose times are all negative ends below zero; pausing at 0
+  // would put the view past its end.
+  it("ends a recording of negative times where it ends", () => {
+    const buf = new TrailBuffer(1000);
+    buf.push(makePoint(-20));
+    buf.push(makePoint(-10));
+    expect(newestTime(new Map([["a", buf]]))).toBe(-10);
+  });
+
+  it("is 0 while no buffer holds a point", () => {
+    expect(newestTime(new Map([["a", new TrailBuffer(1000)]]))).toBe(0);
   });
 });

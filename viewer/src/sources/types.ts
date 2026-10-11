@@ -16,6 +16,17 @@ export type { SatelliteInfo, SimInfo };
 /** Opaque identifier for a source instance. */
 export type SourceId = string;
 
+/**
+ * Where a source's data comes from, which decides how much of it the viewer
+ * keeps.
+ *
+ * - `"websocket"`: a stream with no end. The viewer keeps its recent part and
+ *   follows it live.
+ * - `"file"`: a finite recording (CSV, RRD). The viewer keeps all of it and,
+ *   once it is loaded, pauses at its end.
+ */
+export type SourceKind = "websocket" | "file";
+
 // Source events (discriminated union)
 
 /** Events emitted by a source into the runtime. */

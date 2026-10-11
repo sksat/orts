@@ -44,6 +44,12 @@ export interface UseTimeSeriesStoreWorkerOptions<T extends TimePoint> {
   /** Set to false to disable the Worker (no Worker is spawned). Default: true. */
   enabled?: boolean;
   /**
+   * Whether the Worker compacts its table (default true). Compaction thins old
+   * rows so an endless stream stays within memory; pass false for finite data,
+   * such as a loaded file, to keep every row. May change while mounted.
+   */
+  compaction?: boolean;
+  /**
    * How the Worker should source DuckDB-wasm assets. Pass self-hosted bundle
    * URLs here to avoid the jsDelivr CDN. Defaults to the CDN when omitted.
    */
@@ -65,6 +71,7 @@ export interface WorkerSyncTarget {
   ingest(rows: RowTuple[], latestT: number): void;
   rebuild(rows: RowTuple[], latestT: number): void;
   configure(timeRange: TimeRange, maxPoints: number): void;
+  setCompaction(enabled: boolean): void;
 }
 
 /** What the Worker was last told, so changes can be detected and forwarded. */
@@ -72,11 +79,13 @@ export interface WorkerSyncState<T extends TimePoint> {
   schema: TableSchema<T>;
   timeRange: TimeRange;
   maxPoints: number;
+  compaction: boolean;
 }
 
 /**
- * One drain step: forward a schema change, then the buffered points (as a
- * rebuild or an incremental ingest), then configuration changes.
+ * One drain step: forward a schema change and a compaction change, then the
+ * buffered points (as a rebuild or an incremental ingest), then configuration
+ * changes.
  *
  * The schema goes first because row tuples carry no column names — the Worker
  * must know the current schema before it sees rows produced by it. `sent` is
@@ -100,6 +109,12 @@ export function drainToWorker<T extends TimePoint>(
       client.updateSchema(next);
     }
     sent.schema = current.schema;
+  }
+
+  // Before the rows, so the rows of a file are never compacted.
+  if (current.compaction !== sent.compaction) {
+    client.setCompaction(current.compaction);
+    sent.compaction = current.compaction;
   }
 
   const rebuildData = buffer.consumeRebuild();
@@ -140,6 +155,7 @@ export function useTimeSeriesStoreWorker<T extends TimePoint>(
     clientRef: externalClientRef,
     enabled = true,
     duckDB,
+    compaction = true,
   } = options;
   const duckDBRef = useRef(duckDB);
   duckDBRef.current = duckDB;
@@ -154,6 +170,8 @@ export function useTimeSeriesStoreWorker<T extends TimePoint>(
   timeRangeRef.current = timeRange;
   const maxPointsRef = useRef(maxPoints);
   maxPointsRef.current = maxPoints;
+  const compactionRef = useRef(compaction);
+  compactionRef.current = compaction;
   // `enabled` is depended on directly in the effect below so the worker
   // can be started/stopped as the hook transitions between enabled and
   // disabled states. The ref pattern used for the other props (refs for
@@ -161,7 +179,7 @@ export function useTimeSeriesStoreWorker<T extends TimePoint>(
   // lifecycle gate, not a drain-time read.
 
   // Track what the Worker was last told, to detect changes
-  const sentRef = useRef<WorkerSyncState<T>>({ schema, timeRange, maxPoints });
+  const sentRef = useRef<WorkerSyncState<T>>({ schema, timeRange, maxPoints, compaction: true });
 
   const clientRef = useRef<ChartDataWorkerClient | null>(null);
 
@@ -195,6 +213,8 @@ export function useTimeSeriesStoreWorker<T extends TimePoint>(
       schema: schemaRef.current,
       timeRange: timeRangeRef.current,
       maxPoints: maxPointsRef.current,
+      // What a new Worker starts with; the first drain sends a change.
+      compaction: true,
     };
 
     // Lightweight drain loop: pull from IngestBuffer → toRow() → send to Worker
@@ -211,6 +231,7 @@ export function useTimeSeriesStoreWorker<T extends TimePoint>(
           schema: schemaRef.current,
           timeRange: timeRangeRef.current,
           maxPoints: maxPointsRef.current,
+          compaction: compactionRef.current,
         },
         sentRef.current,
       );

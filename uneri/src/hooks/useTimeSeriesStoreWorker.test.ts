@@ -33,7 +33,8 @@ type Call =
   | { kind: "update-schema"; schema: WorkerTableSchema }
   | { kind: "ingest"; rows: RowTuple[] }
   | { kind: "rebuild"; rows: RowTuple[] }
-  | { kind: "configure"; timeRange: TimeRange; maxPoints: number };
+  | { kind: "configure"; timeRange: TimeRange; maxPoints: number }
+  | { kind: "set-compaction"; enabled: boolean };
 
 function fakeClient(): { calls: Call[]; client: WorkerSyncTarget } {
   const calls: Call[] = [];
@@ -44,12 +45,13 @@ function fakeClient(): { calls: Call[]; client: WorkerSyncTarget } {
       ingest: (rows) => calls.push({ kind: "ingest", rows }),
       rebuild: (rows) => calls.push({ kind: "rebuild", rows }),
       configure: (timeRange, maxPoints) => calls.push({ kind: "configure", timeRange, maxPoints }),
+      setCompaction: (enabled) => calls.push({ kind: "set-compaction", enabled }),
     },
   };
 }
 
 function syncState(schema: TableSchema<Point>): WorkerSyncState<Point> {
-  return { schema, timeRange: null, maxPoints: 2000 };
+  return { schema, timeRange: null, maxPoints: 2000, compaction: true };
 }
 
 describe("drainToWorker", () => {
@@ -114,13 +116,38 @@ describe("drainToWorker", () => {
     });
   });
 
+  // A file turns compaction off before its rows reach the Worker, so none of
+  // them is ever thinned.
+  it("turns compaction off before the rows that follow", () => {
+    const { calls, client } = fakeClient();
+    const buffer = new IngestBuffer<Point>();
+    buffer.markRebuild([{ t: 0, r: 7000 }]);
+    const sent = syncState(EARTH_SCHEMA);
+
+    drainToWorker(client, buffer, { ...syncState(EARTH_SCHEMA), compaction: false }, sent);
+
+    expect(calls.map((c) => c.kind)).toEqual(["set-compaction", "rebuild"]);
+    expect(calls[0]).toEqual({ kind: "set-compaction", enabled: false });
+    expect(sent.compaction).toBe(false);
+  });
+
+  it("does not resend an unchanged compaction setting", () => {
+    const { calls, client } = fakeClient();
+    const buffer = new IngestBuffer<Point>();
+    const sent = { ...syncState(EARTH_SCHEMA), compaction: false };
+
+    drainToWorker(client, buffer, { ...syncState(EARTH_SCHEMA), compaction: false }, sent);
+
+    expect(calls).toEqual([]);
+  });
+
   it("forwards timeRange and maxPoints changes once each", () => {
     const { calls, client } = fakeClient();
     const buffer = new IngestBuffer<Point>();
     const sent = syncState(EARTH_SCHEMA);
 
-    drainToWorker(client, buffer, { schema: EARTH_SCHEMA, timeRange: 300, maxPoints: 2000 }, sent);
-    drainToWorker(client, buffer, { schema: EARTH_SCHEMA, timeRange: 300, maxPoints: 2000 }, sent);
+    drainToWorker(client, buffer, { ...syncState(EARTH_SCHEMA), timeRange: 300 }, sent);
+    drainToWorker(client, buffer, { ...syncState(EARTH_SCHEMA), timeRange: 300 }, sent);
 
     expect(calls).toEqual([{ kind: "configure", timeRange: 300, maxPoints: 2000 }]);
     expect(sent.timeRange).toBe(300);

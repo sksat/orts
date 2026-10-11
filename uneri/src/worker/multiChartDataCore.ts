@@ -81,6 +81,7 @@ export class MultiChartDataCore {
   private tickInterval = 500;
   private queryEveryN = 4;
   private compactEveryN = 20;
+  private compactionEnabled = true;
 
   // Per-satellite state
   private readonly createdTables = new Set<string>();
@@ -158,6 +159,10 @@ export class MultiChartDataCore {
         this.maxPoints = msg.maxPoints;
         break;
       }
+
+      case "multi-set-compaction":
+        this.compactionEnabled = msg.enabled;
+        break;
 
       case "multi-update-configs": {
         this.satelliteConfigs = msg.satelliteConfigs;
@@ -520,7 +525,7 @@ export class MultiChartDataCore {
 
       // Compaction
       this.queryCount++;
-      if (this.queryCount % this.compactEveryN === 0) {
+      if (this.compactionEnabled && this.queryCount % this.compactEveryN === 0) {
         for (const satId of this.hasData) {
           const cd = this.compactCooldowns.get(satId) ?? 0;
           if (cd > 0) {

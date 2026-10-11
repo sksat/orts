@@ -17,6 +17,8 @@ export interface OrbitOverlayProps {
   epochJd: number | undefined;
   /** File-source orbit summary line; empty string when no file is loaded. */
   orbitInfo: string;
+  /** Said once a loaded file is large; null otherwise. */
+  fileSizeWarning: string | null;
   /** Live simulation metadata; null hides the info bar. */
   simInfo: SimInfo | null;
   totalPoints: number;
@@ -83,6 +85,7 @@ export function OrbitOverlay({
   centralBody,
   epochJd,
   orbitInfo,
+  fileSizeWarning,
   simInfo,
   totalPoints,
   activePerturbations,
@@ -170,6 +173,11 @@ export function OrbitOverlay({
       {orbitInfo && (
         <div className={styles.orbitInfo} data-testid="orbit-info-file">
           {orbitInfo}
+        </div>
+      )}
+      {fileSizeWarning && (
+        <div className={styles.orbitInfo} data-testid="file-size-warning" role="status">
+          {fileSizeWarning}
         </div>
       )}
       {simInfo && (

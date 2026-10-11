@@ -47,6 +47,11 @@ export interface UseMultiSatelliteStoreWorkerOptions<T extends TimePoint> {
    * URLs here to avoid the jsDelivr CDN. Defaults to the CDN when omitted.
    */
   duckDB?: DuckDBInitOptions;
+  /**
+   * Whether the Worker compacts the satellites' tables (default true): off for
+   * a loaded file, which keeps every row. May change while mounted.
+   */
+  compaction?: boolean;
 }
 
 export interface UseMultiSatelliteStoreWorkerReturn {
@@ -129,6 +134,7 @@ export function useMultiSatelliteStoreWorker<T extends TimePoint>(
     enabled = true,
     clientRef: externalClientRef,
     duckDB,
+    compaction = true,
   } = options;
   const duckDBRef = useRef(duckDB);
   duckDBRef.current = duckDB;
@@ -150,6 +156,8 @@ export function useMultiSatelliteStoreWorker<T extends TimePoint>(
   timeRangeRef.current = timeRange;
   const maxPointsRef = useRef(maxPoints);
   maxPointsRef.current = maxPoints;
+  const compactionRef = useRef(compaction);
+  compactionRef.current = compaction;
   // `enabled` is depended on directly by the effect below (it is a
   // lifecycle gate, not a drain-time read), so no ref snapshot is
   // needed.
@@ -210,6 +218,8 @@ export function useMultiSatelliteStoreWorker<T extends TimePoint>(
       sentSchemaRef.current = baseSchemaRef.current;
 
       client.configure(timeRangeRef.current, maxPointsRef.current);
+      // What a new Worker starts with; the first drain sends a change.
+      let sentCompaction = true;
 
       const drain = () => {
         if (cancelled) return;
@@ -219,6 +229,12 @@ export function useMultiSatelliteStoreWorker<T extends TimePoint>(
           baseSchemaRef.current,
           sentSchemaRef.current,
         );
+
+        // Before the rows, so the rows of a file are never compacted.
+        if (compactionRef.current !== sentCompaction) {
+          client.setCompaction(compactionRef.current);
+          sentCompaction = compactionRef.current;
+        }
 
         // Drain each satellite's IngestBuffer
         for (const [satId, buf] of buffersRef.current.entries()) {
