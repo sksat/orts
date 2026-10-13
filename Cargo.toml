@@ -54,7 +54,7 @@ futures-util = "0.3"
 # re_entity_db / re_capabilities with no #[cfg], so even features = ["sdk"]
 # drags in re_query, re_chunk_store, re_video, image, re_analytics...
 # Same approach rrd-wasm already takes.
-re_sdk = "0.33"
+re_sdk = "0.38"
 # `default-features = false` drops re_sdk_types' default `ecolor` feature, and
 # with it the ecolor crate. `emath` stays either way — re_sdk_types depends on
 # it unconditionally. re_sdk_types is the only one of these five with a
@@ -64,12 +64,12 @@ re_sdk = "0.33"
 #
 # rrd-wasm opts out too. Features unify per build, so one member leaving the
 # default on would pull ecolor back into every `--workspace` build.
-re_sdk_types = { version = "0.33", default-features = false }
+re_sdk_types = { version = "0.38", default-features = false }
 # `decoder` is orts' own requirement (DecoderApp); `encoder` comes from re_sdk
 # anyway but is named here because save_as_rrd depends on it directly.
-re_log_encoding = { version = "0.33", features = ["encoder", "decoder"] }
-re_chunk = "0.33"
-re_log_types = "0.33"
+re_log_encoding = { version = "0.38", features = ["encoder", "decoder"] }
+re_chunk = "0.38"
+re_log_types = "0.38"
 ureq = "3"
 image = { version = "0.25", default-features = false, features = ["jpeg", "tiff"] }
 toml = "1.0"
