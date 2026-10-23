@@ -70,7 +70,7 @@ jobs:
         uses: ./.github/actions/parse-rust-toolchain
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
