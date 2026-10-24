@@ -486,7 +486,7 @@ jobs:
           echo "WASI_SYSROOT=/usr/share/wasi-sysroot" >> "$GITHUB_ENV"
 
       - name: Download orts binary (debug)
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: orts-cli-debug
           path: ./bin
@@ -565,7 +565,7 @@ jobs:
         run: echo "KBLE_BIN=$HOME/.cargo/bin/kble" >> "$GITHUB_ENV"
 
       - name: Download orts binary
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: orts-cli-debug
           path: ./bin
@@ -835,7 +835,7 @@ jobs:
       # `cargo about` binary needs to be installed for either target.
 
       - name: Download viewer dist
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: viewer-dist
           path: ./viewer/dist
@@ -1193,7 +1193,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Download uneri dist
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: uneri-dist
           path: ./uneri/dist
@@ -1295,7 +1295,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Download uneri dist
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: uneri-dist
           path: ./uneri/dist
@@ -1372,7 +1372,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Download uneri dist
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: uneri-dist
           path: ./uneri/dist
@@ -1398,7 +1398,7 @@ jobs:
         run: npx playwright install-deps chromium
 
       - name: Download CLI binary
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: orts-cli-debug
           path: ./bin
@@ -1489,7 +1489,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Download uneri dist
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: uneri-dist
           path: ./uneri/dist
@@ -1600,43 +1600,43 @@ jobs:
           echo "Extracted EN=$(wc -l < /tmp/changelog-en.txt) JA=$(wc -l < /tmp/changelog-ja.txt) lines"
 
       - name: Download example plugins
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: example-plugins
           path: ./plugins-wasm
 
       - name: Download CLI binary (gnu)
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: orts-cli-release-x86_64-unknown-linux-gnu
           path: ./bin-gnu
 
       - name: Download CLI binary (musl)
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: orts-cli-release-x86_64-unknown-linux-musl
           path: ./bin-musl
 
       - name: Download CLI binary (arm64 gnu)
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: orts-cli-release-aarch64-unknown-linux-gnu
           path: ./bin-arm64-gnu
 
       - name: Download CLI binary (arm64 darwin)
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: orts-cli-release-aarch64-apple-darwin
           path: ./bin-arm64-darwin
 
       - name: Download CLI binary (x86_64 darwin)
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: orts-cli-release-x86_64-apple-darwin
           path: ./bin-x86_64-darwin
 
       - name: Download CLI binary (windows msvc)
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: orts-cli-release-x86_64-pc-windows-msvc
           path: ./bin-windows
